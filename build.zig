@@ -153,7 +153,7 @@ fn addLibdeflate(b: *std.Build, mod: *std.Build.Module, arch: std.Target.Cpu.Arc
     if (arch_file) |f| mod.addCSourceFiles(.{ .root = b.path("third_party/libdeflate"), .files = &.{f}, .flags = &flags });
 }
 
-/// 2.2 aşama 8: gömülü C kütüphaneleri (zstd, lz4, xxHash; sonra PCRE2/brotli/yyjson) — `noxclibs-<hedef>.a` ADLI, ayrı bir statik arşiv. `noxrt.o`ya GÖMÜLMEZ: derleyici
+/// 2.2 aşama 8: gömülü C kütüphaneleri (zstd, lz4, xxHash, yyjson; sonra PCRE2/brotli) — `noxclibs-<hedef>.a` ADLI, ayrı bir statik arşiv. `noxrt.o`ya GÖMÜLMEZ: derleyici
 /// (`compiler/main.zig`) arşivi yalnızca programın modülleri `from "zig-out/lib/noxclibs.a"` bildiriyorsa bağlar (kullanılmayan program büyümez) ve linker yalnızca başvurulan
 /// üyeleri alır. Böylece macOS, Linux VE Windows (COFF'un `noxrt.o`ya çok sayıda C nesnesi gömememesi sınırı arşivi etkilemez) aynı modül yüzeyine sahiptir.
 /// Her `.c` dosyası `zig cc -c` ile ayrı derlenir, `zig ar` (llvm-ar) ile arşivlenir: Zig'in kendi arşiv yazıcısı Mach-O üyelerini 8 bayta hizalamaz ve Apple `ld` reddeder.
@@ -165,6 +165,7 @@ fn addClibsArchive(b: *std.Build, arch: std.Target.Cpu.Arch, os_tag: std.Target.
     const zstd_flags = common ++ [_][]const u8{ "-DZSTD_DISABLE_ASM=1", "-Ithird_party/zstd/lib", "-Ithird_party/zstd/lib/common" };
     const lz4_flags = common ++ [_][]const u8{ "-Ithird_party/lz4", "-DXXH_NAMESPACE=LZ4_", "-Iruntime/c_glue" }; // lz4'ün paketli xxhash'i ayrı ad alanında
     const xxh_flags = common ++ [_][]const u8{ "-Ithird_party/xxhash", "-Iruntime/c_glue" };
+    const yy_flags = common ++ [_][]const u8{ "-Ithird_party/yyjson", "-Iruntime/c_glue" };
     const zstd_glue_flags = common ++ [_][]const u8{ "-Ithird_party/zstd/lib", "-Iruntime/c_glue" };
     const zstd_files = [_][]const u8{
         "lib/common/debug.c",                      "lib/common/entropy_common.c",      "lib/common/error_private.c",             "lib/common/fse_decompress.c",
@@ -181,6 +182,8 @@ fn addClibsArchive(b: *std.Build, arch: std.Target.Cpu.Arch, os_tag: std.Target.
     srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "lz4_glue.c", .flags = &lz4_flags }) catch @panic("OOM");
     srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "zstd_glue.c", .flags = &zstd_glue_flags }) catch @panic("OOM");
     srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "xxh_glue.c", .flags = &xxh_flags }) catch @panic("OOM");
+    srcs.append(b.allocator, .{ .dir = "third_party/yyjson", .file = "yyjson.c", .flags = &yy_flags }) catch @panic("OOM");
+    srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "yyjson_glue.c", .flags = &yy_flags }) catch @panic("OOM");
 
     const ar = b.addSystemCommand(&.{ b.graph.zig_exe, "ar", "rcs" });
     const out_a = ar.addOutputFileArg(b.fmt("{s}.a", .{install_name}));

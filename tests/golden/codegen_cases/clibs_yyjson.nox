@@ -1,0 +1,107 @@
+# v2.1.173 (2.2 aşama 8): nox.yyjson — yyjson ile okuma/yazma (nox.json'ın yanında ayrı modül): erişimciler, sıralı gezinme, hata yolları, dump
+import nox.yyjson
+import nox.json
+from nox.yyjson import YyValue, YyjsonError
+
+doc: str = "{\"id\":7,\"name\":\"nox\",\"ok\":true,\"none\":null,\"pi\":3.5,\"tags\":[\"a\",\"b\",\"c\"],\"nested\":{\"x\":[1,2,[3,4]],\"y\":{}},\"u\":\"\\u00e9\\n\\\"q\\\"\"}"
+v: YyValue = nox.yyjson.parse(doc)
+print(nox.yyjson.is_object(v), nox.yyjson.object_len(v), nox.yyjson.is_supported())
+print(nox.yyjson.get_int(v, "id"), nox.yyjson.get_str(v, "name"), nox.yyjson.get_bool(v, "ok"), nox.yyjson.get_float(v, "pi"))
+print(nox.yyjson.is_null(nox.yyjson.get(v, "none")), nox.yyjson.has_key(v, "none"), nox.yyjson.has_key(v, "zzz"))
+print(nox.yyjson.get_str(v, "u"))
+tags: YyValue = nox.yyjson.get(v, "tags")
+print(nox.yyjson.array_len(tags), nox.yyjson.read_str(nox.yyjson.array_get(tags, 0)), nox.yyjson.read_str(nox.yyjson.array_get(tags, -1)))
+# sıralı ve rastgele sırayla erişim (gezinme önbelleği) aynı sonucu verir
+nx: YyValue = nox.yyjson.get(nox.yyjson.get(v, "nested"), "x")
+print(nox.yyjson.dump(nox.yyjson.array_get(nx, 2)), nox.yyjson.dump(nox.yyjson.array_get(nx, 0)), nox.yyjson.dump(nox.yyjson.array_get(nx, 2)), nox.yyjson.dump(nox.yyjson.array_get(nx, 1)))
+inner: YyValue = nox.yyjson.array_get(nx, 2)
+print(nox.yyjson.read_int(nox.yyjson.array_get(inner, 1)), nox.yyjson.read_int(nox.yyjson.array_get(nx, 1)))
+i: int = 0
+keys: list[str] = []
+while i < nox.yyjson.object_len(v):
+    keys.append(nox.yyjson.object_key(v, i))
+    i = i + 1
+print(",".join(keys))
+print(nox.yyjson.dump(nox.yyjson.object_value(v, 5)), nox.yyjson.dump(nox.yyjson.object_value(v, 6)), nox.yyjson.dump(nox.yyjson.object_value(v, 0)))
+print(nox.yyjson.get_or_none(v, "zzz") is None, nox.yyjson.get_or_none(v, "id") is None)
+
+# --- as_int / sayılar ---
+n1: YyValue = nox.yyjson.parse("[1e2, 1.5, 9007199254740993, 18446744073709551615, -9223372036854775808, 0.1]")
+print(nox.yyjson.as_int(nox.yyjson.array_get(n1, 0)), nox.yyjson.as_int(nox.yyjson.array_get(n1, 2)), nox.yyjson.as_int(nox.yyjson.array_get(n1, 4)))
+print(nox.yyjson.is_integer(nox.yyjson.array_get(n1, 0)), nox.yyjson.is_integer(nox.yyjson.array_get(n1, 2)), nox.yyjson.as_number(nox.yyjson.array_get(n1, 5)))
+try:
+    print(nox.yyjson.as_int(nox.yyjson.array_get(n1, 1)))
+except YyjsonError as e:
+    print("YyjsonError ondalik")
+try:
+    print(nox.yyjson.as_int(nox.yyjson.array_get(n1, 3)))
+except YyjsonError as e:
+    print("YyjsonError uint64")
+print(nox.yyjson.number_text(nox.yyjson.array_get(n1, 3)), nox.yyjson.number_text(nox.yyjson.array_get(n1, 2)))
+
+# --- dump ---
+d1: YyValue = nox.yyjson.parse(" { \"a\" : [ 1 , 2 , { \"b\" : null } ] , \"c\" : \"x\" , \"e\" : [] , \"f\" : { } } ")
+print(nox.yyjson.dump(d1))
+print(nox.yyjson.dump_pretty(d1, 2))
+print(nox.yyjson.dump_pretty(d1, 4))
+print(nox.yyjson.dump_pretty(d1, 3))
+print(nox.yyjson.dump(nox.yyjson.parse(nox.yyjson.dump_pretty(d1, 3))) == nox.yyjson.dump(d1))
+
+# --- hatalar ---
+bad: list[str] = ["", "{", "[1,]", "{\"a\":1,}", "nul", "[1] x", "\"abc", "{\"a\" 1}", "[01]", "\"\\x\""]
+for b in bad:
+    try:
+        print(nox.yyjson.dump(nox.yyjson.parse(b)))
+    except YyjsonError as e:
+        print("YyjsonError", len(b))
+try:
+    print(nox.yyjson.array_get(tags, 3))
+except IndexError as e:
+    print("IndexError dizi")
+try:
+    print(nox.yyjson.get(v, "missing"))
+except YyjsonError as e:
+    print("YyjsonError eksik alan")
+try:
+    print(nox.yyjson.get_int(v, "name"))
+except YyjsonError as e:
+    print("YyjsonError yanlis tur")
+
+# --- gevşek / JSON5 ---
+r: YyValue = nox.yyjson.parse_relaxed("// c\n{\"a\": 1, /* x */ \"b\": [1, 2,],}")
+print(nox.yyjson.dump(r))
+j5: YyValue = nox.yyjson.parse_json5("{a: 'x', b: 0x10, c: [1,],}")
+print(nox.yyjson.dump(j5))
+try:
+    print(nox.yyjson.dump(nox.yyjson.parse_json5("[Infinity]")))
+except YyjsonError as e:
+    print("YyjsonError Infinity")
+
+# --- büyük belge: nox.json ile aynı sonuç, belge sahibi bırakılınca serbest ---
+parts: list[str] = []
+k: int = 0
+while k < 3000:
+    parts.append("{\"id\":" + str(k) + ",\"name\":\"item-" + str(k) + "\",\"tags\":[\"a\",\"b\"],\"s\":" + str(float(k) * 0.5) + "}")
+    k = k + 1
+big: str = "[" + ",".join(parts) + "]"
+bv: YyValue = nox.yyjson.parse(big)
+total: int = 0
+sc: float = 0.0
+m: int = 0
+while m < nox.yyjson.array_len(bv):
+    it: YyValue = nox.yyjson.array_get(bv, m)
+    total = total + nox.yyjson.get_int(it, "id") + len(nox.yyjson.get_str(it, "name"))
+    sc = sc + nox.yyjson.get_float(it, "s")
+    m = m + 1
+jv: JsonValue = nox.json.parse(big)
+total2: int = 0
+sc2: float = 0.0
+m2: int = 0
+while m2 < nox.json.array_len(jv):
+    it2: JsonValue = nox.json.array_get(jv, m2)
+    total2 = total2 + nox.json.as_int(nox.json.get(it2, "id")) + len(nox.json.as_string(nox.json.get(it2, "name")))
+    sc2 = sc2 + nox.json.as_number(nox.json.get(it2, "s"))
+    m2 = m2 + 1
+print(total == total2, sc == sc2, total, len(nox.yyjson.dump(bv)) == len(nox.json.dump(jv)))
+# sondan başa ve ortadan erişim
+print(nox.yyjson.get_int(nox.yyjson.array_get(bv, 2999), "id"), nox.yyjson.get_int(nox.yyjson.array_get(bv, 0), "id"), nox.yyjson.get_int(nox.yyjson.array_get(bv, 1500), "id"), nox.yyjson.get_int(nox.yyjson.array_get(bv, -1), "id"))

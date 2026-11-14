@@ -1557,9 +1557,10 @@ pub const Checker = struct {
         .{ .name = "wasm", .caps = &.{.filesystem} },
         .{ .name = "tempfile", .caps = &.{.filesystem} },
         .{ .name = "zstd", .caps = &.{} },
-        // 2.2 aşama 8: gömülü C kütüphaneleri (macOS/Linux; diğer hedeflerde `is_supported()` False).
+        // 2.2 aşama 8: gömülü C kütüphaneleri (`noxclibs-<hedef>.a`; macOS/Linux/Windows aynı).
         .{ .name = "lz4", .caps = &.{} },
         .{ .name = "xxhash", .caps = &.{} },
+        .{ .name = "yyjson", .caps = &.{} },
         .{ .name = "zip", .caps = &.{} },
         .{ .name = "terminal", .caps = &.{.process} },
         .{ .name = "random", .caps = &.{} },

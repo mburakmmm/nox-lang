@@ -6,7 +6,7 @@ import argparse, os, statistics, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HERE = os.path.dirname(os.path.abspath(__file__))
-NOXC = ROOT + "/zig-out/bin/noxc"
+NOXC = os.environ.get("NOXC", ROOT + "/zig-out/bin/noxc")
 
 
 def sh(cmd, **kw):
@@ -36,8 +36,8 @@ with tempfile.TemporaryDirectory() as d:
     binding = open(d + "/yyjson.nox").read()
     bench = open(HERE + "/bench.nox").read()
     # `import` satırları dosyanın başında kalmalı: bench'in importlarını öne al
-    imports = "".join(l + "\n" for l in bench.splitlines() if l.startswith("import "))
-    body = "\n".join(l for l in bench.splitlines() if not l.startswith("import "))
+    imports = "".join(l + "\n" for l in bench.splitlines() if l.startswith(("import ", "from nox")))
+    body = "\n".join(l for l in bench.splitlines() if not l.startswith(("import ", "from nox")))
     open(d + "/all.nox", "w").write(imports + binding + "\n" + body + "\n")
     sh([NOXC, "build", "--backend", a.backend, d + "/all.nox", "-o", d + "/bench_nox"])
     sh(["cc", "-O2", "-I", HERE, HERE + "/bench.c", HERE + "/yyjson.c", "-o", d + "/bench_c"])

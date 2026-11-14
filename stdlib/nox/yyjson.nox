@@ -1,0 +1,253 @@
+# nox.yyjson (v2.1.173, 2.2 aşama 8) — yyjson (MIT, `third_party/yyjson`) ile JSON OKUMA ve YAZMA: `nox.json`ın yanında, onu DEĞİŞTİRMEYEN ayrı bir modül (kütüphane adıyla; `nox.json` aynen kalır).
+# API adları `nox.json`la aynıdır (`parse/is_*/as_*/get/get_or_null/array_*/object_*/read_*/dump/dump_pretty`), ama değerler `JsonValue` değil `YyValue`dır:
+# ağaç Nox nesnelerine kopyalanmaz, belge yyjson'un kendi bellek düzeninde kalır ve düğümler yalnızca erişildiğinde (belgeyi tutan hafif bir sarmalayıcıyla) kurulur;
+# `get_*`/`read_*` kısayolları düğüm bile kurmaz. Belge bir kez ayrıştırılır, birden çok iş parçacığından okunabilir (değişmez); ömrü sıradan ARC'dir (hiçbir `close` gerekmez).
+# C kütüphanesi ayrı arşivde (`noxclibs-<hedef>.a`) gelir ve yalnızca bu modülü içe aktaran programa bağlanır; macOS, Linux ve Windows'ta aynıdır.
+# `nox.json`dan farklar: yinelenen anahtarlar REDDEDİLMEZ (`get` ilk eşleşmeyi verir); derinlik sınırı yoktur; uint64 aralığındaki tamsayılar tam okunur (`as_int` int64 dışında hata verir);
+# `dump` sayıları yyjson'un en kısa gidiş-dönüş biçimiyle yazar. WebAssembly/mobil/çıplak çekirdek hedeflerinde bu modül yoktur (bağlama hatası); oralarda `nox.json` kullanın.
+
+class YyjsonError(Exception):
+    pass
+
+extern def nxc_yy_parse(s: str, mode: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_err_msg() -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_yy_err_pos() -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_ok() -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_free(d: int) -> None from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_root(d: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_kind(v: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_bool(v: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_num(v: int) -> float from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_int(v: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_is_integer(v: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_str(v: int) -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_yy_len(v: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_arr_get(d: int, a: int, i: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_obj_key(d: int, o: int, i: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_obj_val(d: int, o: int, i: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_obj_get(o: int, key: str) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_yy_dump(v: int, indent: int) -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_yy_available() -> int from "zig-out/lib/noxclibs.a"
+
+# Belge sahibi: ARC sıfırlandığında yyjson belgesini bırakır.
+class YyDoc:
+    h: int
+
+    def __init__(self, h: int) -> None:
+        self.h = h
+
+    def __del__(self) -> None:
+        nxc_yy_free(self.h)
+
+# Belge içindeki bir değer: belgeyi canlı tutar (`doc`), `p` belge içi opak tutamaçtır.
+class YyValue:
+    doc: YyDoc
+    p: int
+
+    def __init__(self, doc: YyDoc, p: int) -> None:
+        self.doc = doc
+        self.p = p
+
+def is_supported() -> bool:
+    return nxc_yy_available() == 1
+
+def open_doc(s: str, mode: int) -> YyValue:
+    h: int = nxc_yy_parse(s, mode)
+    if h == 0:
+        raise YyjsonError("invalid JSON: " + nxc_yy_err_msg() + " at byte " + str(nxc_yy_err_pos()))
+    d: YyDoc = YyDoc(h)
+    return YyValue(d, nxc_yy_root(h))
+
+# Katı RFC 8259 JSON. Geçersiz girdide `YyjsonError` (hata iletisi + bayt konumu).
+def parse(s: str) -> YyValue:
+    return open_doc(s, 0)
+
+# Yorumlara (`//`, `/* */`) ve sondaki virgüle izin veren gevşek JSON.
+def parse_relaxed(s: str) -> YyValue:
+    return open_doc(s, 1)
+
+# JSON5 (tek tırnaklı dize, tırnaksız anahtar, Infinity/NaN, onaltılık sayı...). Not: Infinity/NaN içeren bir belge `dump` edilemez.
+def parse_json5(s: str) -> YyValue:
+    return open_doc(s, 2)
+
+def is_null(v: YyValue) -> bool:
+    return nxc_yy_kind(v.p) == 0
+
+def is_bool(v: YyValue) -> bool:
+    return nxc_yy_kind(v.p) == 1
+
+def is_number(v: YyValue) -> bool:
+    return nxc_yy_kind(v.p) == 2
+
+# Sayı tamsayı olarak (ondalık noktası/üssü olmadan) yazılmış mı?
+def is_integer(v: YyValue) -> bool:
+    return nxc_yy_is_integer(v.p) == 1
+
+def is_string(v: YyValue) -> bool:
+    return nxc_yy_kind(v.p) == 3
+
+def is_array(v: YyValue) -> bool:
+    return nxc_yy_kind(v.p) == 4
+
+def is_object(v: YyValue) -> bool:
+    return nxc_yy_kind(v.p) == 5
+
+def as_bool(v: YyValue) -> bool:
+    return nxc_yy_bool(v.p) == 1
+
+def as_number(v: YyValue) -> float:
+    return nxc_yy_num(v.p)
+
+# Tam değer: int64'e sığan tamsayı ya da tamsayı değerli ondalık; aksi halde `YyjsonError`.
+def as_int(v: YyValue) -> int:
+    if nxc_yy_kind(v.p) != 2:
+        raise YyjsonError("not a number")
+    n: int = nxc_yy_int(v.p)
+    if nxc_yy_ok() == 0:
+        raise YyjsonError("not an integer or out of range")
+    return n
+
+def as_string(v: YyValue) -> str:
+    return nxc_yy_str(v.p)
+
+# Sayının JSON metni (`dump` ile aynı biçim).
+def number_text(v: YyValue) -> str:
+    if nxc_yy_kind(v.p) != 2:
+        raise YyjsonError("not a number")
+    return dump(v)
+
+def expect_object(v: YyValue, what: str) -> None:
+    if nxc_yy_kind(v.p) != 5:
+        raise YyjsonError("expected a JSON object for " + what)
+
+def expect_array(v: YyValue) -> None:
+    if nxc_yy_kind(v.p) != 4:
+        raise YyjsonError("expected a JSON array")
+
+# Nesnenin `key` anahtarının değeri (yoksa `YyjsonError`). Anahtarlar belge sırasındadır; arama doğrusaldır.
+def get(v: YyValue, key: str) -> YyValue:
+    if nxc_yy_kind(v.p) != 5:
+        raise YyjsonError("expected a JSON object")
+    q: int = nxc_yy_obj_get(v.p, key)
+    if q == 0:
+        raise YyjsonError("missing field '" + key + "'")
+    return YyValue(v.doc, q)
+
+# `get`, ama anahtar yoksa (ya da v nesne değilse) `None`.
+def get_or_none(v: YyValue, key: str) -> YyValue | None:
+    if nxc_yy_kind(v.p) != 5:
+        return None
+    q: int = nxc_yy_obj_get(v.p, key)
+    if q == 0:
+        return None
+    return YyValue(v.doc, q)
+
+# Nesnede `key` var mı?
+def has_key(v: YyValue, key: str) -> bool:
+    if nxc_yy_kind(v.p) != 5:
+        return False
+    return nxc_yy_obj_get(v.p, key) != 0
+
+# Düğüm kurmadan tipli okuma kısayolları: eksik alan ya da yanlış tür `YyjsonError`.
+def field(v: YyValue, key: str, kind: int) -> int:
+    if nxc_yy_kind(v.p) != 5:
+        raise YyjsonError("expected a JSON object")
+    q: int = nxc_yy_obj_get(v.p, key)
+    if q == 0:
+        raise YyjsonError("missing field '" + key + "'")
+    if nxc_yy_kind(q) != kind:
+        raise YyjsonError("field '" + key + "' has the wrong type")
+    return q
+
+def get_int(v: YyValue, key: str) -> int:
+    q: int = field(v, key, 2)
+    n: int = nxc_yy_int(q)
+    if nxc_yy_ok() == 0:
+        raise YyjsonError("field '" + key + "' is not an integer or out of range")
+    return n
+
+def get_float(v: YyValue, key: str) -> float:
+    return nxc_yy_num(field(v, key, 2))
+
+def get_bool(v: YyValue, key: str) -> bool:
+    return nxc_yy_bool(field(v, key, 1)) == 1
+
+def get_str(v: YyValue, key: str) -> str:
+    return nxc_yy_str(field(v, key, 3))
+
+def read_int(v: YyValue) -> int:
+    if nxc_yy_kind(v.p) != 2:
+        raise YyjsonError("expected a number")
+    return as_int(v)
+
+def read_float(v: YyValue) -> float:
+    if nxc_yy_kind(v.p) != 2:
+        raise YyjsonError("expected a number")
+    return nxc_yy_num(v.p)
+
+def read_bool(v: YyValue) -> bool:
+    if nxc_yy_kind(v.p) != 1:
+        raise YyjsonError("expected a boolean")
+    return nxc_yy_bool(v.p) == 1
+
+def read_str(v: YyValue) -> str:
+    if nxc_yy_kind(v.p) != 3:
+        raise YyjsonError("expected a string")
+    return nxc_yy_str(v.p)
+
+def array_len(v: YyValue) -> int:
+    return nxc_yy_len(v.p)
+
+# Negatif indeks sondan sayar; aralık dışı `IndexError`. Sıralı erişim O(1) amortize (gezinme önbelleği).
+def array_get(v: YyValue, i: int) -> YyValue:
+    if nxc_yy_kind(v.p) != 4:
+        raise YyjsonError("expected a JSON array")
+    n: int = nxc_yy_len(v.p)
+    j: int = i
+    if j < 0:
+        j = j + n
+    if j < 0 or j >= n:
+        raise IndexError("array index out of range")
+    return YyValue(v.doc, nxc_yy_arr_get(v.doc.h, v.p, j))
+
+def object_len(v: YyValue) -> int:
+    return nxc_yy_len(v.p)
+
+def object_key(v: YyValue, i: int) -> str:
+    if nxc_yy_kind(v.p) != 5:
+        raise YyjsonError("expected a JSON object")
+    n: int = nxc_yy_len(v.p)
+    j: int = i
+    if j < 0:
+        j = j + n
+    if j < 0 or j >= n:
+        raise IndexError("object index out of range")
+    return nxc_yy_str(nxc_yy_obj_key(v.doc.h, v.p, j))
+
+def object_value(v: YyValue, i: int) -> YyValue:
+    if nxc_yy_kind(v.p) != 5:
+        raise YyjsonError("expected a JSON object")
+    n: int = nxc_yy_len(v.p)
+    j: int = i
+    if j < 0:
+        j = j + n
+    if j < 0 or j >= n:
+        raise IndexError("object index out of range")
+    return YyValue(v.doc, nxc_yy_obj_val(v.doc.h, v.p, j))
+
+# Sıkı (boşluksuz) JSON metni.
+def dump(v: YyValue) -> str:
+    out: str = nxc_yy_dump(v.p, -1)
+    if nxc_yy_ok() == 0:
+        raise YyjsonError("cannot serialize value")
+    return out
+
+# Girintili JSON (`indent` boşluk; 2 ve 4 yyjson'un doğrudan yolu).
+def dump_pretty(v: YyValue, indent: int) -> str:
+    n: int = indent
+    if n < 0:
+        n = 0
+    out: str = nxc_yy_dump(v.p, n)
+    if nxc_yy_ok() == 0:
+        raise YyjsonError("cannot serialize value")
+    return out

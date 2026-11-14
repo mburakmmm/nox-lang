@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.173]
+
+### Eklendi (2.2 aşama 8, dilim 2: `nox.yyjson`)
+
+- **`nox.yyjson`** — yyjson 0.13.0 (MIT, `third_party/yyjson`) ile JSON okuma/yazma; `nox.json`ın YANINDA ayrı modül (kütüphane adıyla), `nox.json` değişmedi. API adları aynı (`parse/is_*/as_*/get/get_or_none/array_*/object_*/read_*/dump/dump_pretty`), ek olarak `parse_relaxed` (yorum + sondaki virgül), `parse_json5`, düğüm kurmadan tipli kısayollar `get_int/get_float/get_bool/get_str`, `has_key`, `is_integer`. Değerler `YyValue` (belgeyi tutan hafif sarmalayıcı): ağaç Nox nesnelerine kopyalanmaz; belge ömrü sıradan ARC (`YyDoc.__del__`), değişmez belge çok iş parçacıklı okunabilir.
+- Aynı `noxclibs-<hedef>.a` arşivi: macOS = Linux = Windows, yalnızca bu modülü içe aktaran programa bağlanır. Sıralı gezinme (`array_get(v, i)` döngüleri, `object_key/value`) iş parçacığı-yerel, yalnızca büyük kapsayıcıları (≥16 çocuk) tutan tam ilişkisel önbellekle amortize O(1) (yyjson'un değişmez belgede O(i) olan indeksli erişimi ikinci dereceden döngü üretmesin diye; küçük kayıt nesneleri önbelleği kirletmez).
+- Ölçüm (Apple M4, ReleaseFast, 20 000 kayıtlı 2,9 MB belge; `benchmarks/yyjson/run.py`): ayrıştır+3 alan oku 1,46 ms (C yyjson 0,94; `nox.json` 5,27; CPython 9,9), ayrıştır+yaz 1,29 ms (C 1,21; `nox.json` 5,47; CPython 16,4).
+- Golden `clibs_yyjson` (erişimciler, sıralı/rastgele gezinme, hata yolları, gevşek/JSON5, pretty girintileri, `nox.json` ile 3000 kayıtlık belgede eşdeğerlik); `docs/stdlib/yyjson.md`.
+
 ## [2.1.172]
 
 ### Eklendi (2.2 aşama 8, dilim 1: gömülü C kütüphaneleri — zstd, lz4, xxHash)

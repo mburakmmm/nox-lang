@@ -1,6 +1,8 @@
 # nox.json ve yyjson'un (noxc bindgen ile üretilen binding üzerinden) AYNI belgede kıyaslaması. `run.py` bu dosyanın başına üretilen binding'i ekler.
 # Çıktı: ad<TAB>ms/tekrar<TAB>sağlama toplamı
 import nox.json
+import nox.yyjson
+from nox.yyjson import YyValue
 import nox.time
 
 extern def malloc(n: int) -> ptr from "c"
@@ -61,6 +63,51 @@ def walk_yyjson(text: str) -> int:
     yyjson_doc_free(doc)
     return ids + 1000 * active + int(score)
 
+def walk_nyy(text: str) -> int:
+    v: YyValue = nox.yyjson.parse(text)
+    n: int = nox.yyjson.array_len(v)
+    ids: int = 0
+    active: int = 0
+    score: float = 0.0
+    i: int = 0
+    while i < n:
+        item: YyValue = nox.yyjson.array_get(v, i)
+        ids = ids + nox.yyjson.get_int(item, "id")
+        if nox.yyjson.get_bool(item, "active"):
+            active = active + 1
+        score = score + nox.yyjson.get_float(item, "score")
+        i = i + 1
+    return ids + 1000 * active + int(score)
+
+def walk_nyy_iter(text: str) -> int:
+    v: YyValue = nox.yyjson.parse(text)
+    n: int = nox.yyjson.array_len(v)
+    ids: int = 0
+    active: int = 0
+    score: float = 0.0
+    i: int = 0
+    while i < n:
+        item: YyValue = nox.yyjson.array_get(v, i)
+        m: int = nox.yyjson.object_len(item)
+        j: int = 0
+        while j < m:
+            k: str = nox.yyjson.object_key(item, j)
+            x: YyValue = nox.yyjson.object_value(item, j)
+            if k == "id":
+                ids = ids + nox.yyjson.as_int(x)
+            elif k == "active":
+                if nox.yyjson.as_bool(x):
+                    active = active + 1
+            elif k == "score":
+                score = score + nox.yyjson.as_number(x)
+            j = j + 1
+        i = i + 1
+    return ids + 1000 * active + int(score)
+
+def roundtrip_nyy(text: str) -> int:
+    v: YyValue = nox.yyjson.parse(text)
+    return len(nox.yyjson.dump(v))
+
 def roundtrip_nox(text: str) -> int:
     v: JsonValue = nox.json.parse(text)
     return len(nox.json.dump(v))
@@ -97,6 +144,27 @@ while r < reps:
     check = walk_yyjson(text)
     r = r + 1
 report("parse+walk yyjson (Nox binding)", t0, check)
+
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = walk_nyy(text)
+    r = r + 1
+report("parse+walk nox.yyjson (get_*)", t0, check)
+
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = walk_nyy_iter(text)
+    r = r + 1
+report("parse+walk nox.yyjson (object_*)", t0, check)
+
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = roundtrip_nyy(text)
+    r = r + 1
+report("parse+write nox.yyjson", t0, check)
 
 r = 0
 t0 = nox.time.monotonic_ns()

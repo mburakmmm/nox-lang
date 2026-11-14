@@ -3830,7 +3830,7 @@ fn externProjectRoot(io: std.Io, a: std.mem.Allocator, path_arg: []const u8) ?[]
 }
 
 /// 2.2 aşama 8: gömülü C kütüphaneleri arşivinin (`noxclibs-<hedef>.a`) yolu. Programın modülleri `from "zig-out/lib/noxclibs.a"` bildiren `extern def`ler içeriyorsa
-/// (`nox.lz4`, `nox.xxhash`, `nox.zstd.compress`...) `appendExternLinkArgs` onu bağlar; arşiv `noxrt.o`dan ayrı ve isteğe bağlıdır (Windows dahil tüm hosted masaüstü hedeflerde).
+/// (`nox.lz4`, `nox.xxhash`, `nox.yyjson`, `nox.zstd.compress`...) `appendExternLinkArgs` onu bağlar; arşiv `noxrt.o`dan ayrı ve isteğe bağlıdır (Windows dahil tüm hosted masaüstü hedeflerde).
 /// Yerel hedefte `<install>/lib/noxclibs.a`, çapraz hedefte `<install>/lib/noxclibs-<hedef>.a` (`noxrt-<hedef>`in karşılığı).
 fn clibsArchivePath(a: std.mem.Allocator, resource_dirs: project.ResourceDirs, hosted: ?qbe_target.HostedTargetInfo) !?[]const u8 {
     if (hosted) |ht| {
@@ -3853,7 +3853,7 @@ fn appendExternLinkArgs(io: std.Io, allocator: std.mem.Allocator, argv: *std.Arr
         try seen.put(allocator, from_lib, {});
         if (std.mem.eql(u8, from_lib, clibs_extern_from)) {
             const cp = clibs_path orelse {
-                printErr("this target has no embedded C libraries (needed by nox.lz4, nox.xxhash, nox.zstd.compress): they are available for macOS, Linux and Windows desktop targets\n", .{});
+                printErr("this target has no embedded C libraries (needed by nox.lz4, nox.xxhash, nox.yyjson, nox.zstd.compress): they are available for macOS, Linux and Windows desktop targets\n", .{});
                 return error.BuildFailed;
             };
             if (std.Io.Dir.accessAbsolute(io, cp, .{})) |_| {} else |_| {
