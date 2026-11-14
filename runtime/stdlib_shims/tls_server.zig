@@ -134,6 +134,16 @@ fn openCryptoLibWindows() ?*anyopaque {
     return null;
 }
 
+/// İsteğe bağlı sembol (bulunamazsa mesaj basılmaz). Windows'ta ALPN sembolleri de `libssl`dedir (v2.1.145: eskiden Windows'ta ALPN kapalıydı).
+fn lookupSymQuiet(lib: *LibHandle, comptime T: type, name: [:0]const u8) ?T {
+    if (builtin.os.tag == .windows) {
+        const handle = lib.* orelse return null;
+        const addr = Kernel32.GetProcAddress(handle, name) orelse return null;
+        return @ptrCast(addr);
+    }
+    return lib.lookup(T, name);
+}
+
 fn lookupSym(lib: *LibHandle, comptime T: type, name: [:0]const u8) ?T {
     if (builtin.os.tag == .windows) {
         const handle = lib.* orelse return null;
@@ -248,8 +258,8 @@ fn loadAll() bool {
     const bio_ctrl = lookupSym(&bio_lib, BioCtrlFn, "BIO_ctrl") orelse return false;
 
     // ALPN sembolleri isteğe bağlıdır (yoksa HTTP/2 teklif edilmez, TLS yine çalışır) ve bulunamama mesajı basılmaz.
-    const ctx_set_alpn_cb: ?CtxSetAlpnCbFn = if (builtin.os.tag == .windows) null else lib.lookup(CtxSetAlpnCbFn, "SSL_CTX_set_alpn_select_cb");
-    const ssl_get_alpn: ?SslGetAlpnFn = if (builtin.os.tag == .windows) null else lib.lookup(SslGetAlpnFn, "SSL_get0_alpn_selected");
+    const ctx_set_alpn_cb: ?CtxSetAlpnCbFn = lookupSymQuiet(&lib, CtxSetAlpnCbFn, "SSL_CTX_set_alpn_select_cb");
+    const ssl_get_alpn: ?SslGetAlpnFn = lookupSymQuiet(&lib, SslGetAlpnFn, "SSL_get0_alpn_selected");
 
     g_lib = lib;
     g_funcs = .{

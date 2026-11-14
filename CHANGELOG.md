@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.145]
+
+### Değişti (Windows: TLS ALPN ile HTTP/2, test dalgalanması)
+
+- **Windows'ta TLS üzerinden HTTP/2 (ALPN `h2`):** `SSL_CTX_set_alpn_select_cb`/`SSL_get0_alpn_selected` sembolleri Windows'ta da `libssl-3-x64.dll`den çözülür (eskiden Windows'ta bilerek kapalıydı). Gerçek Windows 11 PC'de OpenSSL 3.6.5 ile `serve_tls` sunucusuna Mac'ten `curl --http2` ile bağlanıldı: `http_version=2 code=200`.
+- **Test dalgalanması düzeltildi:** `http_stdlib_golden_test`in test dinleyicisi `listen(fd, 1)` ile açılıyor, sonradan `listen(fd, 64)` çağrılıyordu; Windows'ta ikinci çağrı birikim kuyruğunu büyütmediğinden 12 eşzamanlı bağlantıdan bazıları reddediliyordu ("12 yerine 10"). Kuyruk baştan 64. Windows'ta 4/4 koşu kararlı. Bu, TODO 6.2'nin (Windows'ta fiber-farkındalıklı istemci ağı) doğruluk için gerekli olmadığını da gösterdi: Nox sunucusuna 12 eşzamanlı `nox.http.request` 6/6 koşuda 12/12 başarılı; 6.2 yalnızca performans iyileştirmesidir (istek başına OS iş parçacığı).
+
 ## [2.1.144]
 
 ### Değişti (Windows: atlanan testler açıldı, h2 kapanış düzeltmesi)

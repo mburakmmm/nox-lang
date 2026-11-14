@@ -100,7 +100,8 @@ fn testListenerOn127001(port_out: *u16) !sys.fd_t {
 
     var addr: sys.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
     if (sys.bind(fd, @ptrCast(&addr), @sizeOf(sys.sockaddr.in)) != 0) return error.BindFailed;
-    if (sys.listen(fd, 1) != 0) return error.ListenFailed;
+    // Birikim kuyruğu baştan 64: Windows'ta sonradan yapılan ikinci `listen(fd, 64)` kuyruğu büyütmez; 12 eşzamanlı bağlantıda fazlası reddediliyordu (dalgalı test).
+    if (sys.listen(fd, 64) != 0) return error.ListenFailed;
 
     var got: sys.sockaddr.in = undefined;
     var got_len: sys.socklen_t = @sizeOf(sys.sockaddr.in);
