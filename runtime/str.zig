@@ -968,6 +968,61 @@ pub export fn nox_chr_raw(rt: ?*anyopaque, cp: i64) ?[*:0]u8 {
     return allocStr(rt, buf[0..n], if (cp < 0x80) ASCII_TRUE else ASCII_FALSE);
 }
 
+/// v2.1.159: `hex(n)`/`oct(n)`/`bin(n)` — `n`in `base` (16/8/2) tabanındaki Python biçimi: `0x1f`, `-0o17`, `0b101` (ASCII).
+pub export fn nox_int_to_base_raw(rt: ?*anyopaque, n: i64, base: i64) ?[*:0]u8 {
+    const b: u64 = switch (base) {
+        16 => 16,
+        8 => 8,
+        2 => 2,
+        else => return allocStr(rt, &.{}, ASCII_TRUE),
+    };
+    var buf: [72]u8 = undefined;
+    var i: usize = buf.len;
+    var mag: u64 = if (n < 0) 0 -% @as(u64, @bitCast(n)) else @intCast(n);
+    if (mag == 0) {
+        i -= 1;
+        buf[i] = '0';
+    }
+    while (mag != 0) : (mag /= b) {
+        i -= 1;
+        buf[i] = "0123456789abcdef"[@intCast(mag % b)];
+    }
+    i -= 2;
+    buf[i] = '0';
+    buf[i + 1] = switch (b) {
+        16 => 'x',
+        8 => 'o',
+        else => 'b',
+    };
+    if (n < 0) {
+        i -= 1;
+        buf[i] = '-';
+    }
+    return allocStr(rt, buf[i..], ASCII_TRUE);
+}
+
+test "nox_int_to_base_raw Python hex/oct/bin ile birebir" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const cases = [_]struct { n: i64, base: i64, want: []const u8 }{
+        .{ .n = 255, .base = 16, .want = "0xff" },
+        .{ .n = 0, .base = 16, .want = "0x0" },
+        .{ .n = -255, .base = 16, .want = "-0xff" },
+        .{ .n = 8, .base = 8, .want = "0o10" },
+        .{ .n = 5, .base = 2, .want = "0b101" },
+        .{ .n = -5, .base = 2, .want = "-0b101" },
+        .{ .n = std.math.maxInt(i64), .base = 16, .want = "0x7fffffffffffffff" },
+        .{ .n = std.math.minInt(i64), .base = 16, .want = "-0x8000000000000000" },
+        .{ .n = std.math.minInt(i64), .base = 2, .want = "-0b1000000000000000000000000000000000000000000000000000000000000000" },
+    };
+    for (cases) |c| {
+        const got = nox_int_to_base_raw(rt, c.n, c.base) orelse return error.AllocFailed;
+        defer nox_str_release(rt, got);
+        try std.testing.expectEqualStrings(c.want, std.mem.span(got));
+    }
+}
+
 /// v1.162.0: `ord(s)` — `s`in ilk kod noktası; boş `str` için -1.
 pub export fn nox_ord_raw(s: ?[*:0]const u8) i64 {
     const p = s orelse return -1;

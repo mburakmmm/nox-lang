@@ -86,11 +86,73 @@ export fn nox_math_atan2_raw(y: f64, x: f64) callconv(.c) f64 {
     return std.math.atan2(y, x);
 }
 
+/// v2.1.159: `pow(b, e, m)` — modüler üs alma (`e >= 0`, `m != 0` çağıranca doğrulanır). Sonuç Python gibi `m`in işaretini taşır
+/// (`m > 0` için `[0, m)`, `m < 0` için `(m, 0]`); ara çarpımlar 128 bittir, taşma yok.
+export fn nox_int_pow_mod_raw(b: i64, e: i64, m: i64) callconv(.c) i64 {
+    if (m == 0 or e < 0) return 0;
+    const am: u128 = @abs(@as(i128, m));
+    var base: u128 = @intCast(@mod(@as(i128, b), @as(i128, @intCast(am))));
+    var exp: u64 = @intCast(e);
+    var r: u128 = 1 % am;
+    while (exp != 0) : (exp >>= 1) {
+        if (exp & 1 == 1) r = (r * base) % am;
+        base = (base * base) % am;
+    }
+    const pos: i128 = @intCast(r);
+    return @intCast(if (m < 0 and pos != 0) pos - @as(i128, @intCast(am)) else pos);
+}
+
+test "nox_int_pow_mod_raw Python pow(b, e, m) ile birebir" {
+    try std.testing.expectEqual(@as(i64, 24), nox_int_pow_mod_raw(2, 10, 1000));
+    try std.testing.expectEqual(@as(i64, 4), nox_int_pow_mod_raw(2, 10, 5));
+    try std.testing.expectEqual(@as(i64, 1), nox_int_pow_mod_raw(7, 0, 13));
+    try std.testing.expectEqual(@as(i64, 0), nox_int_pow_mod_raw(5, 3, 1));
+    try std.testing.expectEqual(@as(i64, 5), nox_int_pow_mod_raw(-2, 3, 13));
+    try std.testing.expectEqual(@as(i64, -3), nox_int_pow_mod_raw(5, 2, -7));
+    try std.testing.expectEqual(@as(i64, 136318165), nox_int_pow_mod_raw(3, 200, 1_000_000_007));
+    // büyük modül: 128 bit ara çarpım taşmaz
+    try std.testing.expectEqual(@as(i64, 7304489514424542795), nox_int_pow_mod_raw(123456789, 987654321, 9223372036854775783));
+    try std.testing.expectEqual(@as(i64, -16807), nox_int_pow_mod_raw(-7, 5, -9223372036854775807));
+}
+
 /// v1.162.0: Python `round(x, ndigits)` — `x`in TAM ikili değeri üzerinde ondalık yuvarlama (yarım → çifte), böylece
 /// `round(2.675, 2) == 2.67` ve `round(0.5) == 0.0`. `nd < 0` onlar/yüzler basamağına yuvarlar. Büyük tamsayı aritmetiği
 /// (`std.math.big.int`) sabit bir yığın tamponunda çalışır (gizli global durum/allocator YOK).
 export fn nox_float_round_digits_raw(x: f64, nd: i64) callconv(.c) f64 {
     if (!std.math.isFinite(x) or x == 0) return x;
+    if (roundFast(x, nd)) |r| return r;
+    return roundDigitsExact(x, nd);
+}
+
+/// v2.1.159: sıcak yol. `nd == 0` için yarım→çifte yuvarlama doğrudan (IEEE `roundeven`); `1 <= nd <= 22` için `x * 10^nd` (10^nd tam temsil
+/// edilir) tek yuvarlamayla hesaplanır ve KESİN tamsayı sonuç yalnızca kesirli kısım yarım noktadan güvenli uzaktaysa kullanılır
+/// (`|frac - 0.5| > |y| * 2^-50`: çarpmanın <= 1/2 ulp hatasından çok büyük); sonuç `r / 10^nd` (tek, doğru yuvarlanmış bölme — büyük
+/// tamsayı yolunun `"{r}e-nd"` ayrıştırmasıyla aynı değer). Belirsiz/aralık dışı girdiler `null` döner ve tam yola düşer.
+fn roundFast(x: f64, nd: i64) ?f64 {
+    const ax = @abs(x);
+    if (nd == 0) {
+        if (ax >= 4503599627370496.0) return x; // 2^52: zaten tamsayı
+        const t = @trunc(x);
+        const frac = ax - @abs(t);
+        var r = @round(x);
+        if (frac == 0.5) r = 2.0 * @round(x * 0.5);
+        return if (r == 0) std.math.copysign(@as(f64, 0), x) else r;
+    }
+    if (nd < 1 or nd > 22) return null;
+    const p10_table = [_]f64{ 1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22 };
+    const p10 = p10_table[@intCast(nd)];
+    const y = x * p10;
+    const ay = @abs(y);
+    if (!(ay < 4503599627370496.0)) return null;
+    const t = @trunc(y);
+    const frac = ay - @abs(t);
+    if (@abs(frac - 0.5) <= ay * 8.881784197001252e-16) return null; // 2^-50
+    const r = @round(y);
+    const q = r / p10;
+    return if (q == 0) std.math.copysign(@as(f64, 0), x) else q;
+}
+
+fn roundDigitsExact(x: f64, nd: i64) f64 {
     if (nd > 340) return x;
     if (nd < -340) return std.math.copysign(@as(f64, 0), x);
     const big = std.math.big.int;
@@ -157,4 +219,27 @@ test "nox_float_round_digits_raw Python round() ile birebir" {
         .{ .x = 1e22, .nd = 2, .want = 1e22 },
     };
     for (cases) |c| try std.testing.expectEqual(c.want, nox_float_round_digits_raw(c.x, c.nd));
+}
+
+test "round hızlı yol: tam (büyük tamsayı) yolla rastgele girdilerde birebir aynı" {
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const rnd = prng.random();
+    var i: usize = 0;
+    while (i < 20000) : (i += 1) {
+        const mag = rnd.float(f64) * std.math.pow(f64, 10.0, @floatFromInt(rnd.intRangeAtMost(i32, -3, 9)));
+        const x: f64 = if (rnd.boolean()) mag else -mag;
+        const nd: i64 = rnd.intRangeAtMost(i64, 0, 8);
+        if (x == 0) continue;
+        const fast = nox_float_round_digits_raw(x, nd);
+        const exact = roundDigitsExact(x, nd);
+        try std.testing.expectEqual(@as(u64, @bitCast(exact)), @as(u64, @bitCast(fast)));
+    }
+    // yarım noktalar ve çifte yuvarlama
+    const halves = [_]f64{ 0.5, 1.5, 2.5, 3.5, -0.5, -2.5, 0.125, 0.375, 2.675, 1.005, 4503599627370495.5, 1e15 + 0.5 };
+    for (halves) |h| {
+        var nd: i64 = 0;
+        while (nd <= 3) : (nd += 1) {
+            try std.testing.expectEqual(@as(u64, @bitCast(roundDigitsExact(h, nd))), @as(u64, @bitCast(nox_float_round_digits_raw(h, nd))));
+        }
+    }
 }

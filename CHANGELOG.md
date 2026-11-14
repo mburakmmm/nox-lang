@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.159]
+
+### Eklendi (2.2 aşama 1: builtin yeterliliği)
+
+- **Yeni builtin'ler** (Python ile birebir doğrulandı; golden `builtins_batch_2_1_159`): `pow(a, b)` (`int,int` → `int`, negatif üs `ValueError`; `float,float` → `float`), `pow(a, b, m)` (128 bit ara çarpım, sonuç `m`in işaretini taşır), `hex/oct/bin(n)`, `sum(xs, start)`, `enumerate(xs, start)`, `zip(a, b, c)`, `min/max(xs, default=d)` (+ `key=`), `int(s, taban)` (2-36 ya da 0, önek, işaret, `_`).
+- Kullanıcı aynı adlı bir işlev tanımlarsa (`def hex(...)`, `def pow(...)`) onun işlevi çalışır; yönlendirme yapılmaz. Yeni çekirdek yardımcılar `[T]` jeneriktir: kullanılmayan çekirdek işlevi her programın IR'ına girmez.
+
+### Performans
+
+- **`round(x)` ve `round(x, n)` hızlı yol:** `nd == 0` için IEEE yarım→çifte yuvarlama, `1 <= nd <= 22` için tek yuvarlamalı çarpım (yarım noktaya yakın belirsiz girdiler büyük-tamsayı yoluna düşer). Önceden her çağrı büyük tamsayı aritmetiğine giriyordu (~90 ns). Rastgele 20.000 girdide tam yolla bit-bit aynı.
+- Not: mobil runtime nesneleri (`zig build mobile-rt`) yerel ortamda bayatsa yeni çalışma zamanı sembolleri bağlanmaz; testten önce yenileyin.
+
 ## [2.1.158]
 
 ### Düzeltildi (Windows CI duman testi — A5)

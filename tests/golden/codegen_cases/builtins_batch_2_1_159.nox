@@ -1,0 +1,44 @@
+# v2.1.159: pow/hex/oct/bin, sum(start), enumerate(start), zip(3), min/max(default=), int(s, base), round hızlı yol
+
+print(pow(2, 10), pow(2.0, 0.5), pow(3, 200, 1000000007), pow(-2, 3, 13), pow(5, 2, -7), pow(7, 0, 13))
+print(hex(255), hex(-255), hex(0), oct(8), oct(-8), bin(5), bin(0), bin(-5))
+print(sum([1, 2, 3], 10), sum([1.5, 2.5], 0.5), sum([1, 2]), sum([0.25, 0.5]))
+print(enumerate(["a", "b"], 1), enumerate(["a"]))
+print(zip([1, 2, 3], ["a", "b"], [True, False, True]))
+empty: list[int] = []
+print(max(empty, default=7), min(empty, default=8), max([2, 9], default=1), min([4, 2], default=0))
+print(max(["aa", "b"], key=lambda s: len(s), default="z"), min(["aa", "b"], key=lambda s: len(s), default="z"))
+print(int("ff", 16), int("0xff", 16), int("0xff", 0), int("-101", 2), int(" 12 ", 10), int("z", 36), int("1_000", 10), int("0b11", 2), int("+7", 8))
+print(round(2.5), round(3.5), round(-0.5), round(-1.5), round(0.4999999999999999), round(1e15 + 0.5), round(2.675, 2), round(1.005, 2), round(0.125, 2), round(1234.5, -2))
+
+def ok(msg: str) -> None:
+    print("ValueError:", msg)
+
+try:
+    print(pow(2, -1))
+except ValueError as e:
+    ok("pow negative exponent")
+try:
+    print(pow(2, 3, 0))
+except ValueError as e:
+    ok("pow zero modulus")
+try:
+    print(int("9", 8))
+except ValueError as e:
+    ok("int digit out of base")
+try:
+    print(int("", 10))
+except ValueError as e:
+    ok("int empty")
+try:
+    print(int("1__0", 10))
+except ValueError as e:
+    ok("int double underscore")
+try:
+    print(int("12", 1))
+except ValueError as e:
+    ok("int bad base")
+try:
+    print(max(empty))
+except ValueError as e:
+    ok("max empty")

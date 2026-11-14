@@ -27,6 +27,8 @@ a-b!
 | Function | Description |
 |---|---|
 | `int(x)` | from `float` (truncating), `str` (decimal; `ValueError` if malformed), `bool`, fixed-width integer |
+| `int(s, base)` | parses `s` in base 2–36 (or 0: from the `0x`/`0o`/`0b` prefix); sign, surrounding spaces, a matching prefix and single `_` between digits are accepted; `ValueError` otherwise |
+| `hex(n)`, `oct(n)`, `bin(n)` | `'0xff'`, `'-0o17'`, `'0b101'` |
 | `float(x)` | from `int`, `bool`, fixed-width integer, `str` |
 | `str(x)` | text of an `int`, `float`, `bool`, `str`, list, dict, set, tuple or class (uses `__str__`) |
 | `repr(x)` | like `str`, with strings quoted (uses `__repr__`) |
@@ -42,8 +44,8 @@ a-b!
 |---|---|
 | `len(x)` | number of elements of a `str` (code points), list, dict, set or tuple, or `__len__` of a class |
 | `range(stop)`, `range(start, stop[, step])` | integer progression, usable in `for`, comprehensions and `list(...)` |
-| `enumerate(xs)` | a list of `(index, element)` tuples |
-| `zip(a, b)` | a list of pairs, as long as the shorter input |
+| `enumerate(xs)`, `enumerate(xs, start)` | a list of `(index, element)` tuples; the index begins at `start` (default 0) |
+| `zip(a, b)`, `zip(a, b, c)` | a list of pairs (triples), as long as the shortest input |
 | `reversed(xs)` | a **new list** in reverse order (not a lazy iterator) |
 | `sorted(xs, key=f, reverse=False)` | a new sorted list; stable; without `key` the elements must be `int`, `float` or `str` |
 | `map(f, xs)`, `filter(f, xs)` | a **new list** (not lazy) |
@@ -75,7 +77,10 @@ True False
 | `abs(x)` | absolute value of an `int` or `float` |
 | `min(a, b)`, `max(a, b)` | of two numbers or strings (both arguments the same type) |
 | `min(xs)`, `max(xs)`, with `key=f` | of a list; `ValueError` when the list is empty |
-| `sum(xs)` | sum of a `list[int]` or `list[float]`; also accepts a generator expression |
+| `min(xs, default=d)`, `max(xs, default=d)` | like above, but `d` is returned for an empty list (also combines with `key=f`) |
+| `sum(xs)`, `sum(xs, start)` | sum of a `list[int]` or `list[float]` (plus `start`, default 0); also accepts a generator expression |
+| `pow(a, b)` | `a ** b`: `int, int` gives an `int` (`ValueError` for a negative exponent — use floats), `float, float` a `float` |
+| `pow(a, b, m)` | modular power of ints with a 128-bit intermediate (`b >= 0`, `m != 0`); the result has the sign of `m` like Python |
 | `round(x)` | nearest `int`, halves to even |
 | `round(x, n)` | a `float` rounded to `n` digits, using the exact binary value like Python |
 | `divmod(a, b)` | the tuple `(a // b, a % b)` |

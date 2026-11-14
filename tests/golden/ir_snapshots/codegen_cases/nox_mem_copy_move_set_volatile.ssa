@@ -2756,80 +2756,86 @@ export function w $all(l %rt, l %p_xs) {
 @fn_end8
     ret 0
 }
-export function l $sum(l %rt, l %p_xs) {
+export function l $sum(l %rt, l %p_xs, l %p_start) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
     %t3 =l alloc8 8
+    %t4 =l alloc8 8
     storel %p_xs, %t0
-    storel 0, %t1
-    storel 0, %t3
-    %t4 =l loadl %t0
-    %t5 =l loadl %t4
+    storel %p_start, %t1
+    %t5 =l loadl %t1
+    storel %t5, %t2
+    storel 0, %t4
+    %t6 =l loadl %t0
+    %t7 =l loadl %t6
     jmp @forlist_cond0
 @forlist_cond0
-    %t6 =l loadl %t3
-    %t7 =w csltl %t6, %t5
-    jnz %t7, @forlist_body1, @forlist_end2
+    %t8 =l loadl %t4
+    %t9 =w csltl %t8, %t7
+    jnz %t9, @forlist_body1, @forlist_end2
 @forlist_body1
-    %t8 =l shl %t6, 3
-    %t9 =l add %t8, 16
-    %t10 =l add %t4, %t9
-    %t11 =l loadl %t10
-    storel %t11, %t2
-    %t12 =l loadl %t1
-    %t13 =l loadl %t2
-    %t14 =l add %t12, %t13
-    storel %t14, %t1
+    %t10 =l shl %t8, 3
+    %t11 =l add %t10, 16
+    %t12 =l add %t6, %t11
+    %t13 =l loadl %t12
+    storel %t13, %t3
+    %t14 =l loadl %t2
+    %t15 =l loadl %t3
+    %t16 =l add %t14, %t15
+    storel %t16, %t2
     jmp @forlist_step3
 @forlist_step3
-    %t15 =l loadl %t3
-    %t16 =l add %t15, 1
-    storel %t16, %t3
+    %t17 =l loadl %t4
+    %t18 =l add %t17, 1
+    storel %t18, %t4
     jmp @forlist_cond0
 @forlist_end2
-    %t17 =l loadl %t1
-    ret %t17
+    %t19 =l loadl %t2
+    ret %t19
 @after_return4
 @fn_end5
     ret 0
 }
-export function d $sum_float(l %rt, l %p_xs) {
+export function d $sum_float(l %rt, l %p_xs, d %p_start) {
 @start
     %t0 =l alloc8 8
     %t1 =l alloc8 8
     %t2 =l alloc8 8
     %t3 =l alloc8 8
+    %t4 =l alloc8 8
     storel %p_xs, %t0
-    stored d_0, %t1
-    storel 0, %t3
-    %t4 =l loadl %t0
-    %t5 =l loadl %t4
+    stored %p_start, %t1
+    %t5 =d loadd %t1
+    stored %t5, %t2
+    storel 0, %t4
+    %t6 =l loadl %t0
+    %t7 =l loadl %t6
     jmp @forlist_cond0
 @forlist_cond0
-    %t6 =l loadl %t3
-    %t7 =w csltl %t6, %t5
-    jnz %t7, @forlist_body1, @forlist_end2
+    %t8 =l loadl %t4
+    %t9 =w csltl %t8, %t7
+    jnz %t9, @forlist_body1, @forlist_end2
 @forlist_body1
-    %t8 =l shl %t6, 3
-    %t9 =l add %t8, 16
-    %t10 =l add %t4, %t9
-    %t11 =d loadd %t10
-    stored %t11, %t2
-    %t12 =d loadd %t1
-    %t13 =d loadd %t2
-    %t14 =d add %t12, %t13
-    stored %t14, %t1
+    %t10 =l shl %t8, 3
+    %t11 =l add %t10, 16
+    %t12 =l add %t6, %t11
+    %t13 =d loadd %t12
+    stored %t13, %t3
+    %t14 =d loadd %t2
+    %t15 =d loadd %t3
+    %t16 =d add %t14, %t15
+    stored %t16, %t2
     jmp @forlist_step3
 @forlist_step3
-    %t15 =l loadl %t3
-    %t16 =l add %t15, 1
-    storel %t16, %t3
+    %t17 =l loadl %t4
+    %t18 =l add %t17, 1
+    storel %t18, %t4
     jmp @forlist_cond0
 @forlist_end2
-    %t17 =d loadd %t1
-    ret %t17
+    %t19 =d loadd %t2
+    ret %t19
 @after_return4
 @fn_end5
     ret d_0

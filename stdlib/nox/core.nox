@@ -502,14 +502,14 @@ def divmod[T](a: T, b: T) -> tuple[T, T]:
 # v1 kapsamı: `sum`/`sum_float` AYRI adlarla (Nox'ta dönüş-tipine göre
 # overload YOK — `total = 0` ile `total = 0.0` FARKLI somut başlangıç
 # qtype'ları gerektirdiğinden TEK bir generic `sum[T]` yazılamaz).
-def sum(xs: list[int]) -> int:
-    total: int = 0
+def sum(xs: list[int], start: int = 0) -> int:
+    total: int = start
     for x in xs:
         total = total + x
     return total
 
-def sum_float(xs: list[float]) -> float:
-    total: float = 0.0
+def sum_float(xs: list[float], start: float = 0.0) -> float:
+    total: float = start
     for x in xs:
         total = total + x
     return total
@@ -632,6 +632,116 @@ def __nox_min_key[T, K](xs: list[T], key: (T) -> K) -> T:
             best_k = k
     return best
 
+# v2.1.159: `max(xs, default=d)` / `min(xs, default=d)` (+ `key=`): boş listede `d` döner (Python gibi), aksi halde sıradan sonuç.
+def __nox_max_default[T](xs: list[T], default: T) -> T:
+    if len(xs) == 0:
+        return default
+    return __nox_max_list(xs)
+
+def __nox_min_default[T](xs: list[T], default: T) -> T:
+    if len(xs) == 0:
+        return default
+    return __nox_min_list(xs)
+
+def __nox_max_key_default[T, K](xs: list[T], key: (T) -> K, default: T) -> T:
+    if len(xs) == 0:
+        return default
+    return __nox_max_key(xs, key)
+
+def __nox_min_key_default[T, K](xs: list[T], key: (T) -> K, default: T) -> T:
+    if len(xs) == 0:
+        return default
+    return __nox_min_key(xs, key)
+
+# v2.1.159: `hex(n)` / `oct(n)` / `bin(n)` (`0x1f`, `-0o17`, `0b101`) ve `pow(a, b)` / `pow(a, b, m)`; checker adları bu işlevlere yönlendirir
+# (kullanıcının kendi `hex`/`pow`/... işlevi VARSA yönlendirme yapılmaz — mevcut programlar bozulmaz). Hepsi `[T]` jenerik: kullanılmayan çekirdek işlevler
+# her programa girmez (jenerik olmayan bir çekirdek işlevi HER programın IR'ına ve ikilisine eklenir).
+extern def nox_int_to_base_raw(n: int, base: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_int_pow_mod_raw(b: int, e: int, m: int) -> int from "zig-out/lib/noxrt.o"
+
+def __nox_hex[T](n: T) -> str:
+    return nox_int_to_base_raw(n, 16)
+
+def __nox_oct[T](n: T) -> str:
+    return nox_int_to_base_raw(n, 8)
+
+def __nox_bin[T](n: T) -> str:
+    return nox_int_to_base_raw(n, 2)
+
+# `pow(int, int)`: üs negatifse Python float döner; Nox'ta dönüş tipi statik olduğundan `ValueError` (float argümanlarla `pow(2.0, -1.0)` kullanın).
+# Taşma `*` gibi sarar (i64).
+def __nox_pow_int[T](a: T, b: T) -> T:
+    if b < 0:
+        raise ValueError("pow() with a negative exponent needs float arguments")
+    return a ** b
+
+def __nox_pow_float[T](a: T, b: T) -> T:
+    return a ** b
+
+def __nox_pow_mod[T](a: T, b: T, m: T) -> T:
+    if m == 0:
+        raise ValueError("pow() 3rd argument cannot be 0")
+    if b < 0:
+        raise ValueError("pow() 2nd argument cannot be negative when 3rd argument is specified")
+    return nox_int_pow_mod_raw(a, b, m)
+
+# `int(s, base)`: taban 2..36 (veya 0 = önekten); `s` boşluklardan arındırılır, `+`/`-` işareti, `0x`/`0o`/`0b` öneki (tabanla uyumluysa) ve
+# alt çizgi (rakamlar arasında) Python gibi kabul edilir. Geçersizse ValueError. Taşma `ValueError` değil, i64 sınırında sarar.
+def __nox_int_base[T](s: T, base: int) -> int:
+    t: T = s.strip()
+    n: int = len(t)
+    i: int = 0
+    neg: bool = False
+    if i < n and (t[i] == "+" or t[i] == "-"):
+        neg = t[i] == "-"
+        i = i + 1
+    b: int = base
+    if b != 0 and (b < 2 or b > 36):
+        raise ValueError("int() base must be >= 2 and <= 36, or 0")
+    if i + 1 < n and t[i] == "0":
+        c1: str = t[i + 1].lower()
+        pb: int = 0
+        if c1 == "x":
+            pb = 16
+        elif c1 == "o":
+            pb = 8
+        elif c1 == "b":
+            pb = 2
+        if pb != 0 and (b == 0 or b == pb):
+            b = pb
+            i = i + 2
+    if b == 0:
+        b = 10
+    if i >= n:
+        raise ValueError("invalid literal for int() with base " + str(base) + ": '" + s + "'")
+    acc: int = 0
+    prev_us: bool = True
+    while i < n:
+        ch: int = ord(t[i])
+        d: int = 99
+        if ch == 95:
+            if prev_us:
+                raise ValueError("invalid literal for int() with base " + str(base) + ": '" + s + "'")
+            prev_us = True
+            i = i + 1
+            continue
+        if ch >= 48 and ch <= 57:
+            d = ch - 48
+        elif ch >= 97 and ch <= 122:
+            d = ch - 97 + 10
+        elif ch >= 65 and ch <= 90:
+            d = ch - 65 + 10
+        if d >= b:
+            raise ValueError("invalid literal for int() with base " + str(base) + ": '" + s + "'")
+        acc = acc * b + d
+        prev_us = False
+        i = i + 1
+    if prev_us:
+        raise ValueError("invalid literal for int() with base " + str(base) + ": '" + s + "'")
+    if neg:
+        return -acc
+    return acc
+
 # `map`/`filter` Python'dan FARKLI olarak tembel yineleyici değil, YENİ bir liste döner (`for x in map(f, xs):` ve `list(map(f, xs))` çalışır).
 def map[T, U](f: (T) -> U, xs: list[T]) -> list[U]:
     out: list[U] = []
@@ -659,11 +769,11 @@ def __nox_dict_items[K, V](d: dict[K, V]) -> list[tuple[K, V]]:
         out.append((k, d[k]))
     return out
 
-def enumerate[T](xs: list[T]) -> list[tuple[int, T]]:
+def enumerate[T](xs: list[T], start: int = 0) -> list[tuple[int, T]]:
     out: list[tuple[int, T]] = []
     i: int = 0
     while i < len(xs):
-        out.append((i, xs[i]))
+        out.append((start + i, xs[i]))
         i = i + 1
     return out
 
@@ -675,6 +785,20 @@ def zip[A, B](a: list[A], b: list[B]) -> list[tuple[A, B]]:
     i: int = 0
     while i < n:
         out.append((a[i], b[i]))
+        i = i + 1
+    return out
+
+# v2.1.159: `zip(a, b, c)` (üç liste) — checker bu işleve yönlendirir.
+def __nox_zip3[A, B, C](a: list[A], b: list[B], c: list[C]) -> list[tuple[A, B, C]]:
+    out: list[tuple[A, B, C]] = []
+    n: int = len(a)
+    if len(b) < n:
+        n = len(b)
+    if len(c) < n:
+        n = len(c)
+    i: int = 0
+    while i < n:
+        out.append((a[i], b[i], c[i]))
         i = i + 1
     return out
 

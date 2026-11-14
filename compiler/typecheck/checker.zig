@@ -8237,14 +8237,46 @@ pub const Checker = struct {
         }
         if ((eq(u8, name, "max") or eq(u8, name, "min")) and positional == 1) {
             const is_max = eq(u8, name, "max");
-            c.callee.* = .{ .identifier = if (has_key) (if (is_max) "__nox_max_key" else "__nox_min_key") else (if (is_max) "__nox_max_list" else "__nox_min_list") };
+            var has_default = false;
+            for (c.args) |a| if (a == .kwarg and eq(u8, a.kwarg.name, "default")) {
+                has_default = true;
+            };
+            c.callee.* = .{ .identifier = if (has_key and has_default)
+                (if (is_max) "__nox_max_key_default" else "__nox_min_key_default")
+            else if (has_default)
+                (if (is_max) "__nox_max_default" else "__nox_min_default")
+            else if (has_key)
+                (if (is_max) "__nox_max_key" else "__nox_min_key")
+            else
+                (if (is_max) "__nox_max_list" else "__nox_min_list") };
             return null;
+        }
+        // v2.1.159: `hex/oct/bin(n)`, `pow(a, b[, m])`, `int(s, base)`, `zip(a, b, c)` — yalnızca kullanıcı aynı adlı bir işlev TANIMLAMADIYSA
+        // (yukarıdaki `user_defined` erken dönüşü) çekirdek yardımcılarına yönlendirilir.
+        if (positional == c.args.len) {
+            if (c.args.len == 1 and (eq(u8, name, "hex") or eq(u8, name, "oct") or eq(u8, name, "bin"))) {
+                c.callee.* = .{ .identifier = if (eq(u8, name, "hex")) "__nox_hex" else if (eq(u8, name, "oct")) "__nox_oct" else "__nox_bin" };
+                return null;
+            }
+            if (eq(u8, name, "pow") and (c.args.len == 2 or c.args.len == 3)) {
+                const at = try self.checkExpr(ctx, c.args[0]);
+                c.callee.* = .{ .identifier = if (c.args.len == 3) "__nox_pow_mod" else if (at == .int) "__nox_pow_int" else "__nox_pow_float" };
+                return null;
+            }
+            if (eq(u8, name, "int") and c.args.len == 2) {
+                c.callee.* = .{ .identifier = "__nox_int_base" };
+                return null;
+            }
+            if (eq(u8, name, "zip") and c.args.len == 3) {
+                c.callee.* = .{ .identifier = "__nox_zip3" };
+                return null;
+            }
         }
         if (eq(u8, name, "sorted") and has_key) {
             c.callee.* = .{ .identifier = "__nox_sorted_key" };
             return null;
         }
-        if (eq(u8, name, "sum") and c.args.len == 1) {
+        if (eq(u8, name, "sum") and (c.args.len == 1 or c.args.len == 2)) {
             const at = try self.checkExpr(ctx, c.args[0]);
             if (at == .list and at.list.* == .float) c.callee.* = .{ .identifier = "sum_float" };
             return null;
