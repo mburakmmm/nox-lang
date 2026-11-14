@@ -1,0 +1,33 @@
+# v2.1.175 (2.2 aşama 8): nox.brotli — brotli açıcı. Test vektörleri brotli v1.2.1 CLI ile üretildi (base64).
+import nox.brotli
+import nox.base64
+from nox.brotli import BrotliError
+
+small: str = nox.brotli.decompress(nox.base64.decode("Hy4A+I2Ubt5EVYaWbCBvYU8cYOIA"))
+print(small, nox.brotli.is_supported())
+print(len(nox.brotli.decompress(nox.base64.decode("Pw=="))))
+rep: str = nox.brotli.decompress(nox.base64.decode("X5+7jV8yTGwsPgsCrmYbNA=="))
+print(len(rep), rep == "abc" * 300000)
+utf: str = nox.brotli.decompress(nox.base64.decode("H9cO+J0Jtq2C9RA3x6y3KNHk8ppt+C5snqbaJgjZW1wYIuTPAECxd5IN"))
+print(len(utf), utf == "héllo wörld çay " * 200)
+print(nox.brotli.decompress(nox.base64.decode("j2sHAICqqqrq/3Tl81UA5CAHBhAAuQjI8SQgh4scLgwHcPErRafYwwFwJpTQkYnWFx1aG/R9BgAG")) == utf)
+
+# hatalar: bozuk, kesik, artık bayt, çıktı sınırı
+good: str = nox.base64.decode("Hy4A+I2Ubt5EVYaWbCBvYU8cYOIA")
+try:
+    print(nox.brotli.decompress("this is not brotli data at all"))
+except BrotliError as e:
+    print("BrotliError bozuk")
+try:
+    print(nox.brotli.decompress(good[0:len(good) - 4]))
+except BrotliError as e:
+    print("BrotliError kesik")
+try:
+    print(nox.brotli.decompress(good + "x"))
+except BrotliError as e:
+    print("BrotliError artik")
+try:
+    print(len(nox.brotli.decompress(nox.base64.decode("X5+7jV8yTGwsPgsCrmYbNA=="), 1000)))
+except BrotliError as e:
+    print("BrotliError sinir")
+print(len(nox.brotli.decompress(nox.base64.decode("X5+7jV8yTGwsPgsCrmYbNA=="), 900000)))

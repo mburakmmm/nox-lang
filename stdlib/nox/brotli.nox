@@ -1,0 +1,21 @@
+# nox.brotli (v2.1.175, 2.2 aşama 8) — Brotli AÇICI (HTTP `Content-Encoding: br`, `.br` dosyaları, WOFF2 vb.). Girdi/çıktı Nox `str` içinde ham baytlardır (ikili güvenli).
+# Gömülü C çözücüsü (`third_party/brotli`, MIT, yerleşik 122 KB sözlük dahil) ayrı arşivde (`noxclibs-<hedef>.a`) gelir ve yalnızca bu modülü içe aktaran programa bağlanır; macOS, Linux ve Windows'ta aynıdır.
+# WebAssembly/mobil/çıplak çekirdek hedeflerinde bu modül yoktur (bağlama hatası). Yalnızca AÇMA vardır (sıkıştırma için `nox.zstd.compress`, `nox.lz4.compress`, `nox.gzip`). Çıktı sınırı varsayılan 1 GiB (açma bombası koruması).
+
+class BrotliError(Exception):
+    pass
+
+extern def nxc_brotli_decompress_str(data: str, limit: int) -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_brotli_last_ok() -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_brotli_available() -> int from "zig-out/lib/noxclibs.a"
+
+# Bu hedefte gömülü brotli var mı? (Modül bağlanabiliyorsa her zaman True.)
+def is_supported() -> bool:
+    return nxc_brotli_available() == 1
+
+# Bir brotli akışını açar. Bozuk/kesik girdide, akıştan sonra artık baytta ya da çıktı `max_output` (0 = 1 GiB) baytı aşarsa `BrotliError`.
+def decompress(data: str, max_output: int = 0) -> str:
+    out: str = nxc_brotli_decompress_str(data, max_output)
+    if nxc_brotli_last_ok() == 0:
+        raise BrotliError("invalid or truncated brotli data")
+    return out

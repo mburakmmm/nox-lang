@@ -153,7 +153,7 @@ fn addLibdeflate(b: *std.Build, mod: *std.Build.Module, arch: std.Target.Cpu.Arc
     if (arch_file) |f| mod.addCSourceFiles(.{ .root = b.path("third_party/libdeflate"), .files = &.{f}, .flags = &flags });
 }
 
-/// 2.2 aşama 8: gömülü C kütüphaneleri (zstd, lz4, xxHash, yyjson, PCRE2; sonra brotli) — `noxclibs-<hedef>.a` ADLI, ayrı bir statik arşiv. `noxrt.o`ya GÖMÜLMEZ: derleyici
+/// 2.2 aşama 8: gömülü C kütüphaneleri (zstd, lz4, xxHash, yyjson, PCRE2, brotli açıcı) — `noxclibs-<hedef>.a` ADLI, ayrı bir statik arşiv. `noxrt.o`ya GÖMÜLMEZ: derleyici
 /// (`compiler/main.zig`) arşivi yalnızca programın modülleri `from "zig-out/lib/noxclibs.a"` bildiriyorsa bağlar (kullanılmayan program büyümez) ve linker yalnızca başvurulan
 /// üyeleri alır. Böylece macOS, Linux VE Windows (COFF'un `noxrt.o`ya çok sayıda C nesnesi gömememesi sınırı arşivi etkilemez) aynı modül yüzeyine sahiptir.
 /// Her `.c` dosyası `zig cc -c` ile ayrı derlenir, `zig ar` (llvm-ar) ile arşivlenir: Zig'in kendi arşiv yazıcısı Mach-O üyelerini 8 bayta hizalamaz ve Apple `ld` reddeder.
@@ -175,6 +175,7 @@ fn addClibsArchive(b: *std.Build, arch: std.Target.Cpu.Arch, os_tag: std.Target.
         "pcre2_match_data.c",   "pcre2_match_next.c", "pcre2_newline.c",   "pcre2_ord2utf.c",  "pcre2_pattern_info.c",   "pcre2_script_run.c",    "pcre2_serialize.c",  "pcre2_string_utils.c",
         "pcre2_study.c",        "pcre2_substitute.c", "pcre2_substring.c", "pcre2_tables.c",   "pcre2_ucd.c",            "pcre2_valid_utf.c",     "pcre2_xclass.c",
     };
+    const brotli_flags = common ++ [_][]const u8{ "-Ithird_party/brotli/c/include", "-Iruntime/c_glue" };
     const zstd_glue_flags = common ++ [_][]const u8{ "-Ithird_party/zstd/lib", "-Iruntime/c_glue" };
     const zstd_files = [_][]const u8{
         "lib/common/debug.c",                      "lib/common/entropy_common.c",      "lib/common/error_private.c",             "lib/common/fse_decompress.c",
@@ -193,6 +194,8 @@ fn addClibsArchive(b: *std.Build, arch: std.Target.Cpu.Arch, os_tag: std.Target.
     srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "xxh_glue.c", .flags = &xxh_flags }) catch @panic("OOM");
     for (pcre_files) |f| srcs.append(b.allocator, .{ .dir = "third_party/pcre2/src", .file = f, .flags = &pcre_flags }) catch @panic("OOM");
     srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "pcre2_glue.c", .flags = &pcre_glue_flags }) catch @panic("OOM");
+    for ([_][]const u8{ "common/constants.c", "common/context.c", "common/dictionary.c", "common/platform.c", "common/shared_dictionary.c", "common/transform.c", "dec/bit_reader.c", "dec/decode.c", "dec/huffman.c", "dec/prefix.c", "dec/state.c", "dec/static_init.c" }) |f| srcs.append(b.allocator, .{ .dir = "third_party/brotli/c", .file = f, .flags = &brotli_flags }) catch @panic("OOM");
+    srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "brotli_glue.c", .flags = &brotli_flags }) catch @panic("OOM");
     srcs.append(b.allocator, .{ .dir = "third_party/yyjson", .file = "yyjson.c", .flags = &yy_flags }) catch @panic("OOM");
     srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "yyjson_glue.c", .flags = &yy_flags }) catch @panic("OOM");
 

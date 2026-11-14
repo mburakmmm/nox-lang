@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.175]
+
+### Eklendi (2.2 aşama 8, dilim 4: `nox.brotli` — aşama 8 TAMAM)
+
+- **`nox.brotli.decompress(data, max_output=0)`** — brotli v1.2.1 (MIT, yalnızca AÇICI; yerleşik 122 KB sözlük dahil, `third_party/brotli`): HTTP `Content-Encoding: br`, `.br` dosyaları. Bozuk/kesik girdi, akış sonrası artık bayt ve `max_output` (0 = 1 GiB) aşımı `BrotliError` (açma bombası koruması; zstd/lz4 ile aynı sıkılık). Sıkıştırıcı yok (kapsam kararı: açma).
+- Aynı `noxclibs-<hedef>.a` arşivi: macOS = Linux = Windows; yalnızca bu modülü içe aktaran programa bağlanır. Ölçüm (4 MB metin, 0,75 MB akış): 5,7 ms (C çözücü yalnız 4,8 ms; fark büyüyen tampon + `str` kopyası).
+- Golden `clibs_brotli` (brotli CLI ile üretilmiş vektörler: küçük, boş, 900 KB yinelenen, UTF-8, q1; hata yolları); `docs/stdlib/brotli.md`.
+- **Aşama 8 bitti:** zstd (sıkıştırma), lz4, xxHash, yyjson, PCRE2 (JIT), brotli (açma) — hepsi `nox.<kütüphane>` adıyla, mevcut modüllere dokunmadan eklendi.
+
 ## [2.1.174]
 
 ### Eklendi (2.2 aşama 8, dilim 3: `nox.pcre2`)
