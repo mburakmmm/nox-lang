@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.168]
+
+### Performans / CI
+
+- **JSON bant ayrıştırıcısı ayarlandı:** bant/dize/çocuk-tablosu kapasiteleri girdi boyutundan tek seferde ayrılır (yeniden büyütme yok), çözümleme arenası 32 MiB'a kadar tutulur (her çağrıda mmap/sayfa hatası yok), kısa dizeler 8 baytlık parçalarla kopyalanır, ≤15 basamaklı tamsayılar özel yoldan ayrıştırılır. 50k nesne / 2,9 MB: ayrıştırma 17,7 ms → 7,1 ms (yalnızca bant kurulumu 5,35 ms; yyjson 1,5-2,9 ms).
+- **CI (Windows):** `net_dial` `awaitLookup` testleri genel yuva sayacını paylaşıyordu; önceki testin arka plan çözümleyicisi sürerken "uçuşta 1" beklentisi 2 görüyordu (yavaş Windows koşucusunda kırmızı koşu). İki test de başlangıçta yuvaların boşalmasını bekler.
+
 ## [2.1.167]
 
 ### Performans (2.2 aşama 3: JSON bant tabanlı tembel `JsonValue`)

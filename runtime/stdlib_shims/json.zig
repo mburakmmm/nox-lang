@@ -605,7 +605,7 @@ const DecodeArenaSlot = if (scratch_util.bare_kernel) struct {
 /// limit` modu) — TİPİK (küçük) payload'lar İçİn arena mmap/munmap
 /// OLMADAN yeniden kullanılır, bunu AŞAN nadir isteklerde fazlalık
 /// serbest bırakılır.
-const DECODE_ARENA_RETAIN_LIMIT: usize = 64 * 1024;
+const DECODE_ARENA_RETAIN_LIMIT: usize = 32 * 1024 * 1024; // v2.1.168: bant tamponları (girdi boyutunun ~5×'i) her çözümlemede yeniden mmap/sayfa-hatası yemesin
 
 /// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi", Madde 2):
 /// `std.json.parseFromSlice`nin KENDİ İÇ özyinelemesi (Zig std'sinin

@@ -880,6 +880,7 @@ fn waitSlotsDrained() !void {
 
 test "awaitLookup: 20 eşzamanlı istek aynı ada TEK çözümleme ve TEK iş parçacığı kullanır" {
     if (comptime !enabled) return error.SkipZigTest;
+    try waitSlotsDrained(); // önceki testlerin (genel yuva sayacı paylaşılır) arka plan çözümleyicileri bitmiş olsun
     var fake: FakeResolver = .{};
     const Worker = struct {
         fn run(f: *FakeResolver, ok_count: *std.atomic.Value(u32)) void {
@@ -902,6 +903,7 @@ test "awaitLookup: 20 eşzamanlı istek aynı ada TEK çözümleme ve TEK iş pa
 
 test "awaitLookup: bir katılımcının zaman aşımı diğerlerini iptal etmez; yuva iş parçacığı bitince boşalır" {
     if (comptime !enabled) return error.SkipZigTest;
+    try waitSlotsDrained(); // önceki testlerin (genel yuva sayacı paylaşılır) arka plan çözümleyicileri bitmiş olsun
     var fake: FakeResolver = .{};
     const Waiter = struct {
         fn run(f: *FakeResolver, ok: *std.atomic.Value(bool)) void {

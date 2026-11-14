@@ -187,8 +187,19 @@ const Parser = struct {
             if (c == '"' or c == '\\' or c < 0x20 or c >= 0x80) break;
         }
         if (j < s.len and s[j] == '"') {
-            // tamamı kaçışsız ASCII: tek kopya
-            try self.b.strs.appendSlice(self.a, s[self.i..j]);
+            // tamamı kaçışsız ASCII: tek kopya (kısa dizelerde 8 baytlık parçalarla; hedef ve kaynak 7 bayt taşabilecek kadar boş/okunur)
+            const n = j - self.i;
+            try self.b.strs.ensureUnusedCapacity(self.a, n + 8);
+            const dst = self.b.strs.items.ptr + self.b.strs.items.len;
+            if (j + 8 <= s.len) {
+                var k: usize = 0;
+                while (k < n) : (k += 8) {
+                    @as(*align(1) u64, @ptrCast(dst + k)).* = @as(*align(1) const u64, @ptrCast(s.ptr + self.i + k)).*;
+                }
+            } else {
+                @memcpy(dst[0..n], s[self.i..j]);
+            }
+            self.b.strs.items.len += n;
             self.i = j + 1;
             out_off.* = start_len;
             out_len.* = @intCast(self.b.strs.items.len - start_len);
@@ -296,6 +307,18 @@ const Parser = struct {
         return true;
     }
 
+    /// En çok 15 basamaklı (|değer| < 2^53 olduğu kesin) onluk tamsayı için hızlı ayrıştırma; aksi halde `null` (genel yol).
+    inline fn smallInt(tok: []const u8) ?i64 {
+        var i: usize = 0;
+        const neg = tok.len > 0 and tok[0] == '-';
+        if (neg) i = 1;
+        const digits = tok.len - i;
+        if (digits == 0 or digits > 15) return null;
+        var v: i64 = 0;
+        while (i < tok.len) : (i += 1) v = v * 10 + (tok[i] - '0');
+        return if (neg) -v else v;
+    }
+
     /// `json.zig`nin `numberLeaf`i ile aynı sınıflandırma; metin gerekiyorsa sayı girdisinin ardına `K_TEXT` kaydı yazar.
     fn number(self: *Parser) Err!void {
         const tok = try self.numberToken();
@@ -313,6 +336,8 @@ const Parser = struct {
                     if (@as(f64, @floatFromInt(iv)) == f) text = str_mod.formatFloatRepr(&fbuf, f);
                 }
             } else if (isPlainBigInteger(tok)) text = tok;
+        } else if (smallInt(tok)) |iv| {
+            n = @floatFromInt(iv);
         } else if (std.fmt.parseInt(i64, tok, 10)) |iv| {
             n = @floatFromInt(iv);
             if (iv >= (1 << 53) or iv <= -(1 << 53)) text = std.fmt.bufPrint(&ibuf, "{d}", .{iv}) catch null;
@@ -477,8 +502,9 @@ pub fn build(a: std.mem.Allocator, text: []const u8, out: *Built) bool {
     out.table.clearRetainingCapacity();
     out.strs.clearRetainingCapacity();
     // yaklaşık ön-ayırma: ~1 girdi / 6 bayt
-    out.entries.ensureTotalCapacity(a, text.len / 6 + 8) catch return false;
-    out.strs.ensureTotalCapacity(a, text.len / 2 + 16) catch return false;
+    out.entries.ensureTotalCapacity(a, text.len / 4 + 16) catch return false;
+    out.table.ensureTotalCapacity(a, text.len / 6 + 16) catch return false;
+    out.strs.ensureTotalCapacity(a, text.len + 16) catch return false;
     var p = Parser{ .s = text, .a = a, .b = out };
     defer p.kids.deinit(a);
     p.ws();
