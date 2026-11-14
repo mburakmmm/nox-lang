@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.169]
+
+### Performans (2.2 aşama 4: HTTP ve IO)
+
+- **`nox.fs.read_to_string` dosyayı doğrudan yeni `str`in veri alanına okur** (`nox_str_alloc_buf`): önceden page_allocator tamponuna okunup `dupeToNoxStr` ile ikinci kez kopyalanıyordu (mmap + sayfa hataları + 2× bellek bant genişliği). 64 MiB: 11 ms (önceki ölçüm; C `fread`: 6 ms). Dosya okuma sırasında küçülürse başlık uzunluğu düzeltilir.
+- Ölçüm notu: HTTP "ok" yanıtı (`wrk -t4 -c100`, `--release`): Nox 273k istek/s, tek iş parçacıklı C kqueue sunucusu 251k, Go `net/http` 118k; yazma (64 MiB) C ile aynı (45 ms).
+
 ## [2.1.168]
 
 ### Performans / CI

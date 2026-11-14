@@ -319,25 +319,25 @@ export fn nox_fs_read_to_string_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callc
     };
     const size: usize = @intCast(info.size);
 
-    // `str`e uzunluk alanı + ASCII bayrağı eklenmesinden BERİ (bkz. plan
-    // dosyası) bir `str`in KENDİ paketlenmiş başlığı OLMADAN elle
-    // `nox_rc_alloc` edilip DOĞRUDAN İÇİNE okunması ARTIK GÜVENLİ DEĞİL —
-    // dosya İÇERİĞİ ÖNCE düz (ARC-dışı) bir arabelleğe okunur, SONRA
-    // `nox_str_from_bytes` İLE GERÇEK, başlıklı bir Nox `str`ine kopyalanır
-    // (`dupeToNoxStr`nin KENDİ KANONİK sarmalayıcısı).
-    const buf = std.heap.page_allocator.alloc(u8, size) catch {
+    // v2.1.169: dosya içeriği DOĞRUDAN yeni bir Nox `str`in veri alanına okunur (`nox_str_alloc_buf`; önceden page_allocator tamponuna okunup `dupeToNoxStr` ile
+    // ikinci kez kopyalanıyordu: 64 MiB'ta ~2x süre + mmap/sayfa hatası). Dosya okuma sırasında küçüldüyse (okunan < boyut) başlıktaki uzunluk düzeltilir.
+    const data = str_mod.nox_str_alloc_buf(rt, size) orelse {
         fsLastOkPtr().* = false;
         return dupeToNoxStr(rt, "");
     };
-    defer std.heap.page_allocator.free(buf);
     var total_read: usize = 0;
     while (total_read < size) {
-        const n = readFd(fd, buf[total_read..size]);
+        const n = readFd(fd, data[total_read..size]);
         if (n <= 0) break;
         total_read += @intCast(n);
     }
+    if (total_read != size) {
+        const hdr: *align(1) i64 = @ptrCast(data - abi_layout.STR_HEADER_SIZE);
+        hdr.* = abi_layout.packStrHeader(total_read, abi_layout.STR_ASCII_UNKNOWN);
+        data[total_read] = 0;
+    }
     fsLastOkPtr().* = true;
-    return dupeToNoxStr(rt, buf[0..total_read]);
+    return @ptrCast(data);
 }
 
 fn writeAllToFile(append: bool, path: [*:0]const u8, content: [*:0]const u8) void {
