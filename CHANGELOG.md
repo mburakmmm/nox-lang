@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.157]
+
+### Düzeltildi
+
+- **`Dokümanlar` iş akışı (ayrılmış semboller):** Windows nesnesinin yeni içe aktardığı `WSARecv`/`WSASend` `reserved_symbols.zig`ye eklendi, `reserved_symbol_names` fixture'ı ve IR anlık görüntüsü yeniden üretildi (`check_reserved_symbols.py` + `gen_reserved_symbol_fixture.py --check` yeşil).
+
 ## [2.1.156]
 
 ### Düzeltildi (Linux x86-64 CI askısı — A1)
