@@ -347,6 +347,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_json_dump_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_json_escape_string_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_json_last_op_ok", Entry{ .params = "", .ret = 'W' } },
+    .{ "nox_json_object_find", Entry{ .params = "PP", .ret = 'L' } },
     .{ "nox_list_concat", Entry{ .params = "PPPLW", .ret = 'P' } },
     .{ "nox_list_copy", Entry{ .params = "PPLW", .ret = 'P' } },
     .{ "nox_list_empty", Entry{ .params = "P", .ret = 'P' } },

@@ -1181,6 +1181,20 @@ fn dumpNodeInto(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), node: [*
     }
 }
 
+/// v2.1.166: `nox.json.get`/`get_or_null` için — nesnenin anahtar listesi (`v.keys`) içinde `key`i doğrusal arar (belge sırası, ilk eşleşme) ve indeksi döner (yoksa -1).
+/// Önceden her anahtar için Nox düzeyinde `object_key` çağrısı + dize eşitliği vardı; tek çalışma zamanı çağrısı ve ham bayt karşılaştırması.
+export fn nox_json_object_find(keys_list: ?*anyopaque, key: ?[*:0]const u8) callconv(.c) i64 {
+    const keys: [*]const u8 = @ptrCast(keys_list orelse return -1);
+    const n: usize = @intCast(rdI64(keys, 0));
+    const ks: []const u8 = if (key) |k| str_mod.nox_str_slice(k) else "";
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const kp = rdPtr(keys, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i) orelse continue;
+        if (std.mem.eql(u8, str_mod.nox_str_slice(@ptrCast(kp)), ks)) return @intCast(i);
+    }
+    return -1;
+}
+
 export fn nox_json_dump_raw(rt: ?*anyopaque, v: ?*anyopaque) callconv(.c) ?[*:0]u8 {
     const node: [*]const u8 = @ptrCast(v orelse return dupeToNoxStr(rt, "null"));
     const a = scratch_util.scratchAllocator();

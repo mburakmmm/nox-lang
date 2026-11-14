@@ -37,6 +37,7 @@ class JsonError(Exception):
 extern def nox_json_decode_raw(s: str) -> JsonValue from "zig-out/lib/noxrt.o" with_rt
 extern def nox_json_last_op_ok() -> int from "zig-out/lib/noxrt.o"
 extern def nox_json_escape_string_raw(s: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_json_object_find(keys: list[str], key: str) -> int from "zig-out/lib/noxrt.o"
 
 def parse(s: str) -> JsonValue:
     v: JsonValue = nox_json_decode_raw(s)
@@ -103,22 +104,16 @@ def expect_array(v: JsonValue) -> None:
 
 # Nesnenin `key` anahtarının değeri (yoksa JsonError). Anahtarlar belge sırasındadır; arama doğrusaldır.
 def get(v: JsonValue, key: str) -> JsonValue:
-    n: int = object_len(v)
-    i: int = 0
-    while i < n:
-        if object_key(v, i) == key:
-            return object_value(v, i)
-        i += 1
+    i: int = nox_json_object_find(v.keys, key)
+    if i >= 0:
+        return v.vals[i]
     raise JsonError("missing field '" + key + "'")
 
 # `get`, ama anahtar yoksa JSON `null` düğümü döner.
 def get_or_null(v: JsonValue, key: str) -> JsonValue:
-    n: int = object_len(v)
-    i: int = 0
-    while i < n:
-        if object_key(v, i) == key:
-            return object_value(v, i)
-        i += 1
+    i: int = nox_json_object_find(v.keys, key)
+    if i >= 0:
+        return v.vals[i]
     return parse("null")
 
 def read_int(v: JsonValue) -> int:

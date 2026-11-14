@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.166]
+
+### Performans / tasarım (2.2 aşama 3: JSON)
+
+- **`nox.json.get` / `get_or_null` yerel anahtar arama:** nesnenin anahtar listesini Nox düzeyinde `object_key` çağrısı + dize eşitliğiyle dolaşmak yerine tek `nox_json_object_find` çağrısı (çalışma zamanı, ham bayt karşılaştırması; ilk eşleşme, belge sırası); davranış aynı. Büyük nesnelerde doğrusal Nox döngüsü kalkar; wasm ABI tablosu güncellendi.
+- **Ölçüm + tasarım:** 50k nesneli belgede yyjson'a göre ayrıştırma ≈9×, gezinme ≈10×, `dump` ≈5× geride. Neden: iki geçişli ayrıştırma (%28), düğüm başına ARC nesnesi (≈400k tahsis), ağaç serbest bırakma (%20), atomik ARC. Kullanıcı kararıyla bant (tape) tabanlı tembel `JsonValue`: `project/json-bant-tasarimi-2026-11.md` (dilimler v2.1.167-169).
+
 ## [2.1.165]
 
 ### Düzeltildi (CI kararlılığı)
