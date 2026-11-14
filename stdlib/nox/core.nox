@@ -496,6 +496,36 @@ def all(xs: list[bool]) -> bool:
             return False
     return True
 
+# v2.1.160: `any/all(<genexpr>)` checker tarafından bu KISA DEVRE işlevlerine yönlendirilir (ara `list[bool]` üretilmez; `[T]` jenerik: kullanılmayan
+# işlev programa girmez). `_range` biçimi `range(lo, hi)` kaynağı için liste de üretmez.
+def __nox_any_pred[T](xs: list[T], f: (T) -> bool) -> bool:
+    for x in xs:
+        if f(x):
+            return True
+    return False
+
+def __nox_all_pred[T](xs: list[T], f: (T) -> bool) -> bool:
+    for x in xs:
+        if not f(x):
+            return False
+    return True
+
+def __nox_any_range[T](lo: T, hi: T, f: (T) -> bool) -> bool:
+    i: T = lo
+    while i < hi:
+        if f(i):
+            return True
+        i = i + 1
+    return False
+
+def __nox_all_range[T](lo: T, hi: T, f: (T) -> bool) -> bool:
+    i: T = lo
+    while i < hi:
+        if not f(i):
+            return False
+        i = i + 1
+    return True
+
 def divmod[T](a: T, b: T) -> tuple[T, T]:
     return a // b, a % b
 

@@ -1,0 +1,26 @@
+# v2.1.160: any/all(genexpr) kısa devre yapar (ilk karar veren elemanda durur) ve ara liste üretmez
+
+calls: list[int] = [0]
+
+def probe(v: int) -> bool:
+    calls[0] = calls[0] + 1
+    return v > 2
+
+xs: list[int] = [1, 2, 3, 4, 5]
+print(any(probe(v) for v in xs), calls[0])
+calls[0] = 0
+print(all(probe(v) for v in xs), calls[0])
+calls[0] = 0
+print(any(probe(v) for v in xs if v > 3), calls[0])
+calls[0] = 0
+print(all(probe(v) for v in xs if v > 3), calls[0])
+
+print(any(v * v == 49 for v in range(100)), all(v < 10 for v in range(10)), any(v > 5 for v in range(2, 6)), all(v >= 2 for v in range(2, 6)))
+empty: list[int] = []
+print(any(v > 3 for v in empty), all(v > 3 for v in empty))
+words: list[str] = ["apple", "kiwi", "fig"]
+print(any(len(w) == 3 for w in words), all(len(w) > 3 for w in words), all(len(w) > 3 for w in words if w != "fig"))
+limit: int = 4
+print(any(v == limit for v in xs), all(v != limit + 10 for v in xs))
+# eski yol hâlâ çalışır: liste ve karmaşık yan tümceler
+print(any([v > 4 for v in xs]), all([True, False]), any(a == b for a in xs for b in xs if a != b))

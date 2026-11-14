@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.160]
+
+### Performans (2.2 aşama 1)
+
+- **`any(<genexpr>)` / `all(<genexpr>)` kısa devre yapar ve ara `list[bool]` üretmez** (Python gibi ilk karar veren elemanda durur; yan etkiler de ona göre). Tek `for` yan tümceli ve yalnızca `if` yan tümceli üreteç ifadeleri `list` ya da `range(..)` kaynağı için `__nox_{any,all}_{pred,range}` (jenerik, lambda ile) çağrılarına yönlendirilir; diğer biçimler eski yolu kullanır. Ölçüm (2M eleman x20 tur): 192 ms → 40 ms (clang -O2 C: 18 ms). `round` hızlı yolu birlikte: abs+round döngüsü 180 ms → 5 ms. Golden `any_all_short_circuit`.
+
 ## [2.1.159]
 
 ### Eklendi (2.2 aşama 1: builtin yeterliliği)

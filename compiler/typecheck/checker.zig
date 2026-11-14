@@ -7998,6 +7998,10 @@ pub const Checker = struct {
         }
         const user_defined = self.classes.contains(name) or (self.functions.contains(name) and !isPreludeName(name));
         if (user_defined) return null;
+        // v2.1.160: `any(<genexpr>)` / `all(<genexpr>)` kısa devre yapar ve ara liste ÜRETMEZ (Python gibi: ilk karar veren elemanda durur).
+        if ((eq(u8, name, "any") or eq(u8, name, "all")) and c.args.len == 1 and c.args[0] == .list_comp and c.args[0].list_comp.is_genexpr) {
+            if (try self.shortCircuitAnyAll(ctx, c, eq(u8, name, "any"))) |rt| return rt;
+        }
         // v1.168.0: yinelenebilir (`__iter__`) sınıf argümanları — `sorted(s)`, `sum(s)`, `list(s)`, `min/max/any/all/set/enumerate/zip/map/filter/reversed` — `arg.__iter__()`e açılır.
         const iter_taking = [_][]const u8{ "sorted", "sum", "list", "min", "max", "any", "all", "set", "enumerate", "zip", "map", "filter", "reversed" };
         var takes_iter: bool = false;
@@ -8331,6 +8335,69 @@ pub const Checker = struct {
             return null;
         }
         return null;
+    }
+
+    /// `any/all(<ifade> for <ad> in <liste | range(..)> [if <koşul>]...)` → `__nox_{any,all}_{pred,range}(kaynak, lambda <ad>: <gövde>)`; tek `for` yan tümcesi ve
+    /// yalnızca `if` yan tümceleri için. `any`: gövde = `koşul1 and koşul2 and ifade`; `all`: gövde = `not (koşullar) or ifade` (koşulu sağlamayanlar atlanır).
+    /// Uygun değilse (`null`) eski yol (liste üret + tara) kullanılır.
+    fn shortCircuitAnyAll(self: *Checker, ctx: *FnCtx, c: ast.Call, is_any: bool) TypeError!?Type {
+        const eq = std.mem.eql;
+        const lc = c.args[0].list_comp;
+        if (lc.clauses.len == 0 or lc.clauses[0] != .for_clause) return null;
+        for (lc.clauses[1..]) |cl| if (cl != .if_clause) return null;
+        const fc = lc.clauses[0].for_clause;
+        const it = fc.iterable;
+        var callee_name: []const u8 = undefined;
+        var src_args: []ast.Expr = undefined;
+        if (it == .call and it.call.callee.* == .identifier and eq(u8, it.call.callee.identifier, "range") and !self.functions.contains("range") and !self.classes.contains("range") and
+            (it.call.args.len == 1 or it.call.args.len == 2))
+        {
+            for (it.call.args) |a| if (a == .kwarg) return null;
+            src_args = try self.allocator.alloc(ast.Expr, 3);
+            if (it.call.args.len == 1) {
+                src_args[0] = .{ .int_lit = 0 };
+                src_args[1] = it.call.args[0];
+            } else {
+                src_args[0] = it.call.args[0];
+                src_args[1] = it.call.args[1];
+            }
+            callee_name = if (is_any) "__nox_any_range" else "__nox_all_range";
+        } else {
+            const t = self.checkExpr(ctx, it) catch return null;
+            if (t != .list) return null;
+            src_args = try self.allocator.alloc(ast.Expr, 2);
+            src_args[0] = it;
+            callee_name = if (is_any) "__nox_any_pred" else "__nox_all_pred";
+        }
+        // gövde
+        var cond: ?*ast.Expr = null;
+        for (lc.clauses[1..]) |cl| {
+            const ce = try self.allocator.create(ast.Expr);
+            ce.* = cl.if_clause;
+            if (cond) |prev| {
+                const both = try self.allocator.create(ast.Expr);
+                both.* = .{ .binary = .{ .op = .and_, .left = prev, .right = ce } };
+                cond = both;
+            } else cond = ce;
+        }
+        const elem = lc.elem;
+        const body = try self.allocator.create(ast.Expr);
+        if (cond) |cd| {
+            if (is_any) {
+                body.* = .{ .binary = .{ .op = .and_, .left = cd, .right = elem } };
+            } else {
+                const neg = try self.allocator.create(ast.Expr);
+                neg.* = .{ .unary = .{ .op = .not_, .operand = cd } };
+                body.* = .{ .binary = .{ .op = .or_, .left = neg, .right = elem } };
+            }
+        } else body.* = elem.*;
+        const params = try self.allocator.alloc([]const u8, 1);
+        params[0] = fc.var_name;
+        src_args[src_args.len - 1] = .{ .lambda = .{ .params = params, .body = body } };
+        const callee = try self.allocator.create(ast.Expr);
+        callee.* = .{ .identifier = callee_name };
+        const repl: ast.Expr = .{ .call = .{ .callee = callee, .args = src_args } };
+        return try self.rewriteExprTo(ctx, @intFromPtr(c.callee), repl);
     }
 
     fn isCoreStrMethod(m: []const u8) bool {
