@@ -7161,73 +7161,111 @@ export function l $__nox_str_rfind__str(l %rt, l %p_s, l %p_sub) {
     %t2 =l alloc8 8
     %t3 =l alloc8 8
     %t4 =l alloc8 8
+    %t7 =l alloc8 8
+    %t19 =l alloc8 8
     storel %p_s, %t0
     storel %p_sub, %t1
     %t5 =l loadl %t0
-    %t6 =l call $nox_str_char_count(l %t5)
-    storel %t6, %t2
-    %t7 =l loadl %t1
-    %t8 =l call $nox_str_char_count(l %t7)
-    storel %t8, %t3
-    %t9 =l loadl %t2
-    %t10 =l loadl %t3
-    %t11 =l sub %t9, %t10
-    storel %t11, %t4
-    jmp @while_cond0
-@while_cond0
-    %t12 =l loadl %t4
-    %t13 =w csgel %t12, 0
-    jnz %t13, @while_body1, @while_end2
-@while_body1
-    %t14 =l loadl %t0
-    %t15 =l loadl %t4
-    %t16 =l loadl %t4
-    %t17 =l loadl %t3
-    %t18 =l add %t16, %t17
-    %t19 =l call $nox_str_slice_op(l %rt, l %t14, l %t15, w 1, l %t18, w 1, l 0, w 0)
-    %t20 =l loadl %t1
-    %t21 =w call $strcmp(l %t19, l %t20)
-    %t22 =w ceqw %t21, 0
-    %t23 =w ceql %t19, 0
-    jnz %t23, @release_skip5, @release4
-@release4
-    %t24 =l sub %t19, 16
-    %t25 =l loadl %t24
-    %t26 =w csgel %t25, 536870912
-    jnz %t26, @str_free_done9, @str_rel_atomic10
-@str_rel_atomic10
-    %t27 =l sub %t19, 16
-    %t28 =l loadl %t27
-    %t29 =l sub %t28, 1
-    storel %t29, %t27
-    %t30 =w cslel %t29, 0
-    jnz %t30, @str_free7, @str_free_skip8
-@str_free7
-    call $nox_str_free_now(l %rt, l %t19)
-    jmp @str_free_done9
-@str_free_skip8
-    jmp @str_free_done9
-@str_free_done9
-    jmp @release_done6
-@release_skip5
-    jmp @release_done6
-@release_done6
-    jnz %t22, @if_then11, @if_end3
-@if_then11
-    %t31 =l loadl %t4
-    ret %t31
-@after_return12
-    jmp @if_end3
-@if_end3
+    %t8 =w ceql %t5, 0
+    jnz %t8, @strlen_slow2, @strlen_chk0
+@strlen_chk0
+    %t9 =l sub %t5, 8
+    %t10 =l loadl %t9
+    %t11 =l shr %t10, 61
+    %t12 =l and %t11, 3
+    %t13 =w ceql %t12, 1
+    jnz %t13, @strlen_fast1, @strlen_slow2
+@strlen_fast1
+    %t14 =l and %t10, 4503599627370495
+    storel %t14, %t7
+    jmp @strlen_done3
+@strlen_slow2
+    %t15 =l call $nox_str_char_count(l %t5)
+    storel %t15, %t7
+    jmp @strlen_done3
+@strlen_done3
+    %t16 =l loadl %t7
+    storel %t16, %t2
+    %t17 =l loadl %t1
+    %t20 =w ceql %t17, 0
+    jnz %t20, @strlen_slow6, @strlen_chk4
+@strlen_chk4
+    %t21 =l sub %t17, 8
+    %t22 =l loadl %t21
+    %t23 =l shr %t22, 61
+    %t24 =l and %t23, 3
+    %t25 =w ceql %t24, 1
+    jnz %t25, @strlen_fast5, @strlen_slow6
+@strlen_fast5
+    %t26 =l and %t22, 4503599627370495
+    storel %t26, %t19
+    jmp @strlen_done7
+@strlen_slow6
+    %t27 =l call $nox_str_char_count(l %t17)
+    storel %t27, %t19
+    jmp @strlen_done7
+@strlen_done7
+    %t28 =l loadl %t19
+    storel %t28, %t3
+    %t29 =l loadl %t2
+    %t30 =l loadl %t3
+    %t31 =l sub %t29, %t30
+    storel %t31, %t4
+    jmp @while_cond8
+@while_cond8
     %t32 =l loadl %t4
-    %t33 =l sub %t32, 1
-    storel %t33, %t4
-    jmp @while_cond0
-@while_end2
-    %t34 =l neg 1
-    ret %t34
-@after_return13
-@fn_end14
+    %t33 =w csgel %t32, 0
+    jnz %t33, @while_body9, @while_end10
+@while_body9
+    %t34 =l loadl %t0
+    %t35 =l loadl %t4
+    %t36 =l loadl %t4
+    %t37 =l loadl %t3
+    %t38 =l add %t36, %t37
+    %t39 =l call $nox_str_slice_op(l %rt, l %t34, l %t35, w 1, l %t38, w 1, l 0, w 0)
+    %t40 =l loadl %t1
+    %t41 =w call $strcmp(l %t39, l %t40)
+    %t42 =w ceqw %t41, 0
+    %t43 =w ceql %t39, 0
+    jnz %t43, @release_skip13, @release12
+@release12
+    %t44 =l sub %t39, 16
+    %t45 =l loadl %t44
+    %t46 =w csgel %t45, 536870912
+    jnz %t46, @str_free_done17, @str_rel_atomic18
+@str_rel_atomic18
+    %t47 =l sub %t39, 16
+    %t48 =l loadl %t47
+    %t49 =l sub %t48, 1
+    storel %t49, %t47
+    %t50 =w cslel %t49, 0
+    jnz %t50, @str_free15, @str_free_skip16
+@str_free15
+    call $nox_str_free_now(l %rt, l %t39)
+    jmp @str_free_done17
+@str_free_skip16
+    jmp @str_free_done17
+@str_free_done17
+    jmp @release_done14
+@release_skip13
+    jmp @release_done14
+@release_done14
+    jnz %t42, @if_then19, @if_end11
+@if_then19
+    %t51 =l loadl %t4
+    ret %t51
+@after_return20
+    jmp @if_end11
+@if_end11
+    %t52 =l loadl %t4
+    %t53 =l sub %t52, 1
+    storel %t53, %t4
+    jmp @while_cond8
+@while_end10
+    %t54 =l neg 1
+    ret %t54
+@after_return21
+@fn_end22
     ret 0
 }
 export function w $main(w %argc, l %argv) {

@@ -2398,6 +2398,7 @@ export function l $Grid_total(l %rt, l %p_self) {
     %t4 =l alloc8 8
     %t5 =l alloc8 8
     %t6 =l alloc8 8
+    %t52 =l alloc8 8
     storel 0, %t2
     storel %p_self, %t0
     storel 0, %t1
@@ -2520,47 +2521,65 @@ export function l $Grid_total(l %rt, l %p_self) {
     storel %t48, %t5
     %t49 =l loadl %t1
     %t50 =l loadl %t5
-    %t51 =l call $nox_str_char_count(l %t50)
-    %t52 =l add %t49, %t51
-    storel %t52, %t1
+    %t53 =w ceql %t50, 0
+    jnz %t53, @strlen_slow36, @strlen_chk34
+@strlen_chk34
+    %t54 =l sub %t50, 8
+    %t55 =l loadl %t54
+    %t56 =l shr %t55, 61
+    %t57 =l and %t56, 3
+    %t58 =w ceql %t57, 1
+    jnz %t58, @strlen_fast35, @strlen_slow36
+@strlen_fast35
+    %t59 =l and %t55, 4503599627370495
+    storel %t59, %t52
+    jmp @strlen_done37
+@strlen_slow36
+    %t60 =l call $nox_str_char_count(l %t50)
+    storel %t60, %t52
+    jmp @strlen_done37
+@strlen_done37
+    %t61 =l loadl %t52
+    %t62 =l add %t49, %t61
+    storel %t62, %t1
     jmp @forlist_step25
 @forlist_step25
-    %t53 =l loadl %t6
-    %t54 =l add %t53, 1
-    storel %t54, %t6
+    %t63 =l loadl %t6
+    %t64 =l add %t63, 1
+    storel %t64, %t6
     jmp @forlist_cond22
 @forlist_end24
     jmp @forlist_step13
 @forlist_step13
-    %t55 =l loadl %t4
-    %t56 =l add %t55, 1
-    storel %t56, %t4
+    %t65 =l loadl %t4
+    %t66 =l add %t65, 1
+    storel %t66, %t4
     jmp @forlist_cond10
 @forlist_end12
-    %t57 =l loadl %t1
-    %t58 =l loadl %t2
-    %t59 =w ceql %t58, 0
-    jnz %t59, @release_skip35, @release34
-@release34
-    call $List_List_str_release(l %rt, l %t58)
-    jmp @release_done36
-@release_skip35
-    jmp @release_done36
-@release_done36
-    storel 0, %t2
-    ret %t57
-@after_return37
-    %t60 =l loadl %t2
-    %t61 =w ceql %t60, 0
-    jnz %t61, @release_skip39, @release38
+    %t67 =l loadl %t1
+    %t68 =l loadl %t2
+    %t69 =w ceql %t68, 0
+    jnz %t69, @release_skip39, @release38
 @release38
-    call $List_List_str_release(l %rt, l %t60)
+    call $List_List_str_release(l %rt, l %t68)
     jmp @release_done40
 @release_skip39
     jmp @release_done40
 @release_done40
     storel 0, %t2
-@fn_end41
+    ret %t67
+@after_return41
+    %t70 =l loadl %t2
+    %t71 =w ceql %t70, 0
+    jnz %t71, @release_skip43, @release42
+@release42
+    call $List_List_str_release(l %rt, l %t70)
+    jmp @release_done44
+@release_skip43
+    jmp @release_done44
+@release_done44
+    storel 0, %t2
+@fn_end45
     ret 0
 }
 export function $Grid_release(l %rt, l %p) {

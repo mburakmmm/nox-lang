@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.163]
+
+### Performans (2.2 aşama 1-2)
+
+- **`len(str)` satır içi hızlı yol:** paketlenmiş başlıkta (`s - 8`) ASCII-biliniyor bayrağı varsa uzunluk (alt 52 bit) doğrudan okunur; null/bilinmeyen/UTF-8 durumunda `nox_str_char_count` (çözer ve önbelleğe yazar). Döngülerde çalışma zamanı çağrısı kalktı. Golden `str_len_inline` (ASCII, UTF-8, boş, birleştirilmiş, dilim, `*`).
+- Aşama 2 ilk ölçümü: `benchmarks/stdlib_perf` 26 iş Nox/CPython 0,11-1,18; `str(i)+append`, `join`, `split` 1M elemanlı C karşılığıyla (malloc'lu) aynı bantta.
+
 ## [2.1.162]
 
 ### Performans (2.2 aşama 1)

@@ -3419,6 +3419,7 @@ export function $main_task(l %rt) {
     %t3 =l alloc8 8
     %t4 =l alloc8 8
     %t5 =l alloc8 8
+    %t87 =l alloc8 8
     storel 0, %t0
     storel 0, %t1
     storel 0, %t3
@@ -3625,65 +3626,83 @@ export function $main_task(l %rt) {
     call $nox_obj_unlock(l %t74)
     jmp @dyn_done41
 @dyn_done41
-    %t86 =l call $nox_str_char_count(l %t80)
-    %t87 =w ceql %t80, 0
-    jnz %t87, @release_skip43, @release42
-@release42
-    %t88 =l sub %t80, 16
-    %t89 =l loadl %t88
-    %t90 =w csgel %t89, 536870912
-    jnz %t90, @str_free_done47, @str_rel_atomic48
-@str_rel_atomic48
-    %t91 =l sub %t80, 16
-    %t92 =l call $nox_atomic_rc_sub(l %t91, l 1)
-    %t93 =w cslel %t92, 0
-    jnz %t93, @str_free45, @str_free_skip46
-@str_free45
+    %t88 =w ceql %t80, 0
+    jnz %t88, @strlen_slow44, @strlen_chk42
+@strlen_chk42
+    %t89 =l sub %t80, 8
+    %t90 =l loadl %t89
+    %t91 =l shr %t90, 61
+    %t92 =l and %t91, 3
+    %t93 =w ceql %t92, 1
+    jnz %t93, @strlen_fast43, @strlen_slow44
+@strlen_fast43
+    %t94 =l and %t90, 4503599627370495
+    storel %t94, %t87
+    jmp @strlen_done45
+@strlen_slow44
+    %t95 =l call $nox_str_char_count(l %t80)
+    storel %t95, %t87
+    jmp @strlen_done45
+@strlen_done45
+    %t96 =l loadl %t87
+    %t97 =w ceql %t80, 0
+    jnz %t97, @release_skip47, @release46
+@release46
+    %t98 =l sub %t80, 16
+    %t99 =l loadl %t98
+    %t100 =w csgel %t99, 536870912
+    jnz %t100, @str_free_done51, @str_rel_atomic52
+@str_rel_atomic52
+    %t101 =l sub %t80, 16
+    %t102 =l call $nox_atomic_rc_sub(l %t101, l 1)
+    %t103 =w cslel %t102, 0
+    jnz %t103, @str_free49, @str_free_skip50
+@str_free49
     call $nox_str_free_now(l %rt, l %t80)
-    jmp @str_free_done47
-@str_free_skip46
-    jmp @str_free_done47
-@str_free_done47
-    jmp @release_done44
-@release_skip43
-    jmp @release_done44
-@release_done44
-    %t94 =w csgtl %t86, 0
-    jnz %t94, @print_true49, @print_false50
-@print_true49
+    jmp @str_free_done51
+@str_free_skip50
+    jmp @str_free_done51
+@str_free_done51
+    jmp @release_done48
+@release_skip47
+    jmp @release_done48
+@release_done48
+    %t104 =w csgtl %t96, 0
+    jnz %t104, @print_true53, @print_false54
+@print_true53
     call $printf(l $fmt_bool_true)
-    jmp @print_done51
-@print_false50
+    jmp @print_done55
+@print_false54
     call $printf(l $fmt_bool_false)
-    jmp @print_done51
-@print_done51
-    %t95 =l loadl %t0
-    %t96 =w ceql %t95, 0
-    jnz %t96, @release_skip53, @release52
-@release52
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t95, l $Stats_release)
-    jmp @release_done54
-@release_skip53
-    jmp @release_done54
-@release_done54
+    jmp @print_done55
+@print_done55
+    %t105 =l loadl %t0
+    %t106 =w ceql %t105, 0
+    jnz %t106, @release_skip57, @release56
+@release56
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t105, l $Stats_release)
+    jmp @release_done58
+@release_skip57
+    jmp @release_done58
+@release_done58
     storel 0, %t0
-    %t97 =l loadl %t1
-    call $nox_channel_destroy(l %rt, l %t97)
+    %t107 =l loadl %t1
+    call $nox_channel_destroy(l %rt, l %t107)
     storel 0, %t1
-    %t98 =l loadl %t5
-    %t99 =w ceql %t98, 0
-    jnz %t99, @release_skip56, @release55
-@release55
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t98, l $Stats_release)
-    jmp @release_done57
-@release_skip56
-    jmp @release_done57
-@release_done57
+    %t108 =l loadl %t5
+    %t109 =w ceql %t108, 0
+    jnz %t109, @release_skip60, @release59
+@release59
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t108, l $Stats_release)
+    jmp @release_done61
+@release_skip60
+    jmp @release_done61
+@release_done61
     storel 0, %t5
-    %t100 =l loadl %t3
-    call $nox_async_destroy_task(l %rt, l %t100)
+    %t110 =l loadl %t3
+    call $nox_async_destroy_task(l %rt, l %t110)
     storel 0, %t3
-@fn_end58
+@fn_end62
     ret
 }
 export function l $main_body(l %argp) {

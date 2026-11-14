@@ -3864,12 +3864,31 @@ export function l $__nox_lambda_1(l %rt, l %p_v) {
 export function l $__nox_lambda_2(l %rt, l %p_s) {
 @start
     %t0 =l alloc8 8
+    %t3 =l alloc8 8
     storel %p_s, %t0
     %t1 =l loadl %t0
-    %t2 =l call $nox_str_char_count(l %t1)
-    ret %t2
-@after_return0
-@fn_end1
+    %t4 =w ceql %t1, 0
+    jnz %t4, @strlen_slow2, @strlen_chk0
+@strlen_chk0
+    %t5 =l sub %t1, 8
+    %t6 =l loadl %t5
+    %t7 =l shr %t6, 61
+    %t8 =l and %t7, 3
+    %t9 =w ceql %t8, 1
+    jnz %t9, @strlen_fast1, @strlen_slow2
+@strlen_fast1
+    %t10 =l and %t6, 4503599627370495
+    storel %t10, %t3
+    jmp @strlen_done3
+@strlen_slow2
+    %t11 =l call $nox_str_char_count(l %t1)
+    storel %t11, %t3
+    jmp @strlen_done3
+@strlen_done3
+    %t12 =l loadl %t3
+    ret %t12
+@after_return4
+@fn_end5
     ret 0
 }
 export function l $__nox_lambda_3(l %rt, l %p_v) {
@@ -3886,12 +3905,31 @@ export function l $__nox_lambda_3(l %rt, l %p_v) {
 export function l $__nox_lambda_4(l %rt, l %p_s) {
 @start
     %t0 =l alloc8 8
+    %t3 =l alloc8 8
     storel %p_s, %t0
     %t1 =l loadl %t0
-    %t2 =l call $nox_str_char_count(l %t1)
-    ret %t2
-@after_return0
-@fn_end1
+    %t4 =w ceql %t1, 0
+    jnz %t4, @strlen_slow2, @strlen_chk0
+@strlen_chk0
+    %t5 =l sub %t1, 8
+    %t6 =l loadl %t5
+    %t7 =l shr %t6, 61
+    %t8 =l and %t7, 3
+    %t9 =w ceql %t8, 1
+    jnz %t9, @strlen_fast1, @strlen_slow2
+@strlen_fast1
+    %t10 =l and %t6, 4503599627370495
+    storel %t10, %t3
+    jmp @strlen_done3
+@strlen_slow2
+    %t11 =l call $nox_str_char_count(l %t1)
+    storel %t11, %t3
+    jmp @strlen_done3
+@strlen_done3
+    %t12 =l loadl %t3
+    ret %t12
+@after_return4
+@fn_end5
     ret 0
 }
 export function l $__nox_lambda_5(l %rt, l %p_v) {

@@ -494,7 +494,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     // v1.149.0: `len(d)` — `d.len()` ile aynı.
                     try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_dict_len", &.{.{ .ty = .l, .text = v.text }});
                 } else {
-                    try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_str_char_count", &.{.{ .ty = .l, .text = v.text }});
+                    return emitStrLen(self, c.args[0], v);
                 }
                 try self.releaseIfTemporary(c.args[0], v);
                 return .{ .text = result_t, .qtype = .l };
@@ -3652,6 +3652,47 @@ fn genCompLeaf(self: *Codegen, st: *const CompState) CodegenError!void {
             });
         },
     }
+}
+
+/// v2.1.162: `len(s)` (str) satır içi hızlı yol — paketlenmiş başlık (`s - 8`) ASCII-biliniyor (`STR_ASCII_TRUE`) ise ham bayt uzunluğu (alt 52 bit) codepoint sayısıdır;
+/// aksi halde (UNKNOWN/FALSE/null) `nox_str_char_count` (çözümler, UTF-8 sayar). Çalışma zamanı çağrısı döngülerde ~3 ns'lik fazlaydı.
+fn emitStrLen(self: *Codegen, arg_expr: ast.Expr, v: Value) CodegenError!Value {
+    const res_slot = try self.newTemp();
+    try self.qbeAlloc(res_slot, .eight, 8);
+    const chk_label = try self.newLabel("strlen_chk");
+    const fast_label = try self.newLabel("strlen_fast");
+    const slow_label = try self.newLabel("strlen_slow");
+    const done_label = try self.newLabel("strlen_done");
+    const isnull = try self.newTemp();
+    try self.qbeOp2Imm(isnull, .w, "ceql", v.text, 0);
+    try self.qbeJnz(isnull, slow_label, chk_label);
+    try self.qbeLabel(chk_label);
+    const haddr = try self.newTemp();
+    try self.qbeOp2Imm(haddr, .l, "sub", v.text, 8);
+    const hdr = try self.newTemp();
+    try self.qbeLoadL(hdr, haddr);
+    const sh = try self.newTemp();
+    try self.qbeOp2Imm(sh, .l, "shr", hdr, 61);
+    const asc = try self.newTemp();
+    try self.qbeOp2Imm(asc, .l, "and", sh, 3);
+    const is_ascii = try self.newTemp();
+    try self.qbeOp2Imm(is_ascii, .w, "ceql", asc, 1);
+    try self.qbeJnz(is_ascii, fast_label, slow_label);
+    try self.qbeLabel(fast_label);
+    const masked = try self.newTemp();
+    try self.qbeOp2Imm(masked, .l, "and", hdr, 4503599627370495);
+    try self.qbeStoreL(masked, res_slot);
+    try self.qbeJmp(done_label);
+    try self.qbeLabel(slow_label);
+    const slow_r = try self.newTemp();
+    try self.qbeCall(.{ .name = slow_r, .ty = .l }, "$nox_str_char_count", &.{.{ .ty = .l, .text = v.text }});
+    try self.qbeStoreL(slow_r, res_slot);
+    try self.qbeJmp(done_label);
+    try self.qbeLabel(done_label);
+    const res = try self.newTemp();
+    try self.qbeLoadL(res, res_slot);
+    try self.releaseIfTemporary(arg_expr, v);
+    return .{ .text = res, .qtype = .l };
 }
 
 /// `[elem for x in it if c ...]` — sonuç listesi `result_type`tan (checker) bilinen tipte; döngüler satır içi üretilir, her eleman sahipli

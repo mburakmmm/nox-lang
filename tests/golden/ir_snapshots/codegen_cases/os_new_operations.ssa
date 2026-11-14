@@ -5524,6 +5524,7 @@ export function w $main(w %argc, l %argv) {
     %t3 =l alloc8 8
     %t4 =l alloc8 8
     %t5 =l alloc4 4
+    %t41 =l alloc8 8
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
@@ -5628,63 +5629,81 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t0
     storel %t29, %t0
     %t39 =l loadl %t0
-    %t40 =l call $nox_str_char_count(l %t39)
-    %t41 =w csgtl %t40, 0
-    jnz %t41, @print_true25, @print_false26
-@print_true25
+    %t42 =w ceql %t39, 0
+    jnz %t42, @strlen_slow27, @strlen_chk25
+@strlen_chk25
+    %t43 =l sub %t39, 8
+    %t44 =l loadl %t43
+    %t45 =l shr %t44, 61
+    %t46 =l and %t45, 3
+    %t47 =w ceql %t46, 1
+    jnz %t47, @strlen_fast26, @strlen_slow27
+@strlen_fast26
+    %t48 =l and %t44, 4503599627370495
+    storel %t48, %t41
+    jmp @strlen_done28
+@strlen_slow27
+    %t49 =l call $nox_str_char_count(l %t39)
+    storel %t49, %t41
+    jmp @strlen_done28
+@strlen_done28
+    %t50 =l loadl %t41
+    %t51 =w csgtl %t50, 0
+    jnz %t51, @print_true29, @print_false30
+@print_true29
     call $printf(l $fmt_bool_true)
-    jmp @print_done27
-@print_false26
+    jmp @print_done31
+@print_false30
     call $printf(l $fmt_bool_false)
-    jmp @print_done27
-@print_done27
-    %t42 =l loadl %t0
-    storel %t42, %t4
-    %t43 =l loadl %t4
-    %t44 =l call $nox_path_is_absolute_raw(l %t43)
-    %t45 =w cnel %t44, 0
-    storew %t45, %t5
-    jmp @inline_done28
-@after_inline_return29
-    jmp @inline_done28
-@inline_done28
-    %t46 =w loadw %t5
-    jnz %t46, @print_true30, @print_false31
-@print_true30
+    jmp @print_done31
+@print_done31
+    %t52 =l loadl %t0
+    storel %t52, %t4
+    %t53 =l loadl %t4
+    %t54 =l call $nox_path_is_absolute_raw(l %t53)
+    %t55 =w cnel %t54, 0
+    storew %t55, %t5
+    jmp @inline_done32
+@after_inline_return33
+    jmp @inline_done32
+@inline_done32
+    %t56 =w loadw %t5
+    jnz %t56, @print_true34, @print_false35
+@print_true34
     call $printf(l $fmt_bool_true)
-    jmp @print_done32
-@print_false31
+    jmp @print_done36
+@print_false35
     call $printf(l $fmt_bool_false)
-    jmp @print_done32
-@print_done32
-    %t47 =l loadl %t0
-    %t48 =w ceql %t47, 0
-    jnz %t48, @release_skip34, @release33
-@release33
-    %t49 =l sub %t47, 16
-    %t50 =l loadl %t49
-    %t51 =w csgel %t50, 536870912
-    jnz %t51, @str_free_done38, @str_rel_atomic39
-@str_rel_atomic39
-    %t52 =l sub %t47, 16
-    %t53 =l loadl %t52
-    %t54 =l sub %t53, 1
-    storel %t54, %t52
-    %t55 =w cslel %t54, 0
-    jnz %t55, @str_free36, @str_free_skip37
-@str_free36
-    call $nox_str_free_now(l %rt, l %t47)
-    jmp @str_free_done38
-@str_free_skip37
-    jmp @str_free_done38
-@str_free_done38
-    jmp @release_done35
-@release_skip34
-    jmp @release_done35
-@release_done35
+    jmp @print_done36
+@print_done36
+    %t57 =l loadl %t0
+    %t58 =w ceql %t57, 0
+    jnz %t58, @release_skip38, @release37
+@release37
+    %t59 =l sub %t57, 16
+    %t60 =l loadl %t59
+    %t61 =w csgel %t60, 536870912
+    jnz %t61, @str_free_done42, @str_rel_atomic43
+@str_rel_atomic43
+    %t62 =l sub %t57, 16
+    %t63 =l loadl %t62
+    %t64 =l sub %t63, 1
+    storel %t64, %t62
+    %t65 =w cslel %t64, 0
+    jnz %t65, @str_free40, @str_free_skip41
+@str_free40
+    call $nox_str_free_now(l %rt, l %t57)
+    jmp @str_free_done42
+@str_free_skip41
+    jmp @str_free_done42
+@str_free_done42
+    jmp @release_done39
+@release_skip38
+    jmp @release_done39
+@release_done39
     storel 0, %t0
     call $nox_runtime_deinit(l %rt)
-@fn_end40
+@fn_end44
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

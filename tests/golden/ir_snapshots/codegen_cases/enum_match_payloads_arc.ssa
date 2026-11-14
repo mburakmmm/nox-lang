@@ -4240,6 +4240,7 @@ export function w $main(w %argc, l %argv) {
     %t387 =l alloc8 8
     %t405 =l alloc8 8
     %t427 =l alloc8 8
+    %t752 =l alloc8 8
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
@@ -6043,68 +6044,86 @@ export function w $main(w %argc, l %argv) {
     %t748 =l loadl %t8
     %t749 =l add %t748, 8
     %t750 =l loadl %t749
-    %t751 =l call $nox_str_char_count(l %t750)
-    %t752 =l add %t747, %t751
-    %t753 =l add %t746, %t752
-    storel %t753, %t4
+    %t753 =w ceql %t750, 0
+    jnz %t753, @strlen_slow393, @strlen_chk391
+@strlen_chk391
+    %t754 =l sub %t750, 8
+    %t755 =l loadl %t754
+    %t756 =l shr %t755, 61
+    %t757 =l and %t756, 3
+    %t758 =w ceql %t757, 1
+    jnz %t758, @strlen_fast392, @strlen_slow393
+@strlen_fast392
+    %t759 =l and %t755, 4503599627370495
+    storel %t759, %t752
+    jmp @strlen_done394
+@strlen_slow393
+    %t760 =l call $nox_str_char_count(l %t750)
+    storel %t760, %t752
+    jmp @strlen_done394
+@strlen_done394
+    %t761 =l loadl %t752
+    %t762 =l add %t747, %t761
+    %t763 =l add %t746, %t762
+    storel %t763, %t4
     jmp @if_end382
 @if_else384
-    %t754 =l loadl %t4
-    %t755 =l sub %t754, 1
-    storel %t755, %t4
+    %t764 =l loadl %t4
+    %t765 =l sub %t764, 1
+    storel %t765, %t4
     jmp @if_end382
 @if_end382
     jmp @for_step348
 @for_step348
-    %t756 =l loadl %t5
-    %t757 =l add %t756, 1
-    storel %t757, %t5
+    %t766 =l loadl %t5
+    %t767 =l add %t766, 1
+    storel %t767, %t5
     jmp @for_cond345
 @for_end347
-    %t758 =l loadl %t4
-    call $printf(l $fmt_int, ..., l %t758)
-    %t759 =l loadl %t7
-    %t760 =w ceql %t759, 0
-    jnz %t760, @release_skip392, @release391
-@release391
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t759, l $Token_release)
-    jmp @release_done393
-@release_skip392
-    jmp @release_done393
-@release_done393
+    %t768 =l loadl %t4
+    call $printf(l $fmt_int, ..., l %t768)
+    %t769 =l loadl %t7
+    %t770 =w ceql %t769, 0
+    jnz %t770, @release_skip396, @release395
+@release395
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t769, l $Token_release)
+    jmp @release_done397
+@release_skip396
+    jmp @release_done397
+@release_done397
     storel 0, %t7
-    %t761 =l loadl %t6
-    %t762 =w ceql %t761, 0
-    jnz %t762, @release_skip395, @release394
-@release394
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t761, l $Token_release)
-    jmp @release_done396
-@release_skip395
-    jmp @release_done396
-@release_done396
+    %t771 =l loadl %t6
+    %t772 =w ceql %t771, 0
+    jnz %t772, @release_skip399, @release398
+@release398
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t771, l $Token_release)
+    jmp @release_done400
+@release_skip399
+    jmp @release_done400
+@release_done400
     storel 0, %t6
-    %t763 =l loadl %t8
-    %t764 =w ceql %t763, 0
-    jnz %t764, @release_skip398, @release397
-@release397
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t763, l $Node_release)
-    jmp @release_done399
-@release_skip398
-    jmp @release_done399
-@release_done399
+    %t773 =l loadl %t8
+    %t774 =w ceql %t773, 0
+    jnz %t774, @release_skip402, @release401
+@release401
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t773, l $Node_release)
+    jmp @release_done403
+@release_skip402
+    jmp @release_done403
+@release_done403
     storel 0, %t8
-    %t765 =l loadl %t0
-    %t766 =w ceql %t765, 0
-    jnz %t766, @release_skip401, @release400
-@release400
-    call $List_Token_release(l %rt, l %t765)
-    jmp @release_done402
-@release_skip401
-    jmp @release_done402
-@release_done402
+    %t775 =l loadl %t0
+    %t776 =w ceql %t775, 0
+    jnz %t776, @release_skip405, @release404
+@release404
+    call $List_Token_release(l %rt, l %t775)
+    jmp @release_done406
+@release_skip405
+    jmp @release_done406
+@release_done406
     storel 0, %t0
     call $nox_runtime_deinit(l %rt)
-@fn_end403
+@fn_end407
     ret 0
 }
 export function $List_Token_release(l %rt, l %p) {
