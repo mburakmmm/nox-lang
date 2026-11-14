@@ -153,7 +153,7 @@ fn addLibdeflate(b: *std.Build, mod: *std.Build.Module, arch: std.Target.Cpu.Arc
     if (arch_file) |f| mod.addCSourceFiles(.{ .root = b.path("third_party/libdeflate"), .files = &.{f}, .flags = &flags });
 }
 
-/// 2.2 aşama 8: gömülü C kütüphaneleri (zstd, lz4, xxHash, yyjson; sonra PCRE2/brotli) — `noxclibs-<hedef>.a` ADLI, ayrı bir statik arşiv. `noxrt.o`ya GÖMÜLMEZ: derleyici
+/// 2.2 aşama 8: gömülü C kütüphaneleri (zstd, lz4, xxHash, yyjson, PCRE2; sonra brotli) — `noxclibs-<hedef>.a` ADLI, ayrı bir statik arşiv. `noxrt.o`ya GÖMÜLMEZ: derleyici
 /// (`compiler/main.zig`) arşivi yalnızca programın modülleri `from "zig-out/lib/noxclibs.a"` bildiriyorsa bağlar (kullanılmayan program büyümez) ve linker yalnızca başvurulan
 /// üyeleri alır. Böylece macOS, Linux VE Windows (COFF'un `noxrt.o`ya çok sayıda C nesnesi gömememesi sınırı arşivi etkilemez) aynı modül yüzeyine sahiptir.
 /// Her `.c` dosyası `zig cc -c` ile ayrı derlenir, `zig ar` (llvm-ar) ile arşivlenir: Zig'in kendi arşiv yazıcısı Mach-O üyelerini 8 bayta hizalamaz ve Apple `ld` reddeder.
@@ -166,6 +166,15 @@ fn addClibsArchive(b: *std.Build, arch: std.Target.Cpu.Arch, os_tag: std.Target.
     const lz4_flags = common ++ [_][]const u8{ "-Ithird_party/lz4", "-DXXH_NAMESPACE=LZ4_", "-Iruntime/c_glue" }; // lz4'ün paketli xxhash'i ayrı ad alanında
     const xxh_flags = common ++ [_][]const u8{ "-Ithird_party/xxhash", "-Iruntime/c_glue" };
     const yy_flags = common ++ [_][]const u8{ "-Ithird_party/yyjson", "-Iruntime/c_glue" };
+    // PCRE2 8-bit + JIT (sljit) + Unicode; `config.h` yapılandırılmamış (generic) sürümdür, özellikler -D ile açılır.
+    const pcre_flags = common ++ [_][]const u8{ "-DHAVE_CONFIG_H", "-DPCRE2_CODE_UNIT_WIDTH=8", "-DSUPPORT_PCRE2_8", "-DSUPPORT_UNICODE", "-DSUPPORT_JIT", "-DPCRE2_STATIC", "-Ithird_party/pcre2/src", "-Ithird_party/pcre2/deps/sljit" };
+    const pcre_glue_flags = common ++ [_][]const u8{ "-DPCRE2_STATIC", "-Ithird_party/pcre2/src", "-Iruntime/c_glue" };
+    const pcre_files = [_][]const u8{
+        "pcre2_auto_possess.c", "pcre2_chartables.c", "pcre2_chkdint.c",   "pcre2_compile.c",  "pcre2_compile_cgroup.c", "pcre2_compile_class.c", "pcre2_config.c",     "pcre2_context.c",
+        "pcre2_convert.c",      "pcre2_dfa_match.c",  "pcre2_error.c",     "pcre2_extuni.c",   "pcre2_find_bracket.c",   "pcre2_jit_compile.c",   "pcre2_maketables.c", "pcre2_match.c",
+        "pcre2_match_data.c",   "pcre2_match_next.c", "pcre2_newline.c",   "pcre2_ord2utf.c",  "pcre2_pattern_info.c",   "pcre2_script_run.c",    "pcre2_serialize.c",  "pcre2_string_utils.c",
+        "pcre2_study.c",        "pcre2_substitute.c", "pcre2_substring.c", "pcre2_tables.c",   "pcre2_ucd.c",            "pcre2_valid_utf.c",     "pcre2_xclass.c",
+    };
     const zstd_glue_flags = common ++ [_][]const u8{ "-Ithird_party/zstd/lib", "-Iruntime/c_glue" };
     const zstd_files = [_][]const u8{
         "lib/common/debug.c",                      "lib/common/entropy_common.c",      "lib/common/error_private.c",             "lib/common/fse_decompress.c",
@@ -182,6 +191,8 @@ fn addClibsArchive(b: *std.Build, arch: std.Target.Cpu.Arch, os_tag: std.Target.
     srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "lz4_glue.c", .flags = &lz4_flags }) catch @panic("OOM");
     srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "zstd_glue.c", .flags = &zstd_glue_flags }) catch @panic("OOM");
     srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "xxh_glue.c", .flags = &xxh_flags }) catch @panic("OOM");
+    for (pcre_files) |f| srcs.append(b.allocator, .{ .dir = "third_party/pcre2/src", .file = f, .flags = &pcre_flags }) catch @panic("OOM");
+    srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "pcre2_glue.c", .flags = &pcre_glue_flags }) catch @panic("OOM");
     srcs.append(b.allocator, .{ .dir = "third_party/yyjson", .file = "yyjson.c", .flags = &yy_flags }) catch @panic("OOM");
     srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "yyjson_glue.c", .flags = &yy_flags }) catch @panic("OOM");
 

@@ -1088,6 +1088,22 @@ fn buildIntList(rt: ?*anyopaque, vals: []const isize) ?*anyopaque {
     return @ptrCast(base);
 }
 
+/// C sarmalayıcıların (`runtime/c_glue/pcre2_glue.c`) `list[int]` döndürmesi için: `vals[0..n]`den yeni Nox listesi.
+pub export fn nox_int_list_from_c(rt: ?*anyopaque, vals: ?[*]const i64, n: usize) callconv(.c) ?*anyopaque {
+    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * n) orelse return null;
+    const base: [*]u8 = @ptrCast(raw);
+    @as(*align(1) i64, @ptrCast(base)).* = @intCast(n);
+    @as(*align(1) i64, @ptrCast(base + 8)).* = @intCast(n);
+    if (n > 0) {
+        const src = vals.?;
+        for (0..n) |i| {
+            const slot = base + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+            @as(*align(1) i64, @ptrCast(slot)).* = src[i];
+        }
+    }
+    return @ptrCast(base);
+}
+
 fn dupStr(rt: ?*anyopaque, s: []const u8) ?[*:0]u8 {
     const buf = str_mod.nox_str_alloc_buf(rt, s.len) orelse return null;
     @memcpy(buf[0..s.len], s);

@@ -54,7 +54,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.time`](time.md) | wall clock, sleeping, calendar date-times, monotonic intervals |
 | [`nox.tasks`](tasks.md) | task groups: add, wait, limit, cancel |
 | [`nox.property`](property.md) | seeded property-based testing with size shrinking and replay |
-| [`nox.regex`](regex.md) | regular expressions (groups, alternation, captures) |
+| [`nox.regex`](regex.md), [`nox.pcre2`](pcre2.md) | regular expressions (groups, alternation, captures); PCRE2 with JIT |
 | [`nox.unicode`](unicode.md) | Unicode normalization (NFC/NFD/NFKC/NFKD) and Turkish case mapping |
 | [`nox.template`](template.md) | `{{ name }}` text templates, HTML-escaped by default |
 

@@ -1,0 +1,79 @@
+# v2.1.174 (2.2 aşama 8): nox.pcre2 — PCRE2 (+JIT) ile Perl uyumlu düzenli ifadeler: derlenmiş desen, gruplar, adlı gruplar, ileri/geri bakış, Unicode, boş eşleşmeler, hata yolları
+import nox.pcre2
+import nox.regex
+from nox.pcre2 import Pcre2, Match, Pcre2Error
+
+print(nox.pcre2.is_supported())
+p: Pcre2 = nox.pcre2.compile("(\\w+)@(\\w+)\\.com")
+m: Match | None = p.search("mail bob@example.com now")
+if m is not None:
+    print(m.start, m.end, m.group(0), m.group(1), m.group(2), m.count())
+print(p.search("nothing here") is None, p.is_match("a@b.com"), p.is_match("zzz"))
+# JIT'li ve JIT'siz aynı sonuç
+q: Pcre2 = nox.pcre2.compile("(\\d+)-(\\d+)", 0, False)
+r: Pcre2 = nox.pcre2.compile("(\\d+)-(\\d+)", 0, True)
+txt: str = "10-20, 3-4 and 100-200"
+print(q.find_all(txt), r.find_all(txt), q.count_matches(txt) == r.count_matches(txt))
+
+# adlı gruplar
+nm: Pcre2 = nox.pcre2.compile("(?P<year>\\d{4})-(?P<mon>\\d{2})")
+mm: Match | None = nm.search("on 2026-11 ok")
+if mm is not None:
+    print(mm.named("year"), mm.named("mon"), mm.index_of("mon"), mm.groups())
+# arkadan başvuru, ileri/geri bakış, sahiplenici (nox.regex'in desteklemediği PCRE özellikleri)
+print(nox.pcre2.find_all("(\\w)\\1", "aabbcd eeff"))
+print(nox.pcre2.find_all("(?<=\\$)\\d+", "cost $15 and $200 or 30"))
+print(nox.pcre2.find_all("\\w+(?=!)", "hi! there you! ok"))
+print(nox.pcre2.find_all("(?>a+)b", "aaab aaac"))
+print(nox.pcre2.find_all("a.*?c", "abcabc"), nox.pcre2.find_all("a.*c", "abcabc"))
+print(nox.pcre2.find_all("(?i)hello", "Hello HELLO hello"), nox.pcre2.find_all("hello", "Hello HELLO hello", 1))
+# bayraklar
+print(nox.pcre2.find_all("^\\w+$", "one\ntwo\nthree", 2), nox.pcre2.find_all("a.b", "a\nb a-b", 4))
+print(nox.pcre2.find_all("a b # comment\n c", "abc", 32))
+# Unicode: \w, büyük/küçük harf, UTF-8 bayt konumları
+print(nox.pcre2.find_all("\\w+", "héllo wörld çay"))
+um: Match | None = nox.pcre2.search("é+", "caféé!")
+if um is not None:
+    print(um.start, um.end, um.group(0))
+print(nox.pcre2.find_all("(?i)ÇAY", "çay"), nox.pcre2.is_match("^\\p{Lu}", "Äb"))
+# boş eşleşmeler (Python 3.7+ ile aynı)
+print(nox.pcre2.find_all("a*", "baac"), len(nox.pcre2.find_matches("", "héé")))
+print(nox.pcre2.find_all("\\b", "ab cd"))
+# tam/başta eşleşme
+print(nox.pcre2.full_match("\\d+", "123") is not None, nox.pcre2.full_match("\\d+", "123a") is None, nox.pcre2.match("\\d+", "a123") is None, nox.pcre2.match("\\d+", "123a") is not None)
+print(p.full_match("bob@example.com") is not None, p.full_match("x bob@example.com") is None)
+# split / replace
+print(nox.pcre2.split(",\\s*", "a, b,c,   d"))
+print(nox.pcre2.replace("(\\w+)@(\\w+)", "\\2 at \\1", "bob@example and amy@site"))
+print(nox.pcre2.replace("(?P<k>\\w+)=(?P<v>\\w+)", "\\g<v>=\\g<k>", "a=1 b=2"), nox.pcre2.replace("o", "0", "foo boo", 0, 2))
+print(nox.pcre2.escape("a.b*c[d]"), nox.pcre2.is_match(nox.pcre2.escape("1+1=2"), "x 1+1=2 y"))
+# BYTES: geçersiz UTF-8 özne
+raw: str = "ab" + chr(255) + "cd"
+print(nox.pcre2.compile("b.c", 64).is_match(raw), nox.pcre2.compile("b..c", 64).is_match(raw), nox.pcre2.compile("b.c").is_match(raw), nox.pcre2.compile("b.c", 64).is_match("abc"))
+
+# hata yolları
+for bad in ["(", "[a", "a**", "(?<n>a)(?<n>b)", "\\"]:
+    try:
+        nox.pcre2.compile(bad)
+        print("compiled?", bad)
+    except Pcre2Error as e:
+        print("Pcre2Error derleme")
+# katastrofik geri izleme: eşleşme sınırı Pcre2Error verir (sonsuz döngü yok)
+evil: Pcre2 = nox.pcre2.compile("(a+)+$", 0, False)
+try:
+    print(evil.is_match("a" * 40 + "b"))
+except Pcre2Error as e:
+    print("Pcre2Error limit")
+evil_jit: Pcre2 = nox.pcre2.compile("(a+)+$", 0, True)
+try:
+    print(evil_jit.is_match("a" * 40 + "b"))
+except Pcre2Error as e:
+    print("Pcre2Error limit jit")
+# büyük girdi: nox.regex ile aynı sayıda eşleşme
+parts: list[str] = []
+i: int = 0
+while i < 5000:
+    parts.append("id" + str(i) + "=" + str(i * 7))
+    i = i + 1
+big: str = " ".join(parts)
+print(nox.pcre2.compile("\\d+").count_matches(big) == len(nox.regex.find_all("[0-9]+", big)), len(nox.pcre2.find_all("id(\\d+)=", big)))

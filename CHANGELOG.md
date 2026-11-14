@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.174]
+
+### Eklendi (2.2 aşama 8, dilim 3: `nox.pcre2`)
+
+- **`nox.pcre2`** — PCRE2 10.49 (BSD-3, sljit JIT ile; `third_party/pcre2`) ile Perl uyumlu düzenli ifadeler; `nox.regex`in YANINDA ayrı modül (`nox.regex` değişmedi). Yüzey `nox.regex`le uyumlu (`search/match/full_match/is_match/find_all/find_matches/split/replace/escape`, `Match`, aynı bayraklar, bayt konumları) + derlenmiş desen sınıfı `Pcre2` (`compile(pattern, flags, jit)`, `count_matches`, `is_jit`, JIT yoksa/başarısızsa yorumlayıcıya sessiz düşüş: sonuçlar aynı) + `EXTENDED`/`BYTES` bayrakları. Varsayılan UTF-8 + Unicode özellikleri (`\w \d \b` Python 3 gibi). Geriye başvuru, ileri/geri bakış, sahiplenici/tembel nicelik, `\p{..}`, adlı gruplar. PCRE2 eşleşme sınırı katastrofik geri izlemeyi `Pcre2Error` yapar (JIT'te de).
+- Yetki: modülün kayıtlı yetkisi `dynamic_code` (JIT çalışma zamanında makine kodu üretir); `--deny-capability dynamic_code` modülü reddeder.
+- Aynı `noxclibs-<hedef>.a` arşivi: macOS = Linux = Windows. Runtime'a tek ekleme: `nox_int_list_from_c` (C sarmalayıcıların `list[int]` döndürmesi için). Özne bir kez doğrulanır (sonraki eşleşmelerde `NO_UTF_CHECK`); boş eşleşmelerde Python 3.7+ ile aynı ilerleme.
+- Ölçüm (Apple M4, 1,3 MB metin; `benchmarks/pcre2/run.py`): `[0-9]+` sayımı 0,81 ms (C PCRE2 JIT 0,69; `nox.regex` 3,35; CPython 4,4), `\b(foo|bar|baz)\b` 2,0 ms (C 1,85; `nox.regex` 17,2), `(\w+)@(\w+)\.com` 2,08 ms (C 2,02; `nox.regex` 28,5; CPython 27,1). 400 rastgele desen/metin çiftinde JIT, yorumlayıcı ve CPython `re` sonuçları birebir aynı.
+- Golden `clibs_pcre2`; `docs/stdlib/pcre2.md`.
+
 ## [2.1.173]
 
 ### Eklendi (2.2 aşama 8, dilim 2: `nox.yyjson`)

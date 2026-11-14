@@ -1561,6 +1561,8 @@ pub const Checker = struct {
         .{ .name = "lz4", .caps = &.{} },
         .{ .name = "xxhash", .caps = &.{} },
         .{ .name = "yyjson", .caps = &.{} },
+        // PCRE2 JIT (sljit) çalışma zamanında makine kodu üretir: `--deny-capability dynamic_code` bu modülü reddeder (`nox.regex` kalır).
+        .{ .name = "pcre2", .caps = &.{.dynamic_code} },
         .{ .name = "zip", .caps = &.{} },
         .{ .name = "terminal", .caps = &.{.process} },
         .{ .name = "random", .caps = &.{} },

@@ -1,0 +1,101 @@
+# nox.regex, nox.pcre2 (yorumlayıcı + JIT) kıyası; C ve CPython aynı iş yükünü bench.c / bench.py'de çalıştırır. Çıktı: ad<TAB>ms/tekrar<TAB>sağlama
+import nox.regex
+import nox.pcre2
+from nox.pcre2 import Pcre2
+import nox.time
+
+def build_numbers(n: int) -> str:
+    parts: list[str] = []
+    i: int = 0
+    while i < n:
+        parts.append("n" + str(i * 37 % 100003))
+        i = i + 1
+    return " ".join(parts)
+
+def build_prose(n: int) -> str:
+    words: list[str] = ["alpha", "beta", "foo", "gamma", "bar", "delta", "baz", "epsilon", "zeta", "contact", "bob@example.com", "eta"]
+    parts: list[str] = []
+    i: int = 0
+    while i < n:
+        parts.append(words[(i * 7 + i // 3) % len(words)])
+        i = i + 1
+    return " ".join(parts)
+
+nums: str = build_numbers(50000)
+prose: str = build_prose(200000)
+reps: int = 10
+
+def report(name: str, t0: int, check: int) -> None:
+    ms: float = float(nox.time.monotonic_ns() - t0) / 1000000.0 / float(reps)
+    print(name + "\t" + str(ms) + "\t" + str(check))
+
+pd_i: Pcre2 = nox.pcre2.compile("[0-9]+", 0, False)
+pd_j: Pcre2 = nox.pcre2.compile("[0-9]+", 0, True)
+pw_i: Pcre2 = nox.pcre2.compile("\\b(foo|bar|baz)\\b", 0, False)
+pw_j: Pcre2 = nox.pcre2.compile("\\b(foo|bar|baz)\\b", 0, True)
+pe_i: Pcre2 = nox.pcre2.compile("(\\w+)@(\\w+)\\.com", 0, False)
+pe_j: Pcre2 = nox.pcre2.compile("(\\w+)@(\\w+)\\.com", 0, True)
+
+check: int = 0
+r: int = 0
+t0: int = nox.time.monotonic_ns()
+while r < reps:
+    check = len(nox.regex.find_all("[0-9]+", nums))
+    r = r + 1
+report("digits count nox.regex", t0, check)
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = pd_i.count_matches(nums)
+    r = r + 1
+report("digits count nox.pcre2 interp", t0, check)
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = pd_j.count_matches(nums)
+    r = r + 1
+report("digits count nox.pcre2 jit", t0, check)
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = len(pd_j.find_all(nums))
+    r = r + 1
+report("digits find_all (strings) nox.pcre2 jit", t0, check)
+
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = len(nox.regex.find_all("\\b(foo|bar|baz)\\b", prose))
+    r = r + 1
+report("words count nox.regex", t0, check)
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = pw_i.count_matches(prose)
+    r = r + 1
+report("words count nox.pcre2 interp", t0, check)
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = pw_j.count_matches(prose)
+    r = r + 1
+report("words count nox.pcre2 jit", t0, check)
+
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = len(nox.regex.find_all("(\\w+)@(\\w+)\\.com", prose))
+    r = r + 1
+report("email count nox.regex", t0, check)
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = pe_i.count_matches(prose)
+    r = r + 1
+report("email count nox.pcre2 interp", t0, check)
+r = 0
+t0 = nox.time.monotonic_ns()
+while r < reps:
+    check = pe_j.count_matches(prose)
+    r = r + 1
+report("email count nox.pcre2 jit", t0, check)

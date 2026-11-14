@@ -1,0 +1,312 @@
+# nox.pcre2 (v2.1.174, 2.2 aşama 8) — PCRE2 (BSD-3, `third_party/pcre2`): Perl uyumlu düzenli ifadeler (geriye başvuru, ileri/geri bakış, sahiplenici/tembel nicelik, Unicode özellikleri, adlı gruplar `(?P<ad>...)`/`(?<ad>...)`),
+# JIT derleme (macOS, Linux, Windows x86-64/arm64/riscv64; JIT yoksa ya da başarısız olursa yorumlayıcıya SESSİZCE düşülür, sonuçlar aynıdır). `nox.regex` (Python `re` alt kümesi) olduğu gibi kalır; bu modül yanındaki ayrı bir motordur.
+# Yüzey `nox.regex`le uyumludur (`search/match/full_match/is_match/find_all/find_matches/split/replace/escape`, `Match`, aynı bayraklar, BAYT konumları) ve bir de DERLENMİŞ desen sınıfı `Pcre2` sunar:
+# JIT derlemesi pahalıdır, bu yüzden aynı deseni çok kez kullanacaksanız `compile()` ile bir kez derleyin. Tek seferlik işlevler JIT'siz derler.
+# Varsayılan: UTF-8 + Unicode özellikleri (`\w`, `\d`, `\b` Python 3 `str` gibi Unicode'a duyarlıdır; özne geçerli UTF-8 olmalıdır, değilse `Pcre2Error`); ham bayt için `BYTES` bayrağı.
+# Katastrofik geri izleme korunur: PCRE2'nin eşleşme sınırı aşılırsa `Pcre2Error` (sonsuz döngü yok). Kayıtlı modül yetkisi `dynamic_code`dur (JIT çalışma zamanında makine kodu üretir);
+# `--deny-capability dynamic_code` ile bu modül reddedilir (o durumda `nox.regex` kullanın). WebAssembly/mobil/çıplak çekirdek hedeflerinde bu modül yoktur (bağlama hatası).
+
+class Pcre2Error(Exception):
+    pass
+
+extern def nxc_pcre2_compile(pattern: str, flags: int, jit: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_pcre2_free(h: int) -> None from "zig-out/lib/noxclibs.a"
+extern def nxc_pcre2_ok() -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_pcre2_err_msg() -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_pcre2_err_pos() -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_pcre2_ngroups(h: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_pcre2_is_jit(h: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_pcre2_jit_supported() -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_pcre2_group_names(h: int) -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_pcre2_exec_all(h: int, text: str, start: int, flags: int, limit: int) -> list[int] from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_pcre2_test(h: int, text: str, start: int, flags: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_pcre2_slice(text: str, start: int, end: int) -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_pcre2_available() -> int from "zig-out/lib/noxclibs.a"
+
+IGNORECASE: int = 1
+MULTILINE: int = 2
+DOTALL: int = 4
+ANCHORED: int = 8
+FULL: int = 16
+EXTENDED: int = 32
+BYTES: int = 64
+_END: int = 4611686018427387904
+
+# Bu hedefte gömülü PCRE2 var mı? (Modül bağlanabiliyorsa her zaman True.)
+def is_supported() -> bool:
+    return nxc_pcre2_available() == 1
+
+# Bu işlemde JIT kullanılabilir mi? (Yalnızca hız bilgisidir; sonuçları değiştirmez.)
+def jit_supported() -> bool:
+    return nxc_pcre2_jit_supported() == 1
+
+class Match:
+    def __init__(self, text: str, spans: list[int], names: list[str]) -> None:
+        self.text: str = text
+        self.spans: list[int] = spans
+        self.names: list[str] = names
+        self.start: int = spans[0]
+        self.end: int = spans[1]
+
+    def count(self) -> int:
+        return len(self.spans) // 2 - 1
+
+    def matched(self, i: int) -> bool:
+        if i < 0 or i * 2 + 1 >= len(self.spans):
+            return False
+        return self.spans[i * 2] >= 0
+
+    def group(self, i: int) -> str:
+        if i < 0 or i * 2 + 1 >= len(self.spans):
+            raise IndexError("no such group")
+        if self.spans[i * 2] < 0:
+            return ""
+        return nxc_pcre2_slice(self.text, self.spans[i * 2], self.spans[i * 2 + 1])
+
+    def index_of(self, name: str) -> int:
+        i: int = 0
+        while i < len(self.names):
+            if self.names[i] == name:
+                return i + 1
+            i += 1
+        return -1
+
+    def named(self, name: str) -> str:
+        k: int = self.index_of(name)
+        if k < 0:
+            raise IndexError("no such group")
+        return self.group(k)
+
+    def groups(self) -> list[str]:
+        out: list[str] = []
+        i: int = 1
+        while i <= self.count():
+            out.append(self.group(i))
+            i += 1
+        return out
+
+    def whole(self) -> str:
+        return self.group(0)
+
+def fail(prefix: str) -> None:
+    raise Pcre2Error(prefix + nxc_pcre2_err_msg() + " (at byte " + str(nxc_pcre2_err_pos()) + ")")
+
+def expand(repl: str, m: Match) -> str:
+    out: str = ""
+    i: int = 0
+    n: int = len(repl)
+    while i < n:
+        ch: str = repl[i]
+        if ch != "\\" or i + 1 >= n:
+            out = out + ch
+            i += 1
+            continue
+        nx: str = repl[i + 1]
+        if nx.isdigit():
+            j: int = i + 1
+            num: int = 0
+            digits: int = 0
+            while j < n and repl[j].isdigit() and digits < 2:
+                num = num * 10 + int(repl[j])
+                j += 1
+                digits += 1
+            out = out + m.group(num)
+            i = j
+        elif nx == "g" and i + 2 < n and repl[i + 2] == "<":
+            rest: str = repl[i + 3:]
+            off: int = rest.find(">")
+            if off < 0:
+                raise Pcre2Error("bad group reference in replacement")
+            close: int = i + 3 + off
+            ref: str = repl[i + 3:close]
+            if len(ref) > 0 and ref.isdigit():
+                out = out + m.group(int(ref))
+            else:
+                out = out + m.named(ref)
+            i = close + 1
+        elif nx == "n":
+            out = out + "\n"
+            i += 2
+        elif nx == "t":
+            out = out + "\t"
+            i += 2
+        elif nx == "\\":
+            out = out + "\\"
+            i += 2
+        else:
+            out = out + ch + nx
+            i += 2
+    return out
+
+# Derlenmiş desen: değişmezdir, birden çok iş parçacığından kullanılabilir, ömrü sıradan ARC'dir.
+class Pcre2:
+    h: int
+    pattern: str
+    names: list[str]
+
+    def __init__(self, h: int, pattern: str, names: list[str]) -> None:
+        self.h = h
+        self.pattern = pattern
+        self.names = names
+
+    def __del__(self) -> None:
+        nxc_pcre2_free(self.h)
+
+    def group_count(self) -> int:
+        return nxc_pcre2_ngroups(self.h)
+
+    # Bu desen JIT ile mi çalışıyor? (Yalnızca bilgi; sonuçlar aynıdır.)
+    def is_jit(self) -> bool:
+        return nxc_pcre2_is_jit(self.h) == 1
+
+    def run(self, text: str, start: int, flags: int, limit: int) -> list[Match]:
+        flat: list[int] = nxc_pcre2_exec_all(self.h, text, start, flags, limit)
+        if nxc_pcre2_ok() == 0:
+            fail("match error: ")
+        per: int = (nxc_pcre2_ngroups(self.h) + 1) * 2
+        out: list[Match] = []
+        i: int = 0
+        while i + per <= len(flat):
+            out.append(Match(text, flat[i:i + per], self.names))
+            i += per
+        return out
+
+    # `text`in HERHANGİ bir yerinde eşleşirse ilk eşleşmeyi, yoksa None döner (`start` bayt konumundan itibaren; UTF-8 modunda karakter sınırı olmalı).
+    def search(self, text: str, start: int = 0) -> Match | None:
+        ms: list[Match] = self.run(text, start, 0, 1)
+        if len(ms) == 0:
+            return None
+        return ms[0]
+
+    # Yalnızca `start`ta (varsayılan: başta) eşleşme (Python `re.match`).
+    def match(self, text: str, start: int = 0) -> Match | None:
+        ms: list[Match] = self.run(text, start, 8, 1)
+        if len(ms) == 0:
+            return None
+        return ms[0]
+
+    # Tüm metnin eşleşmesi gerekir (Python `re.fullmatch`).
+    def full_match(self, text: str) -> Match | None:
+        ms: list[Match] = self.run(text, 0, 8 | 16, 1)
+        if len(ms) == 0:
+            return None
+        return ms[0]
+
+    # Eşleşme var mı? (Gruplar için konum kurmaz: en hızlı yol.)
+    def is_match(self, text: str) -> bool:
+        r: int = nxc_pcre2_test(self.h, text, 0, 0)
+        if r < 0:
+            fail("match error: ")
+        return r == 1
+
+    def is_full_match(self, text: str) -> bool:
+        r: int = nxc_pcre2_test(self.h, text, 0, 8 | 16)
+        if r < 0:
+            fail("match error: ")
+        return r == 1
+
+    def find_matches(self, text: str) -> list[Match]:
+        return self.run(text, 0, 0, 0)
+
+    # Tüm eşleşmelerin metinleri (grup 0).
+    def find_all(self, text: str) -> list[str]:
+        flat: list[int] = nxc_pcre2_exec_all(self.h, text, 0, 0, 0)
+        if nxc_pcre2_ok() == 0:
+            fail("match error: ")
+        per: int = (nxc_pcre2_ngroups(self.h) + 1) * 2
+        out: list[str] = []
+        i: int = 0
+        while i + per <= len(flat):
+            out.append(nxc_pcre2_slice(text, flat[i], flat[i + 1]))
+            i += per
+        return out
+
+    # Eşleşme sayısı (metin kopyalamadan).
+    def count_matches(self, text: str) -> int:
+        flat: list[int] = nxc_pcre2_exec_all(self.h, text, 0, 0, 0)
+        if nxc_pcre2_ok() == 0:
+            fail("match error: ")
+        return len(flat) // ((nxc_pcre2_ngroups(self.h) + 1) * 2)
+
+    def split(self, text: str) -> list[str]:
+        out: list[str] = []
+        last: int = 0
+        for m in self.run(text, 0, 0, 0):
+            if m.end == m.start and m.start == 0:
+                continue
+            out.append(nxc_pcre2_slice(text, last, m.start))
+            last = m.end
+        out.append(nxc_pcre2_slice(text, last, _END))
+        return out
+
+    # `repl` içinde `\1`, `\g<ad>`, `\g<1>`, `\\`, `\n`, `\t` kullanılabilir (`nox.regex.replace` ile aynı). `count > 0` ise en çok `count` eşleşme değiştirilir.
+    def replace(self, repl: str, text: str, count: int = 0) -> str:
+        out: str = ""
+        last: int = 0
+        for m in self.run(text, 0, 0, count):
+            out = out + nxc_pcre2_slice(text, last, m.start) + expand(repl, m)
+            last = m.end
+        return out + nxc_pcre2_slice(text, last, _END)
+
+def names_of(h: int) -> list[str]:
+    if nxc_pcre2_ngroups(h) == 0:
+        return []
+    return nxc_pcre2_group_names(h).split("\n")
+
+def build(pattern: str, flags: int, jit: bool) -> Pcre2:
+    j: int = 0
+    if jit:
+        j = 1
+    h: int = nxc_pcre2_compile(pattern, flags, j)
+    if h == 0:
+        raise Pcre2Error("invalid regular expression '" + pattern + "': " + nxc_pcre2_err_msg() + " (at byte " + str(nxc_pcre2_err_pos()) + ")")
+    return Pcre2(h, pattern, names_of(h))
+
+# Deseni derler (`flags`: IGNORECASE | MULTILINE | DOTALL | EXTENDED | BYTES). `jit=True` JIT'i dener (yoksa yorumlayıcı). Geçersiz desende `Pcre2Error`.
+def compile(pattern: str, flags: int = 0, jit: bool = True) -> Pcre2:
+    return build(pattern, flags, jit)
+
+# --- tek seferlik işlevler (nox.regex ile aynı imza; JIT'siz derler) ---
+
+def search(pattern: str, text: str, flags: int = 0) -> Match | None:
+    ms: list[Match] = build(pattern, flags, False).run(text, 0, flags & 24, 1)
+    if len(ms) == 0:
+        return None
+    return ms[0]
+
+def match(pattern: str, text: str, flags: int = 0) -> Match | None:
+    ms: list[Match] = build(pattern, flags, False).run(text, 0, 8, 1)
+    if len(ms) == 0:
+        return None
+    return ms[0]
+
+def full_match(pattern: str, text: str, flags: int = 0) -> Match | None:
+    ms: list[Match] = build(pattern, flags, False).run(text, 0, 8 | 16, 1)
+    if len(ms) == 0:
+        return None
+    return ms[0]
+
+def is_match(pattern: str, text: str, flags: int = 0) -> bool:
+    return build(pattern, flags, False).is_match(text)
+
+def find_matches(pattern: str, text: str, flags: int = 0) -> list[Match]:
+    return build(pattern, flags, False).run(text, 0, 0, 0)
+
+def find_all(pattern: str, text: str, flags: int = 0) -> list[str]:
+    return build(pattern, flags, False).find_all(text)
+
+def split(pattern: str, text: str, flags: int = 0) -> list[str]:
+    return build(pattern, flags, False).split(text)
+
+def replace(pattern: str, repl: str, text: str, flags: int = 0, count: int = 0) -> str:
+    return build(pattern, flags, False).replace(repl, text, count)
+
+# Desendeki özel karakterleri kaçışlar (düz metni desen olarak kullanmak için).
+def escape(s: str) -> str:
+    out: str = ""
+    for ch in s:
+        if ch in "\\.^$*+?{}[]|()-#& ":
+            out = out + "\\" + ch
+        else:
+            out = out + ch
+    return out
