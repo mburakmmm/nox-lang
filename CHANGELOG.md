@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.158]
+
+### Düzeltildi (Windows CI duman testi — A5)
+
+- **Windows bağlaması: "relocation truncated to fit: IMAGE_REL_AMD64_REL32 against `.rdata`" (v2.1.148'den beri):** COFF sembol tablosundaki `SectionNumber` işaretli 16 bittir; bir nesnede 32767'den fazla bölüm olunca GNU ld bölüm numaralarını yanlış çözer. Debug `noxrt.o` (Zig'in kendi x86-64 backend'i + `link_function_sections`/`link_data_sections`) ~42 bin bölüme çıkmıştı. Bu iki bayrak artık yalnız Windows dışı hedeflerde açık. Gerçek Windows PC'de MinGW gcc ile yeniden üretildi ve doğrulandı (`noxc run --backend qbe` ve `--backend llvm` → `42`; Debug `noxrt.o`: tek `.text`, 2 `.rdata`).
+- **Linux x86-64 CI (A1) kapandı:** v2.1.156 düzeltmesinden sonra v2.1.157 koşusunda Linux (x86-64) yeşil.
+
 ## [2.1.157]
 
 ### Düzeltildi

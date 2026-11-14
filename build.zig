@@ -854,8 +854,13 @@ pub fn build(b: *std.Build) void {
     // Zig ZATEN per-fonksiyon bölüm ÜRETİYOR (BU YÜZDEN macOS'ta `-dead_
     // strip` ÖNCEDEN ÖLÇÜLDÜĞÜ GİBİ ÇALIŞIYORDU) — ELF hedefleri İçİn BU
     // AÇIKÇA İSTENMELİDİR.
-    noxrt.link_function_sections = true;
-    noxrt.link_data_sections = true;
+    // v2.1.158: Windows (COFF) HARİÇ. COFF sembol tablosunun `SectionNumber` alanı işaretli 16 bittir: bir nesnede
+    // 32767'den fazla bölüm varsa GNU ld bölüm numaralarını yanlış çözer ("relocation truncated to fit:
+    // IMAGE_REL_AMD64_REL32 against `.rdata`"). Debug `noxrt.o` (kendi x86-64 backend'i, fonksiyon/veri başına bölüm)
+    // v2.1.148'de ~42 bin bölüme ulaşıp Windows bağlamasını kırdı; COFF'ta tek `.text`/`.rdata` kullanılır.
+    const split_sections = target.result.os.tag != .windows;
+    noxrt.link_function_sections = split_sections;
+    noxrt.link_data_sections = split_sections;
     noxrt.step.dependOn(&compile_swap_asm.step);
     const install_noxrt = b.addInstallFile(noxrt.getEmittedBin(), "lib/noxrt.o");
     b.getInstallStep().dependOn(&install_noxrt.step);
