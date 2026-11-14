@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.150]
+
+### Belge (tasarım)
+
+- `project/registry-guvenlik-tasarimi-2026-11.md` (TODO 7.4: SBOM → yayıncı anahtarı/imza → yayın zamanı tarama etiketleri; mevcut `noxc sign` üzerine kurulu) ve `project/wasm-threads-tasarimi-2026-11.md` (TODO 4.6: wasi-threads uyumlu gerçek çok iş parçacıklı WASM). İkisi de karar bekliyor; kod yok.
+
 ## [2.1.149]
 
 ### Düzeltildi (açık işler turu: B1–B3)

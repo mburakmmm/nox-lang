@@ -22,9 +22,9 @@ Bu listede olmayanlar: `v2-hazirlik-yol-haritasi.md` (37/37 bitti), `limitasyon-
 - [x] **B1. (11.10)** v2.1.149: kök neden bulundu (ikilisiz eski girdi yeniden kullanılırken `used` işaretçisi geç yazılıyordu, başka sürecin `prune`u siliyordu); işaretçi artık hemen yazılır + regresyon testi.
 - [x] **B2. (6.5)** v2.1.149: `docs/internals/wasm-coverage.md` gerçek motorla (MVP, çok değerli, sign-ext, doymalı, bulk, reftypes, SIMD, threads) yeniden yazıldı; kayıt bayattı.
 - [x] **B3. (7.5)** v2.1.149: NNI API fuzz (`alloc(0)` çökmesi düzeltildi) + Plugin API manifest fuzz golden (JSON hatası/yanlış tipler PluginError olur). HPy sınırı v2.0.46'dan fuzz'lıydı.
-- [K] **B4. (7.4) Registry güvenlik kapıları: otomatik tarama, yayıncı imzası, üretilmiş SBOM.** Bunlar ürün/mimari kararı (paket imzalama modeli, anahtar yönetimi, tarama hizmeti); AGENTS §16 gereği önce tasarım onayı gerekir. Mevcut güvenceler `docs/reference/security.md`de.
+- [~] **B4. (7.4)** Tasarım yazıldı: `project/registry-guvenlik-tasarimi-2026-11.md` (S1 SBOM → S2 yayıncı anahtarı/imza → S3 tarama etiketleri). **Karar bekliyor:** §4'teki 4 soru.
 - [K] **B5. (4.6) Kanıt zinciri: Aura commit'i ve toolchain alanlarının zorunluluğu.** Aura deposu ayrı olduğundan D bölümüne taşındı; Nox tarafı v2.0.38'de tamam.
-- [ ] **B6. (4.6, WASM) Gerçek çok iş parçacıklı WASM çalışması.** SIMD ve threads atomikleri bitti; kalan: aynı belleği paylaşan birden çok örnek + iş parçacığı oluşturma API'si. **Host/API tasarım kararı gerekir** (kullanıcıya sorulacak) → karar gelmeden başlanmaz.
+- [~] **B6. (4.6)** Tasarım yazıldı: `project/wasm-threads-tasarimi-2026-11.md` (wasi-threads uyumlu, örnek-başına OS iş parçacığı, gerçek wait/notify). **Karar bekliyor:** §6'daki 4 soru.
 - [ ] **B7. (9.15) WASM varsayılan kotaları çok-kiracılı kullanım için gevşek.** İzleme maddesi; sıkı hazır ayar + capability sınırları W2/W3 ile (Nexus). Çok-kiracılı kullanım gündeme gelince.
 - [ ] **B8. M:N: başlamış fiber, başladığı işçiye bağlı.** Bloklayan FFI'da işçi büyütme (v2.1.142) yalnızca başlamamış görevleri kurtarır; başlamış bir fiber bloklanmış işçide beklemeye devam eder. Tam çözüm = preemption / fiber göçü. **Kullanıcı kararıyla ertelendi** (2026-11-13/14); gündeme gelince yeniden sorulacak.
 
@@ -32,8 +32,8 @@ Bu listede olmayanlar: `v2-hazirlik-yol-haritasi.md` (37/37 bitti), `limitasyon-
 
 - [ ] **C1. (11.7) REPL — LLVM ORC JIT.** `noxc` LLVM'e bağlı değil; libLLVM'i çalışma anında tembel yükleme, `noxrt.o`yu JIT'e nesne olarak ekleme, satırlar arası durum için modül-global + ARC. iOS'ta JIT yasak → yalnızca masaüstü. Önce spike + tasarım onayı.
 - [ ] **C2. (11.8) C FFI maliyetini sıfıra yaklaştır / C kütüphanelerini Nox'ta çalıştır.** Önce mevcut maliyetin ölçümü ve tasarım seçenekleri. AGENTS §9.5 güven sınırı geçerli: sandbox/"güvenli mod" kapsamlı güvenlik tasarımı gerektirir, yarım eklenmez.
-- [K] **C3. (1.11) aarch64 / riscv64 için QEMU boot zinciri.** "Şimdilik yapılmayacak, 2-3-4. bölümlerden sonra yeniden sorulacak" — o bölümler bitti; **yeniden sorulma zamanı geldi.** (Kayıtta: aarch64 boot kodu, linker betiği ve `qemu-system-aarch64` kapısı yazılmadı, `nox-ana-todo` 5.6.)
-- [ ] **C4. (5.1/5.2) bindgen ve metaprogramlama kalanları.** bindgen F4b/F5 bitti; kalan tipler bölüm 8'de. Metaprogramlamada derleme zamanı sabitleri ve kullanıcı makroları **kapsam dışı** (kullanıcı kararı 2026-11-13). Önce `yapilacaklar` bölüm 8'de açık madde kalıp kalmadığını doğrula.
+- [ ] **C3. (1.11)** Kullanıcı kararı 2026-11-14: **aarch64 ve riscv64 birlikte** yapılacak (QEMU `virt`). Sürüyor.
+- [x] **C4. (5.1/5.2)** bindgen F4/F4b/F5 ve `@dataclass`/`@derive` bitti; yapilacaklar bölüm 8'de açık madde yok. Derleme zamanı sabitleri ve kullanıcı makroları kapsam dışı (kullanıcı kararı 2026-11-13).
 - [ ] **C5. (7.3) `list[Task[T]]`.** Bilinçli desteklenmiyor, hata `TaskGroup`'a yönlendirir. Değişmedi; yalnızca tasarım kararıyla.
 - [ ] **C6. Preemption** (B8 ile aynı konu). Kullanıcı "şimdilik gerekmez" dedi.
 
