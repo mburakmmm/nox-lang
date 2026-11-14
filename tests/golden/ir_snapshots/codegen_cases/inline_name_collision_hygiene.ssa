@@ -2071,6 +2071,26 @@ export function l $nox_class_name_dispatch(l %rt, l %tag, l %p) {
 @class_name_next23
     ret $__nox_classname_unknown
 }
+export function $nox_init_globals(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    %t1 =l add %t0, 0
+    storel 100, %t1
+    ret
+}
+export function $nox_globals_alloc(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    ret
+}
+export function $nox_deinit_globals(l %rt) {
+@start
+    %t0 =l call $nox_globals_get(l %rt)
+    call $nox_free(l %rt, l %t0, l 8)
+    ret
+}
 export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l %p_s, l %p_arr, l %p_keys, l %p_vals) {
 @start
     %t0 =l alloc8 8
@@ -2746,30 +2766,35 @@ export function w $main(w %argc, l %argv) {
     %t2 =l alloc8 8
     %t3 =l alloc8 8
     %t4 =l alloc8 8
-    %t5 =l alloc8 8
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    storel 100, %t0
-    storel 200, %t1
-    storel 5, %t3
-    %t6 =l loadl %t3
-    %t7 =l add %t6, 1
-    storel %t7, %t4
-    %t8 =l loadl %t4
-    storel %t8, %t5
+    call $nox_globals_alloc(l %rt)
+    %t5 =l call $nox_globals_get(l %rt)
+    %t6 =l add %t5, 0
+    storel 100, %t6
+    storel 200, %t0
+    storel 5, %t2
+    %t7 =l loadl %t2
+    %t8 =l add %t7, 1
+    storel %t8, %t3
+    %t9 =l loadl %t3
+    storel %t9, %t4
     jmp @inline_done0
 @after_inline_return1
     jmp @inline_done0
 @inline_done0
-    %t9 =l loadl %t5
-    storel %t9, %t2
-    %t10 =l loadl %t0
-    call $printf(l $fmt_int, ..., l %t10)
-    %t11 =l loadl %t1
-    call $printf(l $fmt_int, ..., l %t11)
-    %t12 =l loadl %t2
-    call $printf(l $fmt_int, ..., l %t12)
+    %t10 =l loadl %t4
+    storel %t10, %t1
+    %t11 =l call $nox_globals_get(l %rt)
+    %t12 =l add %t11, 0
+    %t13 =l loadl %t12
+    call $printf(l $fmt_int, ..., l %t13)
+    %t14 =l loadl %t0
+    call $printf(l $fmt_int, ..., l %t14)
+    %t15 =l loadl %t1
+    call $printf(l $fmt_int, ..., l %t15)
+    call $nox_deinit_globals(l %rt)
     call $nox_runtime_deinit(l %rt)
 @fn_end2
     ret 0

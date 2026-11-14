@@ -774,17 +774,10 @@ def __nox_int_base[T](s: T, base: int) -> int:
 
 # `map`/`filter` Python'dan FARKLI olarak tembel yineleyici değil, YENİ bir liste döner (`for x in map(f, xs):` ve `list(map(f, xs))` çalışır).
 def map[T, U](f: (T) -> U, xs: list[T]) -> list[U]:
-    out: list[U] = []
-    for x in xs:
-        out.append(f(x))
-    return out
+    return [f(x) for x in xs]
 
 def filter[T](f: (T) -> bool, xs: list[T]) -> list[T]:
-    out: list[T] = []
-    for x in xs:
-        if f(x):
-            out.append(x)
-    return out
+    return [x for x in xs if f(x)]
 
 def reversed[T](xs: list[T]) -> list[T]:
     ys: list[T] = xs.copy()

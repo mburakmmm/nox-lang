@@ -251,6 +251,46 @@ pub export fn nox_list_push(rt: ?*anyopaque, list: ?*anyopaque, value: i64, esz_
     return @ptrCast(base);
 }
 
+/// v2.1.162 (comprehension ön-ayırma): `list`e en az `extra` eleman daha sığacak kapasiteyi bir kerede ayırır (`extra <= 0` ya da yeterli kapasite varsa liste
+/// aynen döner). `nox_list_push` gibi liste YALNIZCA çağıranın (comprehension) elindedir: eski blok doğrudan serbest bırakılır, elemanlar taşınır.
+pub export fn nox_list_reserve(rt: ?*anyopaque, list: ?*anyopaque, extra: i64, esz_i: i64) ?*anyopaque {
+    var base: [*]u8 = @ptrCast(list orelse return null);
+    if (extra <= 0) return @ptrCast(base);
+    const esz: usize = @intCast(esz_i);
+    const len = hdrLen(base);
+    const cap: usize = @intCast(@as(*align(1) i64, @ptrCast(base + 8)).*);
+    const need = len + @as(usize, @intCast(extra));
+    if (need <= cap) return @ptrCast(base);
+    const raw = arc.nox_rc_alloc(rt, HDR + need * esz) orelse return @ptrCast(base);
+    const nb: [*]u8 = @ptrCast(raw);
+    @memcpy(nb[0 .. HDR + len * esz], base[0 .. HDR + len * esz]);
+    @as(*align(1) i64, @ptrCast(nb + 8)).* = @intCast(need);
+    arc.nox_rc_free_payload(rt, @ptrCast(base), HDR + cap * esz);
+    base = nb;
+    return @ptrCast(base);
+}
+
+test "nox_list_reserve: kapasite bir kerede ayrılır, elemanlar korunur, push yeniden ayırmaz" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    var l = nox_list_empty(rt) orelse return error.AllocFailed;
+    l = nox_list_push(rt, l, 7, 8) orelse return error.AllocFailed;
+    const r = nox_list_reserve(rt, l, 100, 8) orelse return error.AllocFailed;
+    const base: [*]u8 = @ptrCast(r);
+    try std.testing.expectEqual(@as(usize, 1), hdrLen(base));
+    try std.testing.expect(@as(i64, @as(*align(1) i64, @ptrCast(base + 8)).*) >= 101);
+    var cur = r;
+    var i: i64 = 0;
+    while (i < 100) : (i += 1) cur = nox_list_push(rt, cur, i, 8) orelse return error.AllocFailed;
+    try std.testing.expectEqual(r, cur); // yeniden ayırma yok
+    try std.testing.expectEqual(@as(usize, 101), hdrLen(@ptrCast(cur)));
+    // yeterli kapasite / extra <= 0: aynı işaretçi
+    try std.testing.expectEqual(cur, nox_list_reserve(rt, cur, 0, 8));
+    try std.testing.expectEqual(cur, nox_list_reserve(rt, cur, -5, 8));
+    testFree(rt, cur);
+}
+
 test "nox_list_ops: copy/concat/repeat/slice/reverse/move_last/remove_at (int elemanlar)" {
     const asap = @import("../alloc/asap.zig");
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;

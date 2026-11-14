@@ -2071,6 +2071,27 @@ export function l $nox_class_name_dispatch(l %rt, l %tag, l %p) {
 @class_name_next23
     ret $__nox_classname_unknown
 }
+export function $nox_init_globals(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    %t1 =w copy 255
+    %t2 =l add %t0, 0
+    storew %t1, %t2
+    ret
+}
+export function $nox_globals_alloc(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    ret
+}
+export function $nox_deinit_globals(l %rt) {
+@start
+    %t0 =l call $nox_globals_get(l %rt)
+    call $nox_free(l %rt, l %t0, l 8)
+    ret
+}
 export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l %p_s, l %p_arr, l %p_keys, l %p_vals) {
 @start
     %t0 =l alloc8 8
@@ -2729,31 +2750,38 @@ export function w $main(w %argc, l %argv) {
 @start
     %t0 =l alloc4 4
     %t1 =l alloc4 4
-    %t2 =l alloc4 4
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
+    call $nox_globals_alloc(l %rt)
+    %t2 =l call $nox_globals_get(l %rt)
     %t3 =w copy 255
-    storew %t3, %t0
-    %t4 =w copy 1
-    storew %t4, %t1
-    %t5 =w loadw %t0
-    %t6 =l extuw %t5
-    call $printf(l $fmt_uint, ..., l %t6)
-    %t7 =w loadw %t0
-    %t8 =w loadw %t1
-    %t9 =w add %t7, %t8
-    %t10 =w extub %t9
-    %t11 =w cnew %t10, %t9
-    jnz %t11, @ovf_trap0, @ovf_ok1
+    %t4 =l add %t2, 0
+    storew %t3, %t4
+    %t5 =w copy 1
+    storew %t5, %t0
+    %t6 =l call $nox_globals_get(l %rt)
+    %t7 =l add %t6, 0
+    %t8 =w loadw %t7
+    %t9 =l extuw %t8
+    call $printf(l $fmt_uint, ..., l %t9)
+    %t10 =l call $nox_globals_get(l %rt)
+    %t11 =l add %t10, 0
+    %t12 =w loadw %t11
+    %t13 =w loadw %t0
+    %t14 =w add %t12, %t13
+    %t15 =w extub %t14
+    %t16 =w cnew %t15, %t14
+    jnz %t16, @ovf_trap0, @ovf_ok1
 @ovf_trap0
     call $nox_int_overflow_trap(l %rt, l $fmt_lit0)
     ret 0
 @ovf_ok1
-    storew %t10, %t2
-    %t12 =w loadw %t2
-    %t13 =l extuw %t12
-    call $printf(l $fmt_uint, ..., l %t13)
+    storew %t15, %t1
+    %t17 =w loadw %t1
+    %t18 =l extuw %t17
+    call $printf(l $fmt_uint, ..., l %t18)
+    call $nox_deinit_globals(l %rt)
     call $nox_runtime_deinit(l %rt)
 @fn_end2
     ret 0

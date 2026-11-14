@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.162]
+
+### Performans (2.2 aşama 1)
+
+- **Liste comprehension'ı sonuç listesini tek seferde ayırır ve 8 baytlık elemanları satır içi ekler:** tek `for` yan tümceli (`if` yok) `[e for x in range(a, b)]` / `[e for x in liste]` için eleman sayısı döngü başında bilinir → yeni `nox_list_reserve` ile kapasite bir kez ayrılır; her eleman için `nox_list_push` çağrısı yerine `len < cap` ise yerinde yazılır (doluysa eski yol). `list(range(2M))` 10 ms → 4 ms (C: 2 ms). Golden `list_comp_reserve`; wasm ABI tablosu güncellendi.
+- **`map(f, xs)` / `filter(f, xs)`** `append` döngüsü yerine comprehension'a dayanır (ön-ayırma + satır içi ekleme yolundan yararlanır): 2M `map` 7 ms → 6 ms.
+
 ## [2.1.161]
 
 ### Performans (2.2 aşama 1; ölçüt: clang -O2 C)

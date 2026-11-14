@@ -2071,6 +2071,113 @@ export function l $nox_class_name_dispatch(l %rt, l %tag, l %p) {
 @class_name_next23
     ret $__nox_classname_unknown
 }
+export function $nox_init_globals(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    %t1 =l call $make_dict(l %rt, l 3)
+    %t2 =l sub %rt, 48
+    %t3 =w loadub %t2
+    %t4 =l sub %rt, 64
+    %t5 =l loadl %t4
+    jnz %t3, @exc_slow0, @exc_fast1
+@exc_fast1
+    %t6 =w cnel %t5, 0
+    jmp @exc_done2
+@exc_slow0
+    %t7 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done2
+@exc_done2
+    %t8 =w phi @exc_fast1 %t6, @exc_slow0 %t7
+    jnz %t8, @exc_propagate3, @exc_continue4
+@exc_propagate3
+    call $nox_unhandled_exception(l %rt)
+    ret
+@exc_continue4
+    %t9 =l add $str0, 16
+    %t10 =w call $nox_dict_contains(l %rt, l %t1, w 1, l %t9)
+    jnz %t10, @dict_get_ok6, @dict_get_err5
+@dict_get_err5
+    %t11 =l add $str1, 16
+    %t12 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 7, %t12
+    %t13 =l add %t12, 8
+    storel $KeyError_vtable, %t13
+    %t14 =l add %t12, 16
+    storel 0, %t14
+    %t15 =l add %t12, 24
+    storel 0, %t15
+    call $Exception___init__(l %rt, l %t12, l %t11)
+    %t16 =w call $nox_exception_pending(l %rt)
+    jnz %t16, @ctor_init_failed7, @ctor_init_cont8
+@ctor_init_failed7
+    %t17 =w ceql %t12, 0
+    jnz %t17, @release_skip10, @release9
+@release9
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t12)
+    jmp @release_done11
+@release_skip10
+    jmp @release_done11
+@release_done11
+    jmp @ctor_init_cont8
+@ctor_init_cont8
+    %t18 =l sub %rt, 48
+    %t19 =w loadub %t18
+    %t20 =l sub %rt, 64
+    %t21 =l loadl %t20
+    jnz %t19, @exc_slow12, @exc_fast13
+@exc_fast13
+    %t22 =w cnel %t21, 0
+    jmp @exc_done14
+@exc_slow12
+    %t23 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done14
+@exc_done14
+    %t24 =w phi @exc_fast13 %t22, @exc_slow12 %t23
+    jnz %t24, @exc_propagate15, @exc_continue16
+@exc_propagate15
+    call $nox_unhandled_exception(l %rt)
+    ret
+@exc_continue16
+    %t25 =l add %t12, 24
+    storel 9, %t25
+    call $nox_raise(l %rt, l %t12, l 9)
+    %t26 =w ceql %t1, 0
+    jnz %t26, @release_skip18, @release17
+@release17
+    call $nox_dict_release(l %rt, l %t1, w 1, w 0, w 0)
+    jmp @release_done19
+@release_skip18
+    jmp @release_done19
+@release_done19
+    call $nox_unhandled_exception(l %rt)
+    ret
+@dict_get_ok6
+    %t27 =l call $nox_dict_get(l %rt, l %t1, w 1, l %t9)
+    %t28 =w ceql %t1, 0
+    jnz %t28, @release_skip21, @release20
+@release20
+    call $nox_dict_release(l %rt, l %t1, w 1, w 0, w 0)
+    jmp @release_done22
+@release_skip21
+    jmp @release_done22
+@release_done22
+    %t29 =l add %t0, 0
+    storel %t27, %t29
+    ret
+}
+export function $nox_globals_alloc(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    ret
+}
+export function $nox_deinit_globals(l %rt) {
+@start
+    %t0 =l call $nox_globals_get(l %rt)
+    call $nox_free(l %rt, l %t0, l 8)
+    ret
+}
 export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l %p_s, l %p_arr, l %p_keys, l %p_vals) {
 @start
     %t0 =l alloc8 8
@@ -2161,7 +2268,7 @@ export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
     %t4 =w ceql %t3, 0
     jnz %t4, @if_then1, @if_end0
 @if_then1
-    %t5 =l add $str0, 16
+    %t5 =l add $str2, 16
     %t6 =l loadl %t1
     %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
@@ -2268,7 +2375,7 @@ export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
     %t4 =w ceql %t3, 0
     jnz %t4, @if_then1, @if_end0
 @if_then1
-    %t5 =l add $str1, 16
+    %t5 =l add $str3, 16
     %t6 =l loadl %t1
     %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
@@ -2375,7 +2482,7 @@ export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
     %t4 =w ceql %t3, 0
     jnz %t4, @if_then1, @if_end0
 @if_then1
-    %t5 =l add $str2, 16
+    %t5 =l add $str4, 16
     %t6 =l loadl %t1
     %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
@@ -2494,7 +2601,7 @@ export function l $ord(l %rt, l %p_s) {
     %t5 =w csltl %t4, 0
     jnz %t5, @if_then1, @if_end0
 @if_then1
-    %t6 =l add $str3, 16
+    %t6 =l add $str5, 16
     %t7 =l call $nox_rc_alloc(l %rt, l 32)
     storel 12, %t7
     %t8 =l add %t7, 8
@@ -2753,7 +2860,7 @@ export function l $make_dict(l %rt, l %p_n) {
     jnz %t8, @while_body4, @while_end5
 @while_body4
     %t9 =l loadl %t1
-    %t10 =l add $str4, 16
+    %t10 =l add $str6, 16
     %t11 =l loadl %t2
     call $nox_dict_set(l %rt, l %t9, w 1, w 0, w 0, l %t10, l %t11)
     %t12 =l loadl %t2
@@ -2779,10 +2886,11 @@ export function l $make_dict(l %rt, l %p_n) {
 }
 export function w $main(w %argc, l %argv) {
 @start
-    %t0 =l alloc8 8
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
+    call $nox_globals_alloc(l %rt)
+    %t0 =l call $nox_globals_get(l %rt)
     %t1 =l call $make_dict(l %rt, l 3)
     %t2 =l sub %rt, 48
     %t3 =w loadub %t2
@@ -2802,11 +2910,11 @@ export function w $main(w %argc, l %argv) {
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue4
-    %t9 =l add $str5, 16
+    %t9 =l add $str7, 16
     %t10 =w call $nox_dict_contains(l %rt, l %t1, w 1, l %t9)
     jnz %t10, @dict_get_ok6, @dict_get_err5
 @dict_get_err5
-    %t11 =l add $str6, 16
+    %t11 =l add $str8, 16
     %t12 =l call $nox_rc_alloc(l %rt, l 32)
     storel 7, %t12
     %t13 =l add %t12, 8
@@ -2870,9 +2978,13 @@ export function w $main(w %argc, l %argv) {
 @release_skip21
     jmp @release_done22
 @release_done22
-    storel %t27, %t0
-    %t29 =l loadl %t0
-    call $printf(l $fmt_int, ..., l %t29)
+    %t29 =l add %t0, 0
+    storel %t27, %t29
+    %t30 =l call $nox_globals_get(l %rt)
+    %t31 =l add %t30, 0
+    %t32 =l loadl %t31
+    call $printf(l $fmt_int, ..., l %t32)
+    call $nox_deinit_globals(l %rt)
     call $nox_runtime_deinit(l %rt)
 @fn_end23
     ret 0
@@ -3085,7 +3197,7 @@ export function l $__nox_reflect_decorator_arg(l %rt, l %i, l %j) {
     %t8 =w ceql %t7, 0
     jnz %t8, @dec_arg_is_string0, @dec_arg_not_string1
 @dec_arg_not_string1
-    %t9 =l add $str7, 16
+    %t9 =l add $str9, 16
     ret %t9
 @dec_arg_is_string0
     %t10 =l mul %i, 40
@@ -3200,7 +3312,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t8 =w ceql %t7, 3
     jnz %t8, @dec_arg_list_item_match0, @dec_arg_list_item_mismatch1
 @dec_arg_list_item_mismatch1
-    %t9 =l add $str8, 16
+    %t9 =l add $str10, 16
     ret %t9
 @dec_arg_list_item_match0
     %t10 =l mul %i, 40
@@ -3215,7 +3327,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t19 =w cultl %k, %t18
     jnz %t19, @dec_arg_list_item_bounds_ok2, @dec_arg_list_item_bounds_bad3
 @dec_arg_list_item_bounds_bad3
-    %t20 =l add $str9, 16
+    %t20 =l add $str11, 16
     ret %t20
 @dec_arg_list_item_bounds_ok2
     %t21 =l shr %t17, 32
@@ -3238,13 +3350,15 @@ export function l $__nox_reflect_decorator_handler(l %rt, l %i) {
 @start
     ret 0
 }
-data $str0 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
-data $str1 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
+data $str0 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
+data $str1 = { l 1073741824, l 2305843009213693965, b "key not found", b 0 }
 data $str2 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
-data $str3 = { l 1073741824, l 2305843009213693982, b "ord() cannot take an empty str", b 0 }
-data $str4 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
-data $str5 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
-data $str6 = { l 1073741824, l 2305843009213693965, b "key not found", b 0 }
-data $str7 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str8 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str3 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
+data $str4 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
+data $str5 = { l 1073741824, l 2305843009213693982, b "ord() cannot take an empty str", b 0 }
+data $str6 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
+data $str7 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
+data $str8 = { l 1073741824, l 2305843009213693965, b "key not found", b 0 }
 data $str9 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str10 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str11 = { l 1073741824, l 2305843009213693952, b "", b 0 }

@@ -3407,7 +3407,24 @@ const CompTarget = union(enum) {
 const CompState = struct {
     res_slot: []const u8,
     target: CompTarget,
+    /// v2.1.162: tek `for` yan tümceli (hiç `if` yok) liste comprehension'ında eleman sayısı döngü başında bilinir → sonuç listesi tek seferde ayrılır.
+    reserve: bool = false,
 };
+
+/// `st.reserve` ise sonuç listesine `count` eleman kapasitesi ayırır (`$nox_list_reserve`; negatif/0 → değişiklik yok).
+fn emitCompReserve(self: *Codegen, st: *const CompState, count: []const u8) CodegenError!void {
+    if (!st.reserve) return;
+    switch (st.target) {
+        .list => |t| {
+            const cur = try self.newTemp();
+            try self.qbeLoadL(cur, st.res_slot);
+            const np = try self.newTemp();
+            try self.qbeCall(.{ .name = np, .ty = .l }, "$nox_list_reserve", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cur }, .{ .ty = .l, .text = count }, .{ .ty = .l, .text = t.esz } });
+            try self.qbeStoreL(np, st.res_slot);
+        },
+        else => {},
+    }
+}
 
 /// Comprehension döngü değişkenini (ödünç eleman) geçici olarak `self.vars`e bağlar; `is_param` release'i atlatır.
 fn bindCompVar(self: *Codegen, name: []const u8, slot: []const u8, elem: Value) CodegenError!void {
@@ -3480,6 +3497,11 @@ fn genCompFor(self: *Codegen, clauses: []const ast.CompClause, i: usize, fc: ast
                     try emitColdListError(self, bad, "ValueError", "range step cannot be zero", &rels);
                 }
             }
+        }
+        if (st.reserve and step_sign == 1 and std.mem.eql(u8, step, "1")) {
+            const cnt = try self.newTemp();
+            try self.qbeOp2(cnt, .l, "sub", hi, lo);
+            try emitCompReserve(self, st, cnt);
         }
         try self.qbeStoreL(lo, var_slot);
         try self.qbeJmp(cond_label);
@@ -3570,9 +3592,43 @@ fn genCompLeaf(self: *Codegen, st: *const CompState) CodegenError!void {
             const payload = try self.toPayload(ev);
             const cur = try self.newTemp();
             try self.qbeLoadL(cur, st.res_slot);
-            const np = try self.newTemp();
-            try self.qbeCall(.{ .name = np, .ty = .l }, "$nox_list_push", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cur }, .{ .ty = .l, .text = payload.text }, .{ .ty = .l, .text = t.esz } });
-            try self.qbeStoreL(np, st.res_slot);
+            if (std.mem.eql(u8, t.esz, "8")) {
+                // v2.1.162: 8 baytlık elemanlarda satır içi hızlı yol (`len < cap` ise yerinde yaz); doluysa `nox_list_push` (büyütür).
+                const len_t = try self.newTemp();
+                try self.qbeLoadL(len_t, cur);
+                const cap_addr = try self.newTemp();
+                try self.qbeOp2Imm(cap_addr, .l, "add", cur, 8);
+                const cap_t = try self.newTemp();
+                try self.qbeLoadL(cap_t, cap_addr);
+                const full = try self.newTemp();
+                try self.qbeOp2(full, .w, "csgel", len_t, cap_t);
+                const slow_label = try self.newLabel("comp_push_slow");
+                const fast_label = try self.newLabel("comp_push_fast");
+                const done_label = try self.newLabel("comp_push_done");
+                try self.qbeJnz(full, slow_label, fast_label);
+                try self.qbeLabel(fast_label);
+                const off = try self.newTemp();
+                try self.qbeOp2Imm(off, .l, "mul", len_t, 8);
+                const off2 = try self.newTemp();
+                try self.qbeOp2Imm(off2, .l, "add", off, @intCast(LIST_HEADER_SIZE));
+                const addr = try self.newTemp();
+                try self.qbeOp2(addr, .l, "add", cur, off2);
+                try self.qbeStoreL(payload.text, addr);
+                const nlen = try self.newTemp();
+                try self.qbeOp2Imm(nlen, .l, "add", len_t, 1);
+                try self.qbeStoreL(nlen, cur);
+                try self.qbeJmp(done_label);
+                try self.qbeLabel(slow_label);
+                const np = try self.newTemp();
+                try self.qbeCall(.{ .name = np, .ty = .l }, "$nox_list_push", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cur }, .{ .ty = .l, .text = payload.text }, .{ .ty = .l, .text = t.esz } });
+                try self.qbeStoreL(np, st.res_slot);
+                try self.qbeJmp(done_label);
+                try self.qbeLabel(done_label);
+            } else {
+                const np = try self.newTemp();
+                try self.qbeCall(.{ .name = np, .ty = .l }, "$nox_list_push", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = cur }, .{ .ty = .l, .text = payload.text }, .{ .ty = .l, .text = t.esz } });
+                try self.qbeStoreL(np, st.res_slot);
+            }
         },
         .dict => |t| {
             const k0 = try self.genExpr(t.key);
@@ -3610,7 +3666,9 @@ pub fn genListComp(self: *Codegen, lc: ast.ListComp) CodegenError!Value {
     try self.qbeCall(.{ .name = empty, .ty = .l }, "$nox_list_empty", &.{.{ .ty = .l, .text = RT_PARAM }});
     try self.qbeStoreL(empty, res_slot);
     const st: CompState = .{ .res_slot = res_slot, .target = .{ .list = .{ .elem = lc.elem.*, .esz = try std.fmt.allocPrint(self.allocator, "{d}", .{qbeSizeOf(ti.elem_qtype)}), .elem_target = abi.typeInfoOfValue(abi.valueFromElemDescriptor("0", ti.elem_qtype, ti.elem_heap_info, ti.elem_is_str, ti.elem_fixed_int)) } } };
-    try genCompClauses(self, lc.clauses, 0, &st);
+    var st2 = st;
+    st2.reserve = lc.clauses.len == 1 and lc.clauses[0] == .for_clause;
+    try genCompClauses(self, lc.clauses, 0, &st2);
     const res = try self.newTemp();
     try self.qbeLoadL(res, res_slot);
     return .{ .text = res, .qtype = .l, .heap = .list, .elem_qtype = ti.elem_qtype, .elem_heap_info = ti.elem_heap_info, .elem_is_str = ti.elem_is_str, .elem_fixed_int = ti.elem_fixed_int };

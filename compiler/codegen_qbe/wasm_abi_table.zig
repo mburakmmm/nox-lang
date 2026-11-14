@@ -356,6 +356,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_list_nested_fill", Entry{ .params = "PLPL", .ret = 'L' } },
     .{ "nox_list_nested_shallow_gc_free", Entry{ .params = "PPL", .ret = 'v' } },
     .{ "nox_list_push", Entry{ .params = "PPLL", .ret = 'P' } },
+    .{ "nox_list_reserve", Entry{ .params = "PPLL", .ret = 'P' } },
     .{ "nox_list_remove_at", Entry{ .params = "PLL", .ret = 'v' } },
     .{ "nox_list_find_ptr", Entry{ .params = "PLL", .ret = 'L' } },
     .{ "nox_list_take_all", Entry{ .params = "PPL", .ret = 'P' } },

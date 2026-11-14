@@ -2071,6 +2071,47 @@ export function l $nox_class_name_dispatch(l %rt, l %tag, l %p) {
 @class_name_next23
     ret $__nox_classname_unknown
 }
+export function $nox_init_globals(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    %t1 =l add %t0, 0
+    storel 0, %t1
+    ret
+}
+export function $nox_globals_alloc(l %rt) {
+@start
+    %t0 =l call $nox_alloc(l %rt, l 8)
+    call $nox_globals_set(l %rt, l %t0)
+    ret
+}
+export function $nox_deinit_globals(l %rt) {
+@start
+    %t0 =l call $nox_globals_get(l %rt)
+    %t1 =l add %t0, 0
+    %t2 =l loadl %t1
+    %t3 =w ceql %t2, 0
+    jnz %t3, @release_skip1, @release0
+@release0
+    %t4 =l sub %t2, 8
+    %t5 =l loadl %t4
+    %t6 =l sub %t5, 1
+    storel %t6, %t4
+    %t7 =w cslel %t6, 0
+    jnz %t7, @boxed_free3, @boxed_free_skip4
+@boxed_free3
+    call $nox_rc_free_payload(l %rt, l %t2, l 8)
+    jmp @boxed_free_done5
+@boxed_free_skip4
+    jmp @boxed_free_done5
+@boxed_free_done5
+    jmp @release_done2
+@release_skip1
+    jmp @release_done2
+@release_done2
+    call $nox_free(l %rt, l %t0, l 8)
+    ret
+}
 export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l %p_s, l %p_arr, l %p_keys, l %p_vals) {
 @start
     %t0 =l alloc8 8
@@ -2727,79 +2768,41 @@ export function d $sum_float(l %rt, l %p_xs, d %p_start) {
 }
 export function w $main(w %argc, l %argv) {
 @start
-    %t0 =l alloc8 8
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    storel 0, %t0
+    call $nox_globals_alloc(l %rt)
     call $printf(l $fmt_lit0)
-    %t1 =l add $str4, 16
-    call $nox_print_str(l %t1)
+    %t0 =l add $str4, 16
+    call $nox_print_str(l %t0)
     call $printf(l $fmt_lit1)
     call $printf(l $fmt_lit3)
     call $printf(l $fmt_lit1)
     call $printf(l $fmt_int_frag, ..., l 1)
     call $printf(l $fmt_lit2)
-    %t2 =l loadl %t0
-    %t3 =w ceql %t2, 0
-    jnz %t3, @release_skip1, @release0
-@release0
-    %t4 =l sub %t2, 8
+    %t1 =l call $nox_globals_get(l %rt)
+    %t2 =l add %t1, 0
+    storel 0, %t2
+    %t3 =l call $nox_globals_get(l %rt)
+    %t4 =l add %t3, 0
     %t5 =l loadl %t4
-    %t6 =l sub %t5, 1
-    storel %t6, %t4
-    %t7 =w cslel %t6, 0
-    jnz %t7, @boxed_free3, @boxed_free_skip4
-@boxed_free3
-    call $nox_rc_free_payload(l %rt, l %t2, l 8)
-    jmp @boxed_free_done5
-@boxed_free_skip4
-    jmp @boxed_free_done5
-@boxed_free_done5
-    jmp @release_done2
-@release_skip1
-    jmp @release_done2
-@release_done2
-    storel 0, %t0
-    storel 0, %t0
-    %t8 =l loadl %t0
-    %t9 =l add $str5, 16
-    %t10 =w ceql %t8, 0
-    jnz %t10, @print_none6, @print_some7
-@print_none6
+    %t6 =l add $str5, 16
+    %t7 =w ceql %t5, 0
+    jnz %t7, @print_none0, @print_some1
+@print_none0
     call $printf(l $fmt_lit6)
-    jmp @print_opt_done8
-@print_some7
-    %t11 =l loadl %t8
-    call $printf(l $fmt_int_frag, ..., l %t11)
-    jmp @print_opt_done8
-@print_opt_done8
-    call $nox_print_str(l %t9)
+    jmp @print_opt_done2
+@print_some1
+    %t8 =l loadl %t5
+    call $printf(l $fmt_int_frag, ..., l %t8)
+    jmp @print_opt_done2
+@print_opt_done2
+    call $nox_print_str(l %t6)
     call $printf(l $fmt_lit7)
     call $printf(l $fmt_lit5)
-    %t12 =l loadl %t0
-    %t13 =w ceql %t12, 0
-    jnz %t13, @release_skip10, @release9
-@release9
-    %t14 =l sub %t12, 8
-    %t15 =l loadl %t14
-    %t16 =l sub %t15, 1
-    storel %t16, %t14
-    %t17 =w cslel %t16, 0
-    jnz %t17, @boxed_free12, @boxed_free_skip13
-@boxed_free12
-    call $nox_rc_free_payload(l %rt, l %t12, l 8)
-    jmp @boxed_free_done14
-@boxed_free_skip13
-    jmp @boxed_free_done14
-@boxed_free_done14
-    jmp @release_done11
-@release_skip10
-    jmp @release_done11
-@release_done11
-    storel 0, %t0
+    call $nox_deinit_globals(l %rt)
     call $nox_runtime_deinit(l %rt)
-@fn_end15
+@fn_end3
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {
