@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.144]
+
+### Değişti (Windows: atlanan testler açıldı, h2 kapanış düzeltmesi)
+
+- **Windows'ta HTTP/2 kapanışı:** sunucu, okunmamış istemci verisi kalmışken soketi kapatınca Windows RST gönderiyor ve istemci son GOAWAY'ı (ör. SETTINGS seli → `ENHANCE_YOUR_CALM`) okuyamıyordu (yük altında dalgalı test). Bağlantı kapanmadan önce Windows'ta kalan veri en çok 4 MiB / 300 ms boyunca atılır (`Hooks.setLingerTimeout`).
+- **Windows'ta açılan testler:** `nox.glob` Python eşdeğerliği ve `nox.tempfile` golden fixture'ları (gerçek Windows 11'de, tam korpus içinde dahil geçti) ile altı `bindgen` uçtan uca testi (LLP64 `long`, `size_t`, `_Complex`, `__int128`, `long double`, bit alanları, callback, otomatik sınıflar; iki backend).
+- **CI gözcüsü düzeltildi:** v2.1.142'nin Linux x86-64 gözcüsü çekirdek iş parçacıklarını listeleyip `systemd`ye (pid 1) gdb bağlamaya çalışıp takıldı; artık çekirdek iş parçacıkları süzülür, yalnız pid > 1000 ve 4 dakikadan eski kullanıcı süreçlerine (90 sn zaman aşımıyla) bağlanır; 35 ve 50. dakikada iki döküm.
+- Not: gerçek PC'de LLVM yolunu doğrulamak için `zig cc` sarmalayıcısı yenilendi (`x86_64-w64-windows-gnu` → `x86_64-windows-gnu`, `-fno-sanitize=undefined`); artık `ClangFailed` gürültüsü yok. Kalan PC'ye özgü gürültü: `nox.math`/`nox.mathx` `exp(1.0)` 1 ulp, `wasm_frontend_test` tanılama durumu.
+
 ## [2.1.143]
 
 ### Eklendi (Windows: HTTP/2 sunucusu)

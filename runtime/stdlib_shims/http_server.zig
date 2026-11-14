@@ -1925,6 +1925,15 @@ fn h2CloseRead(user: *anyopaque) void {
     }
 }
 
+fn h2SetLingerTimeout(user: *anyopaque, ms: u32) void {
+    const conn: *ConnCtx = @ptrCast(@alignCast(user));
+    if (conn.tls_conn) |tc| {
+        tc.read_timeout_ms = ms;
+    } else if (conn.reader_timeout) |t| {
+        t.* = ms;
+    }
+}
+
 fn h2AfterPreface(user: *anyopaque, wake: *const fn (*anyopaque) void, wake_arg: *anyopaque) void {
     const conn: *ConnCtx = @ptrCast(@alignCast(user));
     if (conn.tls_conn) |tc| {
@@ -2076,6 +2085,7 @@ fn runHttp2(conn: *ConnCtx, reader: *std.Io.Reader, writer: *std.Io.Writer, tls_
         .spawn = h2SpawnFiber,
         .shuttingDown = h2ShuttingDown,
         .closeRead = h2CloseRead,
+        .setLingerTimeout = h2SetLingerTimeout,
         .afterPreface = h2AfterPreface,
         .flushTransport = h2FlushTransport,
     };

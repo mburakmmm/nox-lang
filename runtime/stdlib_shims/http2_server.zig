@@ -52,6 +52,9 @@ pub const Hooks = struct {
     shuttingDown: *const fn () bool,
     /// Bloklanmış okuyucunun EOF görmesini sağlar (soketin okuma ucunu kapatır).
     closeRead: *const fn (user: *anyopaque) void,
+    /// Windows: bağlantı kapanmadan önce okunmamış istemci verisi kalırsa `closesocket` RST gönderir ve istemci GOAWAY'ı okuyamaz; bu yüzden kapanıştan önce kalan veri kısa süre atılır.
+    /// Okuma zaman aşımını `ms`'ye indirir (POSIX'te kullanılmaz: `shutdown(SHUT_RD)` yeterli).
+    setLingerTimeout: *const fn (user: *anyopaque, ms: u32) void,
 };
 
 const our_stream_window: u32 = 1 << 20;
@@ -853,6 +856,15 @@ pub fn run(gpa: Allocator, reader: *std.Io.Reader, writer: *std.Io.Writer, cfg: 
     while (!c.writer_done.load(.acquire)) sleepCoop(1);
     while (c.active_fibers.load(.acquire) > 1) sleepCoop(2); // 1 = yazıcı fiber'ının kendisi (aşağıda düşülür)
     _ = c.active_fibers.fetchSub(1, .acq_rel);
+    if (comptime builtin.os.tag == .windows) {
+        hooks.setLingerTimeout(hooks.user, 300);
+        var total: usize = 0;
+        while (total < (4 << 20)) {
+            const n = reader.discardShort(64 * 1024) catch break;
+            if (n == 0) break;
+            total += n;
+        }
+    }
 }
 
 fn readerLoop(c: *Conn, r: *std.Io.Reader) void {

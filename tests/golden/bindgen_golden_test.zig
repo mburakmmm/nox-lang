@@ -53,8 +53,6 @@ const program =
 ;
 
 test "bindgen: üretilen binding gerçek bir C kütüphanesini iki backend'de aynı çağırır (struct işaretçisi, enum, sabitler, satır içi işlev, float kabuğu)" {
-    // Windows CI'da `cc -E`/`cc -c` ortamı (MSVC/zig cc) bu sürümde hazır değil; Unix'te (macOS, Linux) çalışır.
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -144,7 +142,6 @@ const yyjson_program =
 ;
 
 test "bindgen: yyjson.h (gerçek, ~9000 satırlık satır içi ağırlıklı başlık) -> binding; JSON okuma/gezinme/yazma iki backend'de aynı" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -250,7 +247,6 @@ const shapes_program =
 ;
 
 test "bindgen: struct alanları, değerle struct, dizi/bit alanı, global değişken, float kabuğu ve nox.ffi.cstr iki backend'de aynı" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -327,7 +323,6 @@ const cbs_program =
 ;
 
 test "bindgen: callback + userdata kalıbı (userdata ilk ya da son) @ffi.callback üretir; üst-düzey def ve Callback tutamacı iki backend'de" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -449,7 +444,6 @@ const wide_program =
 ;
 
 test "bindgen: _Complex, __int128, long double (f64), değişken argümanlı sürümler ve bit alanları iki backend'de aynı" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -506,7 +500,6 @@ const classes_program =
 ;
 
 test "bindgen: v2.1.141 otomatik sınıflar — opak tutamaç (yapılandırmada yıkıcı + owned_returns), metotlar, __del__ ile otomatik serbest bırakma iki backend'de aynı" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
