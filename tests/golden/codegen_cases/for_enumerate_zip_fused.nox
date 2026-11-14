@@ -1,0 +1,60 @@
+# v2.1.161: for i, v in enumerate(xs[, start]) / for a, b[, c] in zip(...) demet listesi üretmeden indeks döngüsüne indirilir
+
+calls: list[int] = [0]
+
+def make() -> list[str]:
+    calls[0] = calls[0] + 1
+    return ["a", "b", "c", "d"]
+
+for i, w in enumerate(make()):
+    print(i, w)
+print("make calls:", calls[0])
+
+for i, w in enumerate(make(), 10):
+    if i == 11:
+        continue
+    if i == 13:
+        break
+    print(i, w)
+
+xs: list[int] = [5, 6, 7]
+total: int = 0
+for i, v in enumerate(xs, 1):
+    total = total + i * v
+print(total)
+
+ys: list[str] = ["x", "y"]
+for a, b in zip(xs, ys):
+    print(a, b)
+for a, b, c in zip(xs, ys, [True, False, True]):
+    print(a, b, c)
+
+empty: list[int] = []
+for i, v in enumerate(empty):
+    print("never", i, v)
+for e1, e2 in zip(empty, xs):
+    print("never", e1, e2)
+
+# iç içe + gövdede yeniden bağlama
+for i, v in enumerate(xs):
+    for j, u in enumerate(xs):
+        if j > i:
+            break
+        print(i, j, v * u)
+
+# döngü değişkenini değiştirmek sonraki turu etkilemez
+for i, v in enumerate(xs):
+    v = v * 100
+    i = i + 1000
+    print(i, v)
+
+# gövdede liste değişirse (sayı başlangıçta sabit, elemanlar canlı okunur)
+zs: list[int] = [1, 2, 3]
+for i, v in enumerate(zs):
+    if i == 0:
+        zs[1] = 20
+    print(i, v)
+
+# kaynak bir fonksiyon sonucu / dilim: tek kez değerlendirilir
+for i, v in enumerate(xs[1:]):
+    print(i, v)

@@ -6130,6 +6130,85 @@ pub const Checker = struct {
         try ctx.scope.declare(self.allocator, name, ty);
     }
 
+    /// v2.1.161: parser'ın tuple açma desugarı (`__nox_tup_<k>_<n> = <rhs>` + `n` adet `hedef = __nox_tup_<k>_<n>.f<i>` deyimi, bitişik) `rhs` bir tuple literal'ı
+    /// (`a, b = b, a + b`; aynı uzunlukta) ya da `divmod(a, b)` (2 hedef) ise demet NESNESİ üretmeden çözülür: değerler gizli yerellere soldan sağa alınır,
+    /// sonra hedeflere dağıtılır (`a, b = b, a` doğru kalır). `divmod` çekirdek bir ad olduğundan (yeniden tanımlanamaz) adla tanıma güvenlidir. Biçimlendirici
+    /// ayrıştırıcı çıktısını görür, bu yüzden dönüşüm burada (tip denetiminde, yerinde) yapılır. Uygun değilse `false` (eski demet yolu).
+    fn tryFuseTupleUnpack(self: *Checker, ctx: *FnCtx, stmt: *const ast.Stmt) TypeError!bool {
+        const eq = std.mem.eql;
+        const v = stmt.kind.var_decl;
+        if (!(v.type_expr == .simple and eq(u8, v.type_expr.simple, "__infer"))) return false;
+        const us = std.mem.lastIndexOfScalar(u8, v.name, '_') orelse return false;
+        const n = std.fmt.parseInt(usize, v.name[us + 1 ..], 10) catch return false;
+        if (n < 2 or n > 8) return false;
+        var vals: [8]ast.Expr = undefined;
+        var is_divmod = false;
+        if (v.value == .tuple_lit) {
+            const elems = v.value.tuple_lit;
+            if (elems.len != n) return false;
+            for (elems) |e| switch (e) {
+                .none_lit, .lambda => return false,
+                .list_lit => |l| if (l.len == 0) return false,
+                .dict_lit => |d| if (d.len == 0) return false,
+                else => {},
+            };
+            for (elems, 0..) |e, i| vals[i] = e;
+        } else if (v.value == .call and v.value.call.callee.* == .identifier and eq(u8, v.value.call.callee.identifier, "divmod") and v.value.call.args.len == 2 and n == 2 and
+            !self.functions.contains("divmod"))
+        {
+            for (v.value.call.args) |a| if (a == .kwarg) return false;
+            vals[0] = v.value.call.args[0];
+            vals[1] = v.value.call.args[1];
+            is_divmod = true;
+        } else return false;
+        // bitişik `n` açma deyimini doğrula (hiçbir şeyi değiştirmeden önce)
+        const base: [*]ast.Stmt = @ptrCast(@constCast(stmt));
+        var field_buf: [8]u8 = undefined;
+        for (0..n) |i| {
+            const k = &base[1 + i];
+            const val: ast.Expr = switch (k.kind) {
+                .var_decl => |d| d.value,
+                .assign => |a| a.value,
+                else => return false,
+            };
+            if (val != .attribute or val.attribute.obj.* != .identifier or !eq(u8, val.attribute.obj.identifier, v.name)) return false;
+            const want = std.fmt.bufPrint(&field_buf, "f{d}", .{i}) catch return false;
+            if (!eq(u8, val.attribute.attr, want)) return false;
+        }
+        self.extend_counter += 1;
+        const id = self.extend_counter;
+        const infer: ast.TypeExpr = .{ .simple = "__infer" };
+        const line = stmt.line;
+        const span = stmt.span;
+        var names: [8][]const u8 = undefined;
+        for (0..n) |i| names[i] = try std.fmt.allocPrint(self.allocator, "__nox_tv_{d}_{d}", .{ id, i });
+        var out: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        for (0..n) |i| try out.append(self.allocator, .{ .kind = .{ .var_decl = .{ .name = names[i], .type_expr = infer, .value = vals[i] } }, .line = line, .span = span });
+        for (0..n) |i| {
+            const k = &base[1 + i];
+            var value: ast.Expr = .{ .identifier = names[i] };
+            if (is_divmod) {
+                const l = try self.allocator.create(ast.Expr);
+                l.* = .{ .identifier = names[0] };
+                const r = try self.allocator.create(ast.Expr);
+                r.* = .{ .identifier = names[1] };
+                value = .{ .binary = .{ .op = if (i == 0) .floordiv else .mod, .left = l, .right = r } };
+            }
+            const kind: ast.StmtKind = switch (k.kind) {
+                .var_decl => |d| .{ .var_decl = .{ .name = d.name, .type_expr = d.type_expr, .value = value } },
+                .assign => |a| .{ .assign = .{ .target = a.target, .value = value, .ann = a.ann } },
+                else => unreachable,
+            };
+            try out.append(self.allocator, .{ .kind = kind, .line = k.line, .span = k.span });
+            base[1 + i].kind = .pass_stmt;
+        }
+        const block: ast.IfStmt = .{ .cond = .{ .bool_lit = true }, .then_body = try out.toOwnedSlice(self.allocator), .elif_clauses = &.{}, .else_body = null };
+        const mut: *ast.Stmt = @constCast(stmt);
+        mut.kind = .{ .if_stmt = block };
+        try self.checkStmt(ctx, mut);
+        return true;
+    }
+
     fn checkStmt(self: *Checker, ctx: *FnCtx, stmt: *const ast.Stmt) TypeError!void {
         // Faz T.1: `fail`in okuduğu "şu an neredeyiz" konumu — bkz.
         // `ast.Stmt`in belge notu (DEYİM granülerliği). Bu, `checkStmt`in
@@ -6145,6 +6224,7 @@ pub const Checker = struct {
                 _ = try self.checkExpr(ctx, e);
             },
             .var_decl => |v| {
+                if (std.mem.startsWith(u8, v.name, "__nox_tup_") and try self.tryFuseTupleUnpack(ctx, stmt)) return;
                 // v1.157.0: tuple açma desugarının tip-çıkarımlı bildirimi (`__infer`): tip değerden çıkar; isim zaten bildirilmiş ve değer atanabilirse mevcut tip.
                 if (v.type_expr == .simple and std.mem.eql(u8, v.type_expr.simple, "__infer")) return self.checkInferVarDecl(ctx, v);
                 const declared = try self.typeExprToType(v.type_expr);
@@ -6201,6 +6281,7 @@ pub const Checker = struct {
             .for_stmt => |f| {
                 self.lazy_for_iter = null;
                 if (f.is_async and !ctx.in_async) return self.fail(error.TypeMismatch, "'async for' can only be used inside an 'async def' body or at the top level", .{});
+                if (!f.is_async and try self.tryFuseEnumerateZipFor(ctx, f)) return;
                 const elem_t = try self.checkForIterable(ctx, f.iterable, @intFromPtr(f.body.ptr));
                 if (f.is_async and self.lazy_for_iter == null) return self.fail(error.TypeMismatch, "'async for' needs an async iterator (an 'AsyncIterator[T]' returned by an async generator)", .{});
                 if (self.lazy_for_iter) |lazy_t| {
@@ -6637,6 +6718,124 @@ pub const Checker = struct {
             },
             else => return self.fail(error.TypeMismatch, "invalid assignment target", .{}),
         }
+    }
+
+    /// v2.1.161: `for i, v in enumerate(xs[, start]):` ve `for a, b[, c] in zip(x, y[, z]):` — demet listesi ÜRETMEDEN indeks döngüsüne indirilir:
+    ///   if True:
+    ///       s0 = xs; ...; n = len(s0) [en küçüğü]
+    ///       for k in range(n):  i = k [+ start]; v = s0[k]; <gövde>
+    /// Kaynaklar bir kez değerlendirilir; sayı başlangıçta sabitlenir, elemanlar döngüde canlı okunur (düz `for x in xs` ile aynı anlam). Yalnızca kaynaklar `list[T]`
+    /// ise (başlangıç değeri `int`), `enumerate`/`zip` kullanıcı tarafından yeniden tanımlanmamışsa ve parser'ın tuple açma kalıbı bozulmamışsa uygulanır.
+    fn tryFuseEnumerateZipFor(self: *Checker, ctx: *FnCtx, f: ast.ForStmt) TypeError!bool {
+        const eq = std.mem.eql;
+        if (f.iterable != .call or f.iterable.call.callee.* != .identifier) return false;
+        const cname = f.iterable.call.callee.identifier;
+        const is_enum = eq(u8, cname, "enumerate");
+        const is_zip = eq(u8, cname, "zip");
+        if (!is_enum and !is_zip) return false;
+        if (self.functions.contains(cname) or self.classes.contains(cname)) return false;
+        if ((try ctx.scope.lookup(self.allocator, cname)) != null or self.module_globals.contains(cname)) return false;
+        const cargs = f.iterable.call.args;
+        for (cargs) |a| if (a == .kwarg) return false;
+        const nsrc: usize = if (is_enum) 1 else cargs.len;
+        if (is_enum and !(cargs.len == 1 or cargs.len == 2)) return false;
+        if (is_zip and !(cargs.len == 2 or cargs.len == 3)) return false;
+        const nnames: usize = if (is_enum) 2 else cargs.len;
+        // parser kalıbı: `__nox_tup_<sayaç>_<n>` + gövde başında `ad = tmp.f<k>` bildirimleri
+        if (!std.mem.startsWith(u8, f.var_name, "__nox_tup_") or f.body.len < nnames) return false;
+        const us = std.mem.lastIndexOfScalar(u8, f.var_name, '_') orelse return false;
+        const cnt = std.fmt.parseInt(usize, f.var_name[us + 1 ..], 10) catch return false;
+        if (cnt != nnames) return false;
+        var names: [3][]const u8 = undefined;
+        for (f.body[0..nnames], 0..) |st, k| {
+            if (st.kind != .var_decl) return false;
+            const vd = st.kind.var_decl;
+            if (vd.value != .attribute or vd.value.attribute.obj.* != .identifier or !eq(u8, vd.value.attribute.obj.identifier, f.var_name)) return false;
+            names[k] = vd.name;
+        }
+        // kaynak tipleri
+        for (cargs[0..nsrc]) |a| {
+            const t = self.checkExpr(ctx, a) catch return false;
+            if (t != .list) return false;
+        }
+        if (is_enum and cargs.len == 2) {
+            const st = self.checkExpr(ctx, cargs[1]) catch return false;
+            if (st != .int) return false;
+        }
+        self.extend_counter += 1;
+        const id = self.extend_counter;
+        const infer: ast.TypeExpr = .{ .simple = "__infer" };
+        const line = self.current_line;
+        const span = self.current_span;
+        var outer: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+        var src_names: [3][]const u8 = undefined;
+        for (cargs[0..nsrc], 0..) |a, k| {
+            src_names[k] = try std.fmt.allocPrint(self.allocator, "__nox_fs_{d}_{d}", .{ id, k });
+            try outer.append(self.allocator, .{ .kind = .{ .var_decl = .{ .name = src_names[k], .type_expr = infer, .value = a } }, .line = line, .span = span });
+        }
+        const mkId = struct {
+            fn go(c: *Checker, n: []const u8) !*ast.Expr {
+                const e = try c.allocator.create(ast.Expr);
+                e.* = .{ .identifier = n };
+                return e;
+            }
+        }.go;
+        const mkLen = struct {
+            fn go(c: *Checker, n: []const u8) !ast.Expr {
+                const callee = try c.allocator.create(ast.Expr);
+                callee.* = .{ .identifier = "len" };
+                const args = try c.allocator.alloc(ast.Expr, 1);
+                args[0] = .{ .identifier = n };
+                return .{ .call = .{ .callee = callee, .args = args } };
+            }
+        }.go;
+        // n = en küçük uzunluk
+        const n_name = try std.fmt.allocPrint(self.allocator, "__nox_fn_{d}", .{id});
+        var n_expr: ast.Expr = try mkLen(self, src_names[0]);
+        var k: usize = 1;
+        while (k < nsrc) : (k += 1) {
+            const cond = try self.allocator.create(ast.Expr);
+            cond.* = .{ .binary = .{ .op = .lt, .left = try self.allocator.create(ast.Expr), .right = try self.allocator.create(ast.Expr) } };
+            cond.binary.left.* = n_expr;
+            cond.binary.right.* = try mkLen(self, src_names[k]);
+            const then_e = try self.allocator.create(ast.Expr);
+            then_e.* = n_expr;
+            const else_e = try self.allocator.create(ast.Expr);
+            else_e.* = try mkLen(self, src_names[k]);
+            n_expr = .{ .ternary = .{ .cond = cond, .then_expr = then_e, .else_expr = else_e } };
+            // sonraki turdan önce sabitle (yinelenen değerlendirmeyi sınırla)
+            const tmp = try std.fmt.allocPrint(self.allocator, "__nox_fm_{d}_{d}", .{ id, k });
+            try outer.append(self.allocator, .{ .kind = .{ .var_decl = .{ .name = tmp, .type_expr = infer, .value = n_expr } }, .line = line, .span = span });
+            n_expr = .{ .identifier = tmp };
+        }
+        try outer.append(self.allocator, .{ .kind = .{ .var_decl = .{ .name = n_name, .type_expr = infer, .value = n_expr } }, .line = line, .span = span });
+        // iç döngü
+        const k_name = try std.fmt.allocPrint(self.allocator, "__nox_fk_{d}", .{id});
+        const inner_body = try self.allocator.alloc(ast.Stmt, nnames + (f.body.len - nnames));
+        for (0..nnames) |j| {
+            var val: ast.Expr = undefined;
+            if (is_enum and j == 0) {
+                if (cargs.len == 2) {
+                    val = .{ .binary = .{ .op = .add, .left = try mkId(self, k_name), .right = try self.allocator.create(ast.Expr) } };
+                    val.binary.right.* = cargs[1];
+                } else val = .{ .identifier = k_name };
+            } else {
+                const si = if (is_enum) 0 else j;
+                val = .{ .index = .{ .obj = try mkId(self, src_names[si]), .index = try mkId(self, k_name) } };
+            }
+            inner_body[j] = .{ .kind = .{ .var_decl = .{ .name = names[j], .type_expr = infer, .value = val } }, .line = line, .span = span };
+        }
+        @memcpy(inner_body[nnames..], f.body[nnames..]);
+        const range_callee = try self.allocator.create(ast.Expr);
+        range_callee.* = .{ .identifier = "range" };
+        const range_args = try self.allocator.alloc(ast.Expr, 1);
+        range_args[0] = .{ .identifier = n_name };
+        try outer.append(self.allocator, .{ .kind = .{ .for_stmt = .{ .var_name = k_name, .iterable = .{ .call = .{ .callee = range_callee, .args = range_args } }, .body = inner_body } }, .line = line, .span = span });
+        const block: ast.IfStmt = .{ .cond = .{ .bool_lit = true }, .then_body = try outer.toOwnedSlice(self.allocator), .elif_clauses = &.{}, .else_body = null };
+        var synth: ast.Stmt = .{ .kind = .{ .if_stmt = block }, .line = line, .span = span };
+        try self.checkStmt(ctx, &synth);
+        try self.stmt_for_rewrites.put(self.allocator, @intFromPtr(f.body.ptr), .{ .if_stmt = block });
+        return true;
     }
 
     /// `for x in <iterable>` — v1.148.0'dan beri: `range(n)`/`range(a, b)`/`range(a, b, step)` (int); herhangi bir

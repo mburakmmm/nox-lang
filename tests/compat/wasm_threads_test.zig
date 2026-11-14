@@ -67,7 +67,8 @@ test "wasi-threads: sonsuz wait'te bekleyen iş parçacığı kapanışta iptal 
     try inst.callByName("spawn_one", &[_]u64{99}, &res);
     try std.testing.expect(@as(u32, @truncate(res[0])) != 0xffff_ffff);
     // İş parçacığının `wait`e girmesine zaman tanı.
-    const ts: std.c.timespec = .{ .sec = 0, .nsec = 100 * std.time.ns_per_ms };
-    _ = std.c.nanosleep(&ts, null);
+    // (taşınabilir bekleme: `std.c.nanosleep` Windows'ta yok; ~100 ms'lik meşgul bekleme yeter)
+    var spin: usize = 0;
+    while (spin < 30_000_000) : (spin += 1) std.mem.doNotOptimizeAway(spin);
     inst.deinit(); // asılmamalı; sızıntı varsa testing allocator yakalar
 }

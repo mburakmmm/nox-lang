@@ -14,6 +14,18 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.161]
+
+### Performans (2.2 aşama 1; ölçüt: clang -O2 C)
+
+- **`for i, v in enumerate(xs[, start])` ve `for a, b[, c] in zip(x, y[, z])` demet listesi üretmeden indeks döngüsüne indirilir** (tip denetimi `__nox_fs_*` kaynak yerelleri + `range(n)` döngüsü yazar; kaynaklar bir kez değerlendirilir, sayı başlangıçta sabit, elemanlar canlı okunur). Yalnızca `list` kaynaklarda; dict/str/yineleyici kaynaklar eski yolda. 2M eleman: `enumerate` 15 ms → 1 ms, `zip` 15 ms → 0 ms (C: 1/0 ms). Golden `for_enumerate_zip_fused` (Python ile birebir).
+- **Tuple açma demet nesnesi üretmez:** `a, b = b, a + b`, `xs[i], xs[j] = xs[j], xs[i]`, `x, y, z = 1, "t", 2.5` ve `q, r = divmod(a, b)` değerleri gizli yerellere soldan sağa alıp hedeflere dağıtır (`a // b`, `a % b`). 100M `divmod` döngüsü 0,58 s → 0,07 s (C-benzeri). Biçimlendirici etkilenmez (dönüşüm tip denetiminde, yerinde). Golden `tuple_unpack_fused`.
+
+### Düzeltildi (CI)
+
+- **Windows CI derleme hatası:** `tests/compat/wasm_threads_test.zig` `std.c.nanosleep` kullanıyordu (Windows'ta yok) → taşınabilir bekleme.
+- **macOS CI:** `HTTP/3: h3_client.request` testi CI makinesinde `status 0` veriyor (yerelde geçiyor); test artık başarısız denemelerin sonuç türünü yazdırıyor, nedeni bir sonraki CI günlüğünden okunacak.
+
 ## [2.1.160]
 
 ### Performans (2.2 aşama 1)

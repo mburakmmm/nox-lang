@@ -1,0 +1,74 @@
+# v2.1.161: tuple literal / divmod açma demet nesnesi üretmeden (geçici yerellerle) çözülür; anlam Python ile aynı
+
+a: int = 1
+b: int = 2
+a, b = b, a
+print(a, b)
+a, b = b, a + b
+print(a, b)
+
+xs: list[int] = [10, 20, 30]
+xs[0], xs[2] = xs[2], xs[0]
+print(xs)
+i: int = 0
+j: int = 1
+xs[i], xs[j] = xs[j], xs[i]
+print(xs)
+
+x, y, z = 1, "two", 3.5
+print(x, y, z)
+
+q, r = divmod(17, 5)
+print(q, r)
+q, r = divmod(-17, 5)
+print(q, r)
+q, r = divmod(r + 20, 3)
+print(q, r)
+fq, fr = divmod(7.5, 2.0)
+print(fq, fr)
+
+class P:
+    def __init__(self, a: int, b: int) -> None:
+        self.a: int = a
+        self.b: int = b
+
+p: P = P(3, 4)
+p.a, p.b = p.b, p.a
+print(p.a, p.b)
+p.a, p.b = divmod(p.a * 10 + 7, 4)
+print(p.a, p.b)
+
+calls: list[int] = [0]
+def tick() -> int:
+    calls[0] = calls[0] + 1
+    return calls[0]
+
+m, n = tick(), tick()
+print(m, n, calls[0])
+
+# a, b = b, a içinde sağ taraf hedeflerden ÖNCE değerlendirilir
+k, l = 5, 6
+k, l = l * 2, k * 2
+print(k, l)
+
+def swap_fib(cnt: int) -> int:
+    u: int = 0
+    v: int = 1
+    t: int = 0
+    while t < cnt:
+        u, v = v, u + v
+        t = t + 1
+    return u
+
+print(swap_fib(30))
+
+try:
+    dq, dr = divmod(1, 0)
+    print(dq, dr)
+except ZeroDivisionError as e:
+    print("ZeroDivisionError")
+# tuple değeri taşıyan (açılmayan) kullanım eski yoldan çalışır
+pair: tuple[int, int] = divmod(9, 2)
+print(pair)
+t1, t2 = pair
+print(t1, t2)

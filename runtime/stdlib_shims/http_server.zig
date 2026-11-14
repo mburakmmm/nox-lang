@@ -3313,7 +3313,7 @@ test "HTTP/3: h3_client.request sunucuya GET/POST yapar, yanıt başlıkları ve
                         };
                         break;
                     },
-                    else => {},
+                    else => |o| std.debug.print("h3 test: GET attempt {d}: {s}\n", .{ attempt, @tagName(o) }),
                 }
             }
             pool_after_first = h3_client.poolIdleCount();
