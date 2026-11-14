@@ -287,6 +287,76 @@ export fn nox_crypto_constant_time_eq_raw(a: ?[*:0]const u8, b: ?[*:0]const u8) 
     return if (diff == 0) 1 else 0;
 }
 
+/// v2.1.154 (TODO 7.4 S2): Ed25519 ayrık imza doğrulama. `pub_hex` 64, `sig_hex` 128 küçük/büyük harf hex karakter olmalıdır; `msg` ham bayt dizisidir. Geçerli imza: 1; her türlü bozuk girdi
+/// (uzunluk, hex olmayan, düşük dereceli/geçersiz nokta, yanlış imza): 0 — hata ayrıştırması yoktur, çağıran yalnızca "geçerli mi" sorusunu sorar. `nox.ed25519` sarar.
+export fn nox_ed25519_verify_raw(pub_hex: ?[*:0]const u8, msg: ?[*:0]const u8, sig_hex: ?[*:0]const u8) callconv(.c) i32 {
+    const ph = str_mod.nox_str_slice(pub_hex orelse return 0);
+    const mm = str_mod.nox_str_slice(msg orelse return 0);
+    const sh = str_mod.nox_str_slice(sig_hex orelse return 0);
+    if (ph.len != 64 or sh.len != 128) return 0;
+    var pk_bytes: [32]u8 = undefined;
+    var sig_bytes: [64]u8 = undefined;
+    _ = std.fmt.hexToBytes(&pk_bytes, ph) catch return 0;
+    _ = std.fmt.hexToBytes(&sig_bytes, sh) catch return 0;
+    const Ed25519 = std.crypto.sign.Ed25519;
+    const pk = Ed25519.PublicKey.fromBytes(pk_bytes) catch return 0;
+    const sig = Ed25519.Signature.fromBytes(sig_bytes);
+    sig.verify(mm, pk) catch return 0;
+    return 1;
+}
+
+/// Açık anahtarın parmak izi: SHA-256(ham 32 bayt) ilk 16 baytının hex'i (32 karakter) — `noxc sign`un `fingerprint`iyle aynı. Geçersiz girdi: boş dize.
+export fn nox_ed25519_fingerprint_raw(rt: ?*anyopaque, pub_hex: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const ph = str_mod.nox_str_slice(pub_hex orelse return dupeToNoxStr(rt, ""));
+    if (ph.len != 64) return dupeToNoxStr(rt, "");
+    var pk_bytes: [32]u8 = undefined;
+    _ = std.fmt.hexToBytes(&pk_bytes, ph) catch return dupeToNoxStr(rt, "");
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(&pk_bytes, &digest, .{});
+    const hex = std.fmt.bytesToHex(digest[0..16].*, .lower);
+    return dupeToNoxStr(rt, &hex);
+}
+
+test "nox_ed25519_verify_raw: geçerli imza 1, bozuk/yanlış girdi 0; parmak izi noxc sign ile aynı" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const Ed25519 = std.crypto.sign.Ed25519;
+    const kp = try Ed25519.KeyPair.generateDeterministic([_]u8{7} ** 32);
+    const msg_text = "nox-attest-v1\nhello";
+    const sig = try kp.sign(msg_text, null);
+    const pk_hex = std.fmt.bytesToHex(kp.public_key.toBytes(), .lower);
+    const sig_hex = std.fmt.bytesToHex(sig.toBytes(), .lower);
+
+    const pkp = makeTestStr(rt, &pk_hex);
+    defer str.nox_str_release(rt, pkp);
+    const sgp = makeTestStr(rt, &sig_hex);
+    defer str.nox_str_release(rt, sgp);
+    const mp = makeTestStr(rt, msg_text);
+    defer str.nox_str_release(rt, mp);
+    try std.testing.expectEqual(@as(i32, 1), nox_ed25519_verify_raw(pkp, mp, sgp));
+
+    const other = makeTestStr(rt, "nox-attest-v1\nHELLO");
+    defer str.nox_str_release(rt, other);
+    try std.testing.expectEqual(@as(i32, 0), nox_ed25519_verify_raw(pkp, other, sgp));
+    var bad = sig_hex;
+    bad[3] = if (bad[3] == '0') '1' else '0';
+    const bad_s = makeTestStr(rt, &bad);
+    defer str.nox_str_release(rt, bad_s);
+    try std.testing.expectEqual(@as(i32, 0), nox_ed25519_verify_raw(pkp, mp, bad_s));
+    var nonhex = pk_hex;
+    nonhex[5] = 'z';
+    const nh = makeTestStr(rt, &nonhex);
+    defer str.nox_str_release(rt, nh);
+    try std.testing.expectEqual(@as(i32, 0), nox_ed25519_verify_raw(nh, mp, sgp));
+    try std.testing.expectEqual(@as(i32, 0), nox_ed25519_verify_raw(null, mp, sgp));
+    try std.testing.expectEqual(@as(i32, 0), nox_ed25519_verify_raw(pkp, mp, pkp));
+    const fp = nox_ed25519_fingerprint_raw(rt, pkp) orelse return error.NoFingerprint;
+    defer str.nox_str_release(rt, fp);
+    try std.testing.expectEqual(@as(usize, 32), str.nox_str_slice(fp).len);
+}
+
 /// `secure_random_hex(n_bytes)` — `nox.random`nin (BİLİNÇLİ OLARAK
 /// kriptografik güvenlik iddiası TAŞIMAYAN, tahmin edilebilir zaman-
 /// tabanlı OTOMATİK tohumlu Xoshiro256) YERİNE, oturum belirteci/CSRF

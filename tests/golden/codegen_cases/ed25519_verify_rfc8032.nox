@@ -1,0 +1,10 @@
+# nox.ed25519 (TODO 7.4 S2): RFC 8032 test vektörü 1 geçerli; farklı ileti / bozuk imza / hex olmayan anahtar False; parmak izi `noxc sign` ile aynı biçim.
+import nox.ed25519
+# RFC 8032 test vektörü 1 (boş ileti)
+pk: str = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+sg: str = "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+print(nox.ed25519.verify(pk, "", sg))
+print(nox.ed25519.verify(pk, "x", sg))
+print(nox.ed25519.verify(pk, "", sg[0:126] + "00"))
+print(nox.ed25519.verify("zz", "", sg))
+print(nox.ed25519.fingerprint(pk))

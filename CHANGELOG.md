@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.154]
+
+### Eklendi (TODO 7.4 S2: yayıncı anahtarı + imzalı yayın bildirimi)
+
+- **`nox.ed25519`** (`verify`, `fingerprint`; RFC 8032 vektörüyle golden): Nox stdlib'inde Ed25519 doğrulaması yoktu, sunucu imza denetleyemezdi. Runtime `nox_ed25519_verify_raw`/`_fingerprint_raw` (Zig std).
+- **noxpkg sunucusu:** `POST/GET /api/keys` (açık anahtarı GitHub-girişli hesaba bağlar; parmak izi sunucuda hesaplanır), `POST /api/keys/:fp/revoke`, `POST /api/attest` (oturum + ad sahibi + ETKİN kayıtlı anahtar + kanonik metin üzerinde geçerli imza; aksi 400/403), herkese açık `GET /api/attestations/:name` (açık anahtar ve iptal durumu dahil). Yeni tablolar `publisher_keys`, `attestations`.
+- **`noxc`:** `sign register [--key] [--label]`, `sign check [dir] [--require]` (kilitteki her commit için bildirimi istemci tarafında yeniden doğrular; durumlar: signed (trusted), signed, UNSIGNED, MISMATCH, BAD SIGNATURE, KEY REVOKED), `publish` artık anahtar varsa `{ad, depo, ref, commit, SBOM SHA-256}` bildirimini imzalayıp gönderir (`--key`, `--no-attest`; başarısızlık yayını geri almaz).
+- Test: gerçek yerel noxpkg sunucusuna karşı `scripts/noxpkg_auth_smoke.py` genişletildi (kayıt, idempotans, imzalı yayın, sahte imza/kayıtsız anahtar/başkasının adı reddi, `sign check` durumları, iptal); `attest.zig` birim testleri.
+- Kalan: `noxc fetch`/`add` bildirimi henüz zorunlu kılmaz (S2 "uyar" modu: `sign check` ile elle), M4'e dağıtım (kullanıcı onayı), S3 tarama etiketleri.
+
 ## [2.1.153]
 
 ### Eklendi (TODO 7.4 S1: SBOM)

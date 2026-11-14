@@ -49,6 +49,29 @@ class Publisher:
         self.login = login
         self.avatar_url = avatar_url
 
+# Yayıncının kayıtlı Ed25519 açık anahtarı (TODO 7.4 S2). `fingerprint`: `noxc sign` parmak izi (SHA-256(ham anahtar) ilk 16 bayt, hex). `revoked_ms == 0`: etkin.
+class PublisherKey:
+    def __init__(self: PublisherKey, fingerprint: str, pub_hex: str, label: str, created_ms: int, revoked_ms: int) -> None:
+        self.fingerprint = fingerprint
+        self.pub_hex = pub_hex
+        self.label = label
+        self.created_ms = created_ms
+        self.revoked_ms = revoked_ms
+
+# Bir yayın bildirimi (attestation): `statement`i `signer` anahtarı imzaladı, sunucu doğruladı ve sakladı.
+class Attestation:
+    def __init__(self: Attestation, name: str, repo: str, ref: str, commit: str, sbom_sha256: str, signer: str, sig: str, login: str, created_ms: int, revoked: bool) -> None:
+        self.name = name
+        self.repo = repo
+        self.ref = ref
+        self.commit = commit
+        self.sbom_sha256 = sbom_sha256
+        self.signer = signer
+        self.sig = sig
+        self.login = login
+        self.created_ms = created_ms
+        self.revoked = revoked
+
 class PublisherSummary:
     def __init__(self: PublisherSummary, login: str, avatar_url: str, package_count: int, pending_count: int, last_login_ms: int) -> None:
         self.login = login
@@ -192,6 +215,8 @@ def _ensure(db: Connection) -> None:
     _exec(db, "CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY, package_name TEXT NOT NULL REFERENCES packages(name) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id), title TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL, created_at_ms INTEGER NOT NULL)")
     _exec(db, "CREATE TABLE IF NOT EXISTS publishers (id INTEGER PRIMARY KEY, github_id INTEGER NOT NULL UNIQUE, login TEXT NOT NULL, avatar_url TEXT NOT NULL, created_at_ms INTEGER NOT NULL, last_login_ms INTEGER NOT NULL)")
     _exec(db, "CREATE TABLE IF NOT EXISTS api_tokens (token_hash TEXT PRIMARY KEY, publisher_id INTEGER NOT NULL REFERENCES publishers(id) ON DELETE CASCADE, created_at_ms INTEGER NOT NULL, last_used_ms INTEGER NOT NULL, expires_at_ms INTEGER NOT NULL)")
+    _exec(db, "CREATE TABLE IF NOT EXISTS publisher_keys (fingerprint TEXT PRIMARY KEY, publisher_id INTEGER NOT NULL REFERENCES publishers(id) ON DELETE CASCADE, pub_hex TEXT NOT NULL, label TEXT NOT NULL, created_at_ms INTEGER NOT NULL, revoked_at_ms INTEGER NOT NULL DEFAULT 0)")
+    _exec(db, "CREATE TABLE IF NOT EXISTS attestations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, repo TEXT NOT NULL, ref TEXT NOT NULL, commit_sha TEXT NOT NULL, sbom_sha256 TEXT NOT NULL, signer TEXT NOT NULL REFERENCES publisher_keys(fingerprint), sig TEXT NOT NULL, publisher_id INTEGER NOT NULL REFERENCES publishers(id), created_at_ms INTEGER NOT NULL, UNIQUE(name, commit_sha, signer))")
     _add_column_if_missing(db, "packages", "publisher_id", "INTEGER")
     _add_column_if_missing(db, "submissions", "publisher_id", "INTEGER")
     _import_json_once(db)
@@ -820,3 +845,106 @@ def load_publishers() -> list[PublisherSummary]:
         out.append(PublisherSummary(row.get_str(0), row.get_str(1), row.get_int(2), row.get_int(3), row.get_int(4)))
         i = i + 1
     return out
+
+# ---- Yayıncı anahtarları ve yayın bildirimleri (TODO 7.4 S2) ----
+
+# 1 = eklendi, 2 = bu yayıncıda zaten var (etkin ya da iptal edilmiş), 0 = parmak izi BAŞKA bir yayıncıya ait.
+def add_publisher_key(publisher_id: int, fingerprint: str, pub_hex: str, label: str) -> int:
+    db: Connection = _open()
+    sel: Statement = db.prepare("SELECT publisher_id FROM publisher_keys WHERE fingerprint = ?")
+    sel.bind_str(0, fingerprint)
+    rows: list[Row] = sel.query()
+    if len(rows) > 0:
+        owner: int = rows[0].get_int(0)
+        db.close()
+        if owner == publisher_id:
+            return 2
+        return 0
+    st: Statement = db.prepare("INSERT INTO publisher_keys (fingerprint, publisher_id, pub_hex, label, created_at_ms, revoked_at_ms) VALUES (?, ?, ?, ?, ?, 0)")
+    st.bind_str(0, fingerprint)
+    st.bind_int(1, publisher_id)
+    st.bind_str(2, pub_hex)
+    st.bind_str(3, label)
+    st.bind_int(4, nox.time.now_ms())
+    st.execute()
+    db.close()
+    return 1
+
+def list_publisher_keys(publisher_id: int) -> list[PublisherKey]:
+    db: Connection = _open()
+    st: Statement = db.prepare("SELECT fingerprint, pub_hex, label, created_at_ms, revoked_at_ms FROM publisher_keys WHERE publisher_id = ? ORDER BY created_at_ms")
+    st.bind_int(0, publisher_id)
+    rows: list[Row] = st.query()
+    db.close()
+    out: list[PublisherKey] = []
+    i: int = 0
+    while i < len(rows):
+        r: Row = rows[i]
+        out.append(PublisherKey(r.get_str(0), r.get_str(1), r.get_str(2), r.get_int(3), r.get_int(4)))
+        i = i + 1
+    return out
+
+# Anahtarı iptal eder (silmez: eski bildirimler "iptal sonrası" etiketlenebilsin). Etkin bir anahtar bulunduysa True.
+def revoke_publisher_key(publisher_id: int, fingerprint: str) -> bool:
+    db: Connection = _open()
+    st: Statement = db.prepare("UPDATE publisher_keys SET revoked_at_ms = ? WHERE fingerprint = ? AND publisher_id = ? AND revoked_at_ms = 0")
+    st.bind_int(0, nox.time.now_ms())
+    st.bind_str(1, fingerprint)
+    st.bind_int(2, publisher_id)
+    n: int = st.execute()
+    db.close()
+    return n > 0
+
+# Yayıncının ETKİN anahtarının açık anahtar hex'i; yok ya da iptal edilmişse "".
+def active_key_hex(publisher_id: int, fingerprint: str) -> str:
+    db: Connection = _open()
+    st: Statement = db.prepare("SELECT pub_hex FROM publisher_keys WHERE fingerprint = ? AND publisher_id = ? AND revoked_at_ms = 0")
+    st.bind_str(0, fingerprint)
+    st.bind_int(1, publisher_id)
+    rows: list[Row] = st.query()
+    db.close()
+    if len(rows) == 0:
+        return ""
+    return rows[0].get_str(0)
+
+def add_attestation(name: str, repo: str, ref: str, commit: str, sbom_sha256: str, signer: str, sig: str, publisher_id: int) -> None:
+    db: Connection = _open()
+    st: Statement = db.prepare("INSERT OR REPLACE INTO attestations (name, repo, ref, commit_sha, sbom_sha256, signer, sig, publisher_id, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    st.bind_str(0, name)
+    st.bind_str(1, repo)
+    st.bind_str(2, ref)
+    st.bind_str(3, commit)
+    st.bind_str(4, sbom_sha256)
+    st.bind_str(5, signer)
+    st.bind_str(6, sig)
+    st.bind_int(7, publisher_id)
+    st.bind_int(8, nox.time.now_ms())
+    st.execute()
+    db.close()
+
+# Bir paketin bildirimleri (yeniden eskiye). `revoked`: imzalayan anahtar sonradan iptal edildi.
+def load_attestations(name: str) -> list[Attestation]:
+    db: Connection = _open()
+    st: Statement = db.prepare("SELECT a.name, a.repo, a.ref, a.commit_sha, a.sbom_sha256, a.signer, a.sig, p.login, a.created_at_ms, k.revoked_at_ms FROM attestations a JOIN publishers p ON p.id = a.publisher_id JOIN publisher_keys k ON k.fingerprint = a.signer WHERE a.name = ? ORDER BY a.created_at_ms DESC")
+    st.bind_str(0, name)
+    rows: list[Row] = st.query()
+    db.close()
+    out: list[Attestation] = []
+    i: int = 0
+    while i < len(rows):
+        r: Row = rows[i]
+        out.append(Attestation(r.get_str(0), r.get_str(1), r.get_str(2), r.get_str(3), r.get_str(4), r.get_str(5), r.get_str(6), r.get_str(7), r.get_int(8), r.get_int(9) != 0))
+        i = i + 1
+    return out
+
+# Parmak izinden açık anahtar hex'i (iptal edilmiş olsa da; geçmiş bildirimler istemcide yeniden doğrulanabilsin). Yoksa "".
+def key_hex_of(fingerprint: str) -> str:
+    db: Connection = _open()
+    st: Statement = db.prepare("SELECT pub_hex FROM publisher_keys WHERE fingerprint = ?")
+    st.bind_str(0, fingerprint)
+    rows: list[Row] = st.query()
+    db.close()
+    if len(rows) == 0:
+        return ""
+    return rows[0].get_str(0)
+

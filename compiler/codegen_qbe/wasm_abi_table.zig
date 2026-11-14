@@ -89,6 +89,8 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_crypto_bcrypt_verify_raw", Entry{ .params = "PP", .ret = 'W' } },
     .{ "nox_crypto_blake3_hex_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_crypto_constant_time_eq_raw", Entry{ .params = "PP", .ret = 'W' } },
+    .{ "nox_ed25519_verify_raw", Entry{ .params = "PPP", .ret = 'W' } },
+    .{ "nox_ed25519_fingerprint_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_crypto_hmac_sha256_hex_raw", Entry{ .params = "PPP", .ret = 'P' } },
     .{ "nox_crypto_md5_hex_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_crypto_scrypt_hash_raw", Entry{ .params = "PP", .ret = 'P' } },

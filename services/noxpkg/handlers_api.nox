@@ -8,6 +8,8 @@ import nox.json
 import nox.os
 import nox.strings
 import nox.validate
+import nox.ed25519
+import nox.time
 from nox.validate import Schema
 from nox.json import JsonValue
 from nox.json import JsonError
@@ -15,7 +17,7 @@ from nox.os import OsError
 from nox.router import Context
 from nox.http import HttpResponse
 import store
-from store import Publisher, NameOwner
+from store import Publisher, NameOwner, PublisherKey, Attestation
 import github
 from github import DeviceStart, DevicePoll, GithubUser
 import handlers_public
@@ -179,3 +181,140 @@ def publish(ctx: Context) -> HttpResponse:
         status = "pending"
     body2: str = "{\"ok\": true, \"id\": " + nox.json.dump_string(id) + ", \"status\": " + nox.json.dump_string(status) + ", \"publisher\": " + nox.json.dump_string(pub.login) + "}"
     return HttpResponse(200, body2, {"Content-Type": "application/json"})
+
+# ---- Yayıncı anahtarları ve yayın bildirimleri (TODO 7.4 S2; tasarım: project/registry-guvenlik-tasarimi-2026-11.md) ----
+
+def _hex_ok(text: str, n: int) -> bool:
+    if len(text) != n:
+        return False
+    i: int = 0
+    while i < n:
+        c: str = text[i]
+        if not ((c >= "0" and c <= "9") or (c >= "a" and c <= "f")):
+            return False
+        i = i + 1
+    return True
+
+def _str_field(v: JsonValue, key: str) -> str:
+    f: JsonValue | None = _opt_field(v, key)
+    if f == None:
+        return ""
+    if not nox.json.is_string(f):
+        return ""
+    return nox.json.as_string(f)
+
+# Bildirimin KANONİK metni; `noxc` (compiler/pkg/attest.zig) AYNI metni üretir. Alanlar satır sonu içermemeli (`_clean`).
+def statement_text(name: str, repo: str, ref: str, commit: str, sbom: str) -> str:
+    return "nox-attest-v1\nname=" + name + "\nrepo=" + repo + "\nref=" + ref + "\ncommit=" + commit + "\nsbom=" + sbom + "\n"
+
+def _clean(text: str) -> bool:
+    return len(text) > 0 and len(text) < 300 and not nox.strings.contains(text, "\n") and not nox.strings.contains(text, "\r")
+
+def _key_json(k: PublisherKey) -> str:
+    return "{\"fingerprint\": " + nox.json.dump_string(k.fingerprint) + ", \"label\": " + nox.json.dump_string(k.label) + ", \"created_ms\": " + str(k.created_ms) + ", \"revoked\": " + ("true" if k.revoked_ms != 0 else "false") + "}"
+
+# POST /api/keys {"pub": <64 hex>, "label": "..."}: açık anahtarı hesaba bağlar. Parmak izi sunucuda yeniden hesaplanır.
+def keys_add(ctx: Context) -> HttpResponse:
+    pub: Publisher | None = authenticated(ctx)
+    if pub == None:
+        return _fail(401, "Login required: run `noxc login` first.")
+    if handlers_public._locked(ctx, "keyadd:", 3600000, 30):
+        return _fail(429, "Too many key registrations; try again later.")
+    v: JsonValue = nox.json.parse("null")
+    try:
+        v = nox.json.parse(ctx.request.body)
+    except JsonError:
+        return _fail(400, "The body must be JSON.")
+    if not nox.json.is_object(v):
+        return _fail(400, "The body must be a JSON object.")
+    pub_hex: str = nox.strings.lower(_str_field(v, "pub"))
+    label: str = _str_field(v, "label")
+    if not _hex_ok(pub_hex, 64):
+        return _fail(400, "'pub' must be 64 hex characters (the raw Ed25519 public key).")
+    if len(label) > 80 or nox.strings.contains(label, "\n"):
+        return _fail(400, "'label' is too long or contains a newline.")
+    fp: str = nox.ed25519.fingerprint(pub_hex)
+    if len(fp) == 0:
+        return _fail(400, "Invalid public key.")
+    outcome: int = store.add_publisher_key(pub.id, fp, pub_hex, label)
+    if outcome == 0:
+        return _fail(409, "That key is already registered to another publisher.")
+    status: str = "added"
+    if outcome == 2:
+        status = "exists"
+    return HttpResponse(200, "{\"ok\": true, \"status\": " + nox.json.dump_string(status) + ", \"fingerprint\": " + nox.json.dump_string(fp) + "}", {"Content-Type": "application/json"})
+
+def keys_list(ctx: Context) -> HttpResponse:
+    pub: Publisher | None = authenticated(ctx)
+    if pub == None:
+        return _fail(401, "Login required: run `noxc login` first.")
+    keys: list[PublisherKey] = store.list_publisher_keys(pub.id)
+    items: list[str] = []
+    i: int = 0
+    while i < len(keys):
+        items.append(_key_json(keys[i]))
+        i = i + 1
+    return HttpResponse(200, "{\"ok\": true, \"keys\": [" + nox.strings.join(items, ", ") + "]}", {"Content-Type": "application/json"})
+
+def keys_revoke(ctx: Context) -> HttpResponse:
+    pub: Publisher | None = authenticated(ctx)
+    if pub == None:
+        return _fail(401, "Login required: run `noxc login` first.")
+    fp: str = nox.strings.lower(ctx.params["fp"])
+    if not _hex_ok(fp, 32):
+        return _fail(400, "The fingerprint must be 32 hex characters.")
+    if not store.revoke_publisher_key(pub.id, fp):
+        return _fail(404, "No active key with that fingerprint on your account.")
+    return HttpResponse(200, "{\"ok\": true}", {"Content-Type": "application/json"})
+
+# POST /api/attest {name, repo, ref, commit, sbom, signer, sig}: yayın bildirimini doğrular ve saklar. Koşullar: oturum, adın sahibi bu yayıncı, `signer` onun ETKİN anahtarı, imza kanonik metin üzerinde geçerli.
+def attest(ctx: Context) -> HttpResponse:
+    pub: Publisher | None = authenticated(ctx)
+    if pub == None:
+        return _fail(401, "Login required: run `noxc login` first.")
+    if handlers_public._locked(ctx, "attest:", 3600000, 120):
+        return _fail(429, "Too many attestations; try again later.")
+    v: JsonValue = nox.json.parse("null")
+    try:
+        v = nox.json.parse(ctx.request.body)
+    except JsonError:
+        return _fail(400, "The body must be JSON.")
+    if not nox.json.is_object(v):
+        return _fail(400, "The body must be a JSON object.")
+    name: str = _str_field(v, "name")
+    repo: str = _str_field(v, "repo")
+    ref: str = _str_field(v, "ref")
+    commit: str = nox.strings.lower(_str_field(v, "commit"))
+    sbom: str = nox.strings.lower(_str_field(v, "sbom"))
+    signer: str = nox.strings.lower(_str_field(v, "signer"))
+    sig: str = nox.strings.lower(_str_field(v, "sig"))
+    if not (_clean(name) and _clean(repo) and _clean(ref)):
+        return _fail(400, "'name', 'repo' and 'ref' are required and must be single-line.")
+    if not (_hex_ok(commit, 40) or _hex_ok(commit, 64)):
+        return _fail(400, "'commit' must be a full 40- or 64-hex commit id.")
+    if not (_hex_ok(sbom, 64) and _hex_ok(signer, 32) and _hex_ok(sig, 128)):
+        return _fail(400, "'sbom' (64 hex), 'signer' (32 hex) and 'sig' (128 hex) are required.")
+    owner: NameOwner = store.name_owner(name)
+    if not (owner.kind == "publisher" and owner.publisher_id == pub.id):
+        return _fail(403, "You do not own the package name '" + name + "'.")
+    key_hex: str = store.active_key_hex(pub.id, signer)
+    if len(key_hex) == 0:
+        return _fail(403, "The signing key is not registered and active on your account: run `noxc sign register`.")
+    if not nox.ed25519.verify(key_hex, statement_text(name, repo, ref, commit, sbom), sig):
+        return _fail(400, "The signature does not match the statement.")
+    store.add_attestation(name, repo, ref, commit, sbom, signer, sig, pub.id)
+    return HttpResponse(200, "{\"ok\": true}", {"Content-Type": "application/json"})
+
+# GET /api/attestations/:name (herkese açık): bildirimler + imzalayan yayıncı. İstemci imzayı kendisi de doğrular (sunucuya güvenmek zorunda değildir).
+def attestations(ctx: Context) -> HttpResponse:
+    name: str = ctx.params["name"]
+    list_a: list[Attestation] = store.load_attestations(name)
+    items: list[str] = []
+    i: int = 0
+    while i < len(list_a):
+        a: Attestation = list_a[i]
+        keyhex: str = store.key_hex_of(a.signer)
+        items.append("{\"name\": " + nox.json.dump_string(a.name) + ", \"repo\": " + nox.json.dump_string(a.repo) + ", \"ref\": " + nox.json.dump_string(a.ref) + ", \"commit\": " + nox.json.dump_string(a.commit) + ", \"sbom\": " + nox.json.dump_string(a.sbom_sha256) + ", \"signer\": " + nox.json.dump_string(a.signer) + ", \"pub\": " + nox.json.dump_string(keyhex) + ", \"sig\": " + nox.json.dump_string(a.sig) + ", \"publisher\": " + nox.json.dump_string(a.login) + ", \"created_ms\": " + str(a.created_ms) + ", \"key_revoked\": " + ("true" if a.revoked else "false") + "}")
+        i = i + 1
+    return HttpResponse(200, "{\"ok\": true, \"attestations\": [" + nox.strings.join(items, ", ") + "]}", {"Content-Type": "application/json"})
+

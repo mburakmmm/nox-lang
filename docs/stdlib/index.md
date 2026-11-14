@@ -22,7 +22,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 
 | Capability | Meaning | Modules |
 |---|---|---|
-| none | pure computation | `strings`, `mathx`, `bigint`, `decimal`, `fraction`, `argparse`, `fnmatch`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `tar`, `zip`, `zstd`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `crypto`*, `time`* |
+| none | pure computation | `strings`, `mathx`, `bigint`, `decimal`, `fraction`, `argparse`, `fnmatch`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `tar`, `zip`, `zstd`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `ed25519`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `glob`, `tempfile`, `sqlite`, `timezone`, `wasm` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `grpc`, `grpc_server`, `udp` |
 | `network` + `filesystem` | both | `transfer` |
@@ -98,6 +98,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | Module | Purpose |
 |---|---|
 | [`nox.crypto`](crypto.md) | hashes, HMAC, secure randomness, password hashing |
+| [`nox.ed25519`](ed25519.md) | Ed25519 signature verification and key fingerprints |
 | [`nox.jwt`](jwt.md) | HS256 JSON Web Tokens |
 
 ### Networking and the web

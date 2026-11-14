@@ -25,6 +25,21 @@ def h_index_json(ctx: Context) -> HttpResponse:
 def h_publish(ctx: Context) -> HttpResponse:
     return handlers_api.publish(ctx)
 
+def h_keys_add(ctx: Context) -> HttpResponse:
+    return handlers_api.keys_add(ctx)
+
+def h_keys_list(ctx: Context) -> HttpResponse:
+    return handlers_api.keys_list(ctx)
+
+def h_keys_revoke(ctx: Context) -> HttpResponse:
+    return handlers_api.keys_revoke(ctx)
+
+def h_attest(ctx: Context) -> HttpResponse:
+    return handlers_api.attest(ctx)
+
+def h_attestations(ctx: Context) -> HttpResponse:
+    return handlers_api.attestations(ctx)
+
 def h_device_start(ctx: Context) -> HttpResponse:
     return handlers_api.device_start(ctx)
 
@@ -106,6 +121,11 @@ def build_router() -> Router:
     router.post("/p/:name/comment", h_comment)
     router.post("/p/:name/report", h_report)
     router.post("/api/publish", h_publish)
+    router.post("/api/keys", h_keys_add)
+    router.get("/api/keys", h_keys_list)
+    router.post("/api/keys/:fp/revoke", h_keys_revoke)
+    router.post("/api/attest", h_attest)
+    router.get("/api/attestations/:name", h_attestations)
     router.post("/api/auth/device/start", h_device_start)
     router.post("/api/auth/device/poll", h_device_poll)
     router.get("/api/auth/whoami", h_whoami)

@@ -22,6 +22,7 @@ const sandbox = @import("sandbox.zig");
 const bindgen = @import("bindgen.zig");
 const signing = @import("pkg/signing.zig");
 const sbom = @import("pkg/sbom.zig");
+const attest = @import("pkg/attest.zig");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const syntax_report = @import("syntax_report.zig");
@@ -454,7 +455,7 @@ fn realMain(init: std.process.Init) !void {
         .legacy => try cmdBuild(gpa, io, a, rest, "usage: noxc [--dump|-v] <file.nox>  (for commands: noxc --help)\n", nox_home, resource_dirs, fetch_policy),
         .help => printHelp(is_tr),
         .sbom => try cmdSbom(io, a, rest, nox_home),
-        .sign => try cmdSign(io, a, rest, nox_home),
+        .sign => try cmdSign(io, a, rest, nox_home, registry_policy, fetch_policy),
         .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, run_limits),
         .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, run_limits),
         .fmt => try cmdFmt(gpa, io, a, rest),
@@ -772,9 +773,16 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_ho
     var ref: []const u8 = "main";
     var description: []const u8 = "";
     var tags: []const []const u8 = &.{};
+    var key_arg: ?[]const u8 = null;
+    var no_attest = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--ref")) {
+        if (std.mem.eql(u8, args[i], "--no-attest")) {
+            no_attest = true;
+        } else if (std.mem.eql(u8, args[i], "--key")) {
+            i += 1;
+            if (i < args.len) key_arg = args[i];
+        } else if (std.mem.eql(u8, args[i], "--ref")) {
             i += 1;
             if (i < args.len) ref = args[i];
         } else if (std.mem.eql(u8, args[i], "--description")) {
@@ -793,7 +801,7 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_ho
         }
     }
     const repo = repo_opt orelse {
-        std.debug.print("usage: noxc publish <repo> [--ref <ref>] [--description <text>] [--tags a,b,c]\n", .{});
+        std.debug.print("usage: noxc publish <repo> [--ref <ref>] [--description <text>] [--tags a,b,c] [--key <name>] [--no-attest]\n", .{});
         std.process.exit(1);
     };
 
@@ -827,6 +835,50 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_ho
         printOk("published: {s} updated in the registry as @{s} (no approval needed: same owner, same repository)\n", .{ manifest.name, cred.login });
     } else {
         printOk("submitted: {s} (id={s}) as @{s} — awaiting approval\n", .{ manifest.name, result.id, cred.login });
+    }
+    if (!no_attest) publishAttestation(io, a, nox_home, registry_policy, fetch_policy, root, manifest.name, repo, ref, cred.token, key_arg);
+}
+
+/// `noxc publish` sonrası (TODO 7.4 S2): imzalama anahtarı varsa `{ad, depo, ref, commit, SBOM SHA-256}` bildirimini imzalayıp registry'ye gönderir. Hiçbir başarısızlık yayını geri almaz (uyarı basılır).
+fn publishAttestation(io: std.Io, a: std.mem.Allocator, nox_home: []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy, root: []const u8, name: []const u8, repo: []const u8, ref: []const u8, token: []const u8, key_arg: ?[]const u8) void {
+    const keys_dir = std.fmt.allocPrint(a, "{s}/keys", .{nox_home}) catch return;
+    var have_key = key_arg != null;
+    if (!have_key) {
+        if (std.Io.Dir.cwd().openDir(io, keys_dir, .{ .iterate = true })) |kd| {
+            var kdir = kd;
+            defer kdir.close(io);
+            var it = kdir.iterate();
+            while (it.next(io) catch null) |e| {
+                if (e.kind == .file and std.mem.endsWith(u8, e.name, ".key")) have_key = true;
+            }
+        } else |_| {}
+    }
+    if (!have_key) {
+        printErr("note: published without a signed attestation (no signing key). `noxc sign keygen <name>` + `noxc sign register` enable it.\n", .{});
+        return;
+    }
+    const seed = loadSigningSeed(io, a, keys_dir, key_arg) catch return;
+    const kp = signing.publicKeyOf(seed) catch return;
+    const fp = signing.fingerprint(kp.public_key.toBytes());
+    const commit = (fetch.resolveRemoteSha(a, io, repo, ref, fetch_policy) catch null) orelse {
+        printErr("warning: attestation skipped: could not resolve {s}@{s} to a commit\n", .{ repo, ref });
+        return;
+    };
+    const sbom_text = sbom.generate(a, io, nox_home, root, build_options.version) catch {
+        printErr("warning: attestation skipped: could not generate the SBOM\n", .{});
+        return;
+    };
+    const sbom_hash = attest.sha256Hex(sbom_text);
+    const text = attest.statement(a, name, repo, ref, commit, &sbom_hash) catch return;
+    const sig = attest.signHex(seed, text) catch return;
+    const ack = attest.submit(a, io, registry_policy.publish_api_base, token, .{ .name = name, .repo = repo, .ref = ref, .commit = commit, .sbom = &sbom_hash, .signer = &fp, .sig = &sig }, fetch_policy.allow_insecure_transport) catch |e| {
+        printErr("warning: attestation not sent ({t})\n", .{e});
+        return;
+    };
+    if (ack.ok) {
+        printOk("attested: {s}@{s} signed by key {s}\n", .{ name, commit[0..@min(commit.len, 12)], &fp });
+    } else {
+        printErr("warning: attestation rejected: {s}\n", .{ack.@"error"});
     }
 }
 
@@ -3775,6 +3827,35 @@ fn appendExternLinkArgs(io: std.Io, allocator: std.mem.Allocator, argv: *std.Arr
 
 // ---- `noxc sign` (ADR-011): nox.lock imzalama ---------------------------------------------------------------------------------------
 
+/// `--key <ad|yol>` verilmediyse `keys/` altındaki TEK `.key` dosyasını kullanır; birden çoksa ya da hiç yoksa net bir hatayla çıkar.
+fn loadSigningSeed(io: std.Io, a: std.mem.Allocator, keys_dir: []const u8, key_arg: ?[]const u8) ![32]u8 {
+    var seed: [32]u8 = undefined;
+    if (key_arg) |k| {
+        const path = if (std.mem.indexOfScalar(u8, k, '/') != null) k else try std.fmt.allocPrint(a, "{s}/{s}.key", .{ keys_dir, k });
+        try readHexFile(io, a, path, &seed);
+        return seed;
+    }
+    var found: ?[]const u8 = null;
+    var count: usize = 0;
+    if (std.Io.Dir.cwd().openDir(io, keys_dir, .{ .iterate = true })) |kd| {
+        var kdir = kd;
+        defer kdir.close(io);
+        var it = kdir.iterate();
+        while (try it.next(io)) |e| {
+            if (e.kind == .file and std.mem.endsWith(u8, e.name, ".key")) {
+                count += 1;
+                found = try std.fmt.allocPrint(a, "{s}/{s}", .{ keys_dir, e.name });
+            }
+        }
+    } else |_| {}
+    if (count != 1) {
+        printErr("sign: {s}; pass --key <name> (create one with `noxc sign keygen <name>`)\n", .{if (count == 0) "no signing key found" else "several signing keys found"});
+        std.process.exit(1);
+    }
+    try readHexFile(io, a, found.?, &seed);
+    return seed;
+}
+
 fn readHexFile(io: std.Io, a: std.mem.Allocator, path: []const u8, out: []u8) !void {
     const text = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(4096)) catch {
         printErr("noxc sign: cannot read {s}\n", .{path});
@@ -3819,13 +3900,15 @@ fn cmdSbom(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home:
     }
 }
 
-fn cmdSign(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+fn cmdSign(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, registry_policy: registry.RegistryPolicy, fetch_policy: fetch.FetchPolicy) !void {
     const usage =
         "usage: noxc sign keygen <name>                create an Ed25519 key pair in $NOX_HOME/keys\n" ++
         "       noxc sign lock [--key <name|file>] [dir]  sign dir/nox.lock -> dir/nox.lock.sig\n" ++
         "       noxc sign trust <pubkey-file>          trust a publisher key (verification then accepts it)\n" ++
         "       noxc sign revoke <fingerprint>         never trust that key again\n" ++
-        "       noxc sign verify [dir]                 verify dir/nox.lock.sig offline (exit 0 only when valid)\n";
+        "       noxc sign verify [dir]                 verify dir/nox.lock.sig offline (exit 0 only when valid)\n" ++
+        "       noxc sign register [--key <name>] [--label <text>]   bind a public key to your registry account (needs `noxc login`)\n" ++
+        "       noxc sign check [dir] [--require]      verify each locked dependency against its registry attestation (exit 1 with --require unless every one is signed)\n";
     if (args.len == 0) {
         std.debug.print("{s}", .{usage});
         std.process.exit(1);
@@ -3889,6 +3972,82 @@ fn cmdSign(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home:
         const sig_path = try std.fmt.allocPrint(a, "{s}/nox.lock.sig", .{dir});
         try cwd.writeFile(io, .{ .sub_path = sig_path, .data = sig_text });
         std.debug.print("signed {s} -> {s}\n", .{ lock_path, sig_path });
+        return;
+    }
+
+    if (std.mem.eql(u8, sub, "register")) {
+        var key_arg: ?[]const u8 = null;
+        var label: []const u8 = "";
+        var ai: usize = 1;
+        while (ai < args.len) : (ai += 1) {
+            if (std.mem.eql(u8, args[ai], "--key") and ai + 1 < args.len) {
+                ai += 1;
+                key_arg = args[ai];
+            } else if (std.mem.eql(u8, args[ai], "--label") and ai + 1 < args.len) {
+                ai += 1;
+                label = args[ai];
+            }
+        }
+        const seed = try loadSigningSeed(io, a, keys_dir, key_arg);
+        const kp = try signing.publicKeyOf(seed);
+        const pub_hex = std.fmt.bytesToHex(kp.public_key.toBytes(), .lower);
+        const saved = credentials.load(a, io, nox_home) catch &[_]credentials.Entry{};
+        const cred = credentials.find(saved, registry_policy.publish_api_base) orelse {
+            printErr("sign register: you are not logged in to {s}: run 'noxc login' first\n", .{registry_policy.publish_api_base});
+            std.process.exit(1);
+        };
+        const ack = attest.registerKey(a, io, registry_policy.publish_api_base, cred.token, &pub_hex, label, fetch_policy.allow_insecure_transport) catch |e| {
+            printErr("sign register: could not reach the registry ({t})\n", .{e});
+            std.process.exit(1);
+        };
+        if (!ack.ok) {
+            printErr("sign register: rejected: {s}\n", .{ack.@"error"});
+            std.process.exit(1);
+        }
+        printOk("key {s} {s} for @{s}\n", .{ ack.fingerprint, if (std.mem.eql(u8, ack.status, "exists")) "was already registered" else "registered", cred.login });
+        return;
+    }
+
+    if (std.mem.eql(u8, sub, "check")) {
+        var dir: []const u8 = ".";
+        var require = false;
+        for (args[1..]) |arg| {
+            if (std.mem.eql(u8, arg, "--require")) require = true else dir = arg;
+        }
+        const lock = project.loadLockfile(a, io, dir) catch {
+            printErr("sign check: cannot read {s}/nox.lock\n", .{dir});
+            std.process.exit(1);
+        };
+        var trusted_fps: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (cwd.openDir(io, trusted_dir, .{ .iterate = true })) |td| {
+            var tdir = td;
+            defer tdir.close(io);
+            var it = tdir.iterate();
+            while (try it.next(io)) |e| {
+                if (e.kind == .file and std.mem.endsWith(u8, e.name, ".pub") and e.name.len == 36) try trusted_fps.append(a, try a.dupe(u8, e.name[0..32]));
+            }
+        } else |_| {}
+        var bad = false;
+        var unsigned_count: usize = 0;
+        for (lock.packages) |p| {
+            const remote = attest.fetchRemote(a, io, registry_policy.publish_api_base, p.alias, fetch_policy.allow_insecure_transport) catch &[_]attest.Remote{};
+            const verdict = attest.judge(remote, p.repo, p.resolved, trusted_fps.items);
+            const label = switch (verdict.status) {
+                .signed_trusted => "signed (trusted key)",
+                .signed => "signed (key not trusted locally: run `noxc sign trust`)",
+                .unsigned => "UNSIGNED (no attestation)",
+                .mismatch => "MISMATCH (attestations exist, but not for this commit)",
+                .bad_signature => "BAD SIGNATURE",
+                .key_revoked => "KEY REVOKED",
+            };
+            std.debug.print("{s}  {s}@{s}  {s}{s}{s}\n", .{ p.alias, p.repo, p.resolved[0..@min(p.resolved.len, 12)], label, if (verdict.publisher.len > 0) "  by @" else "", verdict.publisher });
+            switch (verdict.status) {
+                .signed_trusted, .signed => {},
+                .unsigned => unsigned_count += 1,
+                else => bad = true,
+            }
+        }
+        if (bad or (require and unsigned_count > 0)) std.process.exit(1);
         return;
     }
 

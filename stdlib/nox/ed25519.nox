@@ -1,0 +1,17 @@
+# nox.ed25519 — Ed25519 ayrık imza DOĞRULAMA (v2.1.154, TODO 7.4 S2). Zig'in `std.crypto.sign.Ed25519`ine sarar; yeni bir kriptografi algoritması yazılmadı.
+# Yalnızca doğrulama + parmak izi sunar (imzalama `noxc sign`/`noxc publish` tarafında): sunucu tarafı kodu (noxpkg) yayıncı imzalarını bununla denetler.
+#
+# Kullanım:
+#   import nox.ed25519
+#   ok: bool = nox.ed25519.verify(pub_hex, mesaj, imza_hex)   # pub_hex 64, imza_hex 128 hex karakter
+#   fp: str = nox.ed25519.fingerprint(pub_hex)                # `noxc sign` parmak izi (32 hex karakter), geçersizse ""
+
+extern def nox_ed25519_verify_raw(pub_hex: str, msg: str, sig_hex: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_ed25519_fingerprint_raw(pub_hex: str) -> str from "zig-out/lib/noxrt.o" with_rt
+
+# `sig_hex`, `pub_hex` açık anahtarıyla `msg` iletisi üzerinde GEÇERLİ bir Ed25519 imzasıysa True. Her bozuk girdi (yanlış uzunluk, hex olmayan, geçersiz nokta) False verir, istisna fırlatmaz.
+def verify(pub_hex: str, msg: str, sig_hex: str) -> bool:
+    return nox_ed25519_verify_raw(pub_hex, msg, sig_hex) != 0
+
+def fingerprint(pub_hex: str) -> str:
+    return nox_ed25519_fingerprint_raw(pub_hex)
