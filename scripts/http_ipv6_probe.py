@@ -6,6 +6,7 @@ Kullanım: http_ipv6_probe.py <noxc>. İki arka uçta (LLVM, QBE) iki aile denen
 """
 import os
 import socket
+import signal
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,16 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 root = os.path.dirname(HERE)
 noxc = sys.argv[1]
+
+
+def kill_tree(proc):
+    """`noxc run` bir çocuk ikili (sunucu) başlatır; yalnızca `proc.kill()` onu yetim bırakıp sonsuza dek çalıştırıyordu (ve boru açık kalıp `read()` asılıyordu). Süreç grubunu öldür."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.wait()
+
 template = open(os.path.join(root, "tests/golden/http_multicore_ipv6_program.nox.in")).read()
 
 try:
@@ -44,7 +55,7 @@ for backend in ("llvm", "qbe"):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "app.nox")
             open(path, "w").write(template.replace("@PORT@", str(port)).replace("@FAMILY@", str(family)))
-            p = subprocess.Popen([noxc, "run", "--backend", backend, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ, NOX_POOL_WORKERS="4"))
+            p = subprocess.Popen([noxc, "run", "--backend", backend, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True, env=dict(os.environ, NOX_POOL_WORKERS="4"))
             try:
                 up = False
                 body6 = ""
@@ -58,7 +69,7 @@ for backend in ("llvm", "qbe"):
                         if p.poll() is not None:
                             break
                 if not up:
-                    p.kill()
+                    kill_tree(p)
                     print(f"[{backend} f{family}] sunucu açılmadı\n{p.stderr.read()[:1500]}")
                     sys.exit(1)
                 if not body6.startswith("peer:[::1]:"):
@@ -82,5 +93,5 @@ for backend in ("llvm", "qbe"):
                     print(f"[{backend} f2] yalnızca-IPv6 sunucu IPv4 istemciyi kabul etti: {body4!r}")
                     sys.exit(1)
             finally:
-                p.kill()
+                kill_tree(p)
 print("ok")

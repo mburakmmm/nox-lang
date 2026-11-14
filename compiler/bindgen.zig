@@ -2021,6 +2021,16 @@ const usage =
     \\
 ;
 
+fn stripCr(a: std.mem.Allocator, text: []const u8) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, text, '\r') == null) return text;
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    try out.ensureTotalCapacity(a, text.len);
+    for (text) |c| {
+        if (c != '\r') out.appendAssumeCapacity(c);
+    }
+    return out.items;
+}
+
 fn slashPath(a: std.mem.Allocator, p: []const u8) ![]const u8 {
     const out = try a.dupe(u8, p);
     for (out) |*c| {
@@ -2130,7 +2140,8 @@ pub fn runCli(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
         };
     }
     // Windows yolları ters eğik çizgi içerir (`C:\tmp\x.o`); üretilen `from "..."` dize değişmezinde `\t`/`\U` gibi kaçışlar sayılır. Windows `/` ayırıcısını da kabul eder.
-    const result = try generateFromText(a, pp.stdout, dm.stdout, .{
+    // Windows'ta gcc/MinGW ön işlemci çıktısı CRLF verir: `#define NAME "x"` gövdesi `"x"\r` olup dize makrosu sayılmıyordu (CI'da `MYLIB_NAME`/`YYJSON_VERSION_STRING` eksikti).
+    const result = try generateFromText(a, try stripCr(a, pp.stdout), try stripCr(a, dm.stdout), .{
         .header = hdr,
         .lib = try slashPath(a, lib_v),
         .shim_lib = try slashPath(a, shim_lib_v),
@@ -2383,4 +2394,13 @@ test "v2.1.141: struct için otomatik sınıf (yapıcı/__del__/alan erişimcile
     try std.testing.expect(has(out.nox, "def vec2_add(a: ptr, b: ptr) -> ptr:"));
     const raw = try generateFromText(a, src, "", .{ .header = "x.h", .lib = "libx", .shim_lib = "s.o", .include_name = "x.h", .classes = false }, true);
     try std.testing.expect(!has(raw.nox, "class Vec2:"));
+}
+
+test "stripCr: CRLF çıktıdan CR atılır, dize makrosu gövdesi temiz kalır" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const t = try stripCr(a, "#define MYLIB_NAME \"mylib\"\r\n#define X 1\r\n");
+    try std.testing.expectEqualStrings("#define MYLIB_NAME \"mylib\"\n#define X 1\n", t);
+    try std.testing.expectEqualStrings("abc\n", try stripCr(a, "abc\n"));
 }

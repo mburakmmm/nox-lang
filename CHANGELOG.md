@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.152]
+
+### Düzeltildi (CI teşhis turu)
+
+- **Linux x86-64 askısının ilk gerçek ipucu** (v2.1.144 gözcü dökümü): askı anında ebeveyni ölmüş altı `~/.nox/cache/run/obj/<özet>/bin` süreci + takılı bir `test` süreci görüldü. Altı yetim, `http_factory_probe.py` (2) ve `http_ipv6_probe.py` (4) betiklerinin `finally: p.kill()`i yalnızca `noxc run`ı öldürüp sunucu ikilisini sonsuza dek çalışır bıraktığından kaynaklanıyordu (yerel Mac'te her tam test koşusu 6 yetim bırakmış: 96 temizlendi). Betikler artık süreç grubunu öldürür (`start_new_session` + `killpg`). Askıdaki `test` sürecinin kimliği hâlâ bilinmiyor: gözcü artık yalnızca runner kullanıcısının `bin`/`test`/`noxc`/`prog` süreçlerine gdb bağlar (`timeout -k`), eski sürümde sistem sürecine (chronyd) bağlanıp takılıyordu.
+- **bindgen Windows (MinGW gcc) CRLF:** gcc'nin ön işlemci çıktısı Windows'ta CRLF verir; `#define NAME "x"` gövdesi `"x"\r` olup dize makrosu sayılmıyor, v2.1.145-147 Windows CI'da `MYLIB_NAME`/`YYJSON_VERSION_STRING` bulunamıyordu. Çıktı CR'den arındırılır (birim testi).
+
 ## [2.1.151]
 
 ### Eklendi (TODO 1.11 / 5.6: aarch64 ve riscv64 çıplak çekirdek boot zinciri)

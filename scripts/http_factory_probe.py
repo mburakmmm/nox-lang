@@ -7,6 +7,7 @@ Kullanım: http_factory_probe.py <noxc>. Program iki arka uçta (LLVM ve QBE) 4 
 import collections
 import os
 import socket
+import signal
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,16 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 root = os.path.dirname(HERE)
 noxc = sys.argv[1]
+
+
+def kill_tree(proc):
+    """`noxc run` bir çocuk ikili (sunucu) başlatır; yalnızca `proc.kill()` onu yetim bırakıp sonsuza dek çalıştırıyordu (ve boru açık kalıp `read()` asılıyordu). Süreç grubunu öldür."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.wait()
+
 template = open(os.path.join(root, "tests/golden/http_multicore_factory_program.nox.in")).read()
 WORKERS = 4
 
@@ -29,7 +40,7 @@ for backend in ("llvm", "qbe"):
         log = os.path.join(tmp, "factory.log")
         open(path, "w").write(template.replace("@PORT@", str(port)))
         open(log, "w").close()
-        p = subprocess.Popen([noxc, "run", "--backend", backend, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ, FAC_LOG=log, NOX_POOL_WORKERS=str(WORKERS)))
+        p = subprocess.Popen([noxc, "run", "--backend", backend, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True, env=dict(os.environ, FAC_LOG=log, NOX_POOL_WORKERS=str(WORKERS)))
         try:
             up = False
             for _ in range(150):
@@ -42,7 +53,7 @@ for backend in ("llvm", "qbe"):
                     if p.poll() is not None:
                         break
             if not up:
-                p.kill()
+                kill_tree(p)
                 print(f"[{backend}] sunucu açılmadı\n{p.stderr.read()[:1500]}")
                 sys.exit(1)
             seq = collections.defaultdict(list)
@@ -60,5 +71,5 @@ for backend in ("llvm", "qbe"):
                     print(f"[{backend}] worker {ident} sayacı ardışık değil: {v}")
                     sys.exit(1)
         finally:
-            p.kill()
+            kill_tree(p)
 print("ok")
