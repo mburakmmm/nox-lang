@@ -103,7 +103,9 @@ Add `~/.nox/bin` to your `PATH`. `install` accepts a package name from the index
 
 4. A registry administrator reviews and approves the submission; once approved, `noxc search` and `noxc add` find it. The package page shows you as its publisher, and the name is yours for future releases.
 
-`publish` sends **metadata only** (name, repository, ref, description, tags); no code is uploaded — consumers fetch from your repository. See [noxpkg](noxpkg.md) for the service.
+`publish` sends **metadata only** (name, repository, ref, description, tags, source label); no code is uploaded — consumers fetch from your repository. See [noxpkg](noxpkg.md) for the service.
+
+**Source label.** Every published package carries a *source language* label shown on its card and page (and filterable on the packages page): `nox` (pure Nox), `c`, `cpp`, `rust`, `go`, `zig` or `mixed` (two or more native languages). It is the **publisher's declaration** — set `"source": "c"` in `nox.json` or pass `--source c`. `noxc publish` scans your project tree (skipping `tests/`, `examples/`, `docs/`, benchmarks and build output) and **refuses to publish when the declaration contradicts what it finds** (for example `"source": "nox"` with a `native/shim.c`). With no declaration, the scan result is used. The registry stores and displays the label; it does not clone or scan your repository.
 
 ## Security
 

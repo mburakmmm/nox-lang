@@ -63,6 +63,8 @@ pub const Manifest = struct {
     /// belge notu) — `noxc install` bu durumda net bir hatayla REDDEDER.
     bin: ?BinSpec = null,
     requires: []const Requirement = &.{},
+    /// v2.1.171 (2.2 aşama 6): paketin kaynak dili beyanı (`nox`/`c`/`cpp`/`rust`/`go`/`zig`/`mixed`); `noxc publish` yerel taramayla doğrular.
+    source: ?[]const u8 = null,
 };
 
 pub const ManifestError = error{ InvalidManifest, DuplicateAlias, ReservedAlias } ||

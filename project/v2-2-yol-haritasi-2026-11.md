@@ -17,7 +17,7 @@ Verilen kararlar (2026-11-14, kullanıcı):
 - [x] **3. JSON kütüphanesi agresif performans analizi ve düzeltmeleri.** BİTTİ (v2.1.166-168): bant (tape) tabanlı tembel `JsonValue` (`project/json-bant-tasarimi-2026-11.md`); 50k nesne ayrıştırma 17,7 → 7,1 ms (yyjson 1,5-2,9). Açık kalan (aşama 12'ye): `dump` ≈5× ve gezinme ≈10× yyjson'un gerisinde (düğüm kurma/atomik ARC; `putEscaped` taraması).
 - [ ] **4. HTTP ve IO performans analizi ve agresif çözümler.** sunucu/istemci sıcak yol, fs/stream, kqueue/epoll, kopya sayısı, tampon yönetimi.
 - [x] **5. Variadik fonksiyonlar + dönüş tipsiz (None) fonksiyon sadeliği.** BİTTİ (v2.1.170): variadik (`*xs: T`, `**kwargs`, kw-only, açma) ZATEN vardı; `-> T` atlanabilir (`def f(x: int):`), `min/max` 3+ argüman. Tasarım kararı: dönüş tipi yoksa `None` (AGENTS §5 ikinci dar istisna).
-- [ ] **6. `source` etiketi (pure nox / c / rust / cpp / go) — publish + noxpkg sayfası.** Karar yukarıda; `nox.json` alanı, `noxc publish` doğrulaması, registry şeması, packages sayfasında listeleme/filtre (M4 dağıtımı onaylı).
+- [x] **6. `source` etiketi (pure nox / c / rust / cpp / go) — publish + noxpkg sayfası.** BİTTİ (v2.1.171, canlı dağıtım hariç): kod + duman testi hazır; M4 dağıtımı tüm aşamalar bitince (kullanıcı kararı 2026-11-15).
 - [ ] **7. Agresif FFI performans analizi ve geliştirmeleri.** `extern def` çağrı maliyeti, trampolin, bindgen kabaları; C2 (11.8) ile birleşir. AGENTS §9.5 sınırı korunur.
 - [ ] **8. Standart kütüphaneye C kaynaklı performanslı kütüphaneler (Nox semantiğiyle).** Önce aday listesi + ölçüm; Nyx/Aether gibi çerçeveler de kullanabilsin.
 - [ ] **9. `noxc` ve Nox uygulama ikili boyutu analizi.** Şişme/gereksiz yer; gc-sections, strip, kullanılmayan runtime parçaları, LLVM/QBE farkı.

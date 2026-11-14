@@ -124,7 +124,7 @@ def home(ctx: Context) -> HttpResponse:
     i: int = 0
     while i < len(entries):
         e: IndexEntry = entries[i]
-        cards = cards + templates.package_card(e.name, e.repo, e.description, e.tags)
+        cards = cards + templates.package_card(e.name, e.repo, e.description, e.tags, e.source)
         i = i + 1
     return _html(ctx, "Packages — Nox", templates.home_main(cards))
 
@@ -164,7 +164,7 @@ def package_page(ctx: Context) -> HttpResponse:
     owner: Publisher | None = store.find_package_publisher(name)
     if owner != None:
         publisher_html = templates.publisher_line(owner.login)
-    main_html: str = templates.package_main(entry.name, _repo_href(entry.repo), entry.repo, entry.description, _tags_html(entry.tags), entry.name, blocks, composer, publisher_html)
+    main_html: str = templates.package_main(entry.name, _repo_href(entry.repo), entry.repo, entry.description, templates.source_badge(entry.source) + _tags_html(entry.tags), entry.name, blocks, composer, publisher_html)
     return _html(ctx, entry.name + " — Packages", main_html)
 
 def login_page(ctx: Context) -> HttpResponse:

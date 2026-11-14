@@ -120,6 +120,7 @@ def _publish_schema() -> Schema:
     s.optional("ref", "string")
     s.optional("description", "string")
     s.optional("tags", "array")
+    s.optional("source", "string")
     return s
 
 def _opt_field(v: JsonValue, key: str) -> JsonValue | None:
@@ -166,12 +167,18 @@ def publish(ctx: Context) -> HttpResponse:
         while i < n:
             tags.append(nox.json.as_string(nox.json.array_get(tags_v, i)))
             i = i + 1
+    source: str = ""
+    source_v: JsonValue | None = _opt_field(v, "source")
+    if source_v != None:
+        source = nox.json.as_string(source_v)
+        if len(source) > 0 and not store.valid_source(source):
+            return _fail(400, "Invalid source label '" + source + "' (use nox, c, cpp, rust, go, zig or mixed).")
     owner: NameOwner = store.name_owner(name)
     if owner.kind == "publisher" and owner.publisher_id != pub.id:
         return _fail(403, "The name '" + name + "' belongs to @" + owner.login + ".")
     if owner.kind == "legacy":
         return _fail(403, "The name '" + name + "' is reserved by the registry administrators.")
-    outcome: int = store.add_submission(name, repo, ref, description, tags, pub.id)
+    outcome: int = store.add_submission(name, repo, ref, description, tags, pub.id, source)
     if outcome == 0:
         return _fail(429, "Too many pending submissions.")
     id: str = ""

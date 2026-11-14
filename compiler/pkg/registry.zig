@@ -55,6 +55,8 @@ pub const PublishPayload = struct {
     ref: []const u8 = "main",
     description: []const u8 = "",
     tags: []const []const u8 = &.{},
+    /// Kaynak dili etiketi (`pkg/source_kind.zig`); boşsa eski istemci/bilinmiyor.
+    source: []const u8 = "",
 };
 
 pub const PublishResult = struct {

@@ -3,16 +3,26 @@
   if (q) {
     var cards = Array.prototype.slice.call(document.querySelectorAll(".card"));
     var empty = document.getElementById("empty");
-    q.addEventListener("input", function () {
+    var chips = Array.prototype.slice.call(document.querySelectorAll("#chips .chip"));
+    var source = "";
+    function apply() {
       var v = q.value.toLowerCase();
       var shown = 0;
       cards.forEach(function (card) {
         var hay = ((card.dataset.name || "") + " " + (card.dataset.repo || "") + " " + (card.dataset.description || "") + " " + (card.dataset.tags || "")).toLowerCase();
-        var vis = hay.indexOf(v) !== -1;
+        var vis = hay.indexOf(v) !== -1 && (source === "" || (card.dataset.source || "") === source);
         card.style.display = vis ? "" : "none";
         if (vis) shown++;
       });
       if (empty) empty.hidden = shown !== 0;
+    }
+    q.addEventListener("input", apply);
+    chips.forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        source = chip.dataset.source || "";
+        chips.forEach(function (c) { c.classList.toggle("active", c === chip); });
+        apply();
+      });
     });
   }
 

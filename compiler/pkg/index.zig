@@ -35,6 +35,8 @@ pub const PackageEntry = struct {
     repo: []const u8,
     description: []const u8 = "",
     tags: []const []const u8 = &.{},
+    /// 2.2 aşama 6: kaynak dili etiketi (yayıncı beyanı: nox/c/cpp/rust/go/zig/mixed); eski indekslerde yok.
+    source: []const u8 = "",
 };
 
 pub const Index = struct {

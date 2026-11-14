@@ -3,6 +3,7 @@
 # değerler JS string literali içine gömülmez; `data-*` ve form alanı
 # olarak kalır.
 import nox.template
+import store
 
 def _page_template() -> str:
     return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{{ title }}</title><link rel=\"stylesheet\" href=\"/pkg.css\"><script>try{var t=localStorage.getItem(\"nox-theme\");if(t===\"light\"||t===\"dark\")document.documentElement.setAttribute(\"data-theme\",t);}catch(e){}</script>{{ csrf_meta }}</head><body><header class=\"topbar\"><a class=\"brand\" href=\"https://noxlang.com\"><span class=\"mark\">N</span><span>Nox</span></a><nav class=\"topnav\" aria-label=\"Primary\"><a href=\"/\" aria-current=\"page\">Packages</a><a href=\"https://noxlang.com/docs/tutorial/\">Tutorial</a><a href=\"https://noxlang.com/docs/stdlib/\">Stdlib</a></nav><div class=\"topright\">{{ account }}<button class=\"icon-btn\" id=\"theme\" type=\"button\" aria-label=\"Toggle theme\">◐</button></div></header><main class=\"wrap\">{{ main }}<p class=\"footer\"><a href=\"/admin/login\">Admin</a></p></main><script src=\"/pkg.js\"></script></body></html>"
@@ -26,12 +27,19 @@ def account_bar(username: str, role: str) -> str:
     return who + admin + "<button class=\"btn btn-ghost\" id=\"logout\" type=\"button\">Sign out</button>"
 
 def _card_template() -> str:
-    return "<a class=\"card\" href=\"/p/{{ name }}\" data-name=\"{{ name }}\" data-repo=\"{{ repo }}\" data-description=\"{{ description }}\" data-tags=\"{{ tags }}\"><h2>{{ name }}</h2><p>{{ description }}</p><span class=\"tags\">{{ tag_html }}</span></a>"
+    return "<a class=\"card\" href=\"/p/{{ name }}\" data-name=\"{{ name }}\" data-repo=\"{{ repo }}\" data-description=\"{{ description }}\" data-tags=\"{{ tags }}\" data-source=\"{{ source }}\"><h2>{{ name }}</h2><p>{{ description }}</p><span class=\"tags\">{{ source_html }}{{ tag_html }}</span></a>"
+
+def source_badge(source: str) -> str:
+    label: str = store.source_label(source)
+    if len(label) == 0:
+        return ""
+    ctx: dict[str, str] = {"label": nox.template.escape_html(label), "source": nox.template.escape_html(source)}
+    return nox.template.render_unescaped("<span class=\"tag src src-{{ source }}\" title=\"Source language (declared by the publisher)\">{{ label }}</span>", ctx)
 
 def _tag_template() -> str:
     return "<span class=\"tag\">{{ tag }}</span>"
 
-def package_card(name: str, repo: str, description: str, tags: list[str]) -> str:
+def package_card(name: str, repo: str, description: str, tags: list[str], source: str = "") -> str:
     tag_html: str = ""
     i: int = 0
     while i < len(tags):
@@ -45,12 +53,22 @@ def package_card(name: str, repo: str, description: str, tags: list[str]) -> str
             joined = joined + " "
         joined = joined + tags[j]
         j = j + 1
-    ctx: dict[str, str] = {"name": nox.template.escape_html(name), "repo": nox.template.escape_html(repo), "description": nox.template.escape_html(description), "tags": nox.template.escape_html(joined), "tag_html": tag_html}
+    ctx: dict[str, str] = {"name": nox.template.escape_html(name), "repo": nox.template.escape_html(repo), "description": nox.template.escape_html(description), "tags": nox.template.escape_html(joined), "tag_html": tag_html, "source": nox.template.escape_html(source), "source_html": source_badge(source)}
     return nox.template.render_unescaped(_card_template(), ctx)
 
+def source_chips() -> str:
+    out: str = "<div class=\"chips\" id=\"chips\" role=\"group\" aria-label=\"Source language\"><button class=\"chip active\" type=\"button\" data-source=\"\">All</button>"
+    codes: list[str] = ["nox", "c", "cpp", "rust", "go", "zig", "mixed"]
+    i: int = 0
+    while i < len(codes):
+        ctx: dict[str, str] = {"code": codes[i], "label": nox.template.escape_html(store.source_label(codes[i]))}
+        out = out + nox.template.render_unescaped("<button class=\"chip\" type=\"button\" data-source=\"{{ code }}\">{{ label }}</button>", ctx)
+        i = i + 1
+    return out + "</div>"
+
 def home_main(cards_html: str) -> str:
-    ctx: dict[str, str] = {"cards": cards_html}
-    tmpl: str = "<p class=\"kicker\">Registry</p><h1>Packages</h1><p class=\"lead\">The Nox package index. Find packages with <code>noxc search</code> and add one to your project with <code>noxc add</code>.</p><input class=\"search\" id=\"q\" type=\"search\" placeholder=\"Search packages\" autofocus><div class=\"grid\" id=\"pkgs\">{{ cards }}</div><p class=\"empty\" id=\"empty\" hidden>No matching packages.</p>"
+    ctx: dict[str, str] = {"cards": cards_html, "chips": source_chips()}
+    tmpl: str = "<p class=\"kicker\">Registry</p><h1>Packages</h1><p class=\"lead\">The Nox package index. Find packages with <code>noxc search</code> and add one to your project with <code>noxc add</code>.</p><input class=\"search\" id=\"q\" type=\"search\" placeholder=\"Search packages\" autofocus>{{ chips }}<div class=\"grid\" id=\"pkgs\">{{ cards }}</div><p class=\"empty\" id=\"empty\" hidden>No matching packages.</p>"
     return nox.template.render_unescaped(tmpl, ctx)
 
 def _comment_template() -> str:

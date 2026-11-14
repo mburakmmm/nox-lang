@@ -23,6 +23,7 @@ const bindgen = @import("bindgen.zig");
 const signing = @import("pkg/signing.zig");
 const sbom = @import("pkg/sbom.zig");
 const attest = @import("pkg/attest.zig");
+const source_kind = @import("pkg/source_kind.zig");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const syntax_report = @import("syntax_report.zig");
@@ -614,6 +615,7 @@ fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registr
         found += 1;
         try w.print("{s} — {s}\n", .{ pkg.name, pkg.repo });
         if (pkg.description.len > 0) try w.print("    {s}\n", .{pkg.description});
+        if (pkg.source.len > 0) try w.print("    source: {s} (declared by the publisher)\n", .{pkg.source});
         if (pkg.tags.len > 0) {
             try w.writeAll("    tags: ");
             for (pkg.tags, 0..) |t, i| {
@@ -775,9 +777,13 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_ho
     var tags: []const []const u8 = &.{};
     var key_arg: ?[]const u8 = null;
     var no_attest = false;
+    var source_arg: ?[]const u8 = null;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--no-attest")) {
+        if (std.mem.eql(u8, args[i], "--source")) {
+            i += 1;
+            if (i < args.len) source_arg = args[i];
+        } else if (std.mem.eql(u8, args[i], "--no-attest")) {
             no_attest = true;
         } else if (std.mem.eql(u8, args[i], "--key")) {
             i += 1;
@@ -801,7 +807,7 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_ho
         }
     }
     const repo = repo_opt orelse {
-        std.debug.print("usage: noxc publish <repo> [--ref <ref>] [--description <text>] [--tags a,b,c] [--key <name>] [--no-attest]\n", .{});
+        std.debug.print("usage: noxc publish <repo> [--ref <ref>] [--description <text>] [--tags a,b,c] [--source nox|c|cpp|rust|go|zig|mixed] [--key <name>] [--no-attest]\n", .{});
         std.process.exit(1);
     };
 
@@ -811,6 +817,24 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_ho
         printErr("publish: 'name' in nox.json is empty, but it is required to publish\n", .{});
         std.process.exit(1);
     }
+
+    // v2.1.171 (2.2 aşama 6): kaynak dili etiketi — beyan (`--source` > `nox.json` "source") yerel dosya taramasıyla doğrulanır; beyan yoksa tarama sonucu kullanılır.
+    const declared_text: ?[]const u8 = source_arg orelse manifest.source;
+    var declared_kind: ?source_kind.Kind = null;
+    if (declared_text) |dt| {
+        declared_kind = source_kind.parse(dt) orelse {
+            printErr("publish: invalid source label '{s}' (use nox, c, cpp, rust, go, zig or mixed)\n", .{dt});
+            std.process.exit(1);
+        };
+    }
+    const detected = source_kind.detect(io, a, root) catch source_kind.Detected{};
+    const source_label: []const u8 = switch (try source_kind.verify(a, declared_kind, detected)) {
+        .ok => |k| k.label(),
+        .mismatch => |why| {
+            printErr("publish: source label mismatch: {s}\n", .{why});
+            std.process.exit(1);
+        },
+    };
 
     // v2.0.136: yayın için giriş ZORUNLU (ad ilk yayımlayana rezerve edilir, yayıncı yönetim panelinde görünür).
     const saved = credentials.load(a, io, nox_home) catch |e| {
@@ -822,7 +846,7 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_ho
         std.process.exit(1);
     };
 
-    const payload: registry.PublishPayload = .{ .name = manifest.name, .repo = repo, .ref = ref, .description = description, .tags = tags };
+    const payload: registry.PublishPayload = .{ .name = manifest.name, .repo = repo, .ref = ref, .description = description, .tags = tags, .source = source_label };
     const result = registry.submitPublish(a, io, registry_policy.publish_api_base, payload, cred.token, fetch_policy.allow_insecure_transport) catch |e| {
         printErr("publish: could not submit ({t}): {s}\n", .{ e, registry_policy.publish_api_base });
         std.process.exit(1);

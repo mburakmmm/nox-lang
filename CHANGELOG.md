@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.171]
+
+### Eklendi (2.2 aşama 6: paket kaynak dili etiketi)
+
+- **`source` etiketi** (`nox` = saf Nox, `c`, `cpp`, `rust`, `go`, `zig`, `mixed`): yayıncı beyanıdır (`nox.json` `"source"` ya da `noxc publish --source`). `noxc publish` proje ağacını yerelde tarar (`tests/`, `examples/`, `docs/`, benchmark ve derleme çıktısı atlanır) ve beyanla çelişen durumda yayını REDDEDER (ör. `"source": "nox"` + `native/shim.c`); beyan yoksa tarama sonucu kullanılır. Sunucu kaynağı klonlayıp taramaz (S3 kararı). Yeni modül `compiler/pkg/source_kind.zig` (+ birim testleri).
+- **noxpkg sunucusu:** `packages`/`submissions` tablolarına `source` sütunu (geçişli, `_add_column_if_missing`), API etiketi doğrular (geçersiz → 400), `index.json` etiketi taşır, paket kartı ve sayfasında rozet ("Yayıncı beyanı"), ana sayfada kaynak süzgeç düğmeleri. `noxc search` çıktısı etiketi gösterir. Duman testi (`scripts/noxpkg_auth_smoke.py` bölüm 10) gerçek sunucu + gerçek istemciyle doğrular. **Canlı (M4) dağıtım tüm aşamalar bitince yapılacak.**
+
 ## [2.1.170]
 
 ### Eklendi (2.2 aşama 5: sözdizimi sadeliği)
