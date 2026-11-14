@@ -108,6 +108,11 @@ pub fn nox_str_from_bytes(rt: ?*anyopaque, bytes: []const u8) ?[*:0]u8 {
     return allocStr(rt, bytes, ASCII_UNKNOWN);
 }
 
+/// C kütüphane sarmalayıcıları (`runtime/c_glue/*.c`, `noxclibs-*.a`) için: `p[0..n]`den yeni bir Nox `str` (ikili güvenli, ASCII durumu bilinmiyor).
+pub export fn nox_str_from_bytes_c(rt: ?*anyopaque, p: ?[*]const u8, n: usize) ?[*:0]u8 {
+    return allocStr(rt, if (p) |pp| pp[0..n] else &.{}, ASCII_UNKNOWN);
+}
+
 /// `len` baytlık, sıfırla-sonlanan YENİ bir Nox `str` tahsis eder ve veri işaretçisini döner;
 /// çağıran `len` baytı DOĞRUDAN buraya yazar (ASCII durumu "bilinmiyor"). `nox_strings_*`
 /// shim'leri önceden sonucu `page_allocator`dan (her çağrıda mmap/munmap) geçici bir arabelleğe

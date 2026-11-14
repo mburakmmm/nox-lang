@@ -23,6 +23,7 @@ def sh(cmd, **kw):
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--repeat", type=int, default=3)
+ap.add_argument("--noxc", default=ROOT + "/zig-out/bin/noxc", help="ReleaseFast noxc (zig build -Doptimize=ReleaseFast --prefix /tmp/zrf)")
 a = ap.parse_args()
 with tempfile.TemporaryDirectory() as d:
     sh(["cc", "-O2", "-c", HERE + "/ffi_bench.c", "-o", d + "/ffi_bench.o"])
@@ -30,7 +31,7 @@ with tempfile.TemporaryDirectory() as d:
     sh(["cc", "-O2", HERE + "/harness.c", d + "/ffi_bench.o", "-o", d + "/harness_c"])
     exes = {}
     for be in ("llvm", "qbe"):
-        sh([ROOT + "/zig-out/bin/noxc", "build", "--backend", be, HERE + "/ffi_perf.nox", "-o", d + "/nox_" + be], cwd=d)
+        sh([a.noxc, "build", "--backend", be, HERE + "/ffi_perf.nox", "-o", d + "/nox_" + be], cwd=d)
         exes[be] = d + "/nox_" + be
     res = {"c": [], "llvm": [], "qbe": []}
     for _ in range(a.repeat):

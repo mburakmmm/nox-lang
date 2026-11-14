@@ -1,0 +1,34 @@
+# nox.xxhash (v2.1.172, 2.2 aşama 8) — xxHash ailesi: ÇOK HIZLI, ŞİFRELEME AMAÇLI OLMAYAN özetler (önbellek anahtarı, tekrar tespiti, bölümleme). Güvenlik için `nox.crypto`
+# (sha256 vb.) kullanın. Girdi `str` içindeki ham baytlardır. Gömülü C xxHash (`third_party/xxhash`, BSD-2) ayrı arşivde (`noxclibs-<hedef>.a`) gelir; macOS, Linux ve Windows'ta aynıdır.
+# 64 bit sonuçlar işaretli `int`e BİT DÜZENİYLE aktarılır (üst bit 1 ise negatif görünür); işaretsiz gösterim için `*_hex` işlevlerini kullanın.
+
+extern def nxc_xxh32(data: str, seed: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_xxh64(data: str, seed: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_xxh3_64(data: str, seed: int) -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_xxh64_hex(data: str, seed: int) -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_xxh3_64_hex(data: str, seed: int) -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_xxh3_128_hex(data: str, seed: int) -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_xxhash_available() -> int from "zig-out/lib/noxclibs.a"
+
+def is_supported() -> bool:
+    return nxc_xxhash_available() == 1
+
+def xxh32(data: str, seed: int = 0) -> int:
+    return nxc_xxh32(data, seed)
+
+def xxh64(data: str, seed: int = 0) -> int:
+    return nxc_xxh64(data, seed)
+
+def xxh3_64(data: str, seed: int = 0) -> int:
+    return nxc_xxh3_64(data, seed)
+
+# 16 küçük-harf onaltılık karakter (işaretsiz gösterim).
+def xxh64_hex(data: str, seed: int = 0) -> str:
+    return nxc_xxh64_hex(data, seed)
+
+def xxh3_64_hex(data: str, seed: int = 0) -> str:
+    return nxc_xxh3_64_hex(data, seed)
+
+# 32 küçük-harf onaltılık karakter (kanonik/büyük-endian sıra).
+def xxh3_128_hex(data: str, seed: int = 0) -> str:
+    return nxc_xxh3_128_hex(data, seed)

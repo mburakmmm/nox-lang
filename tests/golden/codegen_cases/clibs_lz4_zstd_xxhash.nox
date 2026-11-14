@@ -1,0 +1,57 @@
+# v2.1.172 (2.2 aşama 8): gömülü C kütüphaneleri — nox.lz4 (çerçeve), nox.zstd.compress (+ Zig açıcısıyla gidiş-dönüş), nox.hash (xxHash bilinen vektörleri)
+import nox.lz4
+import nox.zstd
+import nox.xxhash
+import nox.strings
+from nox.lz4 import Lz4Error
+from nox.zstd import ZstdError
+
+def make(n: int) -> str:
+    parts: list[str] = []
+    i: int = 0
+    while i < n:
+        parts.append("record-" + str(i) + "-" + str((i * 7919) % 1000))
+        i = i + 1
+    return nox.strings.join(parts, ";")
+
+small: str = "hello hello hello hello hello hello hello hello"
+big: str = make(20000)
+
+# --- lz4 ---
+z1: str = nox.lz4.compress(small)
+print(nox.lz4.decompress(z1) == small, nox.lz4.is_supported())
+z2: str = nox.lz4.compress(big, 9)
+print(nox.lz4.decompress(z2) == big, len(z2) < len(big))
+e: str = nox.lz4.compress("")
+print(nox.lz4.decompress(e) == "")
+try:
+    print(nox.lz4.decompress("not an lz4 frame"))
+except Lz4Error as err:
+    print("Lz4Error bozuk girdi")
+try:
+    print(nox.lz4.decompress(z1[0:len(z1) - 3]))
+except Lz4Error as err:
+    print("Lz4Error kesik girdi")
+
+# --- zstd sıkıştırma (Zig açıcısıyla gidiş-dönüş) ---
+for lv in [1, 3, 19]:
+    zz: str = nox.zstd.compress(big, lv)
+    print(lv, nox.zstd.decompress(zz) == big, len(zz) < len(big))
+print(nox.zstd.decompress(nox.zstd.compress("")) == "")
+# birden çok çerçevenin art arda açılması ve bozuk/kesik girdi (C yolu reddeder, Zig yolu aynı kararı verir)
+two: str = nox.zstd.compress("abc") + nox.zstd.compress("defg")
+print(nox.zstd.decompress(two))
+try:
+    print(nox.zstd.decompress("not zstd"))
+except ZstdError as err:
+    print("ZstdError bozuk")
+try:
+    zk: str = nox.zstd.compress(big, 3)
+    print(nox.zstd.decompress(zk[0:len(zk) - 5]))
+except ZstdError as err:
+    print("ZstdError kesik")
+
+# --- xxHash bilinen vektörleri ---
+print(nox.xxhash.xxh32(""), nox.xxhash.xxh64_hex(""), nox.xxhash.xxh3_64_hex(""), nox.xxhash.xxh3_128_hex(""))
+print(nox.xxhash.xxh64("a", 0) == nox.xxhash.xxh64("a"), nox.xxhash.xxh64("a", 1) != nox.xxhash.xxh64("a", 2), nox.xxhash.xxh3_64("abc") == nox.xxhash.xxh3_64("abc"))
+print(len(nox.xxhash.xxh3_128_hex(big)), len(nox.xxhash.xxh64_hex(big)))

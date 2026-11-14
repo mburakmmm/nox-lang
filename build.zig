@@ -153,6 +153,51 @@ fn addLibdeflate(b: *std.Build, mod: *std.Build.Module, arch: std.Target.Cpu.Arc
     if (arch_file) |f| mod.addCSourceFiles(.{ .root = b.path("third_party/libdeflate"), .files = &.{f}, .flags = &flags });
 }
 
+/// 2.2 aşama 8: gömülü C kütüphaneleri (zstd, lz4, xxHash; sonra PCRE2/brotli/yyjson) — `noxclibs-<hedef>.a` ADLI, ayrı bir statik arşiv. `noxrt.o`ya GÖMÜLMEZ: derleyici
+/// (`compiler/main.zig`) arşivi yalnızca programın modülleri `from "zig-out/lib/noxclibs.a"` bildiriyorsa bağlar (kullanılmayan program büyümez) ve linker yalnızca başvurulan
+/// üyeleri alır. Böylece macOS, Linux VE Windows (COFF'un `noxrt.o`ya çok sayıda C nesnesi gömememesi sınırı arşivi etkilemez) aynı modül yüzeyine sahiptir.
+/// Her `.c` dosyası `zig cc -c` ile ayrı derlenir, `zig ar` (llvm-ar) ile arşivlenir: Zig'in kendi arşiv yazıcısı Mach-O üyelerini 8 bayta hizalamaz ve Apple `ld` reddeder.
+fn addClibsArchive(b: *std.Build, arch: std.Target.Cpu.Arch, os_tag: std.Target.Os.Tag, abi: std.Target.Abi, install_name: []const u8) void {
+    const tgt = b.resolveTargetQuery(.{ .cpu_arch = arch, .os_tag = os_tag, .abi = abi });
+    const triple = tgt.result.zigTriple(b.allocator) catch @panic("OOM");
+    const Src = struct { dir: []const u8, file: []const u8, flags: []const []const u8 };
+    const common = [_][]const u8{ "-O3", "-DNDEBUG", "-fno-sanitize=undefined", "-fno-strict-aliasing" };
+    const zstd_flags = common ++ [_][]const u8{ "-DZSTD_DISABLE_ASM=1", "-Ithird_party/zstd/lib", "-Ithird_party/zstd/lib/common" };
+    const lz4_flags = common ++ [_][]const u8{ "-Ithird_party/lz4", "-DXXH_NAMESPACE=LZ4_", "-Iruntime/c_glue" }; // lz4'ün paketli xxhash'i ayrı ad alanında
+    const xxh_flags = common ++ [_][]const u8{ "-Ithird_party/xxhash", "-Iruntime/c_glue" };
+    const zstd_glue_flags = common ++ [_][]const u8{ "-Ithird_party/zstd/lib", "-Iruntime/c_glue" };
+    const zstd_files = [_][]const u8{
+        "lib/common/debug.c",                      "lib/common/entropy_common.c",      "lib/common/error_private.c",             "lib/common/fse_decompress.c",
+        "lib/common/xxhash.c",                     "lib/common/zstd_common.c",         "lib/compress/fse_compress.c",            "lib/compress/hist.c",
+        "lib/compress/huf_compress.c",             "lib/compress/zstd_compress.c",     "lib/compress/zstd_compress_literals.c",  "lib/compress/zstd_compress_sequences.c",
+        "lib/compress/zstd_compress_superblock.c", "lib/compress/zstd_double_fast.c",  "lib/compress/zstd_fast.c",               "lib/compress/zstd_lazy.c",
+        "lib/compress/zstd_ldm.c",                 "lib/compress/zstd_opt.c",          "lib/compress/zstd_preSplit.c",           "lib/decompress/huf_decompress.c",
+        "lib/decompress/zstd_ddict.c",             "lib/decompress/zstd_decompress.c", "lib/decompress/zstd_decompress_block.c",
+    };
+    var srcs: std.ArrayListUnmanaged(Src) = .empty;
+    for (zstd_files) |f| srcs.append(b.allocator, .{ .dir = "third_party/zstd", .file = f, .flags = &zstd_flags }) catch @panic("OOM");
+    for ([_][]const u8{ "lz4.c", "lz4hc.c", "lz4frame.c", "xxhash.c" }) |f| srcs.append(b.allocator, .{ .dir = "third_party/lz4", .file = f, .flags = &lz4_flags }) catch @panic("OOM");
+    srcs.append(b.allocator, .{ .dir = "third_party/xxhash", .file = "xxhash.c", .flags = &xxh_flags }) catch @panic("OOM");
+    srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "lz4_glue.c", .flags = &lz4_flags }) catch @panic("OOM");
+    srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "zstd_glue.c", .flags = &zstd_glue_flags }) catch @panic("OOM");
+    srcs.append(b.allocator, .{ .dir = "runtime/c_glue", .file = "xxh_glue.c", .flags = &xxh_flags }) catch @panic("OOM");
+
+    const ar = b.addSystemCommand(&.{ b.graph.zig_exe, "ar", "rcs" });
+    const out_a = ar.addOutputFileArg(b.fmt("{s}.a", .{install_name}));
+    for (srcs.items, 0..) |src, idx| {
+        const cc = b.addSystemCommand(&.{ b.graph.zig_exe, "cc", "-target", triple });
+        cc.addArgs(src.flags);
+        cc.addArg("-c");
+        cc.addFileArg(b.path(b.fmt("{s}/{s}", .{ src.dir, src.file })));
+        cc.addArg("-o");
+        // Aynı dosya adı (xxhash.c, ...) farklı dizinlerde olabilir: indeksle benzersiz nesne adı.
+        const obj = cc.addOutputFileArg(b.fmt("{d}_{s}.o", .{ idx, std.fs.path.basename(src.file) }));
+        ar.addFileArg(obj);
+    }
+    const install = b.addInstallFile(out_a, b.fmt("lib/{s}.a", .{install_name}));
+    b.getInstallStep().dependOn(&install.step);
+}
+
 /// v2.0 madde 8: `addFreestandingRuntimeChain`in hosted karşılığı — SABİT
 /// bir (mimari, OS) çifti İçİn `runtime/lib.zig` kökünden bir runtime
 /// nesnesi zinciri kurar. Windows hedefi KENDİ çapraz-derlenmiş `swap_
@@ -167,6 +212,8 @@ fn addHostedRuntimeChain(
     abi: std.Target.Abi,
     install_name: []const u8,
 ) struct { obj: *std.Build.Step.Compile, swap_asm_o_path: ?[]const u8 } {
+    // `noxrt-<hedef>` → `noxclibs-<hedef>.a` (derleyici arşivi `compiler/main.zig`de bu adla arar).
+    if (std.mem.startsWith(u8, install_name, "noxrt-")) addClibsArchive(b, arch, os_tag, abi, b.fmt("noxclibs-{s}", .{install_name["noxrt-".len..]}));
     const os_target = b.resolveTargetQuery(.{ .cpu_arch = arch, .os_tag = os_tag, .abi = abi });
     const abi_layout_mod = b.createModule(.{
         .root_source_file = b.path("shared/abi_layout.zig"),
@@ -863,6 +910,11 @@ pub fn build(b: *std.Build) void {
     noxrt.link_data_sections = split_sections;
     noxrt.step.dependOn(&compile_swap_asm.step);
     const install_noxrt = b.addInstallFile(noxrt.getEmittedBin(), "lib/noxrt.o");
+    // v2.1.172: yerel hedefin C kütüphane arşivi (`zig-out/lib/noxclibs.a`); `noxrt.o`ya gömülmez, programın IR'ı `nxc_` sembollerine başvurursa bağlanır.
+    switch (target.result.os.tag) {
+        .macos, .linux, .windows => if (!is_freestanding and !target.result.abi.isAndroid()) addClibsArchive(b, target.result.cpu.arch, target.result.os.tag, target.result.abi, "noxclibs"),
+        else => {},
+    }
     b.getInstallStep().dependOn(&install_noxrt.step);
 
     // Faz LL.6: `swap_asm.o`nun Windows'taki AYRI kurulumu — bkz. yukarıdaki
@@ -1202,10 +1254,10 @@ pub fn build(b: *std.Build) void {
     });
     b.getInstallStep().dependOn(&compile_boot_aarch64.step);
     const compile_boot_riscv64 = b.addSystemCommand(&.{
-        b.graph.zig_exe,                               "cc",
-        "-target",                                     "riscv64-freestanding-none",
-        "-mcmodel=medany",                             "-c",
-        "-o",                                          "runtime/freestanding/riscv64/boot_riscv64.o",
+        b.graph.zig_exe,                       "cc",
+        "-target",                             "riscv64-freestanding-none",
+        "-mcmodel=medany",                     "-c",
+        "-o",                                  "runtime/freestanding/riscv64/boot_riscv64.o",
         "runtime/freestanding/riscv64/boot.S",
     });
     b.getInstallStep().dependOn(&compile_boot_riscv64.step);

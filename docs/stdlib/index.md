@@ -89,7 +89,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.json`](json.md), [`nox.toml`](toml.md), [`nox.yaml`](yaml.md), [`nox.csv`](csv.md) | parsers and writers |
 | [`nox.validate`](validate.md) | validate JSON against a schema |
 | [`nox.url`](url.md) | URLs, percent-encoding, query strings |
-| [`nox.base64`](base64.md), [`nox.uuid`](uuid.md), [`nox.gzip`](gzip.md), [`nox.tar`](tar.md), [`nox.zip`](zip.md), [`nox.zstd`](zstd.md) | Base64, UUIDs, compression and archives |
+| [`nox.base64`](base64.md), [`nox.uuid`](uuid.md), [`nox.gzip`](gzip.md), [`nox.tar`](tar.md), [`nox.zip`](zip.md), [`nox.zstd`](zstd.md), [`nox.lz4`](lz4.md), [`nox.xxhash`](xxhash.md) | Base64, UUIDs, compression and archives |
 | [`nox.wasm`](wasm.md) | Run WebAssembly modules (embedded interpreter, sandboxed, fuel and memory limits) |
 | [`nox.ffi`](ffi.md) | `Callback[F]` handles: lambdas and closures as C callbacks |
 

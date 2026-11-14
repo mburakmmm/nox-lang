@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.172]
+
+### Eklendi (2.2 aşama 8, dilim 1: gömülü C kütüphaneleri — zstd, lz4, xxHash)
+
+- **Ekleme, değiştirme değil; macOS = Linux = Windows:** mevcut modüller (`nox.json`, `nox.regex`, `nox.gzip`, `nox.zstd.decompress` Zig yolu) olduğu gibi çalışır; C kütüphaneleri kütüphane adıyla ayrı modüller olarak yanlarına eklenir (kullanıcı kararı 2026-11-15: "nox.yyjson" gibi adlandırma; üç masaüstü işletim sisteminde fark/kısıtlama yok).
+- **Yeni mimari: `noxclibs-<hedef>.a` (isteğe bağlı C kütüphane arşivi).** C kaynakları (`third_party/{zstd,lz4,xxhash}` + ince `runtime/c_glue/*.c` sarmalayıcıları; sarmalayıcılar Nox `str` değerleriyle doğrudan çalışır) `noxrt.o`ya GÖMÜLMEZ: build.zig her hosted hedef (macOS arm64/x64, Linux x64/arm64/riscv64, **Windows x64**) için `zig cc -c` + `zig ar` ile ayrı bir arşiv üretir (Zig'in kendi arşiv yazıcısı Mach-O üyelerini hizalamaz); derleyici arşivi yalnızca programın modülleri `from "zig-out/lib/noxclibs.a"` bildiriyorsa bağlar (`compiler/main.zig` `appendExternLinkArgs`). Windows COFF'un `noxrt.o`ya çok C nesnesi gömememe sınırı arşivi etkilemez; kullanmayan programın ikilisi büyümez. Sonraki C kütüphaneleri (PCRE2, brotli, yyjson) aynı arşive eklenir.
+- **`nox.zstd.compress(data, level=3)`** (zstd v1.5.7, BSD-3; JENERİK `[T]` — yalnızca kullanılırsa arşive bağlanır, `decompress` kullanan WASM/mobil programlar etkilenmez): içerik boyutu + sağlama, pencere ≤ 8 MiB (Zig açıcısıyla uyumlu). `nox.zstd.decompress` Zig yolunda değişmedi.
+- **`nox.lz4`** (LZ4 çerçeve biçimi, lz4 v1.10.0, BSD-2): `compress(data, level=0)` / `decompress`; **`nox.xxhash`** (xxHash v0.8.3, BSD-2): `xxh32`, `xxh64`, `xxh3_64` (+ `*_hex`), `xxh3_128_hex`. Kaynak sürümleri/SHA-256 `third_party/SOURCES.md` ve `NOX_VENDOR.md` dosyalarında.
+- Goldenlar `clibs_lz4_zstd_xxhash` (gidiş-dönüş, çok çerçeveli zstd, bozuk/kesik girdi, xxHash bilinen vektörleri). Ölçüm (27 MB metin): zstd-3 sıkıştırma 12 ms (C: 11,9), lz4 sıkıştırma 17 ms (C: 13,5), xxh3_64 1 ms.
+
 ## [2.1.171]
 
 ### Eklendi (2.2 aşama 6: paket kaynak dili etiketi)

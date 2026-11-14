@@ -1,0 +1,10 @@
+# Vendored third-party sources (provenance)
+
+| Library | Version | Archive SHA-256 | License |
+|---|---|---|---|
+| libdeflate | v1.23 | `1ab18349b9fb0ce8a0ca4116bded725be7dcbfa709e19f6f983d99df1fb8b25f` | MIT |
+| zstd | v1.5.7 | `eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3` | BSD-3-Clause |
+| lz4 | v1.10.0 | `537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b` | BSD-2-Clause |
+| xxHash | v0.8.3 | `aae608dfe8213dfd05d909a57718ef82f30722c392344583d3f39050c7f29a80` | BSD-2-Clause |
+
+Each directory has a `NOX_VENDOR.md` with the exact files and update steps. Archives were downloaded from the upstream GitHub release/tag pages (2026-11-15) and are not committed.

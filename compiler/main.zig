@@ -3306,13 +3306,13 @@ fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []co
     if (info.wasm_freestanding) {
         // libc/libm yok: `from "m"` bildirimleri çalışma zamanındaki (`wasm_libc.zig`/compiler-rt) tanımlara çözülür; `-lm` verilmez.
         var tmp: std.ArrayListUnmanaged([]const u8) = .empty;
-        try appendExternLinkArgs(io, a, &tmp, module, extern_root);
+        try appendExternLinkArgs(io, a, &tmp, module, extern_root, null);
         for (tmp.items) |arg| {
             if (std.mem.eql(u8, arg, "-lm")) continue;
             try argv.append(a, arg);
         }
     } else {
-        try appendExternLinkArgs(io, a, &argv, module, extern_root);
+        try appendExternLinkArgs(io, a, &argv, module, extern_root, null);
     }
     const result = std.process.run(gpa, io, .{ .argv = argv.items }) catch |err| {
         if (err == error.FileNotFound) {
@@ -3542,7 +3542,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         }
         try clang_argv.append(a, "-lm");
         if (target_win) try clang_argv.appendSlice(a, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
-        try appendExternLinkArgs(io, a, &clang_argv, module, extern_root);
+        try appendExternLinkArgs(io, a, &clang_argv, module, extern_root, try clibsArchivePath(a, resource_dirs, cross));
 
         const clang_result = std.process.run(gpa, io, .{ .argv = clang_argv.items }) catch |err| {
             if (err == error.FileNotFound) {
@@ -3660,7 +3660,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             "zig", "cc",     "-target", freestanding_triple,       "-ffreestanding", "-nostdlib", "-static",
             "-o",  bin_path, asm_path,  freestanding_runtime_path,
         });
-        try appendExternLinkArgs(io, a, &zig_argv, module, extern_root);
+        try appendExternLinkArgs(io, a, &zig_argv, module, extern_root, null);
 
         const zig_result = std.process.run(gpa, io, .{ .argv = zig_argv.items }) catch |err| {
             if (err == error.FileNotFound) {
@@ -3737,7 +3737,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     // 'WSAGetLastError'`/`'NtCreateFile'`/`'CertOpenSystemStoreW'`/... İLE
     // doğrulandı).
     if (target_is_windows) try cc_argv.appendSlice(a, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
-    try appendExternLinkArgs(io, a, &cc_argv, module, extern_root);
+    try appendExternLinkArgs(io, a, &cc_argv, module, extern_root, try clibsArchivePath(a, resource_dirs, hosted_target));
 
     const cc_result = try std.process.run(gpa, io, .{
         .argv = cc_argv.items,
@@ -3829,7 +3829,21 @@ fn externProjectRoot(io: std.Io, a: std.mem.Allocator, path_arg: []const u8) ?[]
     return project.findProjectRoot(a, io, dir) catch null;
 }
 
-fn appendExternLinkArgs(io: std.Io, allocator: std.mem.Allocator, argv: *std.ArrayListUnmanaged([]const u8), module: ast.Module, project_root: ?[]const u8) !void {
+/// 2.2 aşama 8: gömülü C kütüphaneleri arşivinin (`noxclibs-<hedef>.a`) yolu. Programın modülleri `from "zig-out/lib/noxclibs.a"` bildiren `extern def`ler içeriyorsa
+/// (`nox.lz4`, `nox.xxhash`, `nox.zstd.compress`...) `appendExternLinkArgs` onu bağlar; arşiv `noxrt.o`dan ayrı ve isteğe bağlıdır (Windows dahil tüm hosted masaüstü hedeflerde).
+/// Yerel hedefte `<install>/lib/noxclibs.a`, çapraz hedefte `<install>/lib/noxclibs-<hedef>.a` (`noxrt-<hedef>`in karşılığı).
+fn clibsArchivePath(a: std.mem.Allocator, resource_dirs: project.ResourceDirs, hosted: ?qbe_target.HostedTargetInfo) !?[]const u8 {
+    if (hosted) |ht| {
+        const prefix = "noxrt-";
+        if (!std.mem.startsWith(u8, ht.runtime_object_name, prefix)) return null;
+        return try std.fmt.allocPrint(a, "{s}/lib/noxclibs-{s}.a", .{ resource_dirs.install_root, ht.runtime_object_name[prefix.len..] });
+    }
+    return try std.fmt.allocPrint(a, "{s}/lib/noxclibs.a", .{resource_dirs.install_root});
+}
+
+const clibs_extern_from = "zig-out/lib/noxclibs.a";
+
+fn appendExternLinkArgs(io: std.Io, allocator: std.mem.Allocator, argv: *std.ArrayListUnmanaged([]const u8), module: ast.Module, project_root: ?[]const u8, clibs_path: ?[]const u8) !void {
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     try seen.put(allocator, "zig-out/lib/noxrt.o", {});
     for (module.body) |stmt| {
@@ -3837,6 +3851,18 @@ fn appendExternLinkArgs(io: std.Io, allocator: std.mem.Allocator, argv: *std.Arr
         const from_lib = stmt.kind.extern_def.from_lib;
         if (seen.contains(from_lib)) continue;
         try seen.put(allocator, from_lib, {});
+        if (std.mem.eql(u8, from_lib, clibs_extern_from)) {
+            const cp = clibs_path orelse {
+                printErr("this target has no embedded C libraries (needed by nox.lz4, nox.xxhash, nox.zstd.compress): they are available for macOS, Linux and Windows desktop targets\n", .{});
+                return error.BuildFailed;
+            };
+            if (std.Io.Dir.accessAbsolute(io, cp, .{})) |_| {} else |_| {
+                printErr("the embedded C library archive '{s}' is missing; build it with: zig build\n", .{cp});
+                return error.BuildFailed;
+            }
+            try argv.append(allocator, cp);
+            continue;
+        }
 
         const looks_like_path = std.mem.indexOfScalar(u8, from_lib, '/') != null or
             std.mem.endsWith(u8, from_lib, ".o") or

@@ -224,9 +224,6 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_gzip_decompress_bytes_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_gzip_decompress_to_str_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_gzip_last_op_ok", Entry{ .params = "", .ret = 'W' } },
-    .{ "nox_hash_float", Entry{ .params = "PD", .ret = 'L' } },
-    .{ "nox_hash_int", Entry{ .params = "PL", .ret = 'L' } },
-    .{ "nox_hash_str", Entry{ .params = "PP", .ret = 'L' } },
     .{ "nox_host_alloc", Entry{ .params = "U", .ret = 'P' } },
     .{ "nox_host_caps_set", Entry{ .params = "W", .ret = 'v' } },
     .{ "nox_host_fetch_complete", Entry{ .params = "WWWPUPU", .ret = 'W' } },
@@ -711,6 +708,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_zip_unpack_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_zstd_decompress_raw", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_zstd_last_ok", Entry{ .params = "", .ret = 'L' } },
+    .{ "nox_xxhash64_hex", Entry{ .params = "PL", .ret = 'P' } },
 });
 
 const std = @import("std");

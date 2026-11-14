@@ -1,4 +1,4 @@
-# nox.zstd (v2.1.71) — Zstandard AÇMA. Sıkıştırma YOKTUR (Zig standart kütüphanesi yalnızca açar); sıkıştırmak için `nox.gzip` kullanın. Girdi/çıktı `str` içinde ham bayttır
+# nox.zstd (v2.1.71) — Zstandard AÇMA (Zig std); v2.1.172'den beri SIKIŞTIRMA da var (gömülü C zstd, yalnızca macOS/Linux; `compress` aşağıda). Girdi/çıktı `str` içinde ham bayttır
 # (ikili güvenli). Pencere sınırı 8 MiB, çıktı sınırı 1 GiB; sözlük (dictionary) desteklenmez. Çıplak çekirdekte (freestanding) kapalıdır.
 
 class ZstdError(Exception):
@@ -6,6 +6,19 @@ class ZstdError(Exception):
 
 extern def nox_zstd_decompress_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_zstd_last_ok() -> int from "zig-out/lib/noxrt.o"
+
+# v2.1.172 (2.2 aşama 8): SIKIŞTIRMA artık VAR — gömülü C zstd (`third_party/zstd`, BSD-3) ayrı arşivde (`noxclibs-<hedef>.a`) gelir; macOS, Linux ve Windows'ta aynıdır.
+# `compress` JENERİKtir (`[T]`, yalnızca `str` ile kullanılır): jenerik işlevler yalnızca kullanıldığında üretildiğinden, `decompress` kullanan WebAssembly/mobil programlar arşive
+# bağımlı olmaz. Çerçeve içerik boyutu + sağlama taşır, pencere ≤ 8 MiB (aşağıdaki `decompress` ile uyumlu).
+extern def nxc_zstd_compress_str(data: str, level: int) -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_zstd_last_ok() -> int from "zig-out/lib/noxclibs.a"
+
+# `level`: 1..19 (varsayılan 3), negatif = daha hızlı; aralık dışı değer sınırlanır.
+def compress[T](data: T, level: int = 3) -> T:
+    out: T = nxc_zstd_compress_str(data, level)
+    if nxc_zstd_last_ok() == 0:
+        raise ZstdError("zstd compression failed")
+    return out
 
 # Bir ya da daha çok Zstandard çerçevesini açar; bozuk/desteklenmeyen girdide `ZstdError`.
 def decompress(data: str) -> str:

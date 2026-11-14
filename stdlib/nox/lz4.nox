@@ -1,0 +1,29 @@
+# nox.lz4 (v2.1.172, 2.2 aşama 8) — LZ4 ÇERÇEVE biçimi (`lz4` komut satırıyla uyumlu): çok hızlı sıkıştırma/açma. Girdi/çıktı Nox `str` içinde ham baytlardır (ikili güvenli).
+# Gömülü C kütüphanesi (`third_party/lz4`, BSD-2) ayrı bir arşivde (`noxclibs-<hedef>.a`) gelir ve yalnızca bu modülü içe aktaran programa bağlanır; macOS, Linux ve Windows'ta
+# aynıdır. WebAssembly/mobil/çıplak çekirdek hedeflerinde bu modül yoktur (bağlama hatası). Çıktı sınırı 1 GiB (açma bombası koruması).
+
+class Lz4Error(Exception):
+    pass
+
+extern def nxc_lz4_compress_str(data: str, level: int) -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_lz4_decompress_str(data: str) -> str from "zig-out/lib/noxclibs.a" with_rt
+extern def nxc_lz4_last_ok() -> int from "zig-out/lib/noxclibs.a"
+extern def nxc_lz4_available() -> int from "zig-out/lib/noxclibs.a"
+
+# Bu hedefte gömülü LZ4 var mı? (Modül bağlanabiliyorsa her zaman True.)
+def is_supported() -> bool:
+    return nxc_lz4_available() == 1
+
+# `level`: 0 = hızlı (varsayılan), 1..12 = HC (daha yavaş, daha küçük). Aralık dışı değer sınırlanır. Çerçeve içerik boyutu ve içerik sağlamasını taşır.
+def compress(data: str, level: int = 0) -> str:
+    out: str = nxc_lz4_compress_str(data, level)
+    if nxc_lz4_last_ok() == 0:
+        raise Lz4Error("lz4 compression failed")
+    return out
+
+# Bir LZ4 çerçevesini açar; bozuk/kesik/artık baytlı girdi ya da sınırı aşan çıktıda `Lz4Error`.
+def decompress(data: str) -> str:
+    out: str = nxc_lz4_decompress_str(data)
+    if nxc_lz4_last_ok() == 0:
+        raise Lz4Error("invalid lz4 data")
+    return out
