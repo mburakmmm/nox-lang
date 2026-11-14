@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.156]
+
+### Düzeltildi (Linux x86-64 CI askısı — A1)
+
+- **`EpollReactor.registerWithTimeout(.., 0, ..)` zaman aşımı hiç ateşlenmiyordu:** `timerfd_settime`, sıfır `it_value`yi "zamanlayıcıyı KAPAT" diye yorumlar; 0 ms'lik bir bekleme bu yüzden yalnızca fd hazır olursa uyanıyor, olmazsa fiber SONSUZA dek uyuyordu. QUIC `pump`ı olay süresi dolmuşken 0 ms verdiğinden `nox.http` HTTP/3 sunucusunun kapanışı (ve `h3_client.request` testi) ubuntu-26.04 (OpenSSL ≥ 3.5, QUIC açık) koşucusunda `epoll_wait(-1)`de takılıyordu (v2.1.132'den beri kırmızı CI; aarch64 koşucusu OpenSSL 3.0 olduğundan testi atlıyordu). 0 ms artık en az 1 ns'ye yükseltilir. Kök neden, x86-64 Linux ikilisi `ubuntu:26.04` konteynerinde çalıştırılarak yeniden üretildi (düzeltme öncesi ~2 koşuda 1 askı, sonrası 12/12 temiz); regresyon testi `io_reactor.zig`de.
+- **`HPy host` iş akışı kırmızıydı:** `shared/hpy_host_contract.zig`deki `nox_commit` sabiti, noktalı `sed` ile yapılan sürüm artırmalarında bozulmuştu (`...edb22.1.1534358...`); `tests/compat/hpy_host/PIN`deki gerçek özetle (`00a855c6...eac9`) geri yüklendi ve `zig test shared/hpy_host_contract.zig -lc` yeşil.
+
 ## [2.1.155]
 
 ### Eklendi (TODO 4.6: gerçek çok iş parçacıklı WASM — wasi-threads)

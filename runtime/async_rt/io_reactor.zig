@@ -384,12 +384,19 @@ const EpollReactor = if (builtin.os.tag == .linux) struct {
 
     /// `timeout_ms` SONRA (yalnızca BİR KEZ — `it_interval = 0`, tekrar
     /// YOK) ateşleyecek şekilde `fd`yi silahlandırır.
+    ///
+    /// v2.1.156: `timerfd_settime`, SIFIR `it_value`yi "zamanlayıcıyı KAPAT" diye
+    /// yorumlar (hemen ateşlemez) — `timeout_ms == 0` bu yüzden zamanlayıcıyı hiç
+    /// silahlandırmıyor, fd hazır olmazsa fiber SONSUZA dek uyuyordu (QUIC `pump`ı,
+    /// olay süresi dolmuşken 0 ms verir; Linux x86-64 CI'daki HTTP/3 askısının kök
+    /// nedeni). 0 ms en az 1 ns'ye yükseltilir: zamanlayıcı hemen ateşlenir.
     fn sysTimerfdSettime(fd: posix.fd_t, timeout_ms: u32) !void {
+        const ns_total: u64 = @max(@as(u64, timeout_ms) * std.time.ns_per_ms, 1);
         const spec: linux.itimerspec = .{
             .it_interval = .{ .sec = 0, .nsec = 0 },
             .it_value = .{
-                .sec = @intCast(timeout_ms / 1000),
-                .nsec = @intCast((timeout_ms % 1000) * std.time.ns_per_ms),
+                .sec = @intCast(ns_total / std.time.ns_per_s),
+                .nsec = @intCast(ns_total % std.time.ns_per_s),
             },
         };
         const rc = posix.system.timerfd_settime(fd, 0, &spec, null);
@@ -958,6 +965,30 @@ test "IoReactor.registerWithTimeout: fd HIC hazir OLMAZSA zaman asimina UGRAR" {
     }
     try std.testing.expectEqual(@as(usize, 1), n);
     try std.testing.expectEqual(@as(?*Fiber, fake_fiber), spy.marked);
+    try std.testing.expectEqual(WaitResult.timed_out, ctx.result);
+}
+
+test "IoReactor.registerWithTimeout: 0 ms zaman asimi HEMEN ateslenir (timerfd sifir = kapali tuzagi)" {
+    const fds = try testSocketPair();
+    defer testCloseFd(fds[0]);
+    defer testCloseFd(fds[1]);
+
+    var reactor = try IoReactor.init();
+    defer reactor.deinit();
+
+    var fake_fiber_storage: Fiber = undefined;
+    const fake_fiber: *Fiber = &fake_fiber_storage;
+    var ctx: WaitCtx = .{ .fiber = fake_fiber };
+
+    // fd HİÇ hazır olmaz; 0 ms'lik zaman aşımı yine de ateşlenmeli (aksi halde `poll()` sonsuza dek bloke olur).
+    try reactor.registerWithTimeout(fds[0], .read, 0, &ctx);
+    var spy = MarkReadySpy{};
+    var n: usize = 0;
+    var attempt: usize = 0;
+    while (n == 0 and attempt < 20) : (attempt += 1) {
+        n = try reactor.poll(&spy);
+    }
+    try std.testing.expectEqual(@as(usize, 1), n);
     try std.testing.expectEqual(WaitResult.timed_out, ctx.result);
 }
 

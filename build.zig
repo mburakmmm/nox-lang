@@ -2404,6 +2404,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("tests/golden/kernel_boot_qemu_test.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true, // `std.c.nanosleep` (Linux'ta libc açıkça bağlanmalı; macOS'ta örtük)
         .imports = &.{
             .{ .name = "build_options", .module = kernel_boot_qemu_options.createModule() },
         },
