@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.153]
+
+### Eklendi (TODO 7.4 S1: SBOM)
+
+- **`noxc sbom [dir] [-o dosya]`:** `nox.json` + `nox.lock`tan deterministik CycloneDX 1.5 JSON SBOM. Her kilitli bağımlılık purl (`pkg:github/<sahip>/<depo>@<commit>`), ref ve çözülmüş commit taşır; önbellekteki kaynaklar statik taranır (`extern def`, kitaplık adları, `lowlevel`, `bin`) ve `nox:native` işaretlenir; hiçbir kod çalıştırılmaz, zaman damgası/yol sızmaz. Modül `compiler/pkg/sbom.zig`, test `tests/cli/sbom_test.zig`. Tasarım: `project/registry-guvenlik-tasarimi-2026-11.md` (S1 onaylandı; S2/S3 sırada).
+
 ## [2.1.152]
 
 ### Düzeltildi (CI teşhis turu)

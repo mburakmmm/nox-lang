@@ -21,6 +21,7 @@ const builtin = @import("builtin");
 const sandbox = @import("sandbox.zig");
 const bindgen = @import("bindgen.zig");
 const signing = @import("pkg/signing.zig");
+const sbom = @import("pkg/sbom.zig");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const syntax_report = @import("syntax_report.zig");
@@ -402,7 +403,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, legacy };
+    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -412,6 +413,7 @@ fn realMain(init: std.process.Init) !void {
         // "geriye dönük uyumlu tekil-dosya" sözleşmesini BOZMAZ.
         if (all_args.items.len == 0) break :blk .help;
         const first = all_args.items[0];
+        if (std.mem.eql(u8, first, "sbom")) break :blk .sbom;
         if (std.mem.eql(u8, first, "sign")) break :blk .sign;
         if (std.mem.eql(u8, first, "build")) break :blk .build;
         if (std.mem.eql(u8, first, "run")) break :blk .run;
@@ -451,6 +453,7 @@ fn realMain(init: std.process.Init) !void {
         .build => try cmdBuild(gpa, io, a, rest, "usage: noxc build [--dump|-v] [-o <output>] <file.nox>\n", nox_home, resource_dirs, fetch_policy),
         .legacy => try cmdBuild(gpa, io, a, rest, "usage: noxc [--dump|-v] <file.nox>  (for commands: noxc --help)\n", nox_home, resource_dirs, fetch_policy),
         .help => printHelp(is_tr),
+        .sbom => try cmdSbom(io, a, rest, nox_home),
         .sign => try cmdSign(io, a, rest, nox_home),
         .run => try cmdRun(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, run_limits),
         .test_cmd => try cmdTest(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, run_limits),
@@ -3785,6 +3788,34 @@ fn readHexFile(io: std.Io, a: std.mem.Allocator, path: []const u8, out: []u8) !v
     if (trimmed.len != out.len * 2) {
         printErr("noxc sign: {s} is not valid hex of the expected length\n", .{path});
         std.process.exit(1);
+    }
+}
+
+/// `noxc sbom [dir] [-o dosya]`: CycloneDX 1.5 SBOM'u (stdout ya da dosya) — bkz. `compiler/pkg/sbom.zig`.
+fn cmdSbom(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8) !void {
+    var dir: []const u8 = ".";
+    var out_path: ?[]const u8 = null;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "-o") and i + 1 < args.len) {
+            i += 1;
+            out_path = args[i];
+        } else if (std.mem.startsWith(u8, args[i], "-")) {
+            printErr("usage: noxc sbom [dir] [-o file]   write a CycloneDX 1.5 SBOM of nox.json + nox.lock (deterministic)\n", .{});
+            std.process.exit(1);
+        } else dir = args[i];
+    }
+    const cwd_abs = try std.process.currentPathAlloc(io, a);
+    const abs_dir = if (std.fs.path.isAbsolute(dir)) try a.dupe(u8, dir) else try std.fs.path.resolve(a, &.{ cwd_abs, dir });
+    const text = try sbom.generate(a, io, nox_home, abs_dir, build_options.version);
+    if (out_path) |op| {
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = op, .data = text });
+        printErr("wrote {s}\n", .{op});
+    } else {
+        var stdout_buf: [4096]u8 = undefined;
+        var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
+        try stdout_writer.interface.writeAll(text);
+        try stdout_writer.interface.flush();
     }
 }
 

@@ -22,7 +22,7 @@ Bu listede olmayanlar: `v2-hazirlik-yol-haritasi.md` (37/37 bitti), `limitasyon-
 - [x] **B1. (11.10)** v2.1.149: kök neden bulundu (ikilisiz eski girdi yeniden kullanılırken `used` işaretçisi geç yazılıyordu, başka sürecin `prune`u siliyordu); işaretçi artık hemen yazılır + regresyon testi.
 - [x] **B2. (6.5)** v2.1.149: `docs/internals/wasm-coverage.md` gerçek motorla (MVP, çok değerli, sign-ext, doymalı, bulk, reftypes, SIMD, threads) yeniden yazıldı; kayıt bayattı.
 - [x] **B3. (7.5)** v2.1.149: NNI API fuzz (`alloc(0)` çökmesi düzeltildi) + Plugin API manifest fuzz golden (JSON hatası/yanlış tipler PluginError olur). HPy sınırı v2.0.46'dan fuzz'lıydı.
-- [~] **B4. (7.4)** Tasarım yazıldı: `project/registry-guvenlik-tasarimi-2026-11.md` (S1 SBOM → S2 yayıncı anahtarı/imza → S3 tarama etiketleri). **Karar bekliyor:** §4'teki 4 soru.
+- [~] **B4. (7.4)** Tasarım KABUL EDİLDİ (kullanıcı 2026-11-14: S1 önce; S2 evet — GitHub OAuth hesap-anahtar bağı, ilk sürümde "uyar" modu; S3 etiketler herkese; sunucu imza anahtarı M4 Docker sırrı). **S1 SBOM bitti (v2.1.153).** Sırada: S2 (yayıncı anahtarı + imza doğrulama), S3 (tarama etiketleri).
 - [K] **B5. (4.6) Kanıt zinciri: Aura commit'i ve toolchain alanlarının zorunluluğu.** Aura deposu ayrı olduğundan D bölümüne taşındı; Nox tarafı v2.0.38'de tamam.
 - [~] **B6. (4.6)** Tasarım yazıldı: `project/wasm-threads-tasarimi-2026-11.md` (wasi-threads uyumlu, örnek-başına OS iş parçacığı, gerçek wait/notify). **Karar bekliyor:** §6'daki 4 soru.
 - [ ] **B7. (9.15) WASM varsayılan kotaları çok-kiracılı kullanım için gevşek.** İzleme maddesi; sıkı hazır ayar + capability sınırları W2/W3 ile (Nexus). Çok-kiracılı kullanım gündeme gelince.

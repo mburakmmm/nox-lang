@@ -20,6 +20,7 @@ normally).
 | Command | Description |
 |---|---|
 | `noxc build [options] <file.nox>` | compile to a native executable named after the file (or `-o`) |
+| `noxc sbom [dir] [-o file]` | write a deterministic CycloneDX 1.5 SBOM of `nox.json` + `nox.lock` (each locked dependency with its purl and commit; `nox:native` flags `extern def` / `lowlevel` / `bin`, found by a static scan of the cached sources; nothing is executed) |
 | `noxc sign keygen <name>`, `sign lock --key <name> [dir]`, `sign trust <pub>`, `sign revoke <fp>`, `sign verify [dir]` | Ed25519 signing of `nox.lock` ([ADR-011](../internals/adr/011-lock-signing.md)); `verify` exits 0 only for a valid signature by a trusted, non-revoked key |
 | `noxc run --sandbox [--allow-net] [--allow-write=DIR] [--allow-read=DIR] <file.nox>` | run the compiled program under an OS sandbox: no network, writes only to `$TMPDIR` ([ADR-010](../internals/adr/010-sandbox.md)); macOS `sandbox-exec`, Linux `bwrap` |
 | `noxc run [options] <file.nox> [args…]` | compile into `$NOX_HOME/cache/run/` (keyed by path, source contents, the `noxc` binary, `noxrt.o`, and the installed stdlib) and run; a matching cache entry is not rebuilt. Everything after `--` goes to the program (`nox.os.arg(1)`, …) |

@@ -47,7 +47,7 @@ What the registry does today: a submission is moderated before it appears in the
 
 If a package is found to be malicious or compromised: (1) the maintainers remove or hide the entry from the index, which stops new installs through `noxc add` and `noxc search`; (2) existing projects keep working from their lock file, so the advisory names the affected repository and commits and tells users to update the lock; (3) the fix and the advisory are published in the `CHANGELOG` and the repository's security advisories. A package that declares `extern def` or a `bin` entry runs native code with your authority (see the trust boundary above); read it before adding it.
 
-Not yet built: automatic malware or native-code scanning, registry-side publisher keys, and a generated SBOM.
+`noxc sbom` (since v2.1.153) writes a CycloneDX 1.5 SBOM listing every locked dependency with its commit and whether it contains native code (`extern def`, `lowlevel`, `bin`). Not yet built: registry-side publisher keys and automatic scanning at publish time (design: `project/registry-guvenlik-tasarimi-2026-11.md`).
 
 ## Reporting vulnerabilities
 
