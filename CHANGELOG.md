@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.184]
+
+### Düzeltme
+
+- `benchmarks/stdlib_perf/stdlib_perf2.c` (v2.1.183'ün C referansı) `.gitignore` kuralı yüzünden depoya girmemişti; `*.c` izin listesine eklendi, dosya eklendi. `run.py --suite 2` temiz bir klonda da C sütununu basar.
+
 ## [2.1.183]
 
 ### Performans (2.2 aşama 2: stdlib modül taraması, ölçüt C)
