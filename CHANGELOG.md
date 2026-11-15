@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.178]
+
+### Düzeltme
+
+- `release.yml` Snap (amd64) işi `ubuntu-latest` yerine `ubuntu-24.04` kullanır: runner 26.04'e geçince snapcraft (core24) "Ubuntu 24.04 builds cannot be performed on this Ubuntu 26.04 system" ile düşüyordu (v2.1.177'nin amd64 snap'i release'e yüklenemedi; arm64 etkilenmedi).
+
 ## [2.1.177]
 
 ### Düzeltme (CI kırmızıları)
