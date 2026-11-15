@@ -25,7 +25,7 @@ noxc build main.nox -o app          # links lib/noxclibs.a because main.nox impo
 
 ## Where they are not available
 
-- **Mobile targets (iOS, Android):** the archive is not linked. Importing `nox.lz4`, `nox.xxhash`, `nox.yyjson` or `nox.brotli` is a compile-time error that says so, and `nox.pcre2` is rejected by the mobile capability rules. `nox.zstd.decompress` works; `nox.zstd.compress` needs the archive and cannot be linked there.
+- **Mobile targets (iOS, Android):** the archive is not linked. Importing `nox.lz4`, `nox.xxhash`, `nox.yyjson` or `nox.brotli` is a compile-time error that says so, and `nox.pcre2` is rejected by the mobile capability rules. `nox.zstd.decompress` works; a call to `nox.zstd.compress` is rejected at compile time because it needs the archive.
 - **WebAssembly:** `noxc build --target wasm32-wasi` stops with "this target has no embedded C libraries" for a program that imports one of these modules.
 - **Builds that deny `dynamic_code`:** `nox.pcre2` is rejected (the JIT generates machine code); use `nox.regex` instead.
 

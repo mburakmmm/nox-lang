@@ -147,6 +147,33 @@ test "mobile targets reject modules that need the embedded C libraries (noxclibs
     }
 }
 
+test "mobile targets reject nox.zstd.compress at the call but allow decompress" {
+    if (builtin.os.tag == .windows) return;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    try tmp.dir.writeFile(io, .{ .sub_path = "zc.nox", .data = "import nox.zstd\nprint(len(nox.zstd.compress(\"abc\")))\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "zi.nox", .data = "from nox.zstd import compress\nprint(len(compress(\"abc\")))\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "zd.nox", .data = "import nox.zstd\nprint(len(nox.zstd.decompress(\"\")))\n" });
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &path_buf);
+    const dir = path_buf[0..len];
+    for ([_][]const u8{ "ios-simulator-arm64", "android-arm64" }) |target| {
+        for ([_][]const u8{ "zc.nox", "zi.nox" }) |name| {
+            const full = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, name });
+            defer gpa.free(full);
+            try expectFail(gpa, io, &.{ noxcPath(), "check", "--target", target, full }, "embedded C libraries");
+        }
+        const dec = try std.fmt.allocPrint(gpa, "{s}/zd.nox", .{dir});
+        defer gpa.free(dec);
+        const ok = try run(gpa, io, &.{ noxcPath(), "check", "--target", target, dec });
+        defer gpa.free(ok.stdout);
+        defer gpa.free(ok.stderr);
+        try std.testing.expectEqual(@as(u8, 0), if (ok.term == .exited) ok.term.exited else 1);
+    }
+}
+
 test "mobile mask allows jwt and the database clients, rejects libssl servers" {
     if (builtin.os.tag == .windows) return;
     var tmp = std.testing.tmpDir(.{});

@@ -455,6 +455,9 @@ const MOBILE_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8
     .{ .name = "brotli", .why = "the embedded C libraries are not linked on mobile targets" },
 };
 
+/// Mobil hedeflerde `noxclibs` arşivine dayanan ama modülünün geri kalanı çalışma zamanında çalışan işlevler (çağrı noktasında reddedilir; modülün tamamı değil): `nox.zstd.decompress` mobilde çalışır, `compress` ise `_nxc_zstd_*` sembollerini ister.
+const MOBILE_UNAVAILABLE_FUNCTIONS = [_][]const u8{"nox_zstd_compress"};
+
 /// `freestanding` profilinde sınıflandırılmış olsa bile ÇALIŞMA ZAMANINDA bulunmayan modüller (mobil/hosted çalışma zamanında vardır, `lib_freestanding.zig`de yoktur): yetenek tablosunda
 /// `{}` görünmeleri freestanding'de sessizce kabul edilip bağlama hatasına dönüşmesin diye açıkça reddedilir.
 const FREESTANDING_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }{
@@ -3082,6 +3085,13 @@ pub const Checker = struct {
     /// KENDİSİ HER profilde import EDİLEBİLİR, ama `secure_random_hex(...)`
     /// GİBİ tek TEK işaretli bir ÇAĞRI 'freestanding'de BURADA reddedilir.
     fn checkCapabilityCall(self: *Checker, name: []const u8) TypeError!void {
+        if (self.mobile_mask != .none) {
+            for (MOBILE_UNAVAILABLE_FUNCTIONS) |f| {
+                if (std.mem.eql(u8, f, name)) {
+                    return self.fail(error.CapabilityNotGranted, "the call to '{s}' was rejected on a mobile target (it needs the embedded C libraries, which are not linked there)", .{name});
+                }
+            }
+        }
         const caps = self.capability_functions.get(name) orelse return;
         for (caps) |cap| {
             if (self.grantsCapability(cap)) continue;
@@ -3236,6 +3246,7 @@ pub const Checker = struct {
         // classes`e bakıyordu, generic'leri HİÇ KONTROL ETMİYORDU (GERÇEKTEN
         // denenip "modülün 'shuffle' adlı üyesi yok" hatasıyla YAKALANDI).
         if (self.generic_functions.get(mangled)) |gfd| {
+            try self.checkCapabilityCall(mangled);
             return try self.instantiateGeneric(ctx, gfd, c);
         }
         if (self.functions.get(mangled)) |sig| {
@@ -7602,6 +7613,7 @@ pub const Checker = struct {
             break :blk self.generic_functions.get(mangled_fn);
         };
         if (maybe_gfd) |gfd| {
+            try self.checkCapabilityCall(self.from_imports.get(g.name) orelse g.name);
             if (g.type_args.len != gfd.type_params.len) {
                 return self.fail(error.ArgumentCountMismatch, "'{s}' takes {d} type argument(s), {d} given", .{ g.name, gfd.type_params.len, g.type_args.len });
             }
@@ -9939,6 +9951,7 @@ pub const Checker = struct {
                     return self.fail(error.TypeMismatch, "'{s}' is not a function and cannot be called", .{name});
                 }
                 if (self.generic_functions.get(name)) |gfd| {
+                    try self.checkCapabilityCall(name);
                     return try self.instantiateGeneric(ctx, gfd, c);
                 }
                 // v2.1.102 (TODO 3.4 F3): `@ffi.errors` taşıyan extern def — çağrı, tembelce üretilen sarmalayıcıya yeniden yazılır (sarmalayıcının

@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.182]
+
+### Düzeltme
+
+- **Mobil hedefte `nox.zstd.compress` çağrısı derleme zamanında reddedilir** ("the call to 'nox_zstd_compress' was rejected on a mobile target (it needs the embedded C libraries, which are not linked there)"); `nox.zstd.decompress` mobilde çalışmaya devam eder. Önceden bağlayıcı `_nxc_zstd_*` tanımsız sembol hatası verirdi. Çağrı noktası listesi (`MOBILE_UNAVAILABLE_FUNCTIONS`) kullanıldı, yeni yetenek türü eklenmedi.
+- Bu sırada genel (jenerik) işlev çağrı noktaları (`f(x)`, `mod.f(x)`, `f[T](x)`) `checkCapabilityCall`'ı atlıyordu: jenerik bir işlevde `@capability.requires` ya da `--deny-capability` etkisizdi. Üç çağrı noktasına da kontrol eklendi (stdlib'de şu an jenerik + `@capability.requires` yok, davranış değişmez).
+- Test: `tests/cli/mobile_target_test.zig` (iOS ve Android; `nox.zstd.compress` her iki içe aktarma biçiminde reddedilir, `decompress` kabul edilir).
+
 ## [2.1.181]
 
 ### Dokümanlar (2.2 aşama 11)
