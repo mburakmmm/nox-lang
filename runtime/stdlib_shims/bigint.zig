@@ -13,11 +13,16 @@ const Managed = big.Managed;
 const Const = big.Const;
 const Limb = std.math.big.Limb;
 
+/// Geçici bellek arenası. İlk 16 KiB yığındaki bir tampondan karşılanır (küçük/orta işlemlerde sistem çağrısı yok); taşan istek `scratchAllocator()`a (hosted'ta page_allocator) düşer.
+/// Önceden her işlem `page_allocator` üstünde yeni bir arena açıyordu: her çarpma bir `mmap` + `munmap` demekti (3000! hesabı C'nin 11 katıydı, 2.2 aşama 2).
+/// Arena kendi içindeki tampona işaret ettiğinden değerle kopyalanamaz: `var ar: Arena = undefined; ar.start();` ile yerinde kurulur.
 const Arena = struct {
+    sfa: std.heap.StackFallbackAllocator(16384),
     inner: std.heap.ArenaAllocator,
 
-    fn init() Arena {
-        return .{ .inner = std.heap.ArenaAllocator.init(shim_util.scratchAllocator()) };
+    fn start(self: *Arena) void {
+        self.sfa = std.heap.stackFallback(16384, shim_util.scratchAllocator());
+        self.inner = std.heap.ArenaAllocator.init(self.sfa.get());
     }
     fn deinit(self: *Arena) void {
         self.inner.deinit();
@@ -90,7 +95,8 @@ pub export fn nox_bigint_is_error(s: ?[*:0]const u8) callconv(.c) i64 {
 }
 
 pub export fn nox_bigint_from_i64(rt: ?*anyopaque, v: i64) callconv(.c) ?[*:0]u8 {
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     var m = Managed.initSet(ar.alloc(), v) catch return errStr();
     defer m.deinit();
@@ -98,7 +104,8 @@ pub export fn nox_bigint_from_i64(rt: ?*anyopaque, v: i64) callconv(.c) ?[*:0]u8
 }
 
 pub export fn nox_bigint_fits_i64(s: ?[*:0]const u8) callconv(.c) i64 {
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     var m = load(ar.alloc(), bytesOf(s)) catch return 0;
     defer m.deinit();
@@ -106,7 +113,8 @@ pub export fn nox_bigint_fits_i64(s: ?[*:0]const u8) callconv(.c) i64 {
 }
 
 pub export fn nox_bigint_to_i64(s: ?[*:0]const u8) callconv(.c) i64 {
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     var m = load(ar.alloc(), bytesOf(s)) catch return 0;
     defer m.deinit();
@@ -117,7 +125,8 @@ pub export fn nox_bigint_to_i64(s: ?[*:0]const u8) callconv(.c) i64 {
 pub export fn nox_bigint_parse_raw(rt: ?*anyopaque, s: ?[*:0]const u8, base: i64) callconv(.c) ?[*:0]u8 {
     const txt = bytesOf(s);
     if (txt.len == 0 or base < 2 or base > 36) return errStr();
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     var body = txt;
     var neg = false;
@@ -140,7 +149,8 @@ pub export fn nox_bigint_parse_raw(rt: ?*anyopaque, s: ?[*:0]const u8, base: i64
 
 pub export fn nox_bigint_to_string(rt: ?*anyopaque, s: ?[*:0]const u8, base: i64) callconv(.c) ?[*:0]u8 {
     if (base < 2 or base > 36) return errStr();
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     var m = load(ar.alloc(), bytesOf(s)) catch return errStr();
     defer m.deinit();
@@ -214,8 +224,52 @@ fn twosComp(al: std.mem.Allocator, v: *const Managed, n: usize) ![]Limb {
     return out;
 }
 
+/// `mul` hızlı yolu: çarpanlardan biri 8 baytı (tek 64-bit sözcüğü) aşmıyorsa `Managed` kurmadan doğrudan sözcük sözcük çarpar (`3000!` gibi biriktirmelerde her adım bir küçük çarpandır). Uygulanamazsa `null`.
+/// Çıktı kanonik biçimdedir (sondaki sıfır baytlar atılır, sıfır pozitiftir); sonuç genel yolla birebir aynıdır (testte Python referans değerleriyle doğrulanır).
+fn mulSmall(rt: ?*anyopaque, a: []const u8, b: []const u8) ?[*:0]u8 {
+    if (a.len == 0 or b.len == 0) return null;
+    const big_s, const small_s = if (b.len <= 9) .{ a, b } else if (a.len <= 9) .{ b, a } else return null;
+    const mag = big_s[1..];
+    const sm = small_s[1..];
+    var m: u64 = 0;
+    for (sm, 0..) |byte, i| m |= @as(u64, byte) << @intCast(i * 8);
+    if (m == 0 or mag.len == 0) return storeBytes(rt, false, &.{});
+    var ar: Arena = undefined;
+    ar.start();
+    defer ar.deinit();
+    const words = (mag.len + 7) / 8;
+    const out = ar.alloc().alloc(u8, (words + 1) * 8) catch return null;
+    var carry: u64 = 0;
+    var wi: usize = 0;
+    while (wi < words) : (wi += 1) {
+        const lo = wi * 8;
+        const n = @min(8, mag.len - lo);
+        var w: u64 = 0;
+        for (mag[lo .. lo + n], 0..) |byte, k| w |= @as(u64, byte) << @intCast(k * 8);
+        const prod = @as(u128, w) * m + carry;
+        std.mem.writeInt(u64, out[lo..][0..8], @truncate(prod), .little);
+        carry = @truncate(prod >> 64);
+    }
+    std.mem.writeInt(u64, out[words * 8 ..][0..8], carry, .little);
+    var len: usize = out.len;
+    while (len > 0 and out[len - 1] == 0) len -= 1;
+    return storeBytes(rt, (big_s[0] != small_s[0]) and len > 0, out[0..len]);
+}
+
+/// Kanonik serileştirme: bayt 0 işaret, ardından büyüklük baytları.
+fn storeBytes(rt: ?*anyopaque, negative: bool, mag: []const u8) ?[*:0]u8 {
+    const buf = str_mod.nox_str_alloc_buf(rt, mag.len + 1) orelse return null;
+    buf[0] = @intFromBool(negative and mag.len > 0);
+    @memcpy(buf[1 .. 1 + mag.len], mag);
+    return @ptrCast(buf);
+}
+
 fn binary(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u8, comptime op: enum { add, sub, mul, gcd, bit_and, bit_or, bit_xor }) ?[*:0]u8 {
-    var ar = Arena.init();
+    if (op == .mul) {
+        if (mulSmall(rt, bytesOf(a), bytesOf(b))) |r| return r;
+    }
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     const al = ar.alloc();
     var x = load(al, bytesOf(a)) catch return errStr();
@@ -260,7 +314,8 @@ pub export fn nox_bigint_xor(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const 
 
 /// Taban (floor) bölme: `want_rem` yanlışsa bölüm, doğruysa kalan döner (Python `//` ve `%`: kalan bölenin işaretini taşır). Sıfıra bölmede hata.
 fn divide(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u8, want_rem: bool) ?[*:0]u8 {
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     const al = ar.alloc();
     var x = load(al, bytesOf(a)) catch return errStr();
@@ -284,7 +339,8 @@ pub export fn nox_bigint_mod(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const 
 }
 
 pub export fn nox_bigint_neg(rt: ?*anyopaque, a: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     var x = load(ar.alloc(), bytesOf(a)) catch return errStr();
     defer x.deinit();
@@ -293,7 +349,8 @@ pub export fn nox_bigint_neg(rt: ?*anyopaque, a: ?[*:0]const u8) callconv(.c) ?[
 }
 
 pub export fn nox_bigint_abs(rt: ?*anyopaque, a: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     var x = load(ar.alloc(), bytesOf(a)) catch return errStr();
     defer x.deinit();
@@ -303,7 +360,8 @@ pub export fn nox_bigint_abs(rt: ?*anyopaque, a: ?[*:0]const u8) callconv(.c) ?[
 
 /// -1, 0 ya da 1.
 pub export fn nox_bigint_cmp(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) i64 {
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     const al = ar.alloc();
     var x = load(al, bytesOf(a)) catch return 0;
@@ -325,7 +383,8 @@ pub export fn nox_bigint_sign(a: ?[*:0]const u8) callconv(.c) i64 {
 
 pub export fn nox_bigint_pow(rt: ?*anyopaque, a: ?[*:0]const u8, e: i64) callconv(.c) ?[*:0]u8 {
     if (e < 0 or e > std.math.maxInt(u32)) return errStr();
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     const al = ar.alloc();
     var x = load(al, bytesOf(a)) catch return errStr();
@@ -338,7 +397,8 @@ pub export fn nox_bigint_pow(rt: ?*anyopaque, a: ?[*:0]const u8, e: i64) callcon
 
 /// `base ** exp mod m` (m > 0, exp >= 0); sonuç `[0, m)` aralığında.
 pub export fn nox_bigint_powmod(rt: ?*anyopaque, a: ?[*:0]const u8, e: ?[*:0]const u8, m: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     const al = ar.alloc();
     var base = load(al, bytesOf(a)) catch return errStr();
@@ -376,7 +436,8 @@ pub export fn nox_bigint_powmod(rt: ?*anyopaque, a: ?[*:0]const u8, e: ?[*:0]con
 
 pub export fn nox_bigint_shl(rt: ?*anyopaque, a: ?[*:0]const u8, n: i64) callconv(.c) ?[*:0]u8 {
     if (n < 0 or n > (1 << 31)) return errStr();
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     const al = ar.alloc();
     var x = load(al, bytesOf(a)) catch return errStr();
@@ -390,7 +451,8 @@ pub export fn nox_bigint_shl(rt: ?*anyopaque, a: ?[*:0]const u8, n: i64) callcon
 /// Aritmetik (taban) sağa kaydırma: Python `>>` gibi negatif değerler -inf'e yuvarlanır.
 pub export fn nox_bigint_shr(rt: ?*anyopaque, a: ?[*:0]const u8, n: i64) callconv(.c) ?[*:0]u8 {
     if (n < 0) return errStr();
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     const al = ar.alloc();
     var x = load(al, bytesOf(a)) catch return errStr();
@@ -402,7 +464,8 @@ pub export fn nox_bigint_shr(rt: ?*anyopaque, a: ?[*:0]const u8, n: i64) callcon
 }
 
 pub export fn nox_bigint_bit_length(a: ?[*:0]const u8) callconv(.c) i64 {
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     var x = load(ar.alloc(), bytesOf(a)) catch return 0;
     defer x.deinit();
@@ -410,7 +473,8 @@ pub export fn nox_bigint_bit_length(a: ?[*:0]const u8) callconv(.c) i64 {
 }
 
 pub export fn nox_bigint_isqrt(rt: ?*anyopaque, a: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     const al = ar.alloc();
     var x = load(al, bytesOf(a)) catch return errStr();
@@ -439,7 +503,8 @@ pub export fn nox_bigint_hash(a: ?[*:0]const u8) callconv(.c) i64 {
 
 /// Miller-Rabin: ilk 12 asal taban (n < 3.3e24 için kesin), `rounds` fazladan sabit-türetilmiş taban (büyük n için olasılıksal). 1 = muhtemelen asal.
 pub export fn nox_bigint_is_probable_prime(a: ?[*:0]const u8, extra_rounds: i64) callconv(.c) i64 {
-    var ar = Arena.init();
+    var ar: Arena = undefined;
+    ar.start();
     defer ar.deinit();
     const al = ar.alloc();
     var n = load(al, bytesOf(a)) catch return 0;
@@ -599,4 +664,40 @@ test "bigint: pow, powmod, gcd, kaydırma, isqrt, asallık" {
     try std.testing.expectEqual(@as(i64, 1), nox_bigint_is_probable_prime(g.dec("170141183460469231731687303715884105727"), 4)); // 2^127 - 1
     try std.testing.expectEqual(@as(i64, 0), nox_bigint_is_probable_prime(g.int(561), 0)); // Carmichael
     try std.testing.expectEqual(@as(i64, 0), nox_bigint_is_probable_prime(g.dec("170141183460469231731687303715884105729"), 4));
+}
+
+test "bigint: tek sözcüklü çarpan hızlı yolu genel yolla aynı sonucu verir (Python referansı)" {
+    const asap = @import("../alloc/asap.zig");
+    const rt = testRt() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    var g: Bag = .{ .rt = rt };
+    defer g.deinit();
+    const Case = struct { x: []const u8, y: []const u8, want: []const u8 };
+    const cases = [_]Case{
+        .{ .x = "123456789012345678901234567890", .y = "987654321", .want = "121932631124828532112482853211126352690" },
+        .{ .x = "-123456789012345678901234567890", .y = "987654321", .want = "-121932631124828532112482853211126352690" },
+        .{ .x = "123456789012345678901234567890", .y = "-18446744073709551615", .want = "-2277375791072698140124934049010216029110176642350" },
+        .{ .x = "18446744073709551615", .y = "18446744073709551615", .want = "340282366920938463426481119284349108225" },
+        .{ .x = "1606938044258990275541962092341162602522202993782792835313721", .y = "9223372036854775808", .want = "14821387422376473014217086081112052205218558037201992197164433280807852801261568" },
+        .{ .x = "0", .y = "5", .want = "0" },
+        .{ .x = "7", .y = "0", .want = "0" },
+        .{ .x = "-1", .y = "-1", .want = "1" },
+        .{ .x = "123456789012345678901234567890", .y = "1", .want = "123456789012345678901234567890" },
+        .{ .x = "123456789012345678901234567890", .y = "-1", .want = "-123456789012345678901234567890" },
+    };
+    for (cases) |c| {
+        const r = g.keep(nox_bigint_mul(rt, g.dec(c.x), g.dec(c.y)));
+        try std.testing.expectEqualStrings(c.want, g.show(r));
+        const r2 = g.keep(nox_bigint_mul(rt, g.dec(c.y), g.dec(c.x))); // değişme: büyük/küçük rolleri yer değiştirir
+        try std.testing.expectEqualStrings(c.want, g.show(r2));
+    }
+    // 30! = 265252859812191058636308480000000, tek sözcüklü çarpanlarla biriktirilerek
+    var acc = g.int(1);
+    var k: i64 = 2;
+    while (k <= 30) : (k += 1) acc = g.keep(nox_bigint_mul(rt, acc, g.int(k)));
+    try std.testing.expectEqualStrings("265252859812191058636308480000000", g.show(acc));
+    // kanonik biçim: sıfır işareti ve sondaki sıfır bayt yok
+    const z = g.keep(nox_bigint_mul(rt, g.int(-5), g.int(0)));
+    try std.testing.expectEqual(@as(i64, 0), nox_bigint_sign(z));
+    try std.testing.expectEqual(@as(i64, 0), nox_bigint_cmp(z, g.int(0)));
 }

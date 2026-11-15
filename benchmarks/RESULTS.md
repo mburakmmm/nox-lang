@@ -1740,3 +1740,27 @@ sarmalayıcı + kabuk katmanından geçmesidir. Not: `yyjson_arr_get(i)` değiş
 
 **Eşit-iş uyarısı (Faz 9.13, v2.1.127):** gezinme sütunundaki iki taraf AYNI arama stratejisini kullanmaz: `nox.json` yolu (`walk_nox`) bir nesnenin alanlarını sırayla gezip anahtar karşılaştırırken, yyjson yolu (`walk_yyjson`) `yyjson_obj_get` ile anahtarı doğrudan arar (C tarafında hash/doğrusal arama). Yani 4,8x/8,4x oranı "aynı işin" iki gerçekleştirimi değil, iki farklı erişim biçiminin toplam maliyetidir; yalnız yönü (bağlama katmanı pahalı değil) gösterir, kesin bir kütüphane-hız oranı olarak alıntılanmamalıdır. Eşit-iş için iki taraf da aynı sırayla `n` alanı okuyan bir varyant gerekir.
 QBE ve LLVM backend'leri aynı sıralamayı verir (QBE gezinme 2,15 ms).
+
+## Stdlib modül taraması, 2. küme (2.2 aşama 2, v2.1.183)
+
+`benchmarks/stdlib_perf/run.py --suite 2` (Nox / C / CPython, aynı iş, sağlama toplamları birebir eşit; **ölçüt C**: `stdlib_perf2.c`, clang -O2, özetler macOS'ta CommonCrypto). Apple M4, ReleaseFast, ortanca. `toml` ve `unicode` için C standart kütüphanesinde karşılık yok (C sütunu boş).
+
+| iş | önce (nox ms) | şimdi | C | Python | nox/C |
+|---|---:|---:|---:|---:|---:|
+| `LRUCache` 300k işlem | 790 | **16,6** | 1,0 | 28,9 | 17 |
+| `bigint` 3000! + ondalık yazım | 22,8 | **2,9** | 2,1 | 4,1 | 1,4 |
+| `DateTime` 100k kurma + yazma | 161 | **19,6** | 32,1 | 135,7 | 0,6 |
+| `Deque` 1M ekle + çıkar | 12,4 | 12,4 | 0,5 | 42,9 | 23 |
+| `Heap` 200k ekle + çıkar | 22,6 | 22,6 | 6,9 | 68,5 | 3,3 |
+| `Counter` 500k ekleme | 2,3 | 2,3 | 0,4 | 19,8 | 5,8 |
+| `sha512` 64 KiB × 16 | 1,5 | 1,5 | 0,6 | 0,6 | 2,5 |
+| `sha1`+`md5` 64 KiB × 16 | 2,2 | 2,2 | 1,6 | 1,5 | 1,4 |
+| `hmac_sha256` 20k | 3,2 | 3,2 | 6,7 | 23,1 | 0,47 |
+| `fnmatch` 200k | 23,8 | 23,8 | 23,5 | 56,9 | 1,0 |
+| `fs` 1 MiB yaz+oku × 8 | 3,0 | 3,0 | 3,1 | 3,9 | 0,98 |
+| `toml` 3000 tablo | 3,8 | 3,8 | - | 18,5 | - |
+| `unicode` NFC × 20 | 20,1 | 20,1 | - | 5,5 | - |
+
+Düzeltilenler: (1) `LRUCache` her işlemde doğrusal tarama + liste yeniden kuruyordu; karma dizin + mezar taşları, sıkıştırma sonrası ekleme payı (aksi halde her ~25 işlemde yeniden kuruluyordu; `OrderedDict` aynı düzeltmeyi aldı). (2) `bigint`: her işlem `page_allocator` üstünde yeni arena açıyordu (çarpma başına `mmap`+`munmap`); yığın tamponlu arena + tek sözcüklü çarpan hızlı yolu. (3) `DateTime`: `std.time.epoch.calculateYearDay` yılları tek tek sayar (~55 yineleme × 3 çağrı); Hinnant `civil_from_days` (O(1)).
+
+Açık (sonraki dilimler): `Deque` iki-liste tasarımı (halka tampon ~2x kazandırır, C'ye 23x), `Heap`/`Counter`/`LRUCache` sabit çarpanı, `unicode.normalize` (CPython'dan 3,7x yavaş), `sha512` (CPU donanım komutları; çalışma zamanında CPU algılamadan açılamaz, "runner-native CPU SIGILL" dersi), 1. küme (`stdlib_perf.nox`) için C referansı.

@@ -234,22 +234,34 @@ fn breakdownSeconds(ms: i64) std.time.epoch.EpochSeconds {
     return .{ .secs = secs };
 }
 
+/// Hinnant'ın `civil_from_days` algoritması (O(1)); `std.time.epoch.calculateYearDay` 1970'ten yılları tek tek sayar (2024 için ~55 yineleme, `DateTime` kurulumunda 3 kez). `days`: 1970-01-01'den beri gün (>= 0).
+const Civil = struct { y: i64, m: i64, d: i64 };
+fn civilFromDays(days: i64) Civil {
+    const z = days + 719468;
+    const era = @divFloor(z, 146097);
+    const doe = z - era * 146097; // [0, 146096]
+    const yoe = @divFloor(doe - @divFloor(doe, 1460) + @divFloor(doe, 36524) - @divFloor(doe, 146096), 365); // [0, 399]
+    const doy = doe - (365 * yoe + @divFloor(yoe, 4) - @divFloor(yoe, 100)); // [0, 365]
+    const mp = @divFloor(5 * doy + 2, 153); // [0, 11]
+    const m = if (mp < 10) mp + 3 else mp - 9;
+    return .{ .y = yoe + era * 400 + @intFromBool(m <= 2), .m = m, .d = doy - @divFloor(153 * mp + 2, 5) + 1 };
+}
+
+fn civilOf(ms: i64) Civil {
+    return civilFromDays(@intCast(breakdownSeconds(ms).getEpochDay().day));
+}
+
 export fn nox_time_year_raw(ms: i64) callconv(.c) i64 {
-    const yd = breakdownSeconds(ms).getEpochDay().calculateYearDay();
-    return @intCast(yd.year);
+    return civilOf(ms).y;
 }
 
 export fn nox_time_month_raw(ms: i64) callconv(.c) i64 {
-    const yd = breakdownSeconds(ms).getEpochDay().calculateYearDay();
-    return @intCast(yd.calculateMonthDay().month.numeric());
+    return civilOf(ms).m;
 }
 
 export fn nox_time_day_raw(ms: i64) callconv(.c) i64 {
-    const yd = breakdownSeconds(ms).getEpochDay().calculateYearDay();
-    // `day_index` 0-TABANLIDIR (0-30) — kullanıcı yüzeyinde 1-TABANLI
-    // (Python'un `datetime.day`siyle TUTARLI) bir gün numarası VERMEK
-    // İÇİN +1.
-    return @as(i64, yd.calculateMonthDay().day_index) + 1;
+    // 1-TABANLI gün numarası (Python'un `datetime.day`siyle tutarlı).
+    return civilOf(ms).d;
 }
 
 export fn nox_time_hour_raw(ms: i64) callconv(.c) i64 {
@@ -316,4 +328,18 @@ test "Faz III.7: nox_time_monotonic_ms_raw pozitif, monoton artan bir değer dö
     nox_time_sleep_ms_raw(20);
     const after = nox_time_monotonic_ms_raw();
     try std.testing.expect(after - before >= 15);
+}
+
+test "2.2 aşama 2: civilFromDays, std.time.epoch ile her gün için aynı (1970-2500) ve daysFromCivil'in tersi" {
+    var day: u47 = 0;
+    const last: u47 = 530 * 366;
+    while (day <= last) : (day += 1) {
+        const yd = (std.time.epoch.EpochDay{ .day = @intCast(day) }).calculateYearDay();
+        const md = yd.calculateMonthDay();
+        const c = civilFromDays(@intCast(day));
+        try std.testing.expectEqual(@as(i64, yd.year), c.y);
+        try std.testing.expectEqual(@as(i64, md.month.numeric()), c.m);
+        try std.testing.expectEqual(@as(i64, md.day_index) + 1, c.d);
+        try std.testing.expectEqual(@as(i64, day), daysFromCivil(c.y, c.m, c.d));
+    }
 }

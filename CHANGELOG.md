@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.183]
+
+### Performans (2.2 aşama 2: stdlib modül taraması, ölçüt C)
+
+- **Ölçüm paketi:** `benchmarks/stdlib_perf/stdlib_perf2.{nox,py,c}` (koleksiyonlar, özetler, bigint, toml, fnmatch, unicode, zaman, fs); `run.py` artık C sütunu (`nox/C`) basar ve sağlama toplamlarını C ile de karşılaştırır (`--suite 2`).
+- **`LRUCache` 790 → 16,6 ms (47×):** her işlem doğrusal tarama + liste yeniden kuruyordu; karma dizin + mezar taşları. Sıkıştırma sonrası karma tablosunda ekleme payı bırakılmıyordu (her ~25 işlemde yeniden kurulurdu; profil `_compact` + `_hx_rebuild` %80); `OrderedDict` de aynı düzeltmeyi aldı.
+- **`nox.bigint` 3000! + yazım 22,8 → 2,9 ms (7,9×, C'nin 1,4×'i):** her işlem `page_allocator` üstünde yeni arena açıyordu (çarpma başına `mmap`+`munmap`); yığın tamponlu arena (16 KiB) + tek sözcüklü çarpan hızlı yolu (Python referans değerli test).
+- **`DateTime` kurma + yazma 161 → 19,6 ms (8,2×, C `strftime`'dan hızlı):** `std.time.epoch.calculateYearDay` yılları tek tek sayar (~55 yineleme, kurulumda 3 kez); Hinnant `civil_from_days` (O(1)); 1970-2500 her gün için std ile farksal test.
+- Tablo ve açık kalanlar: `benchmarks/RESULTS.md`. Henüz yapılmadı: 1. küme (`stdlib_perf.nox`) için C referansı, `Deque`/`Heap`/`Counter` sabit çarpanı, `unicode.normalize`.
+
 ## [2.1.182]
 
 ### Düzeltme

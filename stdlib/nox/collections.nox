@@ -412,7 +412,8 @@ class OrderedDict[K, V]:
         self._values = new_values
         self._dead = new_dead
         self._ndead = 0
-        self._slots = _hx_rebuild(new_keys, _hx_cap_for(len(new_keys), len(self._slots)))
+        # Sıkıştırma sonrası canlı girdi sayısının 2 katı kadar ekleme payı bırakılır (aksi halde her ~n/40 eklemede yeniden kurulurdu).
+        self._slots = _hx_rebuild(new_keys, _hx_cap_for(len(new_keys) * 2, len(self._slots)))
 
     def _index_of(self: OrderedDict, k: K) -> int:
         return _hx_find(self._keys, self._slots, k)
@@ -474,86 +475,122 @@ class OrderedDict[K, V]:
         return len(self._keys) - self._ndead
 
 # ---------------------------------------------------------------------
-# LRUCache[K, V] — OrderedDict'in AYNI dogrusal-tarama deseni + sabit
-# `capacity`. `get` erisileni SONA (en-son-kullanilan) tasir; `put`
-# kapasiteyi ASARSA en ESKIYI (BASTAKI) atar.
+# LRUCache[K, V] — OrderedDict'in AYNI karma dizini (`_hx_*`) + mezar taşları: erişilen girdi
+# "sona taşınır" = eski girdi ölü işaretlenir, yenisi eklenir (amortize O(1); mezar taşları
+# yarıyı aşınca `_compact`). En eski girdi `_first`ten ileriye ilk canlı girdidir.
+# `get` erişileni SONA (en-son-kullanılan) taşır; `put` kapasiteyi AŞARSA en ESKİYİ atar;
+# `contains` sırayı DEĞİŞTİRMEZ. (2.2 aşama 2: önceden her işlem O(n) tarama + liste yeniden kurmaydı; 300k işlemde Python'dan 22x yavaştı.)
 class LRUCache[K, V]:
     _keys: list[K]
     _values: list[V]
+    _slots: list[int]
+    _dead: list[bool]
+    _ndead: int
+    _first: int
+    _n: int
     capacity: int
 
     def __init__(self: LRUCache, capacity: int) -> None:
         self._keys = []
         self._values = []
+        self._slots = []
+        self._dead = []
+        self._ndead = 0
+        self._first = 0
+        self._n = 0
         self.capacity = capacity
 
     def _index_of(self: LRUCache, k: K) -> int:
-        i: int = 0
-        while i < len(self._keys):
-            if self._keys[i] == k:
-                return i
-            i = i + 1
-        return -1
+        return _hx_find(self._keys, self._slots, k)
 
     def contains(self: LRUCache, k: K) -> bool:
         return self._index_of(k) >= 0
 
-    def _move_to_end(self: LRUCache, idx: int) -> None:
+    def _compact(self: LRUCache) -> None:
         keys: list[K] = self._keys
         values: list[V] = self._values
-        k: K = keys[idx]
-        v: V = values[idx]
+        dead: list[bool] = self._dead
         new_keys: list[K] = []
         new_values: list[V] = []
+        new_dead: list[bool] = []
         i: int = 0
         while i < len(keys):
-            if i != idx:
+            if not dead[i]:
                 new_keys.append(keys[i])
                 new_values.append(values[i])
+                new_dead.append(False)
             i = i + 1
-        new_keys.append(k)
-        new_values.append(v)
         self._keys = new_keys
         self._values = new_values
+        self._dead = new_dead
+        self._ndead = 0
+        self._first = 0
+        # Sıkıştırma sonrası canlı girdi sayısının 2 katı kadar ekleme payı bırakılır (aksi halde her ~n/40 eklemede yeniden kurulurdu).
+        self._slots = _hx_rebuild(new_keys, _hx_cap_for(len(new_keys) * 2, len(self._slots)))
+
+    # Girdiyi (anahtar+değer) listelerin sonuna ekler ve karma dizinine yerleştirir.
+    def _append(self: LRUCache, k: K, v: V) -> None:
+        keys: list[K] = self._keys
+        values: list[V] = self._values
+        dead: list[bool] = self._dead
+        keys.append(k)
+        values.append(v)
+        dead.append(False)
+        self._keys = keys
+        self._values = values
+        self._dead = dead
+        if len(keys) * 2 > len(self._slots):
+            if self._ndead > 0:
+                self._compact()
+            else:
+                self._slots = _hx_rebuild(keys, _hx_cap_for(len(keys), len(self._slots)))
+        else:
+            _hx_place(self._slots, __nox_hash(k), len(keys) - 1)
+
+    # `k` canlı girdisini ölü işaretler (karma yuvası mezar taşı olur).
+    def _kill(self: LRUCache, k: K) -> None:
+        pos: int = _hx_find_slot(self._keys, self._slots, k)
+        idx: int = self._slots[pos] - 1
+        self._slots[pos] = -1
+        self._dead[idx] = True
+        self._ndead = self._ndead + 1
+
+    def _maybe_compact(self: LRUCache) -> None:
+        if self._ndead >= 16 and self._ndead * 2 > len(self._keys):
+            self._compact()
 
     def get(self: LRUCache, k: K) -> V:
         idx: int = self._index_of(k)
         if idx < 0:
             raise KeyError("key not in LRUCache")
         v: V = self._values[idx]
-        self._move_to_end(self._index_of(k))
+        if idx != len(self._keys) - 1:
+            self._kill(k)
+            self._append(k, v)
+            self._maybe_compact()
         return v
 
     def put(self: LRUCache, k: K, v: V) -> None:
         idx: int = self._index_of(k)
         if idx >= 0:
-            self._values[idx] = v
-            self._move_to_end(idx)
-            return
-        keys: list[K] = self._keys
-        values: list[V] = self._values
-        keys.append(k)
-        values.append(v)
-        self._keys = keys
-        self._values = values
-        if len(self._keys) > self.capacity:
+            self._kill(k)
+            self._n = self._n - 1
+        self._append(k, v)
+        self._n = self._n + 1
+        if self._n > self.capacity:
             self._evict_oldest()
+        self._maybe_compact()
 
     def _evict_oldest(self: LRUCache) -> None:
-        keys: list[K] = self._keys
-        values: list[V] = self._values
-        new_keys: list[K] = []
-        new_values: list[V] = []
-        i: int = 1
-        while i < len(keys):
-            new_keys.append(keys[i])
-            new_values.append(values[i])
+        i: int = self._first
+        while self._dead[i]:
             i = i + 1
-        self._keys = new_keys
-        self._values = new_values
+        self._kill(self._keys[i])
+        self._n = self._n - 1
+        self._first = i + 1
 
     def size(self: LRUCache) -> int:
-        return len(self._keys)
+        return self._n
 
 # ---------------------------------------------------------------------
 # Heap[T] — ikili min-heap (index aritmetigi), T yalnizca `<` destekleyen
