@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.180]
+
+### Site (2.2 aşama 10, dilim 2)
+
+- Ana sayfadaki platform tablosu `docs/reference/platforms.md` ile hizalandı: Linux riscv64 satırı, bare metal için x86-64/aarch64/riscv64 (üçü de QEMU'da açılır), iOS/Android "deneysel". İndirme sayfasındaki Snap/AUR notları denetlendi: ikisi de herkese açık kayıtlarda henüz yok, notlar doğru.
+- Dağıtım notu: `release.yml`in `site-image` işi her kararlı sürümde siteyi GHCR'ye iter ve M4'teki zamanlayıcı (15 dk) çeker; noxlang.com bu yolla kendiliğinden güncellenir. noxpkg ayrı bir konteynerdir ve elle dağıtılır.
+
 ## [2.1.179]
 
 ### Site (2.2 aşama 10, dilim 1)
