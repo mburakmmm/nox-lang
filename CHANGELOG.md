@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.185]
+
+### Performans (2.2 aşama 2, dilim 2)
+
+- **`nox.unicode.normalize` 20,1 → 8,7 ms (2,3×; CPython 6,2):** saf ASCII dört biçimde kimliktir (erken dönüş); U+0300'ün altındaki kod noktalarının birleştirme sınıfı yoktur ve hiçbir kanonik bileşimin ikinci öğesi değildir (Python `unicodedata` ve bileşim tablosu ile doğrulandı), bu yüzden `ccc` ve `composePair` ikili aramaları atlanır; ara listeler girdi uzunluğuna göre önceden ayrılır. Test: ASCII kimlik, ASCII + işaret bileşimi, ccc yeniden sıralama, Hangul, geçersiz UTF-8.
+
 ## [2.1.184]
 
 ### Düzeltme

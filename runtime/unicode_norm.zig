@@ -21,8 +21,11 @@ const S_COUNT: u32 = L_COUNT * N_COUNT;
 /// Geçersiz bayt: `RAW_BASE + bayt` olarak taşınır, çıktıda tek bayt olarak yazılır.
 const RAW_BASE: u32 = 0x110000;
 
+/// U+0300'den küçük hiçbir kod noktasının birleştirme sınıfı yoktur (Python `unicodedata.combining`: en küçük sıfırdan farklı değer U+0300) ve hiçbir kanonik bileşimin ikinci öğesi değildir (tablodaki en küçük `b` U+0300).
+const MIN_COMBINING: u32 = 0x300;
+
 fn ccc(cp: u32) u8 {
-    if (cp >= RAW_BASE) return 0;
+    if (cp < MIN_COMBINING or cp >= RAW_BASE) return 0;
     return data.combiningClass(cp);
 }
 
@@ -91,12 +94,12 @@ fn compose(cps: []u32) usize {
             continue;
         }
         if (starter) |sp| {
-            if (composeCp(cps[sp], ch)) |comp| {
+            if (ch >= MIN_COMBINING) if (composeCp(cps[sp], ch)) |comp| {
                 if (last_class < cc or last_class == 0) {
                     cps[sp] = comp;
                     continue;
                 }
-            }
+            };
         }
         if (cc == 0) {
             starter = out;
@@ -108,11 +111,23 @@ fn compose(cps: []u32) usize {
     return out;
 }
 
+fn allAscii(s: []const u8) bool {
+    for (s) |c| if (c >= 0x80) return false;
+    return true;
+}
+
 /// `s`yi `form`a göre normalleştirip UTF-8 olarak `out`a ekler.
 pub fn normalize(a: std.mem.Allocator, s: []const u8, form: Form, out: *std.ArrayList(u8)) std.mem.Allocator.Error!void {
     const compat = form == .nfkc or form == .nfkd;
+    // Saf ASCII dört biçimde de kimliktir (ASCII'nin ayrışımı, birleştirme sınıfı ve bileşimi yoktur).
+    if (allAscii(s)) {
+        try out.appendSlice(a, s);
+        return;
+    }
     var cps: std.ArrayList(u32) = .empty;
     defer cps.deinit(a);
+    try cps.ensureTotalCapacity(a, s.len + s.len / 4);
+    try out.ensureUnusedCapacity(a, s.len + s.len / 4);
     var i: usize = 0;
     while (i < s.len) {
         const b = s[i];
@@ -175,4 +190,32 @@ test "NFC/NFD/NFKC/NFKD temel örnekler" {
     // kanonik sıralama: ccc 220 < 230
     try normalize(a, "a\u{301}\u{323}", .nfd, &out);
     try std.testing.expectEqualStrings("a\u{323}\u{301}", out.items);
+}
+
+test "2.2 aşama 2: hızlı yollar (ASCII kimlik, U+0300 alt sınırı) bütün biçimlerde sonuç değiştirmez" {
+    const a = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(a);
+    // saf ASCII: dört biçimde de kimlik
+    inline for (.{ Form.nfc, Form.nfd, Form.nfkc, Form.nfkd }) |f| {
+        out.clearRetainingCapacity();
+        try normalize(a, "plain ASCII text 123", f, &out);
+        try std.testing.expectEqualStrings("plain ASCII text 123", out.items);
+    }
+    // ASCII + birleştirme işareti: bileşim hâlâ çalışır (a + U+0308 -> ä, ASCII 'b' sonrası işaret yok)
+    out.clearRetainingCapacity();
+    try normalize(a, "ab a\u{308}b", .nfc, &out);
+    try std.testing.expectEqualStrings("ab \u{E4}b", out.items);
+    // sıralama: ccc 230 işaret ccc 220 işaretten önce gelirse yeniden sıralanır (q + U+0307 + U+0323 -> q + U+0323 + U+0307)
+    out.clearRetainingCapacity();
+    try normalize(a, "q\u{307}\u{323}", .nfd, &out);
+    try std.testing.expectEqualStrings("q\u{323}\u{307}", out.items);
+    // Hangul: algoritmik bileşim ikinci öğesi >= U+1161
+    out.clearRetainingCapacity();
+    try normalize(a, "\u{1100}\u{1161}\u{11A8}", .nfc, &out);
+    try std.testing.expectEqualStrings("\u{AC01}", out.items);
+    // geçersiz UTF-8 baytı geçer
+    out.clearRetainingCapacity();
+    try normalize(a, "a\xffb", .nfc, &out);
+    try std.testing.expectEqualStrings("a\xffb", out.items);
 }

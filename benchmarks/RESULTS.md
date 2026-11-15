@@ -1759,8 +1759,8 @@ QBE ve LLVM backend'leri aynı sıralamayı verir (QBE gezinme 2,15 ms).
 | `fnmatch` 200k | 23,8 | 23,8 | 23,5 | 56,9 | 1,0 |
 | `fs` 1 MiB yaz+oku × 8 | 3,0 | 3,0 | 3,1 | 3,9 | 0,98 |
 | `toml` 3000 tablo | 3,8 | 3,8 | - | 18,5 | - |
-| `unicode` NFC × 20 | 20,1 | 20,1 | - | 5,5 | - |
+| `unicode` NFC × 20 | 20,1 | **8,7** | - | 6,2 | - |
 
-Düzeltilenler: (1) `LRUCache` her işlemde doğrusal tarama + liste yeniden kuruyordu; karma dizin + mezar taşları, sıkıştırma sonrası ekleme payı (aksi halde her ~25 işlemde yeniden kuruluyordu; `OrderedDict` aynı düzeltmeyi aldı). (2) `bigint`: her işlem `page_allocator` üstünde yeni arena açıyordu (çarpma başına `mmap`+`munmap`); yığın tamponlu arena + tek sözcüklü çarpan hızlı yolu. (3) `DateTime`: `std.time.epoch.calculateYearDay` yılları tek tek sayar (~55 yineleme × 3 çağrı); Hinnant `civil_from_days` (O(1)).
+Düzeltilenler: (1) `LRUCache` her işlemde doğrusal tarama + liste yeniden kuruyordu; karma dizin + mezar taşları, sıkıştırma sonrası ekleme payı (aksi halde her ~25 işlemde yeniden kuruluyordu; `OrderedDict` aynı düzeltmeyi aldı). (2) `bigint`: her işlem `page_allocator` üstünde yeni arena açıyordu (çarpma başına `mmap`+`munmap`); yığın tamponlu arena + tek sözcüklü çarpan hızlı yolu. (3) `DateTime`: `std.time.epoch.calculateYearDay` yılları tek tek sayar (~55 yineleme × 3 çağrı); Hinnant `civil_from_days` (O(1)). (4) `unicode.normalize` (v2.1.185): saf ASCII kimlik hızlı yolu, U+0300 altı için `ccc`/bileşim aramalarının atlanması (en küçük birleştirme sınıfı ve en küçük bileşim ikinci öğesi U+0300; Python `unicodedata` ve tablo ile doğrulandı), ön boyutlandırma.
 
-Açık (sonraki dilimler): `Deque` iki-liste tasarımı (halka tampon ~2x kazandırır, C'ye 23x), `Heap`/`Counter`/`LRUCache` sabit çarpanı, `unicode.normalize` (CPython'dan 3,7x yavaş), `sha512` (CPU donanım komutları; çalışma zamanında CPU algılamadan açılamaz, "runner-native CPU SIGILL" dersi), 1. küme (`stdlib_perf.nox`) için C referansı.
+Açık (sonraki dilimler): `Deque` iki-liste tasarımı (halka tampon ~2x kazandırır, C'ye 23x), `Heap`/`Counter`/`LRUCache` sabit çarpanı, `unicode.normalize` (CPython'dan 1,4x yavaş; NFC "zaten normal" hızlı kontrolü yok), `sha512` (CPU donanım komutları; çalışma zamanında CPU algılamadan açılamaz, "runner-native CPU SIGILL" dersi), 1. küme (`stdlib_perf.nox`) için C referansı.
