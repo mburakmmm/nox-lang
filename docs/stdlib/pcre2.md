@@ -19,6 +19,8 @@ Flags: `IGNORECASE`, `MULTILINE`, `DOTALL`, `EXTENDED` (verbose patterns), `BYTE
 
 ## Speed
 
+`is_supported()` and `jit_supported()` report whether PCRE2 is linked for the target and whether JIT is available there. Internals you will see in stack traces: `build` (what `compile` calls), `names_of` (named groups), `expand` (replacement templates) and `fail` (error raising).
+
 On 1.3 MB of text (Apple M4; `benchmarks/pcre2/run.py`):
 
 | Task | `nox.regex` | `nox.pcre2` JIT | C PCRE2 JIT | CPython `re` |

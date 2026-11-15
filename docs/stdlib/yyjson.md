@@ -22,6 +22,8 @@ A document is immutable, may be read from several threads, and lives as long as 
 - `get(v, key)` (raises when missing), `get_or_none(v, key)`, `has_key(v, key)`; typed shortcuts `get_int`, `get_float`, `get_bool`, `get_str`; `read_int`, `read_float`, `read_bool`, `read_str`.
 - `array_len`, `array_get(v, i)` (negative indexes count from the end, out of range raises `IndexError`); `object_len`, `object_key(v, i)`, `object_value(v, i)`. Sequential access is amortized O(1).
 - `dump(v)` (compact) and `dump_pretty(v, indent)`.
+- `is_supported()` tells whether the yyjson library is linked for the current target.
+- Internals you will see in stack traces and signatures: `YyDoc` owns the parsed document (released when the last reference goes), `YyValue` is a value that keeps its `YyDoc` alive; `open_doc(s, mode)` is what `parse*` call; `expect_object`, `expect_array` and `field` are the shared type checks behind `get*`/`array_*`.
 
 ## Differences from nox.json
 

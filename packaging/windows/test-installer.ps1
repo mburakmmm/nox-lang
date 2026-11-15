@@ -1,9 +1,11 @@
 # Kurucuyu sessizce kurar, doğrular, yeniden kurar (PATH tekrarı yok), kaldırır ve izlerin silindiğini doğrular.
-#   .\test-installer.ps1 -Installer <setup.exe> [-InstallDir <dizin>]
+#   .\test-installer.ps1 -Installer <setup.exe> [-InstallDir <dizin>] [-Stage <açılmış arşiv dizini>]
+# `-Stage` verilirse ve arşivde lib\noxclibs.a varsa kurulumda da bulunması beklenir (v2.1.176'dan önceki sürümlerin arşivinde yoktur).
 # Kullanıcı PATH'ine (HKCU\Environment) bakar; yönetici gerekmez.
 param(
     [Parameter(Mandatory = $true)][string]$Installer,
-    [string]$InstallDir = (Join-Path ([System.IO.Path]::GetTempPath()) "nox-installer-test")
+    [string]$InstallDir = (Join-Path ([System.IO.Path]::GetTempPath()) "nox-installer-test"),
+    [string]$Stage = ""
 )
 $ErrorActionPreference = "Stop"
 $bin = Join-Path $InstallDir "bin"
@@ -22,7 +24,9 @@ $p = Start-Process -FilePath $Installer -ArgumentList $install -Wait -PassThru
 Check ($p.ExitCode -eq 0) "kurulum çıkış kodu 0 ($($p.ExitCode))"
 Check (Test-Path (Join-Path $bin "noxc.exe")) "bin\noxc.exe kuruldu"
 Check (Test-Path (Join-Path $InstallDir "lib\noxrt.o")) "lib\noxrt.o kuruldu"
-Check (Test-Path (Join-Path $InstallDir "lib\noxclibs.a")) "lib\noxclibs.a kuruldu"
+if ($Stage -ne "" -and (Test-Path (Join-Path $Stage "lib\noxclibs.a"))) {
+    Check (Test-Path (Join-Path $InstallDir "lib\noxclibs.a")) "lib\noxclibs.a kuruldu"
+}
 Check (Test-Path (Join-Path $InstallDir "lib\nox\stdlib")) "stdlib kuruldu"
 Check ((Count-Entry) -eq 1) "kullanıcı PATH'ine bin eklendi (tam bir kez)"
 $ver = & (Join-Path $bin "noxc.exe") version 2>&1

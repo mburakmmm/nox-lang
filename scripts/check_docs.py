@@ -142,7 +142,7 @@ def public_names(mod):
             if not m:
                 continue
             n = m.group(1)
-            if n.startswith("_") or n.endswith("_raw") or n.startswith("nox_"):
+            if n.startswith("_") or n.endswith("_raw") or n.startswith("nox_") or n.startswith("nxc_"):
                 continue
             names.append(n)
     return names

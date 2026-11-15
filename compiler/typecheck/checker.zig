@@ -446,6 +446,15 @@ const WASM_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }
     .{ .name = "ffi", .why = "C callbacks need native code, which a wasm module does not link" },
 };
 
+/// Mobil hedeflerde (iOS/Android) `noxclibs` C kütüphane arşivi bağlanmaz (arşiv yalnızca masaüstü hedefler için üretilir): yalnızca bu arşive dayanan modüller derleme zamanında
+/// reddedilir; aksi halde bağlayıcı tanımsız `_nxc_*` sembolleriyle hata verirdi (v2.1.172-175'te iOS simülatör korpusunu kırdı). `nox.zstd` listede DEĞİLDİR: açma yolu çalışma zamanındadır.
+const MOBILE_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }{
+    .{ .name = "lz4", .why = "the embedded C libraries are not linked on mobile targets" },
+    .{ .name = "xxhash", .why = "the embedded C libraries are not linked on mobile targets" },
+    .{ .name = "yyjson", .why = "the embedded C libraries are not linked on mobile targets" },
+    .{ .name = "brotli", .why = "the embedded C libraries are not linked on mobile targets" },
+};
+
 /// `freestanding` profilinde sınıflandırılmış olsa bile ÇALIŞMA ZAMANINDA bulunmayan modüller (mobil/hosted çalışma zamanında vardır, `lib_freestanding.zig`de yoktur): yetenek tablosunda
 /// `{}` görünmeleri freestanding'de sessizce kabul edilip bağlama hatasına dönüşmesin diye açıkça reddedilir.
 const FREESTANDING_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }{
@@ -1631,6 +1640,13 @@ pub const Checker = struct {
             for (WASM_UNAVAILABLE_MODULES) |m| {
                 if (std.mem.eql(u8, m.name, segments[1])) {
                     return self.fail(error.CapabilityNotGranted, "module 'nox.{s}' cannot be used on the wasm32-wasi target ({s})", .{ segments[1], m.why });
+                }
+            }
+        }
+        if (self.mobile_mask != .none) {
+            for (MOBILE_UNAVAILABLE_MODULES) |m| {
+                if (std.mem.eql(u8, m.name, segments[1])) {
+                    return self.fail(error.CapabilityNotGranted, "module 'nox.{s}' cannot be used on a mobile target ({s})", .{ segments[1], m.why });
                 }
             }
         }

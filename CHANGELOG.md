@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.177]
+
+### Düzeltme (CI kırmızıları)
+
+- **Dokümanlar (v2.1.173'ten beri kırmızı):** `scripts/check_docs.py` `nxc_*` C köprü adlarını (`nox_*`/`*_raw` gibi) belgelenecek herkese açık ad saymıyordu; `yyjson.md` ve `pcre2.md`'ye gerçek yardımcı adları (`is_supported`, `jit_supported`, `YyDoc`, `open_doc`, `build`, ...) eklendi.
+- **Mobil (iOS simülatör korpusu):** `noxclibs` arşivi mobil hedeflerde bağlanmaz; `nox.lz4/xxhash/yyjson/brotli` içe aktarımı artık bağlayıcı hatası yerine derleme zamanında "cannot be used on a mobile target" ile reddedilir (`nox.zstd` açma yolu etkilenmez). Test: `tests/cli/mobile_target_test.zig`.
+- **Windows kurucu testi:** `lib\noxclibs.a` denetimi yalnızca kaynak arşivde dosya varsa yapılır (v2.1.176 öncesi yayınlanmış arşivlerde yoktur).
+- v2.1.176'nın Release işi, CI kırmızı olduğu için yayımlanmadı; içeriği (ikili boyut, `noxclibs.a` paketleme) bu sürümle çıkar.
+
 ## [2.1.176]
 
 ### İyileştirme (2.2 aşama 9: ikili boyut analizi, 1. dilim — bağlama)

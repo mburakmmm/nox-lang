@@ -125,6 +125,28 @@ test "mobile mask rejects process and allows async" {
     try std.testing.expectEqual(@as(u8, 0), if (allowed.term == .exited) allowed.term.exited else 1);
 }
 
+test "mobile targets reject modules that need the embedded C libraries (noxclibs), not linked there" {
+    if (builtin.os.tag == .windows) return;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    for ([_][]const u8{ "lz4", "xxhash", "yyjson", "brotli" }) |m| {
+        const name = try std.fmt.allocPrint(gpa, "{s}.nox", .{m});
+        defer gpa.free(name);
+        const body = try std.fmt.allocPrint(gpa, "import nox.{s}\n", .{m});
+        defer gpa.free(body);
+        try tmp.dir.writeFile(io, .{ .sub_path = name, .data = body });
+        const len = try tmp.dir.realPath(io, &path_buf);
+        const full = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ path_buf[0..len], name });
+        defer gpa.free(full);
+        for ([_][]const u8{ "ios-simulator-arm64", "android-arm64" }) |target| {
+            try expectFail(gpa, io, &.{ noxcPath(), "check", "--target", target, full }, "cannot be used on a mobile target");
+        }
+    }
+}
+
 test "mobile mask allows jwt and the database clients, rejects libssl servers" {
     if (builtin.os.tag == .windows) return;
     var tmp = std.testing.tmpDir(.{});
