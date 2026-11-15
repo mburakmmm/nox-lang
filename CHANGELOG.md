@@ -14,6 +14,19 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.176]
+
+### İyileştirme (2.2 aşama 9: ikili boyut analizi, 1. dilim — bağlama)
+
+- **Ölçüm (hello-world, ReleaseFast):** Linux x86-64 **19,0 MB** / arm64 **19,9 MB**, Windows **3,45 MB + 11,9 MB `.pdb`**, macOS 0,38 MB. Linux'ta çalışma zamanı nesnesinin Zig DWARF'ı (`.debug_*` ≈ 14 MB) çıktıya giriyordu ve çapraz derlenen ELF/PE nesneleri işlev başına bölümlü olmadığından `--gc-sections` hiçbir şey atamıyordu (`.text` 2,5 MB; macOS'ta 0,24 MB). Windows'ta ayrıca `--export-all-symbols` ölü kod atmayı kapatıyordu ve hata ayıklama bilgisi bir `.pdb` yan dosyası üretiyordu.
+- **Düzeltmeler:** (1) LLVM ve QBE bağlamasında (`-g` yoksa) `-Wl,--strip-debug` (ELF/PE); (2) hosted çalışma zamanı zincirinde (çapraz `noxrt-<hedef>.o`) işlev/veri başına bölüm (`link_function_sections/data_sections`) — Windows'ta yalnızca Release* modlarında (ReleaseFast nesnesi 11 983 bölüm, COFF sınırı 32 767; Debug ~42 bin olduğundan bölümlenmez); (3) Windows'ta `--export-all-symbols` yerine `--gc-sections`; (4) QBE yolunda çapraz hedef için ana makinenin değil hedefin bağlayıcı bayrağı.
+- (5) Release* modunda macOS/Linux çalışma zamanı nesnesi `strip = true` ile derlenir: DWARF **ve** Zig `std.debug`'ın yığın izi/sembolleme kodu (≈93 KB) ile `eh_frame` çıktıya girmez. Paketlenen `noxrt.o`: Linux x86-64 30 MB → 4,7 MB, riscv64 126 MB → 5,2 MB (release arşivleri bu nesneyi taşır). Sonuç: Release çalışma zamanı paniklerinde Zig yığın izi yazılmaz (panik iletisi aynı). Windows nesnesi striplenmez: ölçümde `.pdata` düşüp bağlanmış ikili 0,78 → 2,5 MB büyüdü.
+- **Paketleme düzeltmesi:** `release.yml` (macOS/Linux ve Windows) `lib/noxclibs.a`'yı arşive koymuyordu; v2.1.172-175'in yayınlanmış `noxc`'si `nox.lz4/xxhash/yyjson/pcre2/brotli` ve `nox.zstd.compress` kullanan programları bağlayamazdı (kaynaktan derleyenler etkilenmezdi). Düzeltildi; Windows kurucu testi `lib\noxclibs.a`'yı da denetler.
+- **Sonuç (hello-world):** Linux x86-64 **0,34 MB** (−%98), macOS **0,21 MB** (−%45), Windows **0,78 MB** (−%77, `.pdb` yok).
+- **Doğrulama:** gerçek Windows PC'de 598 golden çapraz derlenip çalıştırıldı: 587'si `.expected` ile birebir, kalan 7'si (POSIX'e özgü errno/sinyal/wasm testleri) eski bağlamayla da aynı çıktıyı veriyor (yeni bağlama davranışı değiştirmedi).
+- Test: `tests/cli/binary_size_test.zig` sınırı 16 MB → 4 MB; yeni çapraz hedef kapısı (linux-x64, windows-x64 hello-world < 2 MB).
+- **Bilinen kalan:** `std.Io.Threaded` vtable'ı (≈89 KB, kullanılmayan dosya/ağ/süreç işlemleri hello-world'e de girer); Windows hello-world'ün `.text`'i macOS'unkinin ~2 katı; `noxc` derleyicisi 5,7 MB (codegen %25, typecheck %23, TLS/crypto %10: makul).
+
 ## [2.1.175]
 
 ### Eklendi (2.2 aşama 8, dilim 4: `nox.brotli` — aşama 8 TAMAM)

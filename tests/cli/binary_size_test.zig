@@ -14,9 +14,7 @@
 //!    örneği + cycle-collector'ı tetikleyen (>700 örnek) bir program doğru
 //!    çalışır.
 //!
-//! `nm`/dead-stripping Windows'ta (PE/MinGW, blanket `--export-all-symbols`,
-//! bilinçli olarak DEĞİŞTİRİLMEDİ) anlamlı değil — bu testler SADECE macOS/
-//! Linux'ta çalışır.
+//! `nm`/dead-stripping testleri macOS/Linux'ta çalışır (v2.1.176'dan beri Windows da `--gc-sections` kullanır; Windows boyutu çapraz derlemeyle ölçülür).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -170,11 +168,87 @@ test "noxc build: smtp/postgres kullanmayan basit bir program dead-stripping ile
     // v2.1.104: Linux/aarch64 CI'de (ReleaseFast) İKİLİ 14.693.184 bayt ÖLÇÜLDÜ (v2.1.99'dan beri): `-rdynamic` altında `nox.wasm` kabuğunun dışa aktarılan
     // `nox_wasm_*` sembolleri ve çağırdıkları yorumlayıcı (SIMD v2.1.98 + threads/atomikler v2.1.99) bağlayıcı tarafından AYRILMADAN tutulur. Dead-stripping
     // bozulmadı (negatif-sembol kontrolü yukarıda GEÇTİ); sınır yine organik büyümeye göre 16 MB'a yükseltildi.
+    //
+    // v2.1.176 (2.2 aşama 9): çalışma zamanı nesnesinin Zig DWARF'ı (ELF'te ~14 MB) bağlamada atılır (`-Wl,--strip-debug`) ve ELF/PE nesneleri işlev başına bölümlüdür; hello-world
+    // Linux'ta ~0,6 MB, macOS'ta ~0,4 MB oldu. Sınır 16 MB → 4 MB: DWARF'ın ya da bölümlemenin geri gelmesi (10+ MB) bu testi kırar.
     const stat = try tmp.dir.statFile(io, "prog_out", .{});
-    if (stat.size >= 16 * 1024 * 1024) {
+    if (stat.size >= 4 * 1024 * 1024) {
         std.debug.print("ikili beklenenden BUYUK: {d} bayt\n", .{stat.size});
     }
-    try std.testing.expect(stat.size < 16 * 1024 * 1024);
+    try std.testing.expect(stat.size < 4 * 1024 * 1024);
+}
+
+/// ELF64 little-endian bölüm başlıklarında `name` adlı bölüm var mı? (Metin araması yanıltır: Zig'in DWARF okuyucusu `".debug_info"` sabitini kodun içinde taşır.)
+fn elf64HasSection(data: []const u8, name: []const u8) bool {
+    if (data.len < 64 or !std.mem.eql(u8, data[0..4], "\x7fELF")) return false;
+    const shoff = std.mem.readInt(u64, data[0x28..0x30], .little);
+    const shentsize = std.mem.readInt(u16, data[0x3A..0x3C], .little);
+    const shnum = std.mem.readInt(u16, data[0x3C..0x3E], .little);
+    const shstrndx = std.mem.readInt(u16, data[0x3E..0x40], .little);
+    if (shoff == 0 or shentsize < 64 or shstrndx >= shnum) return false;
+    if (shoff + @as(u64, shnum) * shentsize > data.len) return false;
+    const str_hdr: usize = @intCast(shoff + @as(u64, shstrndx) * shentsize);
+    const str_off: usize = @intCast(std.mem.readInt(u64, data[str_hdr + 0x18 ..][0..8], .little));
+    var i: usize = 0;
+    while (i < shnum) : (i += 1) {
+        const hdr: usize = @intCast(shoff + @as(u64, i) * shentsize);
+        const name_off: usize = std.mem.readInt(u32, data[hdr..][0..4], .little);
+        if (str_off + name_off >= data.len) continue;
+        const rest = data[str_off + name_off ..];
+        const end = std.mem.indexOfScalar(u8, rest, 0) orelse rest.len;
+        if (std.mem.eql(u8, rest[0..end], name)) return true;
+    }
+    return false;
+}
+
+test "noxc build --target: çapraz ikililer hata ayıklama bilgisi taşımaz (--strip-debug): linux-x64 .debug_info yok, windows-x64 .pdb yok" {
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
+    // Boyut yerine bağlama bayrağının doğrudan etkisi sınanır: çalışma zamanı nesnesinin hangi modda (Debug/Release) derlendiğinden bağımsızdır.
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const src_path = try writeTempSource(gpa, io, "print(\"hi\")\n", &tmp);
+    defer gpa.free(src_path);
+    var out_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const tmp_dir_len = try tmp.dir.realPath(io, &out_path_buf);
+    const tmp_dir_path = out_path_buf[0..tmp_dir_len];
+    for ([_][]const u8{ "linux-x64", "windows-x64" }) |target| {
+        // Çapraz çalışma zamanı nesnesi kurulu değilse (kısmi kurulum) bu hedef atlanır.
+        const rt_obj = try std.fmt.allocPrint(gpa, "zig-out/lib/noxrt-{s}.o", .{target});
+        defer gpa.free(rt_obj);
+        std.Io.Dir.cwd().access(io, rt_obj, .{}) catch continue;
+        const name = try std.fmt.allocPrint(gpa, "prog_{s}", .{target});
+        defer gpa.free(name);
+        const bin_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ tmp_dir_path, name });
+        defer gpa.free(bin_path);
+        const r = runWithRetry(gpa, io, &.{ noxcPath(), "build", "--target", target, src_path, "-o", bin_path }) catch |err| {
+            std.debug.print("noxc build --target {s} spawn basarisiz: {t}\n", .{ target, err });
+            return err;
+        };
+        defer gpa.free(r.stdout);
+        defer gpa.free(r.stderr);
+        if (!(r.term == .exited and r.term.exited == 0)) {
+            // `zig` PATH'te yoksa çapraz bağlama yapılamaz: bu bir bayrak regresyonu değildir.
+            if (std.mem.indexOf(u8, r.stderr, "not found") != null) continue;
+            std.debug.print("noxc build --target {s} basarisiz:\n{s}\n", .{ target, r.stderr });
+        }
+        try std.testing.expect(r.term == .exited and r.term.exited == 0);
+        if (std.mem.eql(u8, target, "linux-x64")) {
+            const data = try tmp.dir.readFileAlloc(io, name, gpa, .limited(64 * 1024 * 1024));
+            defer gpa.free(data);
+            const has = elf64HasSection(data, ".debug_info");
+            if (has) std.debug.print("linux-x64 ikilisinde .debug_info bölümü var ({d} bayt)\n", .{data.len});
+            try std.testing.expect(!has);
+        } else {
+            const pdb = try std.fmt.allocPrint(gpa, "{s}.pdb", .{name});
+            defer gpa.free(pdb);
+            if (tmp.dir.access(io, pdb, .{})) |_| {
+                std.debug.print("windows-x64 icin .pdb uretildi\n", .{});
+                return error.TestUnexpectedResult;
+            } else |_| {}
+        }
+    }
 }
 
 test "noxc build: nox.json.parse + sınıf + cycle-collector (5-sembol dlsym listesi) doğru çalışır" {

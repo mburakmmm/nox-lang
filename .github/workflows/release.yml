@@ -228,6 +228,8 @@ jobs:
           cp zig-out/bin/noxlsp "$stage/bin/"
           cp "$(command -v qbe)" "$stage/bin/qbe"
           cp zig-out/lib/noxrt.o "$stage/lib/"
+          # v2.1.176: `nox.lz4/xxhash/yyjson/pcre2/brotli` ve `nox.zstd.compress` için isteğe bağlı C kütüphane arşivi (v2.1.172'den beri gerekli; yoksa bu modüller bağlanmaz).
+          cp zig-out/lib/noxclibs.a "$stage/lib/"
           # v1.95.2: `zig build` (bkz. build.zig'in "R.3+F.1 tamamlama"
           # bölümü) HER ZAMAN, host mimarisi + freestanding OS İçİn, İKİNCİ
           # bir `noxrt-freestanding.o` da ÜRETİR (`b.getInstallStep()`e
@@ -368,6 +370,7 @@ jobs:
           Copy-Item "zig-out\bin\noxlsp.exe" "$stage\bin\"
           Copy-Item "$env:RUNNER_TEMP\qbe.exe" "$stage\bin\"
           Copy-Item "zig-out\lib\noxrt.o" "$stage\lib\"
+          Copy-Item "zig-out\lib\noxclibs.a" "$stage\lib\"
           # v1.95.2: macOS/Linux paketleme adımıyla AYNI düzeltme — bkz. onun
           # belge notu (`noxrt-freestanding.o`, `zig build`in HER platformda
           # KOŞULSUZ ürettiği İKİNCİ nesne dosyası).

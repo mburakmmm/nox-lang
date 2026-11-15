@@ -271,6 +271,7 @@ fn addHostedRuntimeChain(
         .root_source_file = b.path("runtime/lib.zig"),
         .target = os_target,
         .optimize = optimize,
+        .strip = if (optimize == .Debug or os_tag == .windows) null else true, // 2.2 aşama 9 (bkz. native `noxrt_mod`; Windows'ta strip .pdata'yı da atar ve ölçümde boyutu küçültmedi)
         .link_libc = true,
         .imports = &.{
             .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
@@ -280,6 +281,9 @@ fn addHostedRuntimeChain(
         },
     });
     addLibdeflate(b, mod, arch, os_tag);
+    // 2.2 aşama 9: işlev/veri başına bölüm (bağlayıcı `--gc-sections`/`-dead_strip` kullanılmayan çalışma zamanı parçalarını atabilsin). COFF'ta bir nesne 32767 bölümü aşarsa GNU ld
+    // bölüm numaralarını yanlış çözer: Debug nesnesi ~42 bin bölüm üretir (bölümlenmez), ReleaseFast ~12 bin (ölçüldü) ve güvenli aralıkta.
+    const split_sections = os_tag != .windows or optimize != .Debug;
     const swap_src: []const u8 = switch (arch) {
         .aarch64 => "runtime/async_rt/swap_aarch64.S",
         .x86_64 => "runtime/async_rt/swap_x86_64.S",
@@ -298,6 +302,8 @@ fn addHostedRuntimeChain(
         });
         mod.addObjectFile(b.path(swap_o_path));
         const obj_pre = b.addObject(.{ .name = install_name, .root_module = mod });
+        obj_pre.link_function_sections = split_sections;
+        obj_pre.link_data_sections = split_sections;
         obj_pre.step.dependOn(&compile_swap.step);
         const install = b.addInstallFile(obj_pre.getEmittedBin(), b.fmt("lib/{s}.o", .{install_name}));
         b.getInstallStep().dependOn(&install.step);
@@ -312,6 +318,8 @@ fn addHostedRuntimeChain(
         });
         const obj = b.addObject(.{ .name = install_name, .root_module = mod });
         obj.step.dependOn(&compile_swap.step);
+        obj.link_function_sections = split_sections;
+        obj.link_data_sections = split_sections;
         const install = b.addInstallFile(obj.getEmittedBin(), b.fmt("lib/{s}.o", .{install_name}));
         b.getInstallStep().dependOn(&install.step);
         const install_swap = b.addInstallFile(b.path(swap_o_path), b.fmt("lib/swap_asm-{s}.o", .{install_name}));
@@ -842,6 +850,8 @@ pub fn build(b: *std.Build) void {
     const sanitize_thread = b.option(bool, "sanitize-thread", "noxrt.o'yu ThreadSanitizer ile derle (yalnız ana makine, hosted; scripts/tsan_check.sh)") orelse false;
     const noxrt_mod = b.createModule(.{
         .sanitize_thread = if (sanitize_thread) true else null,
+        // 2.2 aşama 9: Release* çalışma zamanı nesnesi DWARF taşımaz (kullanıcı ikilisine zaten girmez: bağlayıcı `--strip-debug`; paketlenen `noxrt.o` Linux'ta 30 MB'tan küçülür).
+        .strip = if (optimize == .Debug or target.result.os.tag == .windows) null else true,
         // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
         // freestanding hedeflerde `runtime/lib_freestanding.zig` KÖK olarak
         // kullanılır (SADECE ARC/scheduler/dict/handle çekirdeği — bkz. onun
@@ -922,7 +932,7 @@ pub fn build(b: *std.Build) void {
     // 32767'den fazla bölüm varsa GNU ld bölüm numaralarını yanlış çözer ("relocation truncated to fit:
     // IMAGE_REL_AMD64_REL32 against `.rdata`"). Debug `noxrt.o` (kendi x86-64 backend'i, fonksiyon/veri başına bölüm)
     // v2.1.148'de ~42 bin bölüme ulaşıp Windows bağlamasını kırdı; COFF'ta tek `.text`/`.rdata` kullanılır.
-    const split_sections = target.result.os.tag != .windows;
+    const split_sections = target.result.os.tag != .windows or optimize != .Debug;
     noxrt.link_function_sections = split_sections;
     noxrt.link_data_sections = split_sections;
     noxrt.step.dependOn(&compile_swap_asm.step);

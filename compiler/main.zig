@@ -3033,10 +3033,11 @@ fn cmdExplain(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []
 /// KALDIRILDI, SADECE genel dead-stripping bayrağı KALDI. Windows BİLİNÇLİ
 /// olarak DOKUNULMADI (gerçek Windows CI erişimi/link-davranışı doğrulaması
 /// OLMADAN `--export-all-symbols`i KALDIRMAK riskli — AYRI, gelecekteki bir
-/// tur).
+/// tur). **2.2 aşama 9'da yapıldı:** gerçek Windows PC'de 598 golden eski/yeni bağlamayla aynı çıktıyı verdi.
 fn computeLinkerVisibilityArgs() []const []const u8 {
     if (builtin.os.tag == .windows) {
-        return &.{"-Wl,--export-all-symbols"};
+        // 2.2 aşama 9: `--export-all-symbols` ölü kod atmayı fiilen kapatıyordu (Linux/macOS'ta aynı sebeple çoktan kaldırılmıştı); Windows PC'de golden korpusu eski/yeni bağlamayla aynı çıktıyı verdi.
+        return &.{"-Wl,--gc-sections"};
     }
     if (builtin.os.tag == .macos) {
         return &.{"-Wl,-dead_strip"};
@@ -3529,10 +3530,13 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
                 if (builtin.os.tag == .windows) try clang_argv.appendSlice(a, &.{ "-target", "x86_64-w64-windows-gnu" });
             },
         }
-        // Bağlayıcı görünürlük bayrağı HEDEFİN biçimine göre seçilir (ana makineninki değil): PE `--export-all-symbols`, Mach-O `-dead_strip`, ELF `--gc-sections`.
+        // Bağlayıcı görünürlük bayrağı HEDEFİN biçimine göre seçilir (ana makineninki değil): PE/ELF `--gc-sections`, Mach-O `-dead_strip`.
         if (cross) |ht| {
-            try clang_argv.append(a, if (ht.is_windows) "-Wl,--export-all-symbols" else if (std.mem.endsWith(u8, ht.zig_triple, "macos")) "-Wl,-dead_strip" else "-Wl,--gc-sections");
+            try clang_argv.append(a, if (ht.is_windows) "-Wl,--gc-sections" else if (std.mem.endsWith(u8, ht.zig_triple, "macos")) "-Wl,-dead_strip" else "-Wl,--gc-sections");
         } else try clang_argv.appendSlice(a, linker_visibility_args);
+        // 2.2 aşama 9: LLVM yolu yalnızca `-g` OLMADAN çalışır (`resolveRelease`); çalışma zamanı nesnesinin Zig DWARF'ı (ELF'te ~14 MB) ve PE hata ayıklama bilgisi çıktıya girmesin.
+        // macOS bağlayıcısı DWARF'ı zaten kopyalamaz.
+        if (target_win or !(if (cross) |ht| std.mem.endsWith(u8, ht.zig_triple, "macos") else builtin.os.tag == .macos)) try clang_argv.append(a, "-Wl,--strip-debug");
         const rt_path: []const u8 = if (cross) |ht| try std.fmt.allocPrint(a, "{s}/lib/{s}.o", .{ resource_dirs.install_root, ht.runtime_object_name }) else resource_dirs.noxrt_path;
         try clang_argv.appendSlice(a, &.{ "-o", bin_path, ll_path, rt_path });
         // Windows'ta fiber bağlam değişimi assembly'si `noxrt.o`nun dışında ayrı kurulur (QBE yolundaki ile aynı).
@@ -3712,7 +3716,10 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     } else {
         try cc_argv.append(a, "cc");
     }
-    try cc_argv.appendSlice(a, linker_visibility_args);
+    // Hedefe göre görünürlük/ölü kod bayrağı (çapraz derlemede ANA MAKİNENİN değil hedefin biçimi) ve `-g` yoksa çalışma zamanı DWARF'ının çıktıya girmemesi (2.2 aşama 9).
+    const qbe_macos = if (hosted_target) |ht| std.mem.endsWith(u8, ht.zig_triple, "macos") else builtin.os.tag == .macos;
+    if (hosted_target) |_| try cc_argv.append(a, if (qbe_macos) "-Wl,-dead_strip" else "-Wl,--gc-sections") else try cc_argv.appendSlice(a, linker_visibility_args);
+    if (!debug_info and !qbe_macos) try cc_argv.append(a, "-Wl,--strip-debug");
     try cc_argv.appendSlice(a, &.{ "-o", bin_path, asm_path, runtime_object_path });
     // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): Windows'ta fiber
     // bağlam değişimi assembly'si `noxrt.o`nun DIŞINDA, AYRI kurulur (bkz.
