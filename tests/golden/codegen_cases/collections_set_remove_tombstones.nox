@@ -1,0 +1,53 @@
+from nox.collections import Set
+
+st: Set[int] = Set[int]()
+i: int = 0
+while i < 100:
+    st.add(i)
+    i = i + 1
+removed: int = 0
+j: int = 0
+while j < 100:
+    if st.remove(j):
+        removed = removed + 1
+    j = j + 2
+print(removed)
+print(st.remove(0))
+print(st.size())
+print(st.contains(10))
+print(st.contains(11))
+l1: list[int] = st.to_list()
+print(len(l1), l1[0], l1[1], l1[49])
+st.add(10)
+st.add(11)
+st.add(1000)
+print(st.size())
+l2: list[int] = st.to_list()
+print(l2[0], l2[48], l2[49], l2[50], l2[51])
+other: Set[int] = Set[int]()
+k: int = 90
+while k < 110:
+    other.add(k)
+    k = k + 1
+u: Set[int] = st.union(other)
+d: Set[int] = st.difference(other)
+n: Set[int] = st.intersection(other)
+print(u.size(), d.size(), n.size())
+while not st.is_empty():
+    x: int = st.to_list()[0]
+    st.remove(x)
+print(st.size(), st.is_empty())
+st.add(5)
+print(st.contains(5), st.size())
+
+words: Set[str] = Set[str]()
+w: int = 0
+while w < 40:
+    words.add("w" + str(w))
+    w = w + 1
+w = 0
+while w < 40:
+    if w % 3 != 0:
+        words.remove("w" + str(w))
+    w = w + 1
+print(words.size(), words.to_list()[0], words.to_list()[1], words.to_list()[13])

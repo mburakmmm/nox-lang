@@ -1764,3 +1764,30 @@ QBE ve LLVM backend'leri aynı sıralamayı verir (QBE gezinme 2,15 ms).
 Düzeltilenler: (1) `LRUCache` her işlemde doğrusal tarama + liste yeniden kuruyordu; karma dizin + mezar taşları, sıkıştırma sonrası ekleme payı (aksi halde her ~25 işlemde yeniden kuruluyordu; `OrderedDict` aynı düzeltmeyi aldı). (2) `bigint`: her işlem `page_allocator` üstünde yeni arena açıyordu (çarpma başına `mmap`+`munmap`); yığın tamponlu arena + tek sözcüklü çarpan hızlı yolu. (3) `DateTime`: `std.time.epoch.calculateYearDay` yılları tek tek sayar (~55 yineleme × 3 çağrı); Hinnant `civil_from_days` (O(1)). (4) `unicode.normalize` (v2.1.185): saf ASCII kimlik hızlı yolu, U+0300 altı için `ccc`/bileşim aramalarının atlanması (en küçük birleştirme sınıfı ve en küçük bileşim ikinci öğesi U+0300; Python `unicodedata` ve tablo ile doğrulandı), ön boyutlandırma.
 
 Açık (sonraki dilimler): `Deque` iki-liste tasarımı (halka tampon ~2x kazandırır, C'ye 23x), `Heap`/`Counter`/`LRUCache` sabit çarpanı, `unicode.normalize` (CPython'dan 1,4x yavaş; NFC "zaten normal" hızlı kontrolü yok), `sha512` (CPU donanım komutları; çalışma zamanında CPU algılamadan açılamaz, "runner-native CPU SIGILL" dersi), 1. küme (`stdlib_perf.nox`) için C referansı.
+
+### 1. küme (`stdlib_perf.nox`) için C referansı (2.2 aşama 2, v2.1.186)
+
+`benchmarks/stdlib_perf/stdlib_perf.c` (clang -O2, `-lz`, özetler CommonCrypto; tamsayı biçimlendirme elle yazılmış, `sprintf` yok). `run.py` artık bu kümede de `nox/C` basar. Apple M4, ReleaseFast, ortanca; JSON, regex, url, random/uuid için C standart kütüphanesinde karşılık yok, gzip sıkıştırma çıktı uzunluğu uygulamaya bağlıdır (C'de yalnızca açma).
+
+| iş | nox ms | C ms | nox/C | Python ms |
+|---|---:|---:|---:|---:|
+| `str_build_join_200k` | 4,9 | 0,8 | 6,2 | 9,7 |
+| `str_split_200k_x5` (her parça ayrı `str`/`strndup`) | 10,7 | 20,5 | **0,52** | 15,1 |
+| `str_replace_x5` | 5,6 | 3,2 | 1,7 | 11,6 |
+| `str_find_300k_small` | 11,5 | 1,5 | 7,6 | 24,0 |
+| `str_upper_lower_trim_x20` | 5,3 | 0,4 | 12 | 13,9 |
+| `str_concat_1M` | 2,7 | 0,3 | 9,9 | 27,8 |
+| `fstring_300k` | 13,4 | 2,5 | 5,5 | 29,1 |
+| `base64_encode_4MB` / `decode` | 1,4 / 1,2 | 1,2 / 0,4 | 1,15 / 2,8 | 1,9 / 1,3 |
+| `sha256_64KiB_x128` | 3,1 | 2,7 | 1,13 | 2,8 |
+| `gzip_decompress_4MB` | 0,9 | 0,7 | 1,3 | 0,9 |
+| `csv_parse_50k_rows` (C yalnızca satır sayar) | 5,4 | 1,1 | 4,8 | 18,3 |
+| `path_join_basename_300k` | 20,9 | 4,3 | 4,9 | 109,0 |
+| `set_add_contains_200k` | 8,0 | 0,4 | 21 | 9,5 |
+| `dict_str_insert_lookup_300k` | 36,6 | 15,4 | 2,4 | 66,2 |
+| `sort_1M_ints` | 67,5 | 73,2 | **0,92** | 263,0 |
+| `sort_200k_strs` | 41,5 | 31,9 | 1,3 | 51,7 |
+
+Okuma: C'nin yanında yalnızca "iş aynı" satırlar adildir. `str_split` ilk C sürümünde parça saymakla yetiniyordu (13,8×); `list[str]` döndürmeye denk olacak biçimde her parçayı ayırınca Nox 2× hızlı çıktı. `str_find`, `upper_lower_trim`, `concat` ve `fstring`te Nox her adımda yeni bir ARC `str` ayırır, C yığın tamponu kullanır; bu fark dilin değer semantiğinden gelir ve ancak tahsis sayısını azaltan derleyici çalışmasıyla (aşama 12) kapanır. Gerçek açık: `Set[int]` (21×; genel karma dizin çağrıları) ve `str_build_join`/`csv`/`path` (4-6×).
+
+`Set.remove` (20 000 eleman, hepsini sil): 3598 ms → **3,9 ms** (Python 0,85 ms): önceden her silme listeyi ve karma dizinini yeniden kuruyordu; mezar taşı deseni (v2.1.186).

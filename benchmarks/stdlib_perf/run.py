@@ -39,8 +39,9 @@ with tempfile.TemporaryDirectory() as d:
     c_src = HERE + f"/stdlib_perf{'' if a.suite == 1 else a.suite}.c"
     if os.path.exists(c_src):
         cexe = d + "/bench_c"
-        cflags = ["-O2", "-Wno-deprecated-declarations"] + ([] if sys.platform == "darwin" else ["-lcrypto"])
-        cb = subprocess.run(["clang", *cflags, "-o", cexe, c_src], capture_output=True, text=True)
+        cflags = ["-O2", "-Wno-deprecated-declarations"]
+        clibs = ["-lz"] + ([] if sys.platform == "darwin" else ["-lcrypto"])  # kütüphaneler kaynaktan SONRA gelmelidir
+        cb = subprocess.run(["clang", *cflags, "-o", cexe, c_src, *clibs], capture_output=True, text=True)
         if cb.returncode == 0:
             c_runs = [run([cexe]) for _ in range(a.repeat)]
         else:

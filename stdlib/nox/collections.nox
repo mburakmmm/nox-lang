@@ -239,90 +239,112 @@ class Deque[T]:
 # Set[T] — dogrusal tarama (bkz. modul basligi), HERHANGI bir T icin
 # dogru (siniflar DAHIL).
 class Set[T]:
-    items: list[T]
+    # `remove` mezar taşıyla O(1) amortize (OrderedDict ile aynı desen); ekleme sırası korunur. 2.2 aşama 2: önceden her `remove` listeyi ve karma dizinini baştan kuruyordu
+    # (20 000 elemanda 20 000 silme 3,6 s; Python 0,85 ms). `items` alanı özel `_items` oldu (mezar taşı içerebilir); herkese açık erişim `to_list()`tir.
+    _items: list[T]
     _slots: list[int]
+    _dead: list[bool]
+    _ndead: int
 
     def __init__(self: Set) -> None:
-        self.items = []
+        self._items = []
         self._slots = []
+        self._dead = []
+        self._ndead = 0
+
+    def _compact(self: Set) -> None:
+        items: list[T] = self._items
+        dead: list[bool] = self._dead
+        new_items: list[T] = []
+        i: int = 0
+        while i < len(items):
+            if not dead[i]:
+                new_items.append(items[i])
+            i = i + 1
+        self._items = new_items
+        self._dead = []
+        j: int = 0
+        while j < len(new_items):
+            self._dead.append(False)
+            j = j + 1
+        self._ndead = 0
+        self._slots = _hx_rebuild(new_items, _hx_cap_for(len(new_items) * 2, len(self._slots)))
 
     def contains(self: Set, v: T) -> bool:
-        return _hx_find(self.items, self._slots, v) >= 0
+        return _hx_find(self._items, self._slots, v) >= 0
 
     def add(self: Set, v: T) -> None:
-        if self.contains(v):
+        if _hx_find(self._items, self._slots, v) >= 0:
             return
-        items: list[T] = self.items
+        items: list[T] = self._items
+        dead: list[bool] = self._dead
         items.append(v)
-        self.items = items
+        dead.append(False)
+        self._items = items
+        self._dead = dead
         if len(items) * 2 > len(self._slots):
-            self._slots = _hx_rebuild(items, _hx_cap_for(len(items), len(self._slots)))
+            if self._ndead > 0:
+                self._compact()
+            else:
+                self._slots = _hx_rebuild(items, _hx_cap_for(len(items), len(self._slots)))
         else:
             _hx_place(self._slots, __nox_hash(v), len(items) - 1)
 
     def remove(self: Set, v: T) -> bool:
-        items: list[T] = self.items
-        new_items: list[T] = []
-        found: bool = False
-        i: int = 0
-        while i < len(items):
-            if not found and items[i] == v:
-                found = True
-            else:
-                new_items.append(items[i])
-            i = i + 1
-        self.items = new_items
-        if found:
-            self._slots = _hx_rebuild(new_items, len(self._slots))
-        return found
+        pos: int = _hx_find_slot(self._items, self._slots, v)
+        if pos < 0:
+            return False
+        idx: int = self._slots[pos] - 1
+        self._slots[pos] = -1
+        self._dead[idx] = True
+        self._ndead = self._ndead + 1
+        if self._ndead >= 16 and self._ndead * 2 > len(self._items):
+            self._compact()
+        return True
 
     def size(self: Set) -> int:
-        return len(self.items)
+        return len(self._items) - self._ndead
 
     def is_empty(self: Set) -> bool:
-        return len(self.items) == 0
+        return len(self._items) == self._ndead
 
     def to_list(self: Set) -> list[T]:
-        return self.items
+        if self._ndead > 0:
+            self._compact()
+        return self._items
 
-    # v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-
-    # spesifikasyon.md ilgili bölüm, stdlib/API denetimi): bir "Set"in
-    # İLK beklenen üye işlemleri — Stack/Queue/Deque/Heap/PriorityQueue/
-    # Counter/OrderedDict'in HEPSİ tam donanımlıyken `Set` SADECE contains/
-    # add/remove/size TAŞIYORDU. ÖNCEDEN `list[T]` DÖNÜYORDU (`Set[T]`
-    # DEĞİL) — `Set[T]()`nin (bir generic sınıfın KENDİ metodu İçİNDEN,
-    # KENDİ sınırlı `T`siyle yeniden İNŞA edilmesi) `noxc`ta "bilinmeyen
-    # tip: T" İLE reddedildiği GERÇEK bir derleyici sınırlaması YÜZÜNDENDİ.
-    # v4 Faz A madde 2 (bkz. nox-teknik-spesifikasyon.md §3.2xx) BU
-    # sınırlamayı (`substituteStmt`in `Expr` ağaçlarını GEZMEMESİ kök
-    # nedeniyle) DÜZELTTİ — ARTIK doğru şekilde `Set[T]` DÖNER.
+    # v3 sertleştirme yol haritası, madde 10: `Set[T]` döner (v4 Faz A madde 2 ile `substituteStmt`in `Expr` ağaçlarını gezmeme sorunu düzeltildi).
     def union(self: Set, other: Set) -> Set[T]:
         result: Set[T] = Set[T]()
+        mine: list[T] = self.to_list()
+        theirs: list[T] = other.to_list()
         i: int = 0
-        while i < len(self.items):
-            result.add(self.items[i])
+        while i < len(mine):
+            result.add(mine[i])
             i = i + 1
         j: int = 0
-        while j < len(other.items):
-            result.add(other.items[j])
+        while j < len(theirs):
+            result.add(theirs[j])
             j = j + 1
         return result
 
     def intersection(self: Set, other: Set) -> Set[T]:
         result: Set[T] = Set[T]()
+        mine: list[T] = self.to_list()
         i: int = 0
-        while i < len(self.items):
-            if other.contains(self.items[i]):
-                result.add(self.items[i])
+        while i < len(mine):
+            if other.contains(mine[i]):
+                result.add(mine[i])
             i = i + 1
         return result
 
     def difference(self: Set, other: Set) -> Set[T]:
         result: Set[T] = Set[T]()
+        mine: list[T] = self.to_list()
         i: int = 0
-        while i < len(self.items):
-            if not other.contains(self.items[i]):
-                result.add(self.items[i])
+        while i < len(mine):
+            if not other.contains(mine[i]):
+                result.add(mine[i])
             i = i + 1
         return result
 

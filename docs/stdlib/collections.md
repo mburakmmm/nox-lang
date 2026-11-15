@@ -53,9 +53,9 @@ A class-based set with explicit set algebra (the language also has the built-in 
 | `Set[T]()` | an empty set |
 | `add(v)` | inserts `v` (a no-op if present) |
 | `contains(v)` | membership |
-| `remove(v)` | removes `v`; returns whether it was present |
+| `remove(v)` | removes `v` in amortised O(1); returns whether it was present. Insertion order of the remaining elements is kept |
 | `size()`, `is_empty()` | count and emptiness |
-| `to_list()` | the elements as a list |
+| `to_list()` | the elements as a list, in insertion order |
 | `union(other)`, `intersection(other)`, `difference(other)` | new sets |
 
 ### `Counter[T]`

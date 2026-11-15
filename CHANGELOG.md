@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.186]
+
+### Ölçüm (2.2 aşama 2, dilim 3)
+
+- **1. küme için C referansı:** `benchmarks/stdlib_perf/stdlib_perf.c` (17 iş; clang -O2, el yazımı tamsayı biçimlendirme, adil tahsis); `run.py` artık iki kümede de C sütununu basar ve sağlama toplamlarını C ile karşılaştırır. Tablo ve yorum: `benchmarks/RESULTS.md`. Bulgu: `str_split` C'ye (parça başına `strndup`) göre 2× hızlı, `sort_1M_ints` C `qsort`'la eşit; gerçek açıklar `Set[int]` (21×), `str_build_join`/`csv`/`path` (4-6×). `run.py`: C kütüphaneleri kaynaktan sonra bağlanır.
+- **`nox.collections.Set.remove` ikinci dereceden → amortize O(1) (3,6 s → 3,9 ms, 930×; Python 0,85 ms):** her silme tüm listeyi ve karma dizinini baştan kuruyordu (20 000 elemanlı kümede 20 000 silme 3,6 s). Mezar taşı deseni (`OrderedDict`/`LRUCache` ile aynı), ekleme sırası korunur, `to_list()` önce sıkıştırır. `items` alanı özel `_items` oldu (belgelenmiş arayüz `to_list()`). Golden: `collections_set_remove_tombstones` (beklenen çıktı Python ile bağımsız üretildi; iki arka uçta aynı).
+
 ## [2.1.185]
 
 ### Performans (2.2 aşama 2, dilim 2)
