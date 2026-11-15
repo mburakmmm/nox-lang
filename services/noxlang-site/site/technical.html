@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+{{HEAD}}
+</head>
+<body class="dl-body">
+<a class="skip" href="#main">Skip to content</a>
+{{HEADER}}
+
+<main id="main" class="dl">
+  <div class="wrap">
+    <header class="dl-head">
+      <p class="kicker">Technical specifications</p>
+      <h1>What Nox is, precisely.</h1>
+      <p class="dl-lede">The facts behind the language, in one place: how it compiles, how memory and errors work, where it runs, how big the binaries are and what ships in the box. Current release: <strong>Nox {{VERSION}}</strong>. Every row links to the page that documents it.</p>
+    </header>
+
+    <section class="section" aria-labelledby="t-lang">
+      <div class="section-head"><p class="kicker">Language</p><h2 id="t-lang">Python’s syntax, a static type system.</h2></div>
+      <div class="table-wrap">
+        <table class="platforms">
+          <tbody>
+            <tr><td>Typing</td><td>Static and mandatory: every parameter, variable and return value has a type the compiler checks. There is no <code>Any</code> and no implicit dynamic fallback, not even inside <code>lowlevel</code>. See <a href="/docs/language/">the language guide</a>.</td></tr>
+            <tr><td>Generics and protocols</td><td>Compile-time monomorphization with structural protocols; a heterogeneous collection falls back to a fat pointer without any change in the source.</td></tr>
+            <tr><td>Errors</td><td>Exceptions compile to an implicit error-union return chain. No unwind tables and no landing pads are emitted, on either back end.</td></tr>
+            <tr><td>Concurrency</td><td><code>async</code>/<code>await</code>, tasks and channels on an M:N work-stealing scheduler. Multi-core parallelism is a property of the LLVM back end; QBE programs run tasks on one thread.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="t-mem">
+      <div class="section-head"><p class="kicker">Memory</p><h2 id="t-mem">Managed without a vocabulary.</h2></div>
+      <div class="table-wrap">
+        <table class="platforms">
+          <tbody>
+            <tr><td>Layer 1 · ASAP</td><td>A value is freed at its last use when the compiler can prove it is safe. No reference count, no cost at run time.</td></tr>
+            <tr><td>Layer 2 · ARC</td><td>When that cannot be proved the value is reference-counted, silently. It is never a compile error and never a hint you must write.</td></tr>
+            <tr><td>Layer 3 · cycle collector</td><td>Scans only ARC-managed objects, triggered by allocation pressure.</td></tr>
+            <tr><td>Layer 4 · <code>lowlevel</code></td><td>Arena, pool and raw-pointer allocation. It relaxes how memory is allocated, never how types are checked. See <a href="/docs/internals/ownership/">ownership</a>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="t-be">
+      <div class="section-head"><p class="kicker">Compilation</p><h2 id="t-be">Two back ends, one program.</h2></div>
+      <div class="table-wrap">
+        <table class="platforms">
+          <thead><tr><th>Situation</th><th>Back end</th></tr></thead>
+          <tbody>
+            <tr><td>macOS or Linux, <code>clang</code> or <code>zig</code> on <code>PATH</code></td><td><strong>LLVM</strong> (default), <code>-O2</code></td></tr>
+            <tr><td>Windows with <code>zig</code> on <code>PATH</code></td><td>LLVM through <code>zig cc</code> (default)</td></tr>
+            <tr><td><code>--backend qbe</code>, <code>-g</code>, <code>--emit-asm</code>, freestanding, or no <code>clang</code>/<code>zig</code></td><td>QBE (small, fast to compile)</td></tr>
+            <tr><td>iOS, Android, WebAssembly</td><td>LLVM only</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="install-note">Both back ends run the whole golden test corpus and must agree on program output. Details: <a href="/docs/tools/backends/">Backends</a>.</p>
+    </section>
+
+    <section class="section" aria-labelledby="t-target">
+      <div class="section-head"><p class="kicker">Targets</p><h2 id="t-target">Where Nox programs run.</h2></div>
+      <div class="table-wrap">
+        <table class="platforms">
+          <thead><tr><th>Target</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>macOS arm64</td><td><span class="dot"></span>Full test suite in CI · prebuilt, Homebrew</td></tr>
+            <tr><td>Linux x86-64, aarch64</td><td><span class="dot"></span>Full test suite in CI · tarball, AppImage, Snap, AUR</td></tr>
+            <tr><td>Windows x86-64</td><td><span class="dot"></span>The whole Debug test corpus in CI · installer and zip</td></tr>
+            <tr><td>Linux riscv64</td><td>Static musl, QEMU user-mode smoke tests</td></tr>
+            <tr><td>WebAssembly (WASI, freestanding)</td><td>Compile to <code>.wasm</code>; the compiler itself also runs in a browser tab (<a href="/playground/">Playground</a>)</td></tr>
+            <tr><td>Bare metal (x86-64, aarch64, riscv64)</td><td>Freestanding ELF; all three boot in QEMU in the test suite</td></tr>
+            <tr><td>iOS, Android</td><td>Experimental: library output only, not a supported tier</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="install-note">Cross-compile from any machine with <code>noxc build --target</code>. Known gaps: <a href="/docs/reference/platforms/">platform notes</a>.</p>
+    </section>
+
+    <section class="section" aria-labelledby="t-size">
+      <div class="section-head"><p class="kicker">Size</p><h2 id="t-size">Small executables.</h2></div>
+      <div class="table-wrap">
+        <table class="platforms">
+          <thead><tr><th>Measured: a <code>print("hello")</code> program</th><th>Size</th></tr></thead>
+          <tbody>
+            <tr><td>macOS arm64</td><td>0.21 MB</td></tr>
+            <tr><td>Linux x86-64 (cross-compiled)</td><td>0.34 MB</td></tr>
+            <tr><td>Windows x86-64 (cross-compiled)</td><td>0.78 MB</td></tr>
+            <tr><td>The <code>noxc</code> compiler itself (macOS arm64)</td><td>5.7 MB</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="install-note">Measured on release builds with the LLVM back end (Windows: with <code>zig cc</code>) at version 2.1.176; the linker drops unused runtime and standard-library code, so a program pays only for the modules it imports.</p>
+    </section>
+
+    <section class="section" aria-labelledby="t-lib">
+      <div class="section-head"><p class="kicker">Standard library</p><h2 id="t-lib">{{MODULE_COUNT}} modules in the box.</h2></div>
+      <div class="table-wrap">
+        <table class="platforms">
+          <tbody>
+            <tr><td>Web and network</td><td>HTTP client and server (HTTP/1.1, HTTP/2, HTTP/3), router, WebSockets, TLS, gRPC, templates</td></tr>
+            <tr><td>Data</td><td>SQLite, PostgreSQL, MySQL drivers, JSON, TOML, YAML, CSV, protobuf</td></tr>
+            <tr><td>Security</td><td>Hashing, HMAC, secure randomness, Argon2id/bcrypt/scrypt, JWT</td></tr>
+            <tr><td>Systems</td><td>Files, processes, threads, atomics, shared memory, raw memory</td></tr>
+            <tr><td>Optional C libraries</td><td>LZ4, xxHash, yyjson, PCRE2 (JIT), Brotli and Zstandard compression, linked statically and only into programs that import them. They are not available on mobile targets.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="install-note">The full list, with examples that are compiled and run when this site is built: <a href="/docs/stdlib/">standard library</a>.</p>
+    </section>
+
+    <section class="section" aria-labelledby="t-api">
+      <div class="section-head"><p class="kicker">Interop</p><h2 id="t-api">Three APIs, one stability promise.</h2></div>
+      <div class="table-wrap">
+        <table class="platforms">
+          <tbody>
+            <tr><td>NNI</td><td>A stable C ABI with opaque, generation-checked handles. Native code never sees a pointer into Nox’s heap. <a href="/docs/apis/nni/">Read more</a>.</td></tr>
+            <tr><td>Plugin API</td><td>A manifest and lifecycle for native plugins loaded at run time with declared capabilities. <a href="/docs/apis/plugin-api/">Read more</a>.</td></tr>
+            <tr><td>NAPI</td><td>The language surface and standard library that frameworks program against. <a href="/docs/apis/napi/">Read more</a>.</td></tr>
+            <tr><td><code>extern def</code></td><td>Direct C calls, with <code>noxc bindgen</code> generating bindings. This runs with full native authority; see <a href="/docs/reference/security/">security</a>.</td></tr>
+            <tr><td>Embedded WebAssembly, HPy</td><td>Import a <code>.wasm</code> module as a library; run Python C extensions through an opaque-handle bridge.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="t-tool">
+      <div class="section-head"><p class="kicker">Toolchain</p><h2 id="t-tool">One command for everything.</h2></div>
+      <div class="table-wrap">
+        <table class="platforms">
+          <tbody>
+            <tr><td><code>noxc</code></td><td><code>init</code>, <code>build</code>, <code>run</code> (with an optional OS sandbox), <code>check</code>, <code>test</code>, <code>fmt</code>, <code>explain</code>, <code>bindgen</code>, package commands (<code>add</code>, <code>search</code>, <code>publish</code>, <code>install</code>), lockfile signing and SBOM output, and <code>upgrade</code> for the compiler itself. <a href="/docs/tools/noxc/">Reference</a>.</td></tr>
+            <tr><td>Editors</td><td>A language server (<code>noxlsp</code>), a VS Code extension and a tree-sitter grammar.</td></tr>
+            <tr><td>Packages</td><td>The <a href="https://noxpkg.noxlang.com" rel="noopener">noxpkg</a> registry with GitHub sign-in; each package carries a source label (Nox, C, C++, Rust, Go, Zig or mixed).</td></tr>
+            <tr><td>To build programs</td><td>A C toolchain for linking; <code>clang</code> or <code>zig</code> for the LLVM back end. To build the compiler from source: Zig 0.16.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section cta">
+      <div class="wrap">
+        <div class="cta-box">
+          <div>
+            <h2>Check it on your machine.</h2>
+            <p>Install in a minute and run <code>noxc --version</code>.</p>
+          </div>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="/download/">Download Nox</a>
+            <a class="btn" href="/docs/reference/platforms/">Platform notes</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+{{FOOTER}}
+<script src="/assets/js/app.js?v={{CSSV}}" defer></script>
+</body>
+</html>

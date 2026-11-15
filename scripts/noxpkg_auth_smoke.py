@@ -239,6 +239,11 @@ def main():
         check("@AdminUser" in page, "panel: yayındaki eski paket yöneticiye atfedilir")
         st, page, _ = call(base, "GET", "/p/legacy-pkg")
         check(st == 200 and "Published by" in page and "@AdminUser" in page, f"paket sayfası: Published by @AdminUser ({st} {page[:200]!r})")
+        for path in ("/", "/login", "/p/legacy-pkg"):
+            st, page, _ = call(base, "GET", path)
+            check(st == 200 and "/admin" not in page, f"herkese açık sayfada admin bağlantısı yok ({path} {st})")
+        st, page, _ = call(base, "GET", "/admin/login")
+        check(st == 200, f"admin giriş yolu çalışır ({st})")
         st, idx, _ = call(base, "GET", "/index.json")
         check(st == 200 and "publisher" not in idx, "index.json şeması değişmedi (yayıncı alanı sızmaz)")
 

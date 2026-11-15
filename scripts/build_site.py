@@ -280,6 +280,7 @@ HEADER = """<header class="topbar">
     <a href="/docs/stdlib/">Stdlib</a>
     <a href="/docs/apis/">APIs</a>
     <a href="/docs/tools/noxc/">Tools</a>
+    <a href="/technical/">Technical</a>
     <div class="navdrop" data-navdrop>
       <button class="navdrop-btn" type="button" aria-expanded="false" aria-haspopup="true" aria-controls="frameworks-menu">Frameworks<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2.2 4.2L6 8l3.8-3.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <div class="navdrop-panel" id="frameworks-menu" role="menu" hidden>
@@ -317,7 +318,7 @@ FOOTER = """<footer class="footer">
       <p>Native without the ownership noise.</p>
     </div>
     <nav class="footer-cols" aria-label="Footer">
-      <div><h4>Learn</h4><a href="/download/">Download</a><a href="/playground/">Playground (beta)</a><a href="/docs/install/">Install guide</a><a href="/docs/tutorial/">Tutorial</a><a href="/docs/language/">Language reference</a><a href="/docs/stdlib/">Standard library</a></div>
+      <div><h4>Learn</h4><a href="/download/">Download</a><a href="/playground/">Playground (beta)</a><a href="/docs/install/">Install guide</a><a href="/docs/tutorial/">Tutorial</a><a href="/docs/language/">Language reference</a><a href="/docs/stdlib/">Standard library</a><a href="/technical/">Technical specifications</a></div>
       <div><h4>Build on Nox</h4><a href="/docs/apis/">The three APIs</a><a href="/docs/apis/nni/">Native interface (NNI)</a><a href="/docs/apis/plugin-api/">Plugin API</a><a href="/docs/tools/noxpkg/">Publish a package</a></div>
       <div><h4>Project</h4><a href="{repo}" rel="noopener">GitHub</a><a href="{pkg}" rel="noopener">noxpkg registry</a><a href="https://nyx.noxlang.com">Nyx</a><a href="https://aether.noxlang.com">Aether</a><a href="https://aura.noxlang.com">Aura</a><a href="/docs/whatsnew/2.0/">What’s new in 2.0</a><a href="/docs/reference/versioning/">Versioning policy</a></div>
     </nav>
@@ -513,14 +514,18 @@ def build_static_page(template, title, description, path, css_v, extra_head=""):
     """`site/<template>` şablonundaki {{HEAD}}/{{HEADER}}/{{FOOTER}}/{{CSSV}} yer tutucularını doldurur (indirme, playground)."""
     tpl = read(os.path.join(SITE_SRC, template))
     head = head_html(title, description, BASE_URL + path, BASE_URL + "/assets/img/social-preview.jpg", extra_head).replace("{CSSV}", css_v)
+    version = re.search(r'\.version\s*=\s*"([^"]+)"', read(os.path.join(ROOT, "build.zig.zon"))).group(1)
+    modules = len([f for f in os.listdir(os.path.join(DOCS, "stdlib")) if f.endswith(".md") and f != "index.md"])
     return (tpl.replace("{{HEAD}}", head).replace("{{HEADER}}", HEADER).replace("{{FOOTER}}", FOOTER)
-            .replace("{{CSSV}}", css_v))
+            .replace("{{VERSION}}", version).replace("{{MODULE_COUNT}}", str(modules)).replace("{{CSSV}}", css_v))
 
 
 EXTRA_PAGES = [
     # (şablon, url yolu, başlık, açıklama, arama bölümü)
     ("download.html", "/download/", "Download Nox · macOS, Windows, Linux, WebAssembly",
      "Download the Nox compiler and toolchain for macOS, Windows and Linux — installers, archives, AppImage, Snap, Homebrew and AUR — or try Nox in the browser.", "Install"),
+    ("technical.html", "/technical/", "Technical specifications · Nox language, back ends, targets, binary size",
+     "What Nox is, precisely: the type and memory model, the LLVM and QBE back ends, supported targets, measured binary sizes, the standard library and the three stable APIs.", "Reference"),
     ("playground.html", "/playground/", "Nox Playground (beta) · compile and run Nox in your browser",
      "Write Nox, compile it to WebAssembly and run it — all inside your browser. Nothing is sent to a server.", "Tools"),
 ]

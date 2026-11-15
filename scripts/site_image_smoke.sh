@@ -44,6 +44,7 @@ header() { curl -sI "$1" | tr -d '\r' | grep -i "^$2:" | head -1 | cut -d: -f2- 
 
 [ "$(status "$base/")" = 200 ] && check "ana sayfa 200" ok || check "ana sayfa 200" no
 [ "$(status "$base/download/")" = 200 ] && check "/download/ 200" ok || check "/download/ 200" no
+[ "$(status "$base/technical/")" = 200 ] && check "/technical/ 200" ok || check "/technical/ 200" no
 [ "$(status "$base/docs/tutorial/")" = 200 ] && check "/docs/tutorial/ 200" ok || check "/docs/tutorial/ 200" no
 [ "$(status "$base/nope-$$")" = 404 ] && check "bilinmeyen yol 404" ok || check "bilinmeyen yol 404" no
 

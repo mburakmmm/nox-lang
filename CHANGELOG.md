@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.179]
+
+### Site (2.2 aşama 10, dilim 1)
+
+- **Teknik özellikler sayfası** (`/technical/`, `services/noxlang-site/site/technical.html`): dil/tip sistemi, bellek katmanları, LLVM/QBE arka uçları, hedefler, ölçülmüş ikili boyutları (hello-world), standart kütüphane (modül sayısı ve sürüm derleme anında doğru gelir), NNI/Plugin/NAPI, araç zinciri. Her satır dokümanlara bağlanır; üst menüye ve altbilgiye eklendi, sitemap/arama dizininde.
+- **noxpkg:** her sayfanın altbilgisindeki herkese açık "Admin" bağlantısı kaldırıldı (`/admin` yolu ve parola girişi aynı; yalnızca giriş yapmış admin başlık çubuğunda düğmeyi görür). Duman testi herkese açık sayfalarda `/admin` bağlantısı olmadığını denetler.
+- **noxlang.com ana sayfası:** başlık/alt metinde "Nox 2.0" yerine sürümsüz ad; "an admin console" ifadesi kaldırıldı.
+- `scripts/site_image_smoke.sh` `/technical/` 200'ü denetler.
+- Canlı dağıtım (M4) yapılmadı; onay bekliyor.
+
 ## [2.1.178]
 
 ### Düzeltme
