@@ -18,6 +18,17 @@ This page is the single compatibility matrix for Nox 2.x. The long-form policy i
 | Diagnostics *text* | **none** — the error *kind* is stable, the wording may improve in any release | messages |
 | Performance characteristics | not a promise (they improve) | — |
 
+## Changes to the stable surfaces since 2.0
+
+Everything below is additive: a program, library or plugin written for 2.0 builds and runs unchanged.
+
+| Surface | Since 2.0 |
+|---|---|
+| **NNI v1** | no change: `NOX_NNI_ABI_VERSION` is still 1 and `NoxApiV1` has the same members in the same order. The documentation is checked against `include/nox_nni.h` on every change (`scripts/check_docs.py`). Fuzzing found and fixed three bugs in the host side in 2.1.149; none changed the ABI. |
+| **Plugin API 1** | no change to the manifest or to `nox.plugin`. |
+| **NAPI (language and standard library)** | additions only: variadic and implicit-`None` functions documented, new builtins (`pow` with a modulus, `hex`, `oct`, `bin`, `int(text, base)`, `min`/`max` `default=`), new modules (`nox.lz4`, `nox.xxhash`, `nox.yyjson`, `nox.pcre2`, `nox.brotli`, and `compress` in `nox.zstd`), and the package `source` label. See [What's new in 2.2](../whatsnew/2.2.md). |
+| **Platforms** | Windows x86-64 and Linux riscv64 cross-compilation from any host with `zig`; iOS and Android remain experimental. |
+
 ## What a release number means
 
 `MAJOR.MINOR.PATCH`:

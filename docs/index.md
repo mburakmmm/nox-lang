@@ -53,8 +53,13 @@ Ada has 150
 
 - [Language tour in one page](language/python-differences.md) — if you already know Python
 - [`nox.http`](stdlib/http.md) · [`nox.json`](stdlib/json.md) · [`nox.sqlite`](stdlib/sqlite.md) · [`nox.thread`](stdlib/thread.md)
+- [How-to guides](howto/index.md): [binary size](howto/binary-size.md) · [cross-compiling](howto/cross-compile.md) · [embedded C libraries](howto/embedded-c-libraries.md)
 - [Security model](reference/security.md) · [Platforms](reference/platforms.md) · [FAQ](reference/faq.md)
 - The package registry: [noxpkg](tools/noxpkg.md) · The web framework: [Nyx](https://github.com/mburakmmm/nyx)
+
+## For tools and AI assistants
+
+The whole documentation is available as plain Markdown: an index at <https://noxlang.com/llms.txt> and every page in one file at <https://noxlang.com/llms-full.txt>. Links inside the file are absolute, so it can be fed to a tool as is.
 
 ## About this documentation
 

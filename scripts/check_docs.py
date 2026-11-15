@@ -69,6 +69,11 @@ def read(rel):
         return f.read()
 
 
+def read_abs(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 def headings(text):
     slugs = set()
     in_code = False
@@ -229,6 +234,21 @@ def main():
         for n in public_names(mod):
             if not any(re.search(r"(?<![A-Za-z0-9_])" + re.escape(n) + r"(?![A-Za-z0-9_])", sp) for sp in code_spans) and f"{n}(" not in text:
                 errors.append(f"stdlib kapsamı: {page} içinde `{n}` belgelenmemiş")
+
+    # NNI sözleşmesi: include/nox_nni.h'deki NoxApiV1 üyeleri ve ABI sürümü docs/apis/nni.md ile birebir aynı olmalı.
+    hdr_path = os.path.join(ROOT, "include", "nox_nni.h")
+    if os.path.exists(hdr_path):
+        hdr = read_abs(hdr_path)
+        doc = read("apis/nni.md")
+        h_members = set(re.findall(r"\(\*\s*([a-z_0-9]+)\s*\)", hdr))
+        d_members = set(re.findall(r"\(\*\s*([a-z_0-9]+)\s*\)", doc))
+        for n in sorted(h_members - d_members):
+            errors.append(f"NNI sözleşmesi: nox_nni.h'deki `{n}` apis/nni.md'de yok")
+        for n in sorted(d_members - h_members):
+            errors.append(f"NNI sözleşmesi: apis/nni.md'deki `{n}` nox_nni.h'de yok")
+        m = re.search(r"#define\s+NOX_NNI_ABI_VERSION\s+(\d+)u", hdr)
+        if m and f"NOX_NNI_ABI_VERSION" not in doc:
+            errors.append("NNI sözleşmesi: apis/nni.md NOX_NNI_ABI_VERSION'dan söz etmiyor")
 
     if not os.path.exists(NOXC):
         errors.append(f"noxc bulunamadı: {NOXC} (önce `zig build`)")

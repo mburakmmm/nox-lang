@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.181]
+
+### Dokümanlar (2.2 aşama 11)
+
+- **"How-to guides" bölümü:** ikili boyutu azaltma, çapraz derleme, gömülü C kütüphaneleri (`docs/howto/`). Her olgu ölçüm ya da kaynaktan doğrulandı (hello-world boyutları, `noxc build --target` mesajları, mobil/WASM reddi).
+- **`whatsnew/2.2.md`:** 2.2 yolunda 2.1.x'te gelenler (variadik/örtük `None`, yeni builtin'ler, JSON bandı, C kütüphaneli modüller, `source` etiketi, boyut, paketleme); örnek bloğu çalıştırılıp çıktısı denetlendi.
+- **API'ler:** `apis/stability.md`'ye "Changes to the stable surfaces since 2.0" tablosu (NNI v1 ve Plugin API 1 değişmedi, NAPI yalnızca eklemeli). **NNI sözleşme denetimi:** `scripts/check_docs.py` artık `include/nox_nni.h`'deki `NoxApiV1` üyelerini ve ABI sürümünü `docs/apis/nni.md` ile karşılaştırır (bozulunca kırmızı olduğu elle doğrulandı).
+- **Ajanlar için:** site `/llms.txt` (dizin, her sayfa tek satır açıklamayla) ve `/llms-full.txt` (tüm dokümanlar, mutlak bağlantılarla, ≈0,9 MB) üretir; `site_image_smoke.sh` ikisini de denetler; `docs/index.md`'de tanıtıldı.
+- `nox.yyjson` belgesinde `is_supported()` açıklaması gerçek davranışa (bağlıysa her zaman `True`) düzeltildi.
+- **Bilinen sınır (belgelendi, kod değişmedi):** `nox.zstd.compress` mobil hedefte bağlanamaz (arşiv bağlı değil); `compress` çağrısını derleme zamanında reddetmek yeni bir yetenek türü gerektirir, mimari karar olarak bekliyor.
+
 ## [2.1.180]
 
 ### Site (2.2 aşama 10, dilim 2)

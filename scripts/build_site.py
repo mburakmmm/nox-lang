@@ -484,6 +484,40 @@ PLAY_FILES = ("play.js", "compile-worker.js", "run-worker.js")
 PLAY_LIB = ("noxc-frontend.wasm", "noxrt-wasm32-freestanding.o", "noxrt-wasm32-freestanding-sqlite3.o", "compiler-rt-wasm32.a")
 
 
+def build_llms(out, sections, order, known):
+    """Ajanlar için makine-okunur içerik: `/llms.txt` (dizin) ve `/llms-full.txt` (tüm dokümanlar tek Markdown dosyasında; göreli bağlantılar mutlak URL'ye çevrilir)."""
+    def absolutize(src, rel):
+        def sub(m):
+            text, href = m.group(1), m.group(2)
+            try:
+                r = resolve_link(href, rel, known)
+            except SystemExit:
+                return m.group(0)  # kod örneklerindeki sahte bağlantıya dokunma
+            return f"[{text}]({BASE_URL + r if r.startswith('/') else r})"
+        return re.sub(r"\[([^\]]*)\]\(([^)\s]+)\)", sub, src)
+
+    index = ["# Nox", "",
+             "> Nox is a statically typed, ahead-of-time compiled language with Python's syntax, automatic memory management without a garbage collector and without ownership annotations. Compiled with LLVM or QBE; runtime written in Zig.",
+             "",
+             f"Full documentation as one file: {BASE_URL}/llms-full.txt", ""]
+    for sec in sections:
+        index.append(f"## {sec['section']}")
+        index.append("")
+        for p in sec["pages"]:
+            body = re.sub(r"```.*?```", "", p["src"], flags=re.S)
+            para = next((ln.strip().lstrip("> ").strip() for ln in body.splitlines()
+                         if ln.strip() and not ln.lstrip().startswith(("#", "|", "-", "<", "!"))), "")
+            desc = first_paragraph(re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", para).replace("`", "").replace("**", ""))
+            index.append(f"- [{p['title']}]({BASE_URL}{p['url']})" + (f": {desc}" if desc else ""))
+        index.append("")
+    write(os.path.join(out, "llms.txt"), "\n".join(index) + "\n")
+    full = ["# Nox documentation", "", f"Source: {BASE_URL}/docs/ · Repository: {REPO_URL}", ""]
+    for p in order:
+        full.append(f"\n\n---\n\n<!-- {BASE_URL}{p['url']} -->\n# {p['title']}\n")
+        full.append(absolutize(p["src"], p["rel"]))
+    write(os.path.join(out, "llms-full.txt"), "\n".join(full) + "\n")
+
+
 def build_playground_assets(out, wasm_lib):
     """Playground'un istemci varlıklarını `public/playground/` altına koyar. Derleyici ön yüzü ve çalışma zamanı nesneleri
     `zig build wasm-compiler wasm-rt` çıktısıdır (`--wasm-lib`); yoksa playground sayfası YAZILMAZ (dönüş: False)."""
@@ -615,6 +649,7 @@ def main():
 <script src="/assets/js/app.js?v={css_v_page}" defer></script>
 </body></html>
 """)
+    build_llms(out, sections, order, known)
     write(os.path.join(out, "robots.txt"), f"User-agent: *\nAllow: /\nSitemap: {BASE_URL}/sitemap.xml\n")
     urls = [BASE_URL + "/"] + [BASE_URL + u for u in extra_urls] + [BASE_URL + p["url"] for p in order]
     write(os.path.join(out, "sitemap.xml"),
