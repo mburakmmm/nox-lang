@@ -38,6 +38,7 @@ const LOOKUP_FIBER_CAP_MS: i64 = 120_000;
 threadlocal var tl_deadline_ns: i64 = 0;
 threadlocal var tl_timed_out: bool = false;
 threadlocal var tl_tunnel: ?*const Tunnel = null;
+threadlocal var tl_pin: ?*const Pin = null;
 
 /// HTTP CONNECT tüneli isteği (v2.0.129): `setTunnel` ile işaretlenen fiber/iş parçacığının sıradaki `connect`i hedefe değil VEKİLE yapılır (arama da vekilin adı için), bağlanınca `CONNECT target:port`
 /// el sıkışması gerçekleşir; başarısızlık bağlantı hatasıdır (düz metin geri düşüşü YOK). std sonra aynı soket üzerinde TLS'i hedef adına kurar (SNI + sertifika doğrulaması).
@@ -59,6 +60,27 @@ pub fn setTunnel(t: ?*const Tunnel) void {
         }
     }
     tl_tunnel = t;
+}
+
+/// Sabit IP'ye bağlanma (v2.1.195): `setPin` ile işaretlenen fiber/iş parçacığının sıradaki `connect`i için ad ÇÖZÜMLENMEZ; `ip` (literal) kullanılır. TLS sunucu adı/sertifika doğrulaması
+/// yine ORİJİNAL ana makine adı üzerinden yapılır (çağıran `connectTcp(host, ...)`e adı verir), böylece "doğrulanmış IP'ye bağlan" DNS rebinding penceresi bırakmaz.
+pub const Pin = struct { ip: []const u8 };
+
+pub fn setPin(p: ?*const Pin) void {
+    if (comptime !enabled) return;
+    if (comptime enabled) {
+        if (bridge.currentFiber()) |f| {
+            f.net_pin = if (p) |x| @ptrCast(x) else null;
+            return;
+        }
+    }
+    tl_pin = p;
+}
+
+fn activePin() ?*const Pin {
+    if (comptime !enabled) return null;
+    if (bridge.currentFiber()) |f| return if (f.net_pin) |x| @ptrCast(@alignCast(x)) else null;
+    return tl_pin;
 }
 
 fn activeTunnel() ?*const Tunnel {
@@ -377,6 +399,15 @@ fn boundedLookup(
         name = tn.proxy_host;
         options.port = tn.proxy_port;
     }
+    // Sabitlenmiş IP: ad çözümlenmez (tünel varsa vekil kazanır: sabitleme vekilli yolda desteklenmez ve çağıran tarafından kurulmaz).
+    if (activeTunnel() == null) {
+        if (activePin()) |pin| {
+            const pa: IpAddress = (IpAddress.parseIp6(pin.ip, options.port) catch IpAddress.parseIp4(pin.ip, options.port) catch return error.UnknownHostName);
+            if (options.family) |f| if (std.meta.activeTag(pa) != f) return error.UnknownHostName;
+            try put(resolved, t_io, .{ .address = pa });
+            return;
+        }
+    }
     // `[::1]` biçimi: köşeli parantezleri at.
     if (name.len >= 2 and name[0] == '[' and name[name.len - 1] == ']') name = name[1 .. name.len - 1];
 
@@ -422,6 +453,35 @@ fn boundedLookup(
         try put(resolved, t_io, .{ .canonical_name = .{ .bytes = buf[0..n] } });
     }
     for (job.addrs[0..job.count]) |a| try put(resolved, t_io, .{ .address = a });
+}
+
+pub const ResolveError = error{ TimedOut, Failed, Unsupported };
+
+/// `nox.dns.resolve`: `name`i `timeout_ms` (0 = 30 sn üst sınır) içinde A/AAAA adreslerine çözer (IP literal'ler ve `localhost` çözümlemesiz döner). En çok `MAX_ADDRS` adres.
+pub fn resolveHost(name_in: []const u8, timeout_ms: u64, out: *[MAX_ADDRS]IpAddress) ResolveError!usize {
+    if (comptime !enabled) return error.Unsupported;
+    var name = name_in;
+    if (name.len >= 2 and name[0] == '[' and name[name.len - 1] == ']') name = name[1 .. name.len - 1];
+    if (name.len == 0 or name.len > HostName.max_len) return error.Failed;
+    const literal: ?IpAddress = if (IpAddress.parseIp6(name, 0)) |a| a else |_| if (IpAddress.parseIp4(name, 0)) |a| a else |_| null;
+    if (literal) |a| {
+        out[0] = a;
+        return 1;
+    }
+    if (std.ascii.eqlIgnoreCase(name, "localhost") or std.ascii.endsWithIgnoreCase(name, ".localhost")) {
+        out[0] = .{ .ip6 = .{ .bytes = [_]u8{0} ** 15 ++ [_]u8{1}, .port = 0 } };
+        out[1] = .{ .ip4 = .loopback(0) };
+        return 2;
+    }
+    const wait_ms: i64 = if (timeout_ms == 0) LOOKUP_FIBER_CAP_MS else @intCast(@min(timeout_ms, std.math.maxInt(i32)));
+    const job = awaitLookup(name, 0, null, nowNs() + wait_ms * std.time.ns_per_ms, &resolveInto, null) catch |e| return switch (e) {
+        error.TimedOut => error.TimedOut,
+        error.Failed => error.Failed,
+    };
+    defer job.release();
+    if (!job.ok) return error.Failed;
+    for (job.addrs[0..job.count], 0..) |a, i| out[i] = a;
+    return job.count;
 }
 
 // ---- TCP --------------------------------------------------------------------------------------------------------------------------

@@ -25,6 +25,8 @@ const http_client = @import("shim_util.zig");
 const free_env = wasm_host.is_freestanding_wasm or http_client.bare_kernel;
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
+const arc = @import("../alloc/arc.zig");
+const abi_layout = @import("abi_layout");
 
 var g_argc: i64 = 0;
 var g_argv: ?[*]const ?[*:0]const u8 = null;
@@ -101,6 +103,68 @@ export fn nox_os_getenv_raw(rt: ?*anyopaque, name: ?[*:0]const u8) callconv(.c) 
     return dupeToNoxStr(rt, std.mem.span(v));
 }
 
+/// VAULT 1.4: ortam değişkeni numaralandırması — `AD=değer` biçiminde girdilerden oluşan bir `list[str]` döner
+/// (POSIX `environ`, Windows ortam bloğu, wasm/çıplak çekirdekte bellek içi tablo). Boş/`=` ile başlayan adlar
+/// (Windows'un `=C:` sürücü girdileri) atlanır.
+const ENV_LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
+const ENV_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
+extern "kernel32" fn GetEnvironmentStringsA() callconv(.winapi) ?[*]u8;
+extern "kernel32" fn FreeEnvironmentStringsA(block: [*]u8) callconv(.winapi) c_int;
+
+fn envListFromEntries(rt: ?*anyopaque, entries: []const []const u8) ?*anyopaque {
+    const raw = arc.nox_rc_alloc(rt, ENV_LIST_HEADER_SIZE + ENV_SLOT_SIZE * entries.len) orelse return null;
+    const bytes: [*]u8 = @ptrCast(raw);
+    @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(entries.len);
+    @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(entries.len);
+    for (entries, 0..) |entry, i| {
+        const dup = dupeToNoxStr(rt, entry) orelse return null;
+        const slot = bytes + ENV_LIST_HEADER_SIZE + ENV_SLOT_SIZE * i;
+        @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
+    }
+    return @ptrCast(bytes);
+}
+
+fn envEntryValid(entry: []const u8) bool {
+    const eq = std.mem.indexOfScalar(u8, entry, '=') orelse return false;
+    return eq > 0;
+}
+
+export fn nox_os_environ_raw(rt: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const a = http_client.scratchAllocator();
+    var entries: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer entries.deinit(a);
+    var owned: std.ArrayListUnmanaged([]u8) = .empty;
+    defer {
+        for (owned.items) |o| a.free(o);
+        owned.deinit(a);
+    }
+    if (comptime free_env) {
+        var it = FreeEnv.map.iterator();
+        while (it.next()) |kv| {
+            const joined = std.fmt.allocPrint(a, "{s}={s}", .{ kv.key_ptr.*, kv.value_ptr.* }) catch return null;
+            owned.append(a, joined) catch return null;
+            entries.append(a, joined) catch return null;
+        }
+    } else if (builtin.os.tag == .windows) {
+        const block = GetEnvironmentStringsA() orelse return envListFromEntries(rt, &.{});
+        defer _ = FreeEnvironmentStringsA(block);
+        var off: usize = 0;
+        while (block[off] != 0) {
+            const entry = std.mem.span(@as([*:0]const u8, @ptrCast(block + off)));
+            if (envEntryValid(entry)) entries.append(a, entry) catch return null;
+            off += entry.len + 1;
+        }
+    } else {
+        const env = std.c.environ;
+        var i: usize = 0;
+        while (env[i]) |e| : (i += 1) {
+            const entry = std.mem.span(e);
+            if (envEntryValid(entry)) entries.append(a, entry) catch return null;
+        }
+    }
+    return envListFromEntries(rt, entries.items);
+}
+
 export fn nox_os_exit_raw(code: i64) callconv(.c) noreturn {
     if (comptime http_client.bare_kernel) @import("../errors/handle.zig").exitProcess(code);
     wasm_host.exitProcess(@intCast(code));
@@ -175,4 +239,26 @@ test "Faz III.5: nox_os_current_dir_raw bos olmayan bir mutlak yol doner" {
     } else {
         try std.testing.expect(slice[0] == '/');
     }
+}
+
+test "nox_os_environ_raw set_var ile eklenen degiskeni AD=deger olarak listeler" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+
+    nox_os_set_var_raw("NOX_ENVIRON_TEST_VAR", "v=1");
+    const list_ptr = nox_os_environ_raw(rt) orelse return error.Failed;
+    const bytes: [*]u8 = @ptrCast(list_ptr);
+    const count: usize = @intCast(@as(*align(1) i64, @ptrCast(bytes)).*);
+    var seen = false;
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + ENV_LIST_HEADER_SIZE + ENV_SLOT_SIZE * i)).*)));
+        const p: [*:0]u8 = @ptrFromInt(addr);
+        defer str.nox_str_release(rt, p);
+        if (std.mem.eql(u8, std.mem.sliceTo(p, 0), "NOX_ENVIRON_TEST_VAR=v=1")) seen = true;
+    }
+    arc.nox_rc_release(rt, list_ptr, ENV_LIST_HEADER_SIZE + ENV_SLOT_SIZE * count);
+    try std.testing.expect(seen);
 }

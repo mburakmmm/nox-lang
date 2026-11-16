@@ -1137,3 +1137,64 @@ test "nox.transfer.download_to_file / upload_file: dosya akışla iner ve yükle
     defer allocator.free(expected);
     try expectGolden(source, expected);
 }
+
+test "nox.http.get: aynı adlı yanıt başlıkları (Set-Cookie, Link) kaybolmaz: büyük/küçük harf duyarsız eşleşir, '\\n' ile birleşir, tekil başlık değişmez (2.2, Nova 16)" {
+    const allocator = std.testing.allocator;
+
+    var port: u16 = 0;
+    const listen_fd = try testListenerOn127001(&port);
+    defer _ = sys.close(listen_fd);
+
+    const headers = "HTTP/1.1 200 OK\r\nSet-Cookie: a=1; Path=/\r\nset-cookie: b=2; Path=/\r\nX-One: only\r\nLink: <x>; rel=next\r\nLink: <y>; rel=prev\r\nContent-Length: 2\r\nConnection: close\r\n\r\n";
+    const server_thread = try std.Thread.spawn(.{}, testServeOnceRaw, .{ listen_fd, headers, "ok" });
+    defer server_thread.join();
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\import nox.http
+        \\import nox.strings
+        \\
+        \\resp: nox_http_HttpResponse = nox.http.get("http://127.0.0.1:{d}/", {{}})
+        \\cookies: list[str] = nox.strings.split(resp.headers["Set-Cookie"], "\n")
+        \\print(len(cookies), cookies[0], cookies[1])
+        \\print(resp.headers["X-One"])
+        \\print(resp.headers["Link"] == "<x>; rel=next\n<y>; rel=prev")
+        \\
+    , .{port});
+    defer allocator.free(source);
+
+    try expectGolden(source, "2 a=1; Path=/ b=2; Path=/\nonly\nTrue\n");
+}
+
+test "nox.dns.resolve + nox.http.request(connect_ip): ad çözümlenmeden doğrulanmış IP'ye bağlanır, çözülemeyen ad sabitlemeyle çalışır, geçersiz IP reddedilir (2.2, VAULT 1.1/1.2, Nova 14)" {
+    const allocator = std.testing.allocator;
+
+    var port: u16 = 0;
+    const listen_fd = try testListenerOn127001(&port);
+    defer _ = sys.close(listen_fd);
+
+    const response = "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\npinned";
+    const server_thread = try std.Thread.spawn(.{}, testServeOnceRaw, .{ listen_fd, response, "" });
+    defer server_thread.join();
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\import nox.http
+        \\import nox.dns
+        \\
+        \\print(nox.dns.resolve("127.0.0.1", 1000))
+        \\print(nox.dns.resolve("[2001:db8::1]"))
+        \\try:
+        \\    nox.dns.resolve("no-such-host.invalid", 3000)
+        \\except nox.dns.DnsError as e:
+        \\    print("dns error")
+        \\try:
+        \\    nox.http.request("GET", "http://pin-target.invalid:{d}/", "", {{}}, 3000, "not-an-ip")
+        \\except nox.http.HttpError as e:
+        \\    print("bad ip rejected")
+        \\resp: nox_http_HttpResponse = nox.http.request("GET", "http://pin-target.invalid:{d}/", "", {{}}, 3000, "127.0.0.1")
+        \\print(resp.status, resp.body)
+        \\
+    , .{ port, port });
+    defer allocator.free(source);
+
+    try expectGolden(source, "['127.0.0.1']\n['2001:db8::1']\ndns error\nbad ip rejected\n200 pinned\n");
+}

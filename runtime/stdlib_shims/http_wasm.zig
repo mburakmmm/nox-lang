@@ -104,6 +104,19 @@ export fn nox_http_request_raw(rt: ?*anyopaque, method: ?[*:0]const u8, url: ?[*
     return failedHandle();
 }
 
+/// Tarayıcı/WASI `fetch`i bağlanılacak IP'yi seçtirmez: sabitlenmiş (`connect_ip`) istek sessizce sabitlemesiz gitmek yerine KAPALI başarısız olur (geçersiz istek).
+export fn nox_http_request_pinned_raw(rt: ?*anyopaque, method: ?[*:0]const u8, url: ?[*:0]const u8, body: ?[*:0]const u8, has_body: i32, headers: ?*anyopaque, connect_ip: ?[*:0]const u8, timeout_ms: i64) callconv(.c) ?*anyopaque {
+    _ = rt;
+    _ = method;
+    _ = url;
+    _ = body;
+    _ = has_body;
+    _ = headers;
+    _ = connect_ip;
+    _ = timeout_ms;
+    return null;
+}
+
 export fn nox_http_response_error_kind(h: ?*anyopaque) callconv(.c) i64 {
     if (comptime fetch_enabled) {
         if (fetch.available()) {

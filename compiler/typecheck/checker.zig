@@ -1584,6 +1584,7 @@ pub const Checker = struct {
         .{ .name = "protobuf", .caps = &.{} },
         .{ .name = "reflect", .caps = &.{} },
         .{ .name = "regex", .caps = &.{} },
+        .{ .name = "dns", .caps = &.{.network} },
         .{ .name = "redis", .caps = &.{.network} },
         .{ .name = "router", .caps = &.{} },
         .{ .name = "sharedmem", .caps = &.{.shared_memory} },
@@ -3280,10 +3281,21 @@ pub const Checker = struct {
     /// Zincir bir import'a karşılık GELMİYORSA (ör. sıradan `p.scale(2)`
     /// bir yerel değişken üzerinde) `null` döner — çağıran MEVCUT metod-
     /// çağrısı çözümlemesine devam eder.
+    /// `name` kapsamda bir değişken mi (yerel/parametre, iç içe işlevde yakalanan dış değişken, modül düzeyi değişken)?
+    fn isVariableInScope(self: *Checker, ctx: *FnCtx, name: []const u8) bool {
+        if (ctx.scope.lookupLocal(name) != null) return true;
+        if (ctx.scope.parent != null and ctx.scope.existsInChain(name)) return true;
+        return self.module_globals.contains(name);
+    }
+
     fn tryResolveQualifiedCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!?Type {
         var raw_segments: std.ArrayListUnmanaged([]const u8) = .empty;
         if (!(try self.flattenDottedPath(c.callee.*, &raw_segments))) return null;
         if (raw_segments.items.len < 2) return null;
+        // 2.2 limitasyon turu (Chronos NXL-003): kapsamda bu adda bir DEĞİŞKEN (yerel, parametre, yakalanan ya da modül değişkeni) varsa o kazanır: `from clock import FakeClock` ardından
+        // `clock: FakeClock = ...; clock.advance(...)` bir metod çağrısıdır, `clock` modülünün üyesi DEĞİL. Önceden modül çözümlemesi yerel değişkenden önce çalışıyor ve "module 'clock' has no member
+        // named 'advance'" diyordu (kütüphaneler çatı yerellerini içe aktarılan modül adlarından kaçırmak için yeniden adlandırmak zorunda kalıyordu).
+        if (self.isVariableInScope(ctx, raw_segments.items[0])) return null;
         const segments = try self.substituteAlias(raw_segments.items);
 
         const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
@@ -6418,6 +6430,19 @@ pub const Checker = struct {
 
     fn checkTry(self: *Checker, ctx: *FnCtx, t: ast.TryStmt) TypeError!void {
         for (t.try_body) |*s| try self.checkStmt(ctx, s);
+        // Noktalı sınıf adı (`except nox.http.HttpError`): modül takma adı çözülür, ad mangled sınıf adıyla DEĞİŞTİRİLİR (sonraki geçişler çıplak/mangled adı görür).
+        const mutable_clauses: []ast.ExceptClause = @constCast(t.except_clauses);
+        for (mutable_clauses) |*mc| {
+            const dotted = mc.class_name orelse continue;
+            if (std.mem.indexOfScalar(u8, dotted, '.') == null) continue;
+            var parts: std.ArrayListUnmanaged([]const u8) = .empty;
+            var it = std.mem.splitScalar(u8, dotted, '.');
+            while (it.next()) |seg| try parts.append(self.allocator, seg);
+            const expanded = try self.substituteAlias(parts.items);
+            const mangled = try self.joinSegments(expanded, '_');
+            if (!self.classes.contains(mangled)) return self.fail(error.UndefinedClass, "unknown class: {s} (is the module imported?)", .{dotted});
+            mc.class_name = mangled;
+        }
         for (t.except_clauses) |ec| {
             // Bulundu (nyx framework — bkz. proje belleği "NOX_LIMITATIONS.md
             // incelemesi", P5): ÇIPLAK `except:` (`ec.class_name == null`,
@@ -11181,7 +11206,10 @@ pub const Checker = struct {
             .optional => |inner_te| {
                 switch (actual) {
                     .optional => |elem| try self.unifyTypeExpr(inner_te.*, elem.*, type_params, bindings, fn_name),
-                    else => return self.fail(error.TypeMismatch, "type mismatch for argument '{s}'", .{fn_name}),
+                    // 2.2 limitasyon turu (Chronos NXL-005): `None` her `T | None` parametresine, `T` değeri de `T | None` parametresine atanabilir. Yalnızca `.optional` kabul edildiğinden, protokol tipli bir
+                    // parametre yüzünden ÖRTÜK generic olan bir fonksiyonun varsayılanlı `p: P | None = None` parametresi (çağrıda atlanan ya da açık `None`/`P(..)` verilen) "type mismatch for argument" ile düşüyordu.
+                    .none => {},
+                    else => try self.unifyTypeExpr(inner_te.*, actual, type_params, bindings, fn_name),
                 }
             },
             // Nitelikli (`pkg.module.X`) bir tip adı ASLA bir tip

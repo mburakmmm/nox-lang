@@ -399,3 +399,111 @@ test "nox.http.serve_multicore: num_threads=1 sıradan tek-iş-parçacıklı sun
 
     try std.testing.expect(results[0]);
 }
+
+/// 2.2 limitasyon turu (worker ölçek raporu): yanıt gövdesini (başlıktan sonrası) `out`a okur; geri dönüş gövde uzunluğu (hata: 0).
+fn testGetBody(port: u16, out: *[64]u8) usize {
+    const fd = testConnect(port) catch return 0;
+    defer _ = sys.close(fd);
+    testSendGet(fd, "/");
+    var buf: [512]u8 = undefined;
+    var total: usize = 0;
+    while (total < buf.len) {
+        const n = sys.read(fd, buf[total..].ptr, buf.len - total);
+        if (n <= 0) break;
+        total += @intCast(n);
+    }
+    const resp = buf[0..total];
+    if (!std.mem.startsWith(u8, resp, "HTTP/1.1 200")) return 0;
+    const sep = std.mem.indexOf(u8, resp, "\r\n\r\n") orelse return 0;
+    const body = resp[sep + 4 ..];
+    const len = @min(body.len, out.len);
+    @memcpy(out[0..len], body[0..len]);
+    return len;
+}
+
+fn distinctWorkerClient(port: u16, ids: *[4][64]u8, lens: *[4]usize) void {
+    for (0..4) |i| lens[i] = testGetBody(port, &ids[i]);
+}
+
+// 2.2: `serve_multicore` bağlantıları worker'lara GERÇEKTEN dağıtmalı. macOS'ta `SO_REUSEPORT` yük dağıtmaz (tüm bağlantılar tek dinleyiciye giderdi, 1/2/4/8 worker'da istek hızı aynı kalıyordu);
+// artık tek paylaşılan dinleme soketi kullanılır. Yavaş (~1 ms), hiç `await` etmeyen bir işleyici ve 16 eşzamanlı istemciyle iki yürütmenin zaman olarak çakıştığı görülmelidir.
+test "nox.http.serve_multicore: bağlantılar birden fazla worker'a dağılır (N=4, yavaş işleyici, 16 eşzamanlı istemci, çakışan yürütme aralıkları)" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const source = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\import nox.time
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    t0: int = nox.time.monotonic_ns()
+        \\    h: int = 7
+        \\    i: int = 0
+        \\    while i < 300000:
+        \\        h = (h * 31 + i) % 1000003
+        \\        i = i + 1
+        \\    t1: int = nox.time.monotonic_ns()
+        \\    return nox_http_HttpResponse(200, str(t0) + " " + str(t1), {{}})
+        \\
+        \\nox.http.serve_multicore({d}, handle, 4, 16)
+        \\
+    , .{port});
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const bin_path = try compileToBinary(a, &tmp, source);
+
+    var child = try std.process.spawn(io, .{ .argv = &.{bin_path}, .stdout = .pipe, .stderr = .pipe });
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&child, 60_000);
+    defer watchdog.disarm();
+
+    var ids: [16][4][64]u8 = undefined;
+    var lens: [16][4]usize = undefined;
+    var threads: [16]std.Thread = undefined;
+    for (&threads, 0..) |*t, k| t.* = try std.Thread.spawn(.{}, distinctWorkerClient, .{ port, &ids[k], &lens[k] });
+    for (threads) |t| t.join();
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stdout_data);
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited);
+    try std.testing.expectEqual(@as(u8, 0), term.exited);
+    if (stderr_data.len != 0) std.debug.print("program stderr'e yazdı:\n{s}\n", .{stderr_data});
+    try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+
+    // Her yanıt "<başlangıç_ns> <bitiş_ns>" (süreç genelinde ortak `monotonic_ns`). CPU-yoğun işleyici hiç `await` etmediğinden bir worker istekleri SIRAYLA işler: iki yanıtın aralığı
+    // çakışıyorsa iki FARKLI worker aynı anda çalışmıştır (kimlik taşımaya gerek yok, modül durumu sızıntısı da yok).
+    var starts: [64]u64 = undefined;
+    var ends: [64]u64 = undefined;
+    var n: usize = 0;
+    for (0..16) |k| {
+        for (0..4) |i| {
+            try std.testing.expect(lens[k][i] > 0);
+            const body = ids[k][i][0..lens[k][i]];
+            const sp = std.mem.indexOfScalar(u8, body, ' ') orelse return error.BadBody;
+            starts[n] = try std.fmt.parseInt(u64, body[0..sp], 10);
+            ends[n] = try std.fmt.parseInt(u64, body[sp + 1 ..], 10);
+            n += 1;
+        }
+    }
+    var overlapping: usize = 0;
+    for (0..n) |x| {
+        for (x + 1..n) |y| {
+            if (starts[x] < ends[y] and starts[y] < ends[x]) overlapping += 1;
+        }
+    }
+    if (overlapping == 0) std.debug.print("64 isteğin hiçbiri zaman olarak çakışmadı: tüm bağlantılar tek worker'da işlendi\n", .{});
+    try std.testing.expect(overlapping > 0);
+}

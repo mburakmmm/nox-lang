@@ -38,6 +38,7 @@ pub const list_ops = @import("collections/list_ops.zig");
 pub const strings_shim = @import("stdlib_shims/strings.zig");
 pub const math_shim = @import("stdlib_shims/math.zig");
 pub const os_shim = @import("stdlib_shims/os.zig");
+pub const dns_shim = @import("stdlib_shims/dns.zig");
 pub const path_shim = @import("stdlib_shims/path.zig");
 pub const time_shim = @import("stdlib_shims/time.zig");
 pub const task_wait = @import("stdlib_shims/task_wait.zig");
@@ -101,6 +102,7 @@ comptime {
     _ = strings_shim;
     _ = math_shim;
     _ = os_shim;
+    _ = dns_shim;
     _ = path_shim;
     _ = time_shim;
     _ = task_wait;

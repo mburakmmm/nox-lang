@@ -1,0 +1,67 @@
+class Hist:
+    minimum: float | None
+    maximum: float | None
+    count: int
+
+    def __init__(self: Hist) -> None:
+        self.minimum = None
+        self.maximum = None
+        self.count = 0
+
+    def observe(self: Hist, v: float) -> None:
+        cur_min: float | None = self.minimum
+        cur_max: float | None = self.maximum
+        if cur_min is None or v < cur_min:
+            self.minimum = v
+        if cur_max is None or v > cur_max:
+            self.maximum = v
+        self.count = self.count + 1
+
+    def spread(self: Hist) -> float:
+        lo: float | None = self.minimum
+        hi: float | None = self.maximum
+        if lo is not None and hi is not None:
+            return hi - lo
+        return -1.0
+
+def both(a: int | None, b: int | None) -> int:
+    if a is None or b is None:
+        return -1
+    return a + b
+
+def ok_gt(a: float | None, limit: float) -> bool:
+    return a is not None and a > limit
+
+def pick(a: int | None, b: int | None) -> int:
+    return a if a is not None and (b is None or a >= b) else (b if b is not None else 0)
+
+h: Hist = Hist()
+print(h.spread())
+for v in [3.5, 1.25, 9.0, 4.0]:
+    h.observe(v)
+print(h.minimum is None, h.count, h.spread())
+print(both(1, 2), both(None, 2), both(1, None), both(None, None))
+print(ok_gt(2.0, 1.5), ok_gt(1.0, 1.5), ok_gt(None, 1.5))
+print(pick(5, 3), pick(3, 5), pick(None, 4), pick(4, None), pick(None, None))
+
+x: int | None = None
+print(x is None or x > 0)
+z: int | None = 5
+print(z is not None and z > 3, z is not None and z > 9)
+w: float | None = 1.5
+y: float = 2.0
+if w is None or y < w:
+    print("lt")
+else:
+    print("ge")
+if w != None and w + 1.0 == 2.5:
+    print("sum ok")
+n: int | None = 3
+total: int = 0
+while n is not None and n > 0:
+    total = total + n
+    if n > 1:
+        n = n - 1
+    else:
+        n = None
+print(total)

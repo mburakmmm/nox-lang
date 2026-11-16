@@ -170,10 +170,10 @@ fn addClibsArchive(b: *std.Build, arch: std.Target.Cpu.Arch, os_tag: std.Target.
     const pcre_flags = common ++ [_][]const u8{ "-DHAVE_CONFIG_H", "-DPCRE2_CODE_UNIT_WIDTH=8", "-DSUPPORT_PCRE2_8", "-DSUPPORT_UNICODE", "-DSUPPORT_JIT", "-DPCRE2_STATIC", "-Ithird_party/pcre2/src", "-Ithird_party/pcre2/deps/sljit" };
     const pcre_glue_flags = common ++ [_][]const u8{ "-DPCRE2_STATIC", "-Ithird_party/pcre2/src", "-Iruntime/c_glue" };
     const pcre_files = [_][]const u8{
-        "pcre2_auto_possess.c", "pcre2_chartables.c", "pcre2_chkdint.c",   "pcre2_compile.c",  "pcre2_compile_cgroup.c", "pcre2_compile_class.c", "pcre2_config.c",     "pcre2_context.c",
-        "pcre2_convert.c",      "pcre2_dfa_match.c",  "pcre2_error.c",     "pcre2_extuni.c",   "pcre2_find_bracket.c",   "pcre2_jit_compile.c",   "pcre2_maketables.c", "pcre2_match.c",
-        "pcre2_match_data.c",   "pcre2_match_next.c", "pcre2_newline.c",   "pcre2_ord2utf.c",  "pcre2_pattern_info.c",   "pcre2_script_run.c",    "pcre2_serialize.c",  "pcre2_string_utils.c",
-        "pcre2_study.c",        "pcre2_substitute.c", "pcre2_substring.c", "pcre2_tables.c",   "pcre2_ucd.c",            "pcre2_valid_utf.c",     "pcre2_xclass.c",
+        "pcre2_auto_possess.c", "pcre2_chartables.c", "pcre2_chkdint.c",   "pcre2_compile.c", "pcre2_compile_cgroup.c", "pcre2_compile_class.c", "pcre2_config.c",     "pcre2_context.c",
+        "pcre2_convert.c",      "pcre2_dfa_match.c",  "pcre2_error.c",     "pcre2_extuni.c",  "pcre2_find_bracket.c",   "pcre2_jit_compile.c",   "pcre2_maketables.c", "pcre2_match.c",
+        "pcre2_match_data.c",   "pcre2_match_next.c", "pcre2_newline.c",   "pcre2_ord2utf.c", "pcre2_pattern_info.c",   "pcre2_script_run.c",    "pcre2_serialize.c",  "pcre2_string_utils.c",
+        "pcre2_study.c",        "pcre2_substitute.c", "pcre2_substring.c", "pcre2_tables.c",  "pcre2_ucd.c",            "pcre2_valid_utf.c",     "pcre2_xclass.c",
     };
     const brotli_flags = common ++ [_][]const u8{ "-Ithird_party/brotli/c/include", "-Iruntime/c_glue" };
     const zstd_glue_flags = common ++ [_][]const u8{ "-Ithird_party/zstd/lib", "-Iruntime/c_glue" };
@@ -2148,6 +2148,8 @@ pub fn build(b: *std.Build) void {
     const http_serve_multicore_test = b.addTest(.{ .root_module = http_serve_multicore_test_mod });
     http_serve_multicore_test.step.dependOn(&install_noxrt.step);
     test_step.dependOn(&addTimedTestRun(b, http_serve_multicore_test, win_test_timeout_s).step);
+    const http_multicore_step = b.step("http-multicore-test", "Yalnızca nox.http.serve_multicore uçtan uca golden testlerini çalıştırır (hızlı yineleme için)");
+    http_multicore_step.dependOn(&addTimedTestRun(b, http_serve_multicore_test, win_test_timeout_s).step);
 
     // ---- Faz MN.7b: `nox.http.serve_multicore`nin havuz-tabanlı
     // (`--release`/LLVM) lowering'i İçİn AYNI uçtan uca golden desen —

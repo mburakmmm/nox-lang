@@ -1590,14 +1590,14 @@ pub const Parser = struct {
             var multi: std.ArrayList([]const u8) = .empty;
             if (!self.check(.colon)) {
                 if (self.match(.l_paren)) {
-                    try multi.append(self.allocator, (try self.expect(.identifier)).lexeme);
+                    try multi.append(self.allocator, try self.parseExceptClassName());
                     while (self.match(.comma)) {
                         if (self.check(.r_paren)) break;
-                        try multi.append(self.allocator, (try self.expect(.identifier)).lexeme);
+                        try multi.append(self.allocator, try self.parseExceptClassName());
                     }
                     _ = try self.expect(.r_paren);
                 } else {
-                    class_name = (try self.expect(.identifier)).lexeme;
+                    class_name = try self.parseExceptClassName();
                 }
                 if (self.match(.kw_as)) {
                     bind_name = (try self.expect(.identifier)).lexeme;
@@ -1686,6 +1686,20 @@ pub const Parser = struct {
     /// `from nox.http import get` / `from nox.http import get as g, post` —
     /// (bkz. `ast.FromImportStmt`in belge notu). Virgülle ayrılmış bir ya da
     /// daha fazla üye, HER biri isteğe bağlı KENDİ `as <isim>` sonekiyle.
+    /// 2.2 limitasyon turu (Nyx 2.11): `except nox.http.HttpError as e:`. İstisna sınıfı adı noktalı yol olabilir; noktalarla birleştirilmiş tek ad olarak saklanır (`nox.http.HttpError`),
+    /// tip denetleyici modül takma adını (`import nox.http as h` -> `h.HttpError`) çözüp mangled sınıf adına çevirir. Noktasız ad olduğu gibi kalır.
+    fn parseExceptClassName(self: *Parser) ParseError![]const u8 {
+        const first = (try self.expect(.identifier)).lexeme;
+        if (!self.check(.dot)) return first;
+        var buf = std.ArrayList(u8).empty;
+        try buf.appendSlice(self.allocator, first);
+        while (self.match(.dot)) {
+            try buf.append(self.allocator, '.');
+            try buf.appendSlice(self.allocator, (try self.expect(.identifier)).lexeme);
+        }
+        return buf.toOwnedSlice(self.allocator);
+    }
+
     fn parseFromImport(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_from);
         var segments = std.ArrayList([]const u8).empty;
@@ -1694,8 +1708,11 @@ pub const Parser = struct {
             try segments.append(self.allocator, (try self.expect(.identifier)).lexeme);
         }
         _ = try self.expect(.kw_import);
+        // 2.2 limitasyon turu (VAULT 2.2): Python'daki gibi parantezli, çok satırlı içe aktarma listesi (`from m import (\n a,\n b,\n)`, sondaki virgül serbest). Parantez içinde lexer satır sonlarını zaten yutar.
+        const parenthesized = self.match(.l_paren);
         var names = std.ArrayList(ast.FromImportName).empty;
         while (true) {
+            if (parenthesized and self.check(.r_paren)) break; // sondaki virgülden sonra kapanış
             const name = (try self.expect(.identifier)).lexeme;
             var name_alias: ?[]const u8 = null;
             if (self.match(.kw_as)) {
@@ -1703,6 +1720,10 @@ pub const Parser = struct {
             }
             try names.append(self.allocator, .{ .name = name, .alias = name_alias });
             if (!self.match(.comma)) break;
+        }
+        if (parenthesized) {
+            if (names.items.len == 0) return error.UnexpectedToken;
+            _ = try self.expect(.r_paren);
         }
         _ = try self.expect(.newline);
         return .{ .from_import_stmt = .{

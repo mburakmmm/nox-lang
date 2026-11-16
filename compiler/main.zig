@@ -451,6 +451,17 @@ fn realMain(init: std.process.Init) !void {
     };
     const rest: []const []const u8 = if (sub == .legacy or all_args.items.len == 0) all_args.items else all_args.items[1..];
 
+    // 2.2 limitasyon turu (VAULT 3.1): `noxc publish --help` `--help`i `<repo>` sanıp kayıt defterine "--help" adlı bir gönderi yapıyordu (halka açık dizinde `repo: "--help"` kayıtları var). Yan etkili ya da
+    // konumsal depo/paket argümanı alan alt komutlarda ilk argüman `--help`/`-h` ise yardım ekranı basılır ve hiçbir şey yapılmaz.
+    const helpable = switch (sub) {
+        .publish, .add, .delete, .install, .uninstall, .login, .sign, .refresh, .cache, .search, .sbom => true,
+        else => false,
+    };
+    if (helpable and rest.len > 0 and (std.mem.eql(u8, rest[0], "--help") or std.mem.eql(u8, rest[0], "-h"))) {
+        printHelp(is_tr);
+        return;
+    }
+
     switch (sub) {
         .build => try cmdBuild(gpa, io, a, rest, "usage: noxc build [--dump|-v] [-o <output>] <file.nox>\n", nox_home, resource_dirs, fetch_policy),
         .legacy => try cmdBuild(gpa, io, a, rest, "usage: noxc [--dump|-v] <file.nox>  (for commands: noxc --help)\n", nox_home, resource_dirs, fetch_policy),
@@ -802,6 +813,9 @@ fn cmdPublish(io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_ho
                 while (it.next()) |t| try tag_list.append(a, t);
                 tags = tag_list.items;
             }
+        } else if (std.mem.startsWith(u8, args[i], "-") and args[i].len > 1) {
+            std.debug.print("noxc publish: unknown option '{s}' (see: noxc publish --help)\n", .{args[i]});
+            std.process.exit(2);
         } else if (repo_opt == null) {
             repo_opt = args[i];
         }

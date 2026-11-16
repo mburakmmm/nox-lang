@@ -486,6 +486,8 @@ pub const Fiber = struct {
     net_timed_out: bool = false,
     /// `net_dial` için: bu fiber'ın sıradaki bağlanması bir HTTP CONNECT tüneli olarak vekil üzerinden yapılacaksa tünel açıklaması (opak; bkz. `net_dial.Tunnel`). Fiber-yerel çünkü fiber'lar aynı OS iş parçacığını paylaşır.
     net_tunnel: ?*const anyopaque = null,
+    /// `net_dial` için: bu fiber'ın sıradaki bağlanması DNS çözülmeden sabit bir IP'ye yapılacaksa (SSRF/DNS-rebinding savunması) o IP'nin açıklaması (opak; bkz. `net_dial.Pin`).
+    net_pin: ?*const anyopaque = null,
     /// Faz OO.2 (bkz. nox-teknik-spesifikasyon.md §3.83, `TaskLocal[T]`):
     /// bu fiber'a ÖZGÜ, `TaskLocal` tutamacı işaretçisiyle ANAHTARLANMIŞ
     /// depolama — `runtime/async_rt/task_local.zig`nin `nox_tasklocal_

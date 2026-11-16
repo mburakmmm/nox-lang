@@ -1,0 +1,23 @@
+import nox.http
+import nox.json as js
+import nox.sqlite
+
+def risky(n: int) -> int:
+    if n == 1:
+        raise nox.http.HttpError("net down")
+    if n == 2:
+        raise ValueError("bad value")
+    return n
+
+for n in [0, 1, 2]:
+    try:
+        print(risky(n))
+    except nox.http.HttpError as e:
+        print("http:", e.message)
+    except (ValueError, nox.sqlite.SqliteError) as e:
+        print("other:", e.message)
+
+try:
+    js.parse("{")
+except js.JsonError as e:
+    print("json error caught")

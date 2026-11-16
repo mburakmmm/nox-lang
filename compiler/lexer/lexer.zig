@@ -619,6 +619,17 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
     }
     try tokens.append(allocator, mkToken(.eof, "", line, 1, i));
 
+    // 2.2 limitasyon turu (Nyx 2.13): `protocol` yalnızca bir satırın İLK belirteci ve ardından bir ad geldiğinde anahtar sözcüktür (`protocol Name:`); başka her yerde
+    // (`def protocol(...)`, `x.protocol`, `protocol = 1`) sıradan bir tanımlayıcıdır. Önceden kelime her bağlamda ayrılmıştı ve bir yöntem/alan adı olarak kullanılamıyordu.
+    for (tokens.items, 0..) |*tok, ti| {
+        if (tok.kind != .kw_protocol) continue;
+        const proto_at_line_start = ti == 0 or switch (tokens.items[ti - 1].kind) {
+            .newline, .indent, .dedent => true,
+            else => false,
+        };
+        const next_is_name = ti + 1 < tokens.items.len and tokens.items[ti + 1].kind == .identifier;
+        if (!(proto_at_line_start and next_is_name)) tok.kind = .identifier;
+    }
     return tokens.toOwnedSlice(allocator);
 }
 

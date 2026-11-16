@@ -20,6 +20,7 @@ extern def nox_os_exit_raw(code: int) -> None from "zig-out/lib/noxrt.o"
 
 # Faz III.5 (bkz. nox-teknik-spesifikasyon.md §3.69).
 extern def nox_os_set_var_raw(name: str, value: str) -> None from "zig-out/lib/noxrt.o"
+extern def nox_os_environ_raw() -> list[str] from "zig-out/lib/noxrt.o" with_rt
 extern def nox_os_current_dir_raw() -> str from "zig-out/lib/noxrt.o" with_rt
 
 def arg_count() -> int:
@@ -41,3 +42,20 @@ def set_var(name: str, value: str) -> None:
 
 def current_dir() -> str:
     return nox_os_current_dir_raw()
+
+# VAULT 1.4: süreç ortamının TÜM değişkenleri (ad -> değer). Windows'ta `set_var(k, "")` değişkeni SİLER
+# (Win32 `_putenv_s` semantiği) — bu yüzden boş değerli bir değişken orada numaralandırmada görünmez.
+def environ() -> dict[str, str]:
+    out: dict[str, str] = {}
+    entries: list[str] = nox_os_environ_raw()
+    for entry in entries:
+        eq: int = entry.find("=")
+        if eq > 0:
+            out[entry[0:eq]] = entry[eq + 1:len(entry)]
+    return out
+
+def env_names() -> list[str]:
+    names: list[str] = []
+    for k in environ():
+        names.append(k)
+    return names

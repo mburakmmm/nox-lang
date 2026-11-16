@@ -18,7 +18,7 @@ pub const NativeInfo = struct {
     bin: bool = false,
 
     pub fn isNative(self: NativeInfo) bool {
-        return self.has_extern or self.lowlevel or self.bin;
+        return self.has_extern or self.lowlevel;
     }
 };
 

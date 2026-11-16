@@ -2251,7 +2251,7 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     if (result_temp) |rt| {
         // v4 Faz A madde 4 (bkz. nox-teknik-spesifikasyon.md §3.2xx): genCall'ın
         // AYNI bulgusu (bkz. onun belge notu) — metod çağrısı dönüş yolu.
-        return .{ .text = rt, .qtype = msig.sig.ret.qtype, .heap = msig.sig.ret.heap, .elem_qtype = msig.sig.ret.elem_qtype, .class_name = msig.sig.ret.class_name, .elem_heap_info = msig.sig.ret.elem_heap_info, .elem_is_str = msig.sig.ret.elem_is_str, .fixed_int = msig.sig.ret.fixed_int };
+        return .{ .text = rt, .qtype = msig.sig.ret.qtype, .heap = msig.sig.ret.heap, .elem_qtype = msig.sig.ret.elem_qtype, .class_name = msig.sig.ret.class_name, .elem_heap_info = msig.sig.ret.elem_heap_info, .elem_is_str = msig.sig.ret.elem_is_str, .dict_info = msig.sig.ret.dict_info, .fixed_int = msig.sig.ret.fixed_int };
     }
     return .{ .text = "0", .qtype = .w };
 }
@@ -2317,7 +2317,7 @@ pub fn genSuperMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Ex
     if (result_temp) |rt| {
         // v4 Faz A madde 4 (bkz. nox-teknik-spesifikasyon.md §3.2xx): genCall'ın
         // AYNI bulgusu (bkz. onun belge notu) — metod çağrısı dönüş yolu.
-        return .{ .text = rt, .qtype = msig.sig.ret.qtype, .heap = msig.sig.ret.heap, .elem_qtype = msig.sig.ret.elem_qtype, .class_name = msig.sig.ret.class_name, .elem_heap_info = msig.sig.ret.elem_heap_info, .elem_is_str = msig.sig.ret.elem_is_str, .fixed_int = msig.sig.ret.fixed_int };
+        return .{ .text = rt, .qtype = msig.sig.ret.qtype, .heap = msig.sig.ret.heap, .elem_qtype = msig.sig.ret.elem_qtype, .class_name = msig.sig.ret.class_name, .elem_heap_info = msig.sig.ret.elem_heap_info, .elem_is_str = msig.sig.ret.elem_is_str, .dict_info = msig.sig.ret.dict_info, .fixed_int = msig.sig.ret.fixed_int };
     }
     return .{ .text = "0", .qtype = .w };
 }

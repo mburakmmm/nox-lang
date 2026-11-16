@@ -728,8 +728,9 @@ pub fn detectNarrowedBoxedName(self: *Codegen, cond: ast.Expr) ?struct { name: [
         b.right.identifier
     else
         return null;
-    const info = self.vars.get(name) orelse return null;
-    if (info.heap != .boxed_scalar) return null;
+    // Yerel/parametre önce; yoksa modül düzeyi global (üst düzey betikteki `x: int | None` değişkenleri).
+    const heap: HeapKind = if (self.vars.get(name)) |info| info.heap else if (self.module_globals.get(name)) |g| g.info.heap else return null;
+    if (heap != .boxed_scalar) return null;
     return .{ .name = name, .narrows_then = (b.op == .ne) };
 }
 
@@ -1236,7 +1237,19 @@ pub fn genForRange(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenEr
 pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenError!void {
     const list_info = self.vars.get(f.iterable.identifier) orelse return error.Unsupported;
     if (list_info.heap != .list) return error.Unsupported;
-    const loop_var = self.vars.get(f.var_name).?;
+    var loop_var = self.vars.get(f.var_name).?;
+    // 2.2 limitasyon turu (Pulse NOX-CODEGEN-002): aynı döngü değişkeni adı bir fonksiyonda farklı SINIF elemanlı listeler üzerinde yeniden kullanılabilir (checker sınıf <-> sınıf yeniden
+    // bildirimine izin verir: temsil aynı işaretçi). `collectLocals` adı tek bir kayıtla tutar (ilk sınıf), bu yüzden ikinci döngünün `p.w` alan okuması ilk sınıfa karşı çözülüp "desteklenmiyor"la
+    // düşüyordu. Kayıt, bu döngünün eleman sınıfıyla yeniden bağlanır (yuva aynı; yalnızca sınıf bilgisi değişir).
+    if (list_info.elem_heap_info) |ehi| {
+        if (ehi.heap == .class and loop_var.heap == .class and !std.mem.eql(u8, loop_var.class_name orelse "", ehi.class_name orelse "")) {
+            loop_var.class_name = ehi.class_name;
+            loop_var.elem_qtype = ehi.elem_qtype;
+            loop_var.elem_heap_info = ehi.nested;
+            loop_var.func_sig = ehi.func_sig;
+            try self.vars.put(self.allocator, f.var_name, loop_var);
+        }
+    }
 
     // İndeks yuvası, `collectLocals`de (bkz. `forListIdxName`) FONKSİYON
     // GİRİŞİNDE bir kez tahsis edilmiş olmalıdır — burada taze bir

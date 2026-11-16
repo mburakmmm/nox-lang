@@ -13,6 +13,11 @@ const str_mod = @import("../str.zig");
 const shim_util = @import("shim_util.zig");
 const tcp = if (builtin.cpu.arch.isWasm()) @import("tcp_host.zig") else @import("tcp_native.zig");
 const abi_layout = @import("abi_layout");
+/// wasm'da ana makine soketlerinin okuma zaman aşımı yoktur (`tcp_host.waitReadable` hep "hazır"): saat de gerekmez.
+fn monotonicMs() u64 {
+    if (comptime builtin.cpu.arch.isWasm()) return 0;
+    return @import("http_client.zig").monotonicMs();
+}
 
 const gpa = std.heap.page_allocator;
 const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
@@ -45,6 +50,13 @@ const RConn = struct {
     ok: bool = false,
     errmsg: []const u8 = "",
     errmsg_owned: bool = false,
+    /// `nox_redis_set_read_timeout_raw`: bir yanıtı beklemenin üst sınırı (ms; 0 = sınırsız).
+    read_timeout_ms: u32 = 0,
+    /// Geçerli komutun mutlak son tarihi (`monotonicMs`; 0 = yok).
+    deadline_ms: u64 = 0,
+    timed_out: bool = false,
+    /// `nox_redis_queue_raw`un biriktirdiği, henüz gönderilmemiş komutlar (pipeline).
+    pending: std.ArrayListUnmanaged(u8) = .empty,
 
     fn setErr(self: *RConn, msg: []const u8) void {
         if (self.errmsg_owned) gpa.free(self.errmsg);
@@ -64,6 +76,14 @@ const RConn = struct {
 
     /// Taşımadan bir parça daha okuyup tampona ekler (tüketilmiş önek atılır). Başarısızlıkta bağlantı kullanılamaz olur.
     fn fill(self: *RConn) bool {
+        if (self.deadline_ms != 0) {
+            const now = monotonicMs();
+            if (now >= self.deadline_ms or !tcp.waitReadable(self.c, @intCast(@min(self.deadline_ms - now, std.math.maxInt(u32))))) {
+                self.timed_out = true;
+                self.fail("read timed out");
+                return false;
+            }
+        }
         const chunk = tcp.readSome(self.c, 16 * 1024);
         if (chunk.len == 0) {
             self.fail(if (self.c.eof) "connection closed by the server" else (if (self.c.errmsg.len > 0) self.c.errmsg else "read failed"));
@@ -211,6 +231,9 @@ fn encode(out: *std.ArrayListUnmanaged(u8), args: []const []const u8) !void {
 /// Komutu gönderir ve yanıtı okur; G/Ç hatasında `null` (bağlantı kullanılamaz olur).
 fn roundTrip(c: *RConn, args: []const []const u8) ?*Reply {
     if (!c.ok) return null;
+    c.timed_out = false;
+    c.deadline_ms = if (c.read_timeout_ms > 0) monotonicMs() + c.read_timeout_ms else 0;
+    defer c.deadline_ms = 0;
     var out: std.ArrayListUnmanaged(u8) = .empty;
     defer out.deinit(gpa);
     encode(&out, args) catch {
@@ -302,6 +325,18 @@ fn openImpl(host: ?[*:0]const u8, port: i64, use_tls: bool, ca_file: ?[*:0]const
     return c;
 }
 
+/// Yanıt başına okuma zaman aşımı (ms; 0 = kapalı). Süre dolarsa komut başarısız olur ve bağlantı KAPANIR (geç gelen yanıt sonraki komutla karışmasın): `reconnect()` gerekir.
+pub export fn nox_redis_set_read_timeout_raw(conn: ?*anyopaque, ms: i64) callconv(.c) void {
+    const c: *RConn = @ptrCast(@alignCast(conn orelse return));
+    c.read_timeout_ms = if (ms <= 0) 0 else @intCast(@min(ms, std.math.maxInt(u32)));
+}
+
+/// Son komut okuma zaman aşımıyla mı bitti?
+pub export fn nox_redis_timed_out_raw(conn: ?*anyopaque) callconv(.c) i64 {
+    const c: *RConn = @ptrCast(@alignCast(conn orelse return 0));
+    return if (c.timed_out) 1 else 0;
+}
+
 pub export fn nox_redis_status_raw(conn: ?*anyopaque) callconv(.c) i64 {
     const c: *RConn = @ptrCast(@alignCast(conn orelse return 0));
     return if (c.ok) 1 else 0;
@@ -316,6 +351,7 @@ pub export fn nox_redis_close_raw(conn: ?*anyopaque) callconv(.c) void {
     const c: *RConn = @ptrCast(@alignCast(conn orelse return));
     tcp.close(c.c);
     c.rbuf.deinit(gpa);
+    c.pending.deinit(gpa);
     if (c.errmsg_owned) gpa.free(c.errmsg);
     gpa.destroy(c);
 }
@@ -336,6 +372,58 @@ pub export fn nox_redis_command_raw(conn: ?*anyopaque, args_list: ?*anyopaque) c
     defer gpa.free(args);
     for (args, 0..) |*a, i| a.* = listItem(list, i);
     return roundTrip(c, args);
+}
+
+/// Pipeline (v2.1.195): komutu gönderilmeden RESP olarak biriktirir. Başarıda 1.
+pub export fn nox_redis_queue_raw(conn: ?*anyopaque, args_list: ?*anyopaque) callconv(.c) i64 {
+    const c: *RConn = @ptrCast(@alignCast(conn orelse return 0));
+    const list = args_list orelse return 0;
+    const n = listLen(list);
+    if (!c.ok or n == 0) return 0;
+    const args = gpa.alloc([]const u8, n) catch {
+        c.fail("out of memory");
+        return 0;
+    };
+    defer gpa.free(args);
+    for (args, 0..) |*a, i| a.* = listItem(list, i);
+    encode(&c.pending, args) catch {
+        c.fail("out of memory");
+        return 0;
+    };
+    return 1;
+}
+
+/// Biriken komutları tek yazmada gönderir. Başarıda 1; yazma hatasında bağlantı kullanılamaz olur.
+pub export fn nox_redis_flush_raw(conn: ?*anyopaque) callconv(.c) i64 {
+    const c: *RConn = @ptrCast(@alignCast(conn orelse return 0));
+    if (!c.ok) return 0;
+    defer c.pending.clearRetainingCapacity();
+    if (c.pending.items.len == 0) return 1;
+    if (!tcp.write(c.c, c.pending.items)) {
+        c.fail(if (c.c.errmsg.len > 0) c.c.errmsg else "write failed");
+        return 0;
+    }
+    return 1;
+}
+
+/// Gönderilmiş bir komutun yanıtını okur (zaman aşımı `nox_redis_set_read_timeout_raw`a bağlıdır); G/Ç hatasında `null`.
+pub export fn nox_redis_recv_raw(conn: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const c: *RConn = @ptrCast(@alignCast(conn orelse return null));
+    if (!c.ok) return null;
+    c.timed_out = false;
+    c.deadline_ms = if (c.read_timeout_ms > 0) monotonicMs() + c.read_timeout_ms else 0;
+    defer c.deadline_ms = 0;
+    const r = gpa.create(Reply) catch {
+        c.fail("out of memory");
+        return null;
+    };
+    r.* = .{};
+    if (!c.readReply(r, 0)) {
+        r.deinit();
+        gpa.destroy(r);
+        return null;
+    }
+    return r;
 }
 
 fn asReply(r: ?*anyopaque) ?*Reply {

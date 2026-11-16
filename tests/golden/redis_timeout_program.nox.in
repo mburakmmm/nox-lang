@@ -1,0 +1,21 @@
+import nox.redis
+from nox.redis import Client, Reply, RedisError
+
+# ---- Okuma zaman aşımı (v2.1.195): süre dolunca kind == "timeout", bağlantı kapanır, reconnect() sonrası geç yanıt karışmaz ----
+t1: Client = nox.redis.connect("127.0.0.1", @PORT@)
+t1.set_read_timeout(300)
+try:
+    t1.command(["BLPOP", "no:such:list", "3"])
+    print("no timeout")
+except RedisError as e:
+    print(e.kind, e.is_timeout(), e.is_connection_error(), t1.is_ok())
+t1.reconnect()
+print(t1.ping())
+t1.xgroup_ensure("jobs:t", "workers", "$")
+tq: Reply = t1.xreadgroup("workers", "w9", "jobs:t", ">", 1, 200)
+print(tq.is_nil())
+
+# ---- Pipeline: tek yazma, sıralı yanıtlar; sunucu hatası ilgili Reply'da ----
+pl: list[Reply] = t1.pipeline([["SET", "pl:k", "1"], ["INCR", "pl:k"], ["GET", "pl:k"], ["LPUSH", "pl:k", "x"], ["PING"]])
+print(len(pl), pl[0].as_str(), pl[1].as_int(), pl[2].as_str(), pl[3].is_error(), pl[4].as_str())
+t1.close()

@@ -265,6 +265,118 @@ export fn nox_crypto_hmac_sha256_hex_raw(rt: ?*anyopaque, key: ?[*:0]const u8, d
     return dupeToNoxStr(rt, &hex_buf);
 }
 
+/// AEAD (v2.1.195, VAULT 1.3): `nox.crypto.aead_seal` / `aead_open`. Algoritma kodları: 0 chacha20-poly1305, 1 aes-256-gcm, 2 aes-128-gcm, 3 xchacha20-poly1305.
+/// `key_hex`/`nonce_hex` onaltılık (anahtar/nonce uzunluğu algoritmaya göre denetlenir). Mühür = hex(şifreli metin || etiket). Başarı/başarısızlık `nox_crypto_aead_status_raw`la okunur
+/// (0 tamam, 1 geçersiz algoritma, 2 anahtar uzunluğu, 3 nonce uzunluğu, 4 geçersiz hex, 5 kimlik doğrulama başarısız). Durum iş parçacığı-yereldir; iki çağrı arasında fiber askıya alınmaz.
+threadlocal var tl_aead_status: i64 = 0;
+
+fn hexVal(c: u8) ?u8 {
+    return switch (c) {
+        '0'...'9' => c - '0',
+        'a'...'f' => c - 'a' + 10,
+        'A'...'F' => c - 'A' + 10,
+        else => null,
+    };
+}
+
+fn hexDecodeInto(out: []u8, hex: []const u8) bool {
+    if (hex.len != out.len * 2) return false;
+    for (out, 0..) |*b, i| {
+        const hi = hexVal(hex[i * 2]) orelse return false;
+        const lo = hexVal(hex[i * 2 + 1]) orelse return false;
+        b.* = (hi << 4) | lo;
+    }
+    return true;
+}
+
+fn aeadRun(comptime A: type, rt: ?*anyopaque, seal: bool, key_hex: []const u8, nonce_hex: []const u8, data: []const u8, aad: []const u8) ?[*:0]u8 {
+    const alloc = @import("shim_util.zig").scratchAllocator();
+    var key: [A.key_length]u8 = undefined;
+    defer std.crypto.secureZero(u8, &key);
+    var nonce: [A.nonce_length]u8 = undefined;
+    if (key_hex.len != A.key_length * 2) {
+        tl_aead_status = 2;
+        return dupeToNoxStr(rt, "");
+    }
+    if (nonce_hex.len != A.nonce_length * 2) {
+        tl_aead_status = 3;
+        return dupeToNoxStr(rt, "");
+    }
+    if (!hexDecodeInto(&key, key_hex) or !hexDecodeInto(&nonce, nonce_hex)) {
+        tl_aead_status = 4;
+        return dupeToNoxStr(rt, "");
+    }
+    if (seal) {
+        const buf = alloc.alloc(u8, data.len + A.tag_length) catch {
+            tl_aead_status = 5;
+            return dupeToNoxStr(rt, "");
+        };
+        defer alloc.free(buf);
+        var tag: [A.tag_length]u8 = undefined;
+        A.encrypt(buf[0..data.len], &tag, data, aad, nonce, key);
+        @memcpy(buf[data.len..], &tag);
+        const hex = alloc.alloc(u8, buf.len * 2) catch {
+            tl_aead_status = 5;
+            return dupeToNoxStr(rt, "");
+        };
+        defer alloc.free(hex);
+        for (buf, 0..) |byte, i| {
+            hex[i * 2] = hex_chars[byte >> 4];
+            hex[i * 2 + 1] = hex_chars[byte & 0xF];
+        }
+        tl_aead_status = 0;
+        return dupeToNoxStr(rt, hex);
+    }
+    // open: `data` = hex(şifreli metin || etiket)
+    if (data.len % 2 != 0 or data.len < A.tag_length * 2) {
+        tl_aead_status = 4;
+        return dupeToNoxStr(rt, "");
+    }
+    const sealed = alloc.alloc(u8, data.len / 2) catch {
+        tl_aead_status = 5;
+        return dupeToNoxStr(rt, "");
+    };
+    defer alloc.free(sealed);
+    if (!hexDecodeInto(sealed, data)) {
+        tl_aead_status = 4;
+        return dupeToNoxStr(rt, "");
+    }
+    const ct_len = sealed.len - A.tag_length;
+    const plain = alloc.alloc(u8, ct_len) catch {
+        tl_aead_status = 5;
+        return dupeToNoxStr(rt, "");
+    };
+    defer alloc.free(plain);
+    A.decrypt(plain, sealed[0..ct_len], sealed[ct_len..][0..A.tag_length].*, aad, nonce, key) catch {
+        tl_aead_status = 5;
+        return dupeToNoxStr(rt, "");
+    };
+    tl_aead_status = 0;
+    return dupeToNoxStr(rt, plain);
+}
+
+export fn nox_crypto_aead_raw(rt: ?*anyopaque, seal: i64, alg: i64, key_hex: ?[*:0]const u8, nonce_hex: ?[*:0]const u8, data: ?[*:0]const u8, aad: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const k = str_mod.nox_str_slice(key_hex orelse return dupeToNoxStr(rt, ""));
+    const n = str_mod.nox_str_slice(nonce_hex orelse return dupeToNoxStr(rt, ""));
+    const d = str_mod.nox_str_slice(data orelse return dupeToNoxStr(rt, ""));
+    const a = if (aad) |p| str_mod.nox_str_slice(p) else "";
+    const s = seal != 0;
+    return switch (alg) {
+        0 => aeadRun(std.crypto.aead.chacha_poly.ChaCha20Poly1305, rt, s, k, n, d, a),
+        1 => aeadRun(std.crypto.aead.aes_gcm.Aes256Gcm, rt, s, k, n, d, a),
+        2 => aeadRun(std.crypto.aead.aes_gcm.Aes128Gcm, rt, s, k, n, d, a),
+        3 => aeadRun(std.crypto.aead.chacha_poly.XChaCha20Poly1305, rt, s, k, n, d, a),
+        else => blk: {
+            tl_aead_status = 1;
+            break :blk dupeToNoxStr(rt, "");
+        },
+    };
+}
+
+export fn nox_crypto_aead_status_raw() callconv(.c) i64 {
+    return tl_aead_status;
+}
+
 /// `constant_time_eq(a, b)` — bir belirteç/parola-özeti KARŞILAŞTIRIRKEN
 /// `==`in (ilk FARKLI bayta rastlayınca DURAN `strcmp`-tabanlı, bkz.
 /// `compiler/codegen_qbe/codegen.zig`nin `str` eşitlik kodgen'i) yol AÇTIĞI
@@ -741,4 +853,62 @@ test "v2.1.70: md5/sha384/sha3/blake3 bilinen vektörler" {
         defer str_mod.nox_str_release(rt, h);
         try std.testing.expectEqualStrings(c.want, str_mod.nox_str_slice(h));
     }
+}
+
+test "nox_crypto_aead_raw: ChaCha20-Poly1305 RFC 8439 §2.8.2 vektörü + bozuk etiket reddi" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const key = str.nox_str_from_bytes(rt, "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f") orelse return error.Failed;
+    defer str.nox_str_release(rt, key);
+    const nonce = str.nox_str_from_bytes(rt, "070000004041424344454647") orelse return error.Failed;
+    defer str.nox_str_release(rt, nonce);
+    const aad = str.nox_str_from_bytes(rt, "\x50\x51\x52\x53\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7") orelse return error.Failed;
+    defer str.nox_str_release(rt, aad);
+    const msg = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+    const plain = str.nox_str_from_bytes(rt, msg) orelse return error.Failed;
+    defer str.nox_str_release(rt, plain);
+    const sealed = nox_crypto_aead_raw(rt, 1, 0, key, nonce, plain, aad) orelse return error.Failed;
+    defer str.nox_str_release(rt, sealed);
+    try std.testing.expectEqual(@as(i64, 0), nox_crypto_aead_status_raw());
+    const sealed_s = std.mem.span(sealed);
+    try std.testing.expect(std.mem.startsWith(u8, sealed_s, "d31a8d34648e60db7b86afbc53ef7ec2"));
+    try std.testing.expect(std.mem.endsWith(u8, sealed_s, "1ae10b594f09e26a7e902ecbd0600691")); // RFC 8439 etiketi
+    const opened = nox_crypto_aead_raw(rt, 0, 0, key, nonce, sealed, aad) orelse return error.Failed;
+    defer str.nox_str_release(rt, opened);
+    try std.testing.expectEqual(@as(i64, 0), nox_crypto_aead_status_raw());
+    try std.testing.expectEqualStrings(msg, std.mem.span(opened));
+    // bir bit bozulursa kimlik doğrulama başarısız
+    var tampered: [400]u8 = undefined;
+    @memcpy(tampered[0..sealed_s.len], sealed_s);
+    tampered[0] = if (tampered[0] == '0') '1' else '0';
+    const bad = str.nox_str_from_bytes(rt, tampered[0..sealed_s.len]) orelse return error.Failed;
+    defer str.nox_str_release(rt, bad);
+    const rejected = nox_crypto_aead_raw(rt, 0, 0, key, nonce, bad, aad) orelse return error.Failed;
+    defer str.nox_str_release(rt, rejected);
+    try std.testing.expectEqual(@as(i64, 5), nox_crypto_aead_status_raw());
+}
+
+test "nox_crypto_aead_raw: AES-256-GCM McGrew-Viega test case 16 (AAD'li, 60 baytlık düz metin)" {
+    const asap = @import("../alloc/asap.zig");
+    const str = @import("../str.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    var plain_bytes: [60]u8 = undefined;
+    _ = try std.fmt.hexToBytes(&plain_bytes, "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39");
+    var aad_bytes: [20]u8 = undefined;
+    _ = try std.fmt.hexToBytes(&aad_bytes, "feedfacedeadbeeffeedfacedeadbeefabaddad2");
+    const key = str.nox_str_from_bytes(rt, "feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308") orelse return error.Failed;
+    defer str.nox_str_release(rt, key);
+    const nonce = str.nox_str_from_bytes(rt, "cafebabefacedbaddecaf888") orelse return error.Failed;
+    defer str.nox_str_release(rt, nonce);
+    const plain = str.nox_str_from_bytes(rt, &plain_bytes) orelse return error.Failed;
+    defer str.nox_str_release(rt, plain);
+    const aad = str.nox_str_from_bytes(rt, &aad_bytes) orelse return error.Failed;
+    defer str.nox_str_release(rt, aad);
+    const sealed = nox_crypto_aead_raw(rt, 1, 1, key, nonce, plain, aad) orelse return error.Failed;
+    defer str.nox_str_release(rt, sealed);
+    try std.testing.expectEqual(@as(i64, 0), nox_crypto_aead_status_raw());
+    try std.testing.expectEqualStrings("522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f66276fc6ece0f4e1768cddf8853bb2d551b", std.mem.span(sealed));
 }

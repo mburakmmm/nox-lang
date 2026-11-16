@@ -3935,8 +3935,8 @@ export function l $nox_sqlite_Connection_prepare(l %rt, l %p_self, l %p_sql) {
     ret 0
 @exc_continue25
     %t46 =l add %t25, 24
-    storel 145, %t46
-    call $nox_raise(l %rt, l %t25, l 145)
+    storel 146, %t46
+    call $nox_raise(l %rt, l %t25, l 146)
     %t47 =l sub %rt, 48
     %t48 =w loadub %t47
     %t49 =l sub %rt, 64
@@ -4003,55 +4003,344 @@ export function l $nox_sqlite_Connection_execute(l %rt, l %p_self, l %p_sql) {
     %t1 =l alloc8 8
     storel %p_self, %t0
     storel %p_sql, %t1
-    %t2 =l loadl %t0
-    %t3 =l loadl %t1
-    %t4 =l call $nox_sqlite_Connection_prepare(l %rt, l %t2, l %t3)
-    %t5 =l sub %rt, 48
-    %t6 =w loadub %t5
-    %t7 =l sub %rt, 64
-    %t8 =l loadl %t7
-    jnz %t6, @exc_slow0, @exc_fast1
-@exc_fast1
-    %t9 =w cnel %t8, 0
-    jmp @exc_done2
-@exc_slow0
-    %t10 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done2
-@exc_done2
-    %t11 =w phi @exc_fast1 %t9, @exc_slow0 %t10
-    jnz %t11, @exc_propagate3, @exc_continue4
-@exc_propagate3
+    %t2 =l loadl %t1
+    %t3 =l add $str8, 16
+    %t4 =l call $nox_str_find(l %t2, l %t3)
+    %t5 =w csltl %t4, 0
+    jnz %t5, @if_then1, @if_end0
+@if_then1
+    %t6 =l loadl %t0
+    %t7 =l loadl %t1
+    %t8 =l call $nox_sqlite_Connection_prepare(l %rt, l %t6, l %t7)
+    %t9 =l sub %rt, 48
+    %t10 =w loadub %t9
+    %t11 =l sub %rt, 64
+    %t12 =l loadl %t11
+    jnz %t10, @exc_slow2, @exc_fast3
+@exc_fast3
+    %t13 =w cnel %t12, 0
+    jmp @exc_done4
+@exc_slow2
+    %t14 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done4
+@exc_done4
+    %t15 =w phi @exc_fast3 %t13, @exc_slow2 %t14
+    jnz %t15, @exc_propagate5, @exc_continue6
+@exc_propagate5
     ret 0
-@exc_continue4
-    %t12 =l call $nox_db_Statement_execute(l %rt, l %t4)
-    %t13 =w ceql %t4, 0
-    jnz %t13, @release_skip6, @release5
-@release5
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t4, l $nox_db_Statement_release)
-    jmp @release_done7
-@release_skip6
-    jmp @release_done7
-@release_done7
-    %t14 =l sub %rt, 48
-    %t15 =w loadub %t14
-    %t16 =l sub %rt, 64
-    %t17 =l loadl %t16
-    jnz %t15, @exc_slow8, @exc_fast9
-@exc_fast9
-    %t18 =w cnel %t17, 0
-    jmp @exc_done10
-@exc_slow8
-    %t19 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done10
-@exc_done10
-    %t20 =w phi @exc_fast9 %t18, @exc_slow8 %t19
-    jnz %t20, @exc_propagate11, @exc_continue12
-@exc_propagate11
+@exc_continue6
+    %t16 =l call $nox_db_Statement_execute(l %rt, l %t8)
+    %t17 =w ceql %t8, 0
+    jnz %t17, @release_skip8, @release7
+@release7
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t8, l $nox_db_Statement_release)
+    jmp @release_done9
+@release_skip8
+    jmp @release_done9
+@release_done9
+    %t18 =l sub %rt, 48
+    %t19 =w loadub %t18
+    %t20 =l sub %rt, 64
+    %t21 =l loadl %t20
+    jnz %t19, @exc_slow10, @exc_fast11
+@exc_fast11
+    %t22 =w cnel %t21, 0
+    jmp @exc_done12
+@exc_slow10
+    %t23 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done12
+@exc_done12
+    %t24 =w phi @exc_fast11 %t22, @exc_slow10 %t23
+    jnz %t24, @exc_propagate13, @exc_continue14
+@exc_propagate13
     ret 0
-@exc_continue12
-    ret %t12
-@after_return13
-@fn_end14
+@exc_continue14
+    ret %t16
+@after_return15
+    jmp @if_end0
+@if_end0
+    %t25 =l loadl %t0
+    %t26 =l loadl %t1
+    %t27 =l call $nox_sqlite_Connection_execute_script(l %rt, l %t25, l %t26)
+    %t28 =l sub %rt, 48
+    %t29 =w loadub %t28
+    %t30 =l sub %rt, 64
+    %t31 =l loadl %t30
+    jnz %t29, @exc_slow16, @exc_fast17
+@exc_fast17
+    %t32 =w cnel %t31, 0
+    jmp @exc_done18
+@exc_slow16
+    %t33 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done18
+@exc_done18
+    %t34 =w phi @exc_fast17 %t32, @exc_slow16 %t33
+    jnz %t34, @exc_propagate19, @exc_continue20
+@exc_propagate19
+    ret 0
+@exc_continue20
+    ret %t27
+@after_return21
+@fn_end22
+    ret 0
+}
+export function l $nox_sqlite_Connection_execute_script(l %rt, l %p_self, l %p_sql) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    storel %p_self, %t0
+    storel %p_sql, %t1
+    %t3 =l loadl %t0
+    %t4 =l add %t3, 8
+    %t5 =l loadl %t4
+    %t6 =l loadl %t1
+    %t7 =l call $nox_sqlite_script_raw(l %t5, l %t6)
+    storel %t7, %t2
+    %t8 =l loadl %t2
+    %t9 =l neg 1
+    %t10 =w ceql %t8, %t9
+    jnz %t10, @if_then1, @if_end0
+@if_then1
+    %t11 =l add $str9, 16
+    %t12 =l loadl %t0
+    %t13 =l add %t12, 8
+    %t14 =l loadl %t13
+    %t15 =l call $nox_sqlite_errmsg_raw(l %rt, l %t14)
+    %t16 =l call $nox_str_concat(l %rt, l %t11, l %t15)
+    %t17 =w ceql %t15, 0
+    jnz %t17, @release_skip3, @release2
+@release2
+    %t18 =l sub %t15, 16
+    %t19 =l loadl %t18
+    %t20 =w csgel %t19, 536870912
+    jnz %t20, @str_free_done7, @str_rel_atomic8
+@str_rel_atomic8
+    %t21 =l sub %t15, 16
+    %t22 =l loadl %t21
+    %t23 =l sub %t22, 1
+    storel %t23, %t21
+    %t24 =w cslel %t23, 0
+    jnz %t24, @str_free5, @str_free_skip6
+@str_free5
+    call $nox_str_free_now(l %rt, l %t15)
+    jmp @str_free_done7
+@str_free_skip6
+    jmp @str_free_done7
+@str_free_done7
+    jmp @release_done4
+@release_skip3
+    jmp @release_done4
+@release_done4
+    %t25 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 3, %t25
+    %t26 =l add %t25, 8
+    storel $nox_sqlite_SqliteError_vtable, %t26
+    %t27 =l add %t25, 16
+    storel 0, %t27
+    %t28 =l add %t25, 24
+    storel 0, %t28
+    call $Exception___init__(l %rt, l %t25, l %t16)
+    %t29 =w ceql %t16, 0
+    jnz %t29, @release_skip10, @release9
+@release9
+    %t30 =l sub %t16, 16
+    %t31 =l loadl %t30
+    %t32 =w csgel %t31, 536870912
+    jnz %t32, @str_free_done14, @str_rel_atomic15
+@str_rel_atomic15
+    %t33 =l sub %t16, 16
+    %t34 =l loadl %t33
+    %t35 =l sub %t34, 1
+    storel %t35, %t33
+    %t36 =w cslel %t35, 0
+    jnz %t36, @str_free12, @str_free_skip13
+@str_free12
+    call $nox_str_free_now(l %rt, l %t16)
+    jmp @str_free_done14
+@str_free_skip13
+    jmp @str_free_done14
+@str_free_done14
+    jmp @release_done11
+@release_skip10
+    jmp @release_done11
+@release_done11
+    %t37 =w call $nox_exception_pending(l %rt)
+    jnz %t37, @ctor_init_failed16, @ctor_init_cont17
+@ctor_init_failed16
+    %t38 =w ceql %t25, 0
+    jnz %t38, @release_skip19, @release18
+@release18
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t25)
+    jmp @release_done20
+@release_skip19
+    jmp @release_done20
+@release_done20
+    jmp @ctor_init_cont17
+@ctor_init_cont17
+    %t39 =l sub %rt, 48
+    %t40 =w loadub %t39
+    %t41 =l sub %rt, 64
+    %t42 =l loadl %t41
+    jnz %t40, @exc_slow21, @exc_fast22
+@exc_fast22
+    %t43 =w cnel %t42, 0
+    jmp @exc_done23
+@exc_slow21
+    %t44 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done23
+@exc_done23
+    %t45 =w phi @exc_fast22 %t43, @exc_slow21 %t44
+    jnz %t45, @exc_propagate24, @exc_continue25
+@exc_propagate24
+    ret 0
+@exc_continue25
+    %t46 =l add %t25, 24
+    storel 159, %t46
+    call $nox_raise(l %rt, l %t25, l 159)
+    %t47 =l sub %rt, 48
+    %t48 =w loadub %t47
+    %t49 =l sub %rt, 64
+    %t50 =l loadl %t49
+    jnz %t48, @exc_slow26, @exc_fast27
+@exc_fast27
+    %t51 =w cnel %t50, 0
+    jmp @exc_done28
+@exc_slow26
+    %t52 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done28
+@exc_done28
+    %t53 =w phi @exc_fast27 %t51, @exc_slow26 %t52
+    jnz %t53, @exc_propagate29, @exc_continue30
+@exc_propagate29
+    ret 0
+@exc_continue30
+    jmp @if_end0
+@if_end0
+    %t54 =l loadl %t2
+    %t55 =l neg 2
+    %t56 =w ceql %t54, %t55
+    jnz %t56, @if_then32, @if_end31
+@if_then32
+    %t57 =l add $str10, 16
+    %t58 =l loadl %t0
+    %t59 =l add %t58, 8
+    %t60 =l loadl %t59
+    %t61 =l call $nox_sqlite_errmsg_raw(l %rt, l %t60)
+    %t62 =l call $nox_str_concat(l %rt, l %t57, l %t61)
+    %t63 =w ceql %t61, 0
+    jnz %t63, @release_skip34, @release33
+@release33
+    %t64 =l sub %t61, 16
+    %t65 =l loadl %t64
+    %t66 =w csgel %t65, 536870912
+    jnz %t66, @str_free_done38, @str_rel_atomic39
+@str_rel_atomic39
+    %t67 =l sub %t61, 16
+    %t68 =l loadl %t67
+    %t69 =l sub %t68, 1
+    storel %t69, %t67
+    %t70 =w cslel %t69, 0
+    jnz %t70, @str_free36, @str_free_skip37
+@str_free36
+    call $nox_str_free_now(l %rt, l %t61)
+    jmp @str_free_done38
+@str_free_skip37
+    jmp @str_free_done38
+@str_free_done38
+    jmp @release_done35
+@release_skip34
+    jmp @release_done35
+@release_done35
+    %t71 =l call $nox_rc_alloc(l %rt, l 32)
+    storel 3, %t71
+    %t72 =l add %t71, 8
+    storel $nox_sqlite_SqliteError_vtable, %t72
+    %t73 =l add %t71, 16
+    storel 0, %t73
+    %t74 =l add %t71, 24
+    storel 0, %t74
+    call $Exception___init__(l %rt, l %t71, l %t62)
+    %t75 =w ceql %t62, 0
+    jnz %t75, @release_skip41, @release40
+@release40
+    %t76 =l sub %t62, 16
+    %t77 =l loadl %t76
+    %t78 =w csgel %t77, 536870912
+    jnz %t78, @str_free_done45, @str_rel_atomic46
+@str_rel_atomic46
+    %t79 =l sub %t62, 16
+    %t80 =l loadl %t79
+    %t81 =l sub %t80, 1
+    storel %t81, %t79
+    %t82 =w cslel %t81, 0
+    jnz %t82, @str_free43, @str_free_skip44
+@str_free43
+    call $nox_str_free_now(l %rt, l %t62)
+    jmp @str_free_done45
+@str_free_skip44
+    jmp @str_free_done45
+@str_free_done45
+    jmp @release_done42
+@release_skip41
+    jmp @release_done42
+@release_done42
+    %t83 =w call $nox_exception_pending(l %rt)
+    jnz %t83, @ctor_init_failed47, @ctor_init_cont48
+@ctor_init_failed47
+    %t84 =w ceql %t71, 0
+    jnz %t84, @release_skip50, @release49
+@release49
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t71)
+    jmp @release_done51
+@release_skip50
+    jmp @release_done51
+@release_done51
+    jmp @ctor_init_cont48
+@ctor_init_cont48
+    %t85 =l sub %rt, 48
+    %t86 =w loadub %t85
+    %t87 =l sub %rt, 64
+    %t88 =l loadl %t87
+    jnz %t86, @exc_slow52, @exc_fast53
+@exc_fast53
+    %t89 =w cnel %t88, 0
+    jmp @exc_done54
+@exc_slow52
+    %t90 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done54
+@exc_done54
+    %t91 =w phi @exc_fast53 %t89, @exc_slow52 %t90
+    jnz %t91, @exc_propagate55, @exc_continue56
+@exc_propagate55
+    ret 0
+@exc_continue56
+    %t92 =l add %t71, 24
+    storel 161, %t92
+    call $nox_raise(l %rt, l %t71, l 161)
+    %t93 =l sub %rt, 48
+    %t94 =w loadub %t93
+    %t95 =l sub %rt, 64
+    %t96 =l loadl %t95
+    jnz %t94, @exc_slow57, @exc_fast58
+@exc_fast58
+    %t97 =w cnel %t96, 0
+    jmp @exc_done59
+@exc_slow57
+    %t98 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done59
+@exc_done59
+    %t99 =w phi @exc_fast58 %t97, @exc_slow57 %t98
+    jnz %t99, @exc_propagate60, @exc_continue61
+@exc_propagate60
+    ret 0
+@exc_continue61
+    jmp @if_end31
+@if_end31
+    %t100 =l loadl %t2
+    ret %t100
+@after_return62
+@fn_end63
     ret 0
 }
 export function l $nox_sqlite_Connection_query(l %rt, l %p_self, l %p_sql) {
@@ -4684,7 +4973,7 @@ export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
     %t4 =w ceql %t3, 0
     jnz %t4, @if_then1, @if_end0
 @if_then1
-    %t5 =l add $str8, 16
+    %t5 =l add $str11, 16
     %t6 =l loadl %t1
     %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
@@ -4791,7 +5080,7 @@ export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
     %t4 =w ceql %t3, 0
     jnz %t4, @if_then1, @if_end0
 @if_then1
-    %t5 =l add $str9, 16
+    %t5 =l add $str12, 16
     %t6 =l loadl %t1
     %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
@@ -4898,7 +5187,7 @@ export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
     %t4 =w ceql %t3, 0
     jnz %t4, @if_then1, @if_end0
 @if_then1
-    %t5 =l add $str10, 16
+    %t5 =l add $str13, 16
     %t6 =l loadl %t1
     %t7 =l call $nox_str_concat(l %rt, l %t5, l %t6)
     %t8 =l call $nox_rc_alloc(l %rt, l 32)
@@ -5017,7 +5306,7 @@ export function l $ord(l %rt, l %p_s) {
     %t5 =w csltl %t4, 0
     jnz %t5, @if_then1, @if_end0
 @if_then1
-    %t6 =l add $str11, 16
+    %t6 =l add $str14, 16
     %t7 =l call $nox_rc_alloc(l %rt, l 32)
     storel 16, %t7
     %t8 =l add %t7, 8
@@ -5350,7 +5639,7 @@ export function l $nox_sqlite__read_row(l %rt, l %p_stmt) {
     %t38 =l loadl %t6
     %t39 =w ceql %t38, 5
     storew %t39, %t7
-    %t40 =l add $str12, 16
+    %t40 =l add $str15, 16
     %t41 =l loadl %t8
     %t42 =w ceql %t41, 0
     jnz %t42, @release_skip16, @release15
@@ -5953,7 +6242,7 @@ export function $nox_sqlite__sqlite_bind_int(l %rt, l %p_stmt, l %p_idx, l %p_va
     %t12 =w cnel %t11, 0
     jnz %t12, @if_then1, @if_end0
 @if_then1
-    %t13 =l add $str13, 16
+    %t13 =l add $str16, 16
     %t14 =l loadl %t1
     %t15 =l call $nox_int_to_str(l %rt, l %t14)
     %t16 =l call $nox_str_concat(l %rt, l %t13, l %t15)
@@ -6045,8 +6334,8 @@ export function $nox_sqlite__sqlite_bind_int(l %rt, l %p_stmt, l %p_idx, l %p_va
     ret
 @exc_continue25
     %t46 =l add %t25, 24
-    storel 100, %t46
-    call $nox_raise(l %rt, l %t25, l 100)
+    storel 101, %t46
+    call $nox_raise(l %rt, l %t25, l 101)
     %t47 =l sub %rt, 48
     %t48 =w loadub %t47
     %t49 =l sub %rt, 64
@@ -6090,7 +6379,7 @@ export function $nox_sqlite__sqlite_bind_float(l %rt, l %p_stmt, l %p_idx, d %p_
     %t12 =w cnel %t11, 0
     jnz %t12, @if_then1, @if_end0
 @if_then1
-    %t13 =l add $str14, 16
+    %t13 =l add $str17, 16
     %t14 =l loadl %t1
     %t15 =l call $nox_int_to_str(l %rt, l %t14)
     %t16 =l call $nox_str_concat(l %rt, l %t13, l %t15)
@@ -6182,8 +6471,8 @@ export function $nox_sqlite__sqlite_bind_float(l %rt, l %p_stmt, l %p_idx, d %p_
     ret
 @exc_continue25
     %t46 =l add %t25, 24
-    storel 105, %t46
-    call $nox_raise(l %rt, l %t25, l 105)
+    storel 106, %t46
+    call $nox_raise(l %rt, l %t25, l 106)
     %t47 =l sub %rt, 48
     %t48 =w loadub %t47
     %t49 =l sub %rt, 64
@@ -6227,7 +6516,7 @@ export function $nox_sqlite__sqlite_bind_str(l %rt, l %p_stmt, l %p_idx, l %p_va
     %t12 =w cnel %t11, 0
     jnz %t12, @if_then1, @if_end0
 @if_then1
-    %t13 =l add $str15, 16
+    %t13 =l add $str18, 16
     %t14 =l loadl %t1
     %t15 =l call $nox_int_to_str(l %rt, l %t14)
     %t16 =l call $nox_str_concat(l %rt, l %t13, l %t15)
@@ -6319,8 +6608,8 @@ export function $nox_sqlite__sqlite_bind_str(l %rt, l %p_stmt, l %p_idx, l %p_va
     ret
 @exc_continue25
     %t46 =l add %t25, 24
-    storel 110, %t46
-    call $nox_raise(l %rt, l %t25, l 110)
+    storel 111, %t46
+    call $nox_raise(l %rt, l %t25, l 111)
     %t47 =l sub %rt, 48
     %t48 =w loadub %t47
     %t49 =l sub %rt, 64
@@ -6361,7 +6650,7 @@ export function $nox_sqlite__sqlite_bind_null(l %rt, l %p_stmt, l %p_idx) {
     %t10 =w cnel %t9, 0
     jnz %t10, @if_then1, @if_end0
 @if_then1
-    %t11 =l add $str16, 16
+    %t11 =l add $str19, 16
     %t12 =l loadl %t1
     %t13 =l call $nox_int_to_str(l %rt, l %t12)
     %t14 =l call $nox_str_concat(l %rt, l %t11, l %t13)
@@ -6453,8 +6742,8 @@ export function $nox_sqlite__sqlite_bind_null(l %rt, l %p_stmt, l %p_idx) {
     ret
 @exc_continue25
     %t44 =l add %t23, 24
-    storel 115, %t44
-    call $nox_raise(l %rt, l %t23, l 115)
+    storel 116, %t44
+    call $nox_raise(l %rt, l %t23, l 116)
     %t45 =l sub %rt, 48
     %t46 =w loadub %t45
     %t47 =l sub %rt, 64
@@ -6495,7 +6784,7 @@ export function l $nox_sqlite__sqlite_execute(l %rt, l %p_stmt) {
     %t11 =w cnel %t10, 101
     jnz %t11, @if_then1, @if_end0
 @if_then1
-    %t12 =l add $str17, 16
+    %t12 =l add $str20, 16
     %t13 =l loadl %t0
     %t14 =l add %t13, 32
     %t15 =l loadl %t14
@@ -6589,8 +6878,8 @@ export function l $nox_sqlite__sqlite_execute(l %rt, l %p_stmt) {
     ret 0
 @exc_continue25
     %t47 =l add %t26, 24
-    storel 124, %t47
-    call $nox_raise(l %rt, l %t26, l 124)
+    storel 125, %t47
+    call $nox_raise(l %rt, l %t26, l 125)
     %t48 =l sub %rt, 48
     %t49 =w loadub %t48
     %t50 =l sub %rt, 64
@@ -6827,7 +7116,7 @@ export function l $nox_sqlite__sqlite_query(l %rt, l %p_stmt) {
     %t102 =w cnel %t101, 101
     jnz %t102, @if_then36, @if_end35
 @if_then36
-    %t103 =l add $str18, 16
+    %t103 =l add $str21, 16
     %t104 =l loadl %t0
     %t105 =l add %t104, 32
     %t106 =l loadl %t105
@@ -6931,8 +7220,8 @@ export function l $nox_sqlite__sqlite_query(l %rt, l %p_stmt) {
     ret 0
 @exc_continue60
     %t140 =l add %t117, 24
-    storel 135, %t140
-    call $nox_raise(l %rt, l %t117, l 135)
+    storel 136, %t140
+    call $nox_raise(l %rt, l %t117, l 136)
     %t141 =l sub %rt, 48
     %t142 =w loadub %t141
     %t143 =l sub %rt, 64
@@ -6994,7 +7283,7 @@ export function l $nox_sqlite_open(l %rt, l %p_path) {
     %t7 =w cnel %t6, 0
     jnz %t7, @if_then1, @if_end0
 @if_then1
-    %t8 =l add $str19, 16
+    %t8 =l add $str22, 16
     %t9 =l loadl %t0
     %t10 =l call $nox_str_concat(l %rt, l %t8, l %t9)
     %t11 =l call $nox_rc_alloc(l %rt, l 32)
@@ -7087,8 +7376,8 @@ export function l $nox_sqlite_open(l %rt, l %p_path) {
     ret 0
 @exc_continue18
     %t41 =l add %t11, 24
-    storel 166, %t41
-    call $nox_raise(l %rt, l %t11, l 166)
+    storel 179, %t41
+    call $nox_raise(l %rt, l %t11, l 179)
     %t42 =l sub %rt, 48
     %t43 =w loadub %t42
     %t44 =l sub %rt, 64
@@ -7164,7 +7453,7 @@ export function l $nox_sqlite_open(l %rt, l %p_path) {
     storel 0, %t2
     storel %t59, %t2
     %t69 =l loadl %t2
-    %t70 =l add $str20, 16
+    %t70 =l add $str23, 16
     %t72 =w loadub %t69
     %t73 =w cnew %t72, 110
     jnz %t73, @streq_false47, @streq_next49
@@ -7239,7 +7528,7 @@ export function l $nox_sqlite_open(l %rt, l %p_path) {
     %t111 =w ceql %t110, 0
     jnz %t111, @if_then62, @if_end45
 @if_then62
-    %t112 =l add $str21, 16
+    %t112 =l add $str24, 16
     %t113 =l loadl %t2
     %t114 =l call $nox_str_concat(l %rt, l %t112, l %t113)
     %t115 =l call $nox_rc_alloc(l %rt, l 32)
@@ -7332,8 +7621,8 @@ export function l $nox_sqlite_open(l %rt, l %p_path) {
     ret 0
 @exc_continue79
     %t145 =l add %t115, 24
-    storel 169, %t145
-    call $nox_raise(l %rt, l %t115, l 169)
+    storel 182, %t145
+    call $nox_raise(l %rt, l %t115, l 182)
     %t146 =l sub %rt, 48
     %t147 =w loadub %t146
     %t148 =l sub %rt, 64
@@ -7454,7 +7743,7 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t0
     storel 0, %t1
     storel 0, %t2
-    %t3 =l add $str22, 16
+    %t3 =l add $str25, 16
     %t4 =l call $nox_sqlite_open(l %rt, l %t3)
     %t5 =l sub %rt, 48
     %t6 =w loadub %t5
@@ -7486,7 +7775,7 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t0
     storel %t4, %t0
     %t14 =l loadl %t0
-    %t15 =l add $str23, 16
+    %t15 =l add $str26, 16
     %t16 =l call $nox_sqlite_Connection_execute(l %rt, l %t14, l %t15)
     %t17 =l sub %rt, 48
     %t18 =w loadub %t17
@@ -7507,7 +7796,7 @@ export function w $main(w %argc, l %argv) {
     ret 0
 @exc_continue12
     %t24 =l loadl %t0
-    %t25 =l add $str24, 16
+    %t25 =l add $str27, 16
     %t26 =l call $nox_sqlite_Connection_prepare(l %rt, l %t24, l %t25)
     %t27 =l sub %rt, 48
     %t28 =w loadub %t27
@@ -7539,7 +7828,7 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t1
     storel %t26, %t1
     %t36 =l loadl %t1
-    %t37 =l add $str25, 16
+    %t37 =l add $str28, 16
     call $nox_db_Statement_bind_str(l %rt, l %t36, l 1, l %t37)
     %t38 =l sub %rt, 48
     %t39 =w loadub %t38
@@ -7578,7 +7867,7 @@ export function w $main(w %argc, l %argv) {
 @release_done34
     storel 0, %t2
     storel %t45, %t2
-    %t50 =l add $str26, 16
+    %t50 =l add $str29, 16
     %t51 =w ceql %t50, 0
     jnz %t51, @print_none35, @print_some36
 @print_none35
@@ -7615,7 +7904,7 @@ export function w $main(w %argc, l %argv) {
 @try_after22
 @try_end23
     %t59 =l loadl %t1
-    %t60 =l add $str27, 16
+    %t60 =l add $str30, 16
     call $nox_db_Statement_bind_str(l %rt, l %t59, l 0, l %t60)
     %t61 =l sub %rt, 48
     %t62 =w loadub %t61
@@ -7971,7 +8260,7 @@ export function l $__nox_reflect_decorator_arg(l %rt, l %i, l %j) {
     %t8 =w ceql %t7, 0
     jnz %t8, @dec_arg_is_string0, @dec_arg_not_string1
 @dec_arg_not_string1
-    %t9 =l add $str28, 16
+    %t9 =l add $str31, 16
     ret %t9
 @dec_arg_is_string0
     %t10 =l mul %i, 40
@@ -8086,7 +8375,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t8 =w ceql %t7, 3
     jnz %t8, @dec_arg_list_item_match0, @dec_arg_list_item_mismatch1
 @dec_arg_list_item_mismatch1
-    %t9 =l add $str29, 16
+    %t9 =l add $str32, 16
     ret %t9
 @dec_arg_list_item_match0
     %t10 =l mul %i, 40
@@ -8101,7 +8390,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t19 =w cultl %k, %t18
     jnz %t19, @dec_arg_list_item_bounds_ok2, @dec_arg_list_item_bounds_bad3
 @dec_arg_list_item_bounds_bad3
-    %t20 =l add $str30, 16
+    %t20 =l add $str33, 16
     ret %t20
 @dec_arg_list_item_bounds_ok2
     %t21 =l shr %t17, 32
@@ -8132,29 +8421,32 @@ data $str4 = { l 1073741824, l 2305843009213693982, b "float(): invalid number f
 data $str5 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
 data $str6 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
 data $str7 = { l 1073741824, l 2305843009213693968, b "prepare failed: ", b 0 }
-data $str8 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
-data $str9 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
-data $str10 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
-data $str11 = { l 1073741824, l 2305843009213693982, b "ord() cannot take an empty str", b 0 }
-data $str12 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str13 = { l 1073741824, l 2305843009213693988, b "bind index out of range or invalid: ", b 0 }
-data $str14 = { l 1073741824, l 2305843009213693988, b "bind index out of range or invalid: ", b 0 }
-data $str15 = { l 1073741824, l 2305843009213693988, b "bind index out of range or invalid: ", b 0 }
+data $str8 = { l 1073741824, l 2305843009213693953, b ";", b 0 }
+data $str9 = { l 1073741824, l 2305843009213693968, b "prepare failed: ", b 0 }
+data $str10 = { l 1073741824, l 2305843009213693965, b "step failed: ", b 0 }
+data $str11 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
+data $str12 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
+data $str13 = { l 1073741824, l 2305843009213693978, b "invalid format specifier: ", b 0 }
+data $str14 = { l 1073741824, l 2305843009213693982, b "ord() cannot take an empty str", b 0 }
+data $str15 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str16 = { l 1073741824, l 2305843009213693988, b "bind index out of range or invalid: ", b 0 }
-data $str17 = { l 1073741824, l 2305843009213693965, b "step failed: ", b 0 }
-data $str18 = { l 1073741824, l 2305843009213693966, b "query failed: ", b 0 }
-data $str19 = { l 1073741824, l 2305843009213693981, b "could not open the database: ", b 0 }
-data $str20 = { l 1073741824, l 2305843009213693964, b "not an error", b 0 }
-data $str21 = { l 1073741824, l 2305843009213693981, b "could not open the database: ", b 0 }
-data $str22 = { l 1073741824, l 2305843009213693960, b ":memory:", b 0 }
-data $str23 = { l 1073741824, l 2305843009213693975, b "CREATE TABLE u (a TEXT)", b 0 }
-data $str24 = { l 1073741824, l 2305843009213693980, b "INSERT INTO u (a) VALUES (?)", b 0 }
-data $str25 = { l 1073741824, l 2305843009213693953, b "x", b 0 }
-data $str26 = { l 1073741824, l 2305843009213693964, b "out of range", b 0 }
-data $str27 = { l 1073741824, l 2305843009213693954, b "ok", b 0 }
-data $str28 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str29 = { l 1073741824, l 2305843009213693952, b "", b 0 }
-data $str30 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str17 = { l 1073741824, l 2305843009213693988, b "bind index out of range or invalid: ", b 0 }
+data $str18 = { l 1073741824, l 2305843009213693988, b "bind index out of range or invalid: ", b 0 }
+data $str19 = { l 1073741824, l 2305843009213693988, b "bind index out of range or invalid: ", b 0 }
+data $str20 = { l 1073741824, l 2305843009213693965, b "step failed: ", b 0 }
+data $str21 = { l 1073741824, l 2305843009213693966, b "query failed: ", b 0 }
+data $str22 = { l 1073741824, l 2305843009213693981, b "could not open the database: ", b 0 }
+data $str23 = { l 1073741824, l 2305843009213693964, b "not an error", b 0 }
+data $str24 = { l 1073741824, l 2305843009213693981, b "could not open the database: ", b 0 }
+data $str25 = { l 1073741824, l 2305843009213693960, b ":memory:", b 0 }
+data $str26 = { l 1073741824, l 2305843009213693975, b "CREATE TABLE u (a TEXT)", b 0 }
+data $str27 = { l 1073741824, l 2305843009213693980, b "INSERT INTO u (a) VALUES (?)", b 0 }
+data $str28 = { l 1073741824, l 2305843009213693953, b "x", b 0 }
+data $str29 = { l 1073741824, l 2305843009213693964, b "out of range", b 0 }
+data $str30 = { l 1073741824, l 2305843009213693954, b "ok", b 0 }
+data $str31 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str32 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str33 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $fmt_lit0 = { b "None", b 0 }
 data $nox_sqlite__sqlite_bind_int__fnval_static = { l 1152921504606846976, l $nox_sqlite__sqlite_bind_int__fnval, l $nox_sqlite__sqlite_bind_int__fnval_release }
 data $nox_sqlite__sqlite_bind_float__fnval_static = { l 1152921504606846976, l $nox_sqlite__sqlite_bind_float__fnval, l $nox_sqlite__sqlite_bind_float__fnval_release }

@@ -1,0 +1,50 @@
+protocol Trigger:
+    def fire(self) -> int:
+        pass
+
+class Policy:
+    retries: int
+
+    def __init__(self: Policy, retries: int) -> None:
+        self.retries = retries
+
+class Once:
+    at: int
+
+    def __init__(self: Once, at: int) -> None:
+        self.at = at
+
+    def fire(self) -> int:
+        return self.at
+
+class Twice:
+    at: int
+
+    def __init__(self: Twice, at: int) -> None:
+        self.at = at
+
+    def fire(self) -> int:
+        return self.at * 2
+
+def schedule(trigger: Trigger, label: str, policy: Policy | None = None) -> str:
+    retries: int = 3
+    if policy is not None:
+        retries = policy.retries
+    return label + ":" + str(trigger.fire()) + ":" + str(retries)
+
+def with_handler(trigger: Trigger, handler: (int) -> int, scale: int = 2, policy: Policy | None = None) -> int:
+    base: int = handler(trigger.fire()) * scale
+    if policy is not None:
+        base = base + policy.retries
+    return base
+
+def double(x: int) -> int:
+    return x * 2
+
+print(schedule(Once(5), "a"))
+print(schedule(Once(5), "b", None))
+print(schedule(Twice(5), "c", Policy(9)))
+print(schedule(Twice(7), "d", policy=Policy(1)))
+print(with_handler(Once(4), double))
+print(with_handler(Twice(4), double, 3))
+print(with_handler(Once(4), double, 1, Policy(10)))

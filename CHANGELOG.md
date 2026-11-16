@@ -14,6 +14,23 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.195]
+
+### Limitasyon turu (VAULT, Pulse, Ember, Chronos, Nova, Aether, Nyx raporları + worker ölçek raporu)
+
+Her madde önce güncel derleyicide yeniden üretildi; bayat çıkanlar (Pulse FMT-004, VAULT 2.3/2.4, Nova 15 üreteç/`yield`) elle düzeltilmedi.
+
+- **Worker ölçek raporu (macOS):** `SO_REUSEPORT` macOS/BSD'de yük dağıtmaz: yeni bağlantıların neredeyse hepsi tek dinleyiciye yığılıyordu, worker sayısı artınca CPU artıyor ama istek hızı artmıyordu. macOS ve Windows'ta `serve_multicore*` worker'ları artık TEK paylaşılan dinleme soketini kullanır (Linux'ta worker başına `SO_REUSEPORT` soketi korunur). Doğrulama: fd paylaşımını sabitleyen birim testi + 4 worker'a dağılımı ölçen uçtan uca test (`zig build http-multicore-test`). `docs/stdlib/http.md`: ping gibi mikro-işleyicilerin tek worker'da zaten kabul yoluyla sınırlı olduğu notu.
+- **Dil:** `and`/`or` sağ operandında Optional daraltma (`x is not None and x > 0`), modül-global boxed daraltma; aynı değişken adının farklı sınıflarla `for` döngüsünde yeniden kullanılması (NXL-003); yerel değişkenin modül takma adını gölgelemesi (NXL-005); protokol-tipli parametrede Optional/varsayılan değer (NXL-007); parantezli çok satırlı `from m import (...)`; `protocol` yazılı bir tanımlayıcı olarak kullanılabilir; nitelikli `except nox.http.HttpError`; metottan dönen sözlük geçicisi bir argüman olarak geçince çökme (`dict_info` kaybı).
+- **Paket/CLI:** `noxc publish --help` artık yardım yazar (eskiden `--help` bir depo adı olarak kayıt gönderiyordu), bilinmeyen `-x` seçeneği hata; projenin kendi adıyla yaptığı içe aktarmalar (`import <proje_adı>.x`) çözülür; `noxc sbom`: yalnızca `bin` bildiren saf Nox paketi `nox:native=false` (ayrı `nox:bin=true`).
+- **`nox.http`:** aynı adlı yanıt başlıkları (`Set-Cookie`, `Link`) kaybolmaz, `\n` ile birleşir; `request(..., connect_ip=...)` ile ad çözümlenmeden doğrulanmış IP'ye bağlanma (TLS adı/sertifikası orijinal ana makineye karşı; havuz/HTTP3/vekil kullanılmaz).
+- **Yeni `nox.dns`:** `resolve(host, timeout_ms=0) -> list[str]` (sınırlı, singleflight `getaddrinfo`; `network` yeteneği). `nox.http` `connect_ip` ile "çöz → doğrula → o IP'ye bağlan" akışı (SSRF / DNS rebinding).
+- **`nox.crypto` AEAD:** `aead_seal`/`aead_open` (ChaCha20-Poly1305, XChaCha20-Poly1305, AES-256-GCM, AES-128-GCM). Bilinen-cevap testleri: RFC 8439 §2.8.2, McGrew–Viega test case 16.
+- **`nox.redis`:** `set_read_timeout(ms)` (zaman aşımı `RedisError(kind="timeout")`, bağlantı kapanır, `reconnect()`; `xreadgroup` `block_ms`i ekler) ve `pipeline(commands)` (tek yazma, sıralı yanıt). Gerçek `redis-server` ile doğrulandı.
+- **`nox.os`:** `environ() -> dict[str, str]` ve `env_names()` (POSIX `environ`, Windows ortam bloğu, wasm/çıplak çekirdek bellek tablosu).
+- **`nox.sqlite`:** `Connection.execute` birden çok `;` ile ayrılmış deyimi sırayla çalıştırır (önceden yalnızca ilkini çalıştırıp kalanını sessizce atıyordu); `execute_script` eklendi, toplam değişen satır döner.
+- **Bilinçli olarak yapılmadı (karar bekliyor):** HTTP sunucusunda bağlanma adresi API'si (Pulse HTTP-004), `nox.http.Pool` (Nova 17), `ca_bundle` (Nova 22), iç içe `async def` (Faz U.4.2 bilinçli kısıt), Redis Cluster, taşınabilir kapanış olayı (Windows/WASM), PostgreSQL mobil zaman aşımı; Windows'a özgü NOX-IO-001 ve VAULT 1.5 gerçek Windows makinesi gerektirir.
+
 ## [2.1.194]
 
 ### Performans (2.2 aşama 2/12, toplu)

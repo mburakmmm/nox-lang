@@ -174,3 +174,48 @@ def scrypt_hash(password: str) -> str:
 
 def scrypt_verify(hash: str, password: str) -> bool:
     return nox_crypto_scrypt_verify_raw(hash, password) != 0
+
+# AEAD (kimlik doğrulamalı şifreleme, v2.1.195): ChaCha20-Poly1305, XChaCha20-Poly1305, AES-256-GCM, AES-128-GCM — Zig'in `std.crypto.aead`i. Anahtar, nonce ve MÜHÜR onaltılık (hex) dizelerdir
+# (`secure_random_hex(32)` anahtar, `secure_random_hex(12)` nonce üretir). `plaintext` ikili-güvenlidir (str uzunluğu başlıkta). Mühür = hex(şifreli metin || 16 baytlık etiket).
+#
+#     key: str = nox.crypto.secure_random_hex(32)
+#     nonce: str = nox.crypto.secure_random_hex(12)         # AYNI anahtarla bir nonce'u İKİ KEZ kullanmayın
+#     sealed: str = nox.crypto.aead_seal(key, nonce, "secret", "context")
+#     plain: str = nox.crypto.aead_open(key, nonce, sealed, "context")   # bozulmuş/yanlış anahtar/aad -> CryptoError
+#
+# `algorithm`: "chacha20-poly1305" (32 B anahtar, 12 B nonce; varsayılan), "xchacha20-poly1305" (32 B, 24 B nonce — rastgele nonce için daha güvenli), "aes-256-gcm" (32 B, 12 B), "aes-128-gcm" (16 B, 12 B).
+# `aad`: şifrelenmeyen ama kimliği doğrulanan ek veri (boş olabilir).
+extern def nox_crypto_aead_raw(seal: int, alg: int, key_hex: str, nonce_hex: str, data: str, aad: str) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_crypto_aead_status_raw() -> int from "zig-out/lib/noxrt.o"
+
+def _aead_alg(algorithm: str) -> int:
+    if algorithm == "chacha20-poly1305":
+        return 0
+    if algorithm == "aes-256-gcm":
+        return 1
+    if algorithm == "aes-128-gcm":
+        return 2
+    if algorithm == "xchacha20-poly1305":
+        return 3
+    raise CryptoError("unknown AEAD algorithm: " + algorithm)
+
+def _aead_check(status: int, what: str) -> None:
+    if status == 0:
+        return
+    if status == 2:
+        raise CryptoError(what + ": wrong key length for this algorithm")
+    if status == 3:
+        raise CryptoError(what + ": wrong nonce length for this algorithm")
+    if status == 4:
+        raise CryptoError(what + ": key, nonce or sealed text is not valid hex")
+    raise CryptoError(what + ": authentication failed")
+
+def aead_seal(key_hex: str, nonce_hex: str, plaintext: str, aad: str = "", algorithm: str = "chacha20-poly1305") -> str:
+    out: str = nox_crypto_aead_raw(1, _aead_alg(algorithm), key_hex, nonce_hex, plaintext, aad)
+    _aead_check(nox_crypto_aead_status_raw(), "aead_seal")
+    return out
+
+def aead_open(key_hex: str, nonce_hex: str, sealed_hex: str, aad: str = "", algorithm: str = "chacha20-poly1305") -> str:
+    out: str = nox_crypto_aead_raw(0, _aead_alg(algorithm), key_hex, nonce_hex, sealed_hex, aad)
+    _aead_check(nox_crypto_aead_status_raw(), "aead_open")
+    return out

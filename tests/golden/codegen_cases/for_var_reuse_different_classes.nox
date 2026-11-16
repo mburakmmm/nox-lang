@@ -1,0 +1,66 @@
+class Counter:
+    total: int
+
+    def __init__(self: Counter, total: int) -> None:
+        self.total = total
+
+class Level:
+    name: str
+    depth: int
+
+    def __init__(self: Level, name: str, depth: int) -> None:
+        self.name = name
+        self.depth = depth
+
+class Gauge:
+    value: float
+
+    def __init__(self: Gauge, value: float) -> None:
+        self.value = value
+
+class Snapshot:
+    points: list[Counter]
+
+    def __init__(self: Snapshot) -> None:
+        self.points = []
+
+enum Data:
+    Counts(snapshot: Snapshot)
+    Levels(level_items: list[Level])
+    Gauges(gauge_items: list[Gauge])
+
+def summarize(d: Data) -> str:
+    out: str = ""
+    match d:
+        case Data.Counts(snapshot):
+            for point in snapshot.points:
+                out = out + str(point.total) + ";"
+        case Data.Levels(level_items):
+            for point in level_items:
+                out = out + point.name + "@" + str(point.depth) + ";"
+        case Data.Gauges(gauge_items):
+            for point in gauge_items:
+                out = out + str(point.value) + ";"
+    return out
+
+def sequential(a: list[Counter], b: list[Level], c: list[Gauge]) -> str:
+    out: str = ""
+    for p in a:
+        out = out + str(p.total) + ","
+    for p in b:
+        out = out + p.name + ","
+    for p in c:
+        out = out + str(p.value) + ","
+    for p in a:
+        out = out + str(p.total * 2) + ","
+    return out
+
+s: Snapshot = Snapshot()
+s.points.append(Counter(2))
+s.points.append(Counter(3))
+levels: list[Level] = [Level("info", 1), Level("warn", 2)]
+gauges: list[Gauge] = [Gauge(1.5), Gauge(2.25)]
+print(summarize(Data.Counts(s)))
+print(summarize(Data.Levels(levels)))
+print(summarize(Data.Gauges(gauges)))
+print(sequential(s.points, levels, gauges))

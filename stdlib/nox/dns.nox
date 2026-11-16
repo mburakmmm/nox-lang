@@ -1,0 +1,45 @@
+# nox.dns — açık DNS çözümlemesi (v2.1.195). `nox.http` bağlanırken ana makine adını KENDİSİ yeniden çözer; "çöz → doğrula → o IP'ye bağlan" (SSRF / DNS rebinding savunması) için
+# adı önce `resolve` ile çözün, adresleri denetleyin, sonra `nox.http.request(..., connect_ip=ip)` ile doğrulanmış IP'ye bağlanın (TLS sunucu adı/sertifika doğrulaması yine ORİJİNAL ad üzerinden yapılır).
+#
+#     import nox.dns
+#     ips: list[str] = nox.dns.resolve("example.com", 3000)
+#
+# Yetenek: `network`. IP literal'ler (`203.0.113.7`, `[2001:db8::1]`) ve `localhost` ağ kullanmadan döner. En çok 16 adres; sıra işletim sisteminin RFC 6724 sırasıdır.
+
+class DnsError(Exception):
+    pass
+
+class DnsTimeoutError(DnsError):
+    pass
+
+class DnsCapabilityError(DnsError):
+    pass
+
+extern def nox_dns_resolve_raw(host: str, timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_dns_status_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_dns_count_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_dns_at_raw(h: ptr, i: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_dns_free_raw(h: ptr) -> None from "zig-out/lib/noxrt.o"
+
+# `host` için A/AAAA adreslerini metin olarak döner. `timeout_ms > 0`: çözümleme bu sürede bitmezse `DnsTimeoutError` (0: üst sınırlı süresiz).
+# Çözülemeyen ad `DnsError` fırlatır (boş liste dönmez: çağıran "hata = izin ver" yanlışına düşmesin).
+def resolve(host: str, timeout_ms: int = 0) -> list[str]:
+    h: ptr = nox_dns_resolve_raw(host, timeout_ms)
+    status: int = nox_dns_status_raw(h)
+    if status != 0:
+        nox_dns_free_raw(h)
+        if status == 1:
+            raise DnsTimeoutError("dns lookup timed out: " + host)
+        if status == 4:
+            raise DnsCapabilityError("the 'network' capability is not available on this host: " + host)
+        if status == 5:
+            raise DnsError("dns resolution is not supported on this target: " + host)
+        raise DnsError("could not resolve host: " + host)
+    out: list[str] = []
+    n: int = nox_dns_count_raw(h)
+    i: int = 0
+    while i < n:
+        out.append(nox_dns_at_raw(h, i))
+        i = i + 1
+    nox_dns_free_raw(h)
+    return out

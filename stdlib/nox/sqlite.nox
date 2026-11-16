@@ -46,6 +46,7 @@ extern def nox_sqlite_bind_int_raw(stmt: ptr, idx: int, val: int) -> int from "z
 extern def nox_sqlite_bind_double_raw(stmt: ptr, idx: int, val: float) -> int from "zig-out/lib/noxrt.o"
 extern def nox_sqlite_bind_text_raw(stmt: ptr, idx: int, value: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_sqlite_bind_null_raw(stmt: ptr, idx: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_sqlite_script_raw(db: ptr, sql: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_sqlite_changes_raw(db: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_sqlite_last_insert_rowid_raw(db: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_sqlite_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
@@ -145,8 +146,20 @@ class Connection:
             raise SqliteError("prepare failed: " + nox_sqlite_errmsg_raw(self.handle))
         return Statement(stmt, self.handle, sql, _sqlite_bind_int, _sqlite_bind_float, _sqlite_bind_str, _sqlite_bind_null, _sqlite_execute, _sqlite_query)
 
+    # Birden çok deyim (`CREATE ...; CREATE ...;`) sırayla çalışır; toplam değişen satırı döner.
+    # Tek deyimli (`;` içermeyen) sorgu eskisi gibi hazırlanıp çalıştırılır (sıcak yol).
     def execute(self: Connection, sql: str) -> int:
-        return self.prepare(sql).execute()
+        if sql.find(";") < 0:
+            return self.prepare(sql).execute()
+        return self.execute_script(sql)
+
+    def execute_script(self: Connection, sql: str) -> int:
+        n: int = nox_sqlite_script_raw(self.handle, sql)
+        if n == -1:
+            raise SqliteError("prepare failed: " + nox_sqlite_errmsg_raw(self.handle))
+        if n == -2:
+            raise SqliteError("step failed: " + nox_sqlite_errmsg_raw(self.handle))
+        return n
 
     def query(self: Connection, sql: str) -> list[Row]:
         return self.prepare(sql).query()

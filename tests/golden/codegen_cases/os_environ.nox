@@ -1,0 +1,16 @@
+import nox.os
+
+nox.os.set_var("NOX_ENV_PROBE_A", "alpha")
+nox.os.set_var("NOX_ENV_PROBE_B", "x=y=z")
+env: dict[str, str] = nox.os.environ()
+print(env["NOX_ENV_PROBE_A"])
+print(env["NOX_ENV_PROBE_B"])
+print("NOX_ENV_PROBE_A" in env)
+print("NOX_ENV_NEVER_SET" in env)
+names: list[str] = nox.os.env_names()
+found: int = 0
+for n in names:
+    if n == "NOX_ENV_PROBE_A" or n == "NOX_ENV_PROBE_B":
+        found = found + 1
+print(found)
+print(len(names) == len(env))

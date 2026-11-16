@@ -15,6 +15,8 @@ const tls_mod = @import("tls.zig");
 /// `std.crypto.tls.Client` DEĞİL — `certificate_request` düzeltmesi içeren yamalı kopya (bkz. `tls.zig`).
 const TlsClient = @import("../vendor/tls_client.zig");
 const client_cert_mod = @import("client_cert.zig");
+const fiber_net = @import("fiber_net.zig");
+const win_udp = @import("win_udp.zig");
 
 const gpa = std.heap.page_allocator;
 
@@ -103,6 +105,20 @@ fn fail(c: *Conn, err: anyerror) bool {
     c.setErr(@errorName(err));
     c.ok = false;
     return false;
+}
+
+/// `readSome` çağrısının bloklamadan veri bulabileceği zamana kadar en çok `timeout_ms` bekler (v2.1.195, `nox.redis` okuma zaman aşımı). Tamponlarda (soket okuyucusu ya da TLS çözülmüş veri)
+/// zaten bayt varsa beklemez. `false` = süre doldu, veri yok. Fiber içinde yalnızca o fiber askıya alınır; dışında `poll`/`WSAPoll` iş parçacığını bekletir.
+pub fn waitReadable(c: *Conn, timeout_ms: u32) bool {
+    if (!c.ok or c.eof) return true;
+    if (c.stream_reader.interface.bufferedLen() > 0) return true;
+    if (c.use_tls and c.client.reader.bufferedLen() > 0) return true;
+    const handle = c.stream.socket.handle;
+    if (fiber_net.inFiber()) return fiber_net.waitFd(handle, false, @max(timeout_ms, 1)) == .ready;
+    if (comptime builtin.os.tag == .windows) return win_udp.pollReady(@intFromPtr(handle), false, @max(timeout_ms, 1));
+    var fds = [1]std.posix.pollfd{.{ .fd = handle, .events = std.posix.POLL.IN, .revents = 0 }};
+    const rc = std.posix.poll(&fds, @intCast(@min(timeout_ms, 1 << 30))) catch return true;
+    return rc > 0;
 }
 
 /// En çok `max` bayt döner (en az bir bayt gelene kadar bekler); EOF'ta ya da hatada boş dilim (`c.eof` / `c.ok == false`). Dilim bir sonraki okumaya kadar geçerlidir.

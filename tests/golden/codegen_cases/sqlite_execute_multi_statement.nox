@@ -1,0 +1,16 @@
+import nox.sqlite
+
+conn: nox.sqlite.Connection = nox.sqlite.open(":memory:")
+n: int = conn.execute("CREATE TABLE a (id INTEGER); CREATE TABLE b (id INTEGER);\nINSERT INTO a VALUES (1); INSERT INTO a VALUES (2); INSERT INTO b VALUES (3); CREATE TABLE c (id INTEGER);")
+print(n)
+print(len(conn.query("SELECT * FROM a")))
+print(len(conn.query("SELECT * FROM b")))
+print(conn.execute("INSERT INTO b VALUES (4)"))
+print(conn.execute("INSERT INTO b VALUES ('x;y')"))
+print(len(conn.query("SELECT * FROM b")))
+try:
+    conn.execute("INSERT INTO a VALUES (5); INSERT INTO nope VALUES (6);")
+except nox.sqlite.SqliteError as e:
+    print("err", e.message)
+print(len(conn.query("SELECT * FROM a")))
+conn.close()

@@ -132,6 +132,7 @@ const Funcs = struct {
     bind_text: BindTextFn,
     bind_null: BindNullFn,
     changes: ChangesFn,
+    total_changes: ChangesFn,
     last_insert_rowid: LastInsertRowidFn,
 };
 
@@ -169,6 +170,7 @@ fn loadAll() bool {
             extern fn sqlite3_bind_text(stmt: ?*anyopaque, idx: c_int, text: [*:0]const u8, nbyte: c_int, destructor: ?*const anyopaque) callconv(.c) c_int;
             extern fn sqlite3_bind_null(stmt: ?*anyopaque, idx: c_int) callconv(.c) c_int;
             extern fn sqlite3_changes(db: ?*anyopaque) callconv(.c) c_int;
+            extern fn sqlite3_total_changes(db: ?*anyopaque) callconv(.c) c_int;
             extern fn sqlite3_last_insert_rowid(db: ?*anyopaque) callconv(.c) i64;
         };
         // WASI: sqlite'ın unix VFS'i kilit için `fcntl(F_SETLK)` kullanır, wasi-libc'de yoktur. Kilitsiz "unix-none" varsayılan yapılır (tek süreç/ön-açılmış dizinler).
@@ -192,6 +194,7 @@ fn loadAll() bool {
             .bind_text = linked.sqlite3_bind_text,
             .bind_null = linked.sqlite3_bind_null,
             .changes = linked.sqlite3_changes,
+            .total_changes = linked.sqlite3_total_changes,
             .last_insert_rowid = linked.sqlite3_last_insert_rowid,
         };
         return true;
@@ -212,6 +215,7 @@ fn loadAll() bool {
     const bind_text_fn = lookupSym(&lib, BindTextFn, "sqlite3_bind_text") orelse return false;
     const bind_null_fn = lookupSym(&lib, BindNullFn, "sqlite3_bind_null") orelse return false;
     const changes_fn = lookupSym(&lib, ChangesFn, "sqlite3_changes") orelse return false;
+    const total_changes_fn = lookupSym(&lib, ChangesFn, "sqlite3_total_changes") orelse return false;
     const last_insert_rowid_fn = lookupSym(&lib, LastInsertRowidFn, "sqlite3_last_insert_rowid") orelse return false;
 
     g_lib = lib;
@@ -231,6 +235,7 @@ fn loadAll() bool {
         .bind_text = bind_text_fn,
         .bind_null = bind_null_fn,
         .changes = changes_fn,
+        .total_changes = total_changes_fn,
         .last_insert_rowid = last_insert_rowid_fn,
     };
     return true;
@@ -390,6 +395,34 @@ pub export fn nox_sqlite_bind_null_raw(stmt: ?*anyopaque, idx: i64) callconv(.c)
     const active = stmt orelse return 1;
     if (!ensureLoaded()) return 1;
     return g_funcs.bind_null(active, @intCast(idx));
+}
+
+/// `;` ile ayrılmış birden çok SQL deyimini sırayla çalıştırır (satır döndüren deyimlerin satırları atılır).
+/// Dönüş: toplam değişen satır (>= 0); -1 = hazırlama hatası, -2 = çalıştırma hatası (ayrıntı `errmsg`te).
+pub export fn nox_sqlite_script_raw(db: ?*anyopaque, sql: ?[*:0]const u8) callconv(.c) i64 {
+    lock();
+    defer unlock();
+    const opened = db orelse return -1;
+    var cursor: [*:0]const u8 = sql orelse return -1;
+    if (!ensureLoaded()) return -1;
+    const before: i64 = g_funcs.total_changes(opened);
+    var total: i64 = 0;
+    while (true) {
+        var stmt: ?*anyopaque = null;
+        var tail: ?[*:0]const u8 = null;
+        if (g_funcs.prepare_v2(opened, cursor, -1, &stmt, &tail) != 0) return -1;
+        if (stmt) |st| {
+            var rc = g_funcs.step(st);
+            while (rc == 100) rc = g_funcs.step(st);
+            const fin = g_funcs.finalize(st);
+            if (rc != 101 or fin != 0) return -2;
+            total = g_funcs.total_changes(opened) - before;
+        }
+        const next = tail orelse break;
+        if (next[0] == 0) break;
+        cursor = next;
+    }
+    return total;
 }
 
 pub export fn nox_sqlite_changes_raw(db: ?*anyopaque) callconv(.c) i64 {

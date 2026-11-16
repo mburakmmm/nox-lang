@@ -149,7 +149,15 @@ fn resolveImportsImpl(
     const core_module = try parser.parseModule(a, core_tokens);
     try extra.appendSlice(a, core_module.body);
 
-    try loadImportsRecursive(a, env, user_module.body, &loaded, &extra, alias_roots, stdlib_root, project_root, null, null);
+    // 2.2 limitasyon turu (Chronos NXL-007): proje kendi `nox.json` adıyla da içe aktarma yapabilir (`from chronos.time import X`); aynı kaynak bir bağımlılık olarak yüklendiğinde de çalışır.
+    // Böylece paket hem kendi kaynak dizininde hem tüketicide AYNI içe aktarma biçimini kullanır. Manifest yoksa/geçersizse eski davranış.
+    var own_name: ?[]const u8 = null;
+    if (alias_roots != null and project_root != null and comptime builtin.os.tag != .freestanding) {
+        if (project.loadManifest(a, env.io, project_root.?)) |m| {
+            if (m.name.len > 0) own_name = m.name;
+        } else |_| {}
+    }
+    try loadImportsRecursive(a, env, user_module.body, &loaded, &extra, alias_roots, stdlib_root, project_root, own_name, own_name, if (own_name != null) project_root else null);
 
     const combined = try a.alloc(ast.Stmt, extra.items.len + user_module.body.len);
     @memcpy(combined[0..extra.items.len], extra.items);
@@ -236,6 +244,7 @@ fn loadImportsRecursive(
     alias_roots: ?*const std.StringHashMapUnmanaged([]const u8),
     stdlib_root: []const u8,
     project_root: ?[]const u8,
+    project_name: ?[]const u8,
     current_own_name: ?[]const u8,
     current_own_root: ?[]const u8,
 ) LoadError!void {
@@ -272,7 +281,14 @@ fn loadImportsRecursive(
             // paketin kendi iç import'ları KENDİ adıyla ÇALIŞIR, tüketicinin
             // SEÇTİĞİ alias NE OLURSA olsun.
             if (current_own_name) |own| {
-                if (segments.len > 0 and std.mem.eql(u8, segments[0], own)) {
+                // Projenin KENDİ adı (bir bağımlılığınki değil): `<kök>/<ad>/<yol>.nox` gibi bir dosya zaten varsa (proje içinde ad-dizini olan düzenler) eski çözümleme korunur.
+                const is_project_self = project_root != null and current_own_root != null and std.mem.eql(u8, current_own_root.?, project_root.?);
+                const legacy_exists = is_project_self and blk2: {
+                    const rel = try joinWith(a, segments, '/');
+                    const cand = try std.fmt.allocPrint(a, "{s}/{s}.nox", .{ project_root.?, rel });
+                    break :blk2 env.exists(cand);
+                };
+                if (segments.len > 0 and std.mem.eql(u8, segments[0], own) and !legacy_exists) {
                     const root = current_own_root.?;
                     pkg_root = root;
                     const rest = try joinWith(a, segments[1..], '/');
@@ -323,12 +339,16 @@ fn loadImportsRecursive(
             const manifest = project.loadManifest(a, env.io, root) catch break :blk .{ null, null };
             if (manifest.name.len == 0) break :blk .{ null, null };
             break :blk .{ manifest.name, root };
-        } else .{ null, null };
+        } else if (!is_nox_stdlib and project_name != null and project_root != null)
+            // Proje içi (birinci taraf) dosya: kendi iç içe aktarmaları da projenin adıyla çalışır.
+            .{ project_name, project_root }
+        else
+            .{ null, null };
 
         // ÖNCE bu stdlib modülünün KENDİ import'larını özyinelemeli çöz
         // (transitif — bir stdlib modülü başka bir stdlib modülünü import
         // edebilir).
-        try loadImportsRecursive(a, env, stdlib_module.body, loaded, out, alias_roots, stdlib_root, project_root, next_own_name, next_own_root);
+        try loadImportsRecursive(a, env, stdlib_module.body, loaded, out, alias_roots, stdlib_root, project_root, project_name, next_own_name, next_own_root);
 
         // Bu modülün KENDİ üst-düzey `func_def`/`class_def` adlarını topla.
         var rename_map: std.StringHashMapUnmanaged([]const u8) = .empty;

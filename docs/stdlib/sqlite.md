@@ -17,7 +17,8 @@ from nox.sqlite import Connection, SqliteError
 | Member | Description |
 |---|---|
 | `open(path)` | opens (creating if needed) a database file, or `":memory:"` for a private in-memory database; raises `SqliteError` on failure |
-| `Connection.execute(sql)` | runs a statement without parameters; returns the number of rows it changed |
+| `Connection.execute(sql)` | runs a statement without parameters; returns the number of rows it changed. Several `;`-separated statements run in order (like `sqlite3_exec`: no implicit transaction, an error stops the script and earlier statements stay applied; the result is the total rows changed) |
+| `Connection.execute_script(sql)` | the same multi-statement runner, always (what `execute` calls when the text contains `;`) |
 | `Connection.query(sql)` | runs a query; returns `list[Row]` |
 | `Connection.prepare(sql)` | a parameterised [`Statement`](db.md#statement) with `?` placeholders |
 | `Connection.last_insert_rowid()` | the rowid of the most recent `INSERT` on this connection |

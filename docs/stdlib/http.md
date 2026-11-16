@@ -49,7 +49,7 @@ What a handler returns and what the client functions return.
 | `post(url, body, headers)` | issues a POST with `body` |
 | `put(url, body, headers)`, `patch(url, body, headers)` | PUT / PATCH with `body` |
 | `delete(url, headers)`, `head(url, headers)`, `options(url, headers)` | bodyless requests |
-| `request(method, url, body, headers, timeout_ms=0)` | any of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; optional timeout |
+| `request(method, url, body, headers, timeout_ms=0, connect_ip="")` | any of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; optional timeout; optional pinned address (see below) |
 
 **Concurrency.** Inside a task (`spawn`) or a `serve` handler, a request does not occupy an operating-system thread: the task is suspended while it waits for the network and the worker runs other tasks, so thousands of requests can be in flight at once on a few threads (about 110 KB of memory per request in flight). Outside a task (plain top-level code) and for `stream`/`stream_upload`, each request still uses a helper thread. Windows behaves like macOS and Linux (since v2.1.147).
 
@@ -86,6 +86,8 @@ can only be sent with `POST`, `PUT` and `PATCH`.
 `timeout_ms > 0` limits the DNS lookup, the TCP connect, and then the time spent sending the request and reading the response: when it runs out the connection is aborted and
 `HttpTimeoutError` (a subclass of `HttpError`) is raised. An unresolvable name or an address that never answers therefore fails after `timeout_ms` instead of waiting for the operating
 system's own limit (30 s for DNS and 75 s for a TCP connect on macOS, similar on Android). With `timeout_ms = 0` the lookup and the connect are not bounded.
+
+**Pinned address (`connect_ip`, SSRF / DNS-rebinding defence).** When `connect_ip` is a non-empty IPv4/IPv6 literal, the host name in the URL is **not resolved**: the connection goes to that address. The TLS server name (SNI) and certificate/host-name verification still use the **original** host name, so the usual flow is `ips = nox.dns.resolve(host)` → check every address against your policy → `request(..., connect_ip=ips[0])`, with no window for the name to resolve differently a second time. A pinned request does not use the connection pool, HTTP/3 or `HTTP_PROXY`/`HTTPS_PROXY`, and it does not follow redirects (the caller re-resolves and re-validates the new location). A malformed `connect_ip` raises `HttpError`; it never falls back to name resolution.
 
 Names resolve with the system resolver for both IPv4 and IPv6 (the system's address order is tried in turn, so a dead IPv6 route falls back to IPv4), and IPv6 literals such as
 `http://[::1]:8080/` work on every platform. `nox.tls.connect`, `nox.websocket.connect` and `nox.smtp.connect` bound DNS and connect at 30 seconds.
@@ -355,6 +357,8 @@ Malformed or hostile requests no longer drop the connection silently: `400` (bad
   ```
 
   A closure *value* from the main runtime is still rejected, because the workers use separate runtimes; the factory runs inside each worker, so its closure belongs to that worker. The `_tls`, `_ws` and `_ws_tls` forms accept a factory too.
+
+  **How connections reach the workers.** On Linux every worker owns a `SO_REUSEPORT` listening socket and the kernel spreads new connections across them. On macOS (BSD) and Windows `SO_REUSEPORT` does **not** balance load, so the workers share **one** listening socket instead and take connections from it in turn. A keep-alive connection stays on the worker that accepted it. More workers help when handlers cost real CPU or wait on I/O; a handler that does almost nothing (a ping answered in a few microseconds) is limited by the accept path and the network stack, and one worker may already be the fastest configuration. Measure with your real handler (`wrk -t4 -c40`), not with an empty route.
 - **`_tls`** — pass paths to a PEM certificate chain and private key; clients that offer `h2` get [HTTP/2](#http2). Behind a reverse proxy that terminates TLS, plain `serve` is usually what you want.
 - **`_ws`** — use when the same port serves normal requests and WebSockets; see [`nox.websocket`](websocket.md).
 

@@ -118,6 +118,13 @@ fn fill(c: *Conn) bool {
     return true;
 }
 
+/// Ana makine soketlerinde okuma zaman aşımı yoktur (köprü bloklar): her zaman "hazır".
+pub fn waitReadable(c: *Conn, timeout_ms: u32) bool {
+    _ = c;
+    _ = timeout_ms;
+    return true;
+}
+
 /// En çok `max` bayt döner (en az bir bayt gelene kadar bekler); EOF'ta boş dilim. Dilim bir sonraki okumaya kadar geçerlidir.
 pub fn readSome(c: *Conn, max: usize) []const u8 {
     if (c.off >= c.buf.items.len and !fill(c)) return &.{};

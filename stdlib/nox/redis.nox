@@ -26,8 +26,12 @@ class RedisError(Exception):
         self.code = code
         self.kind = kind
 
+    # Bağlantı koptu ya da okuma zaman aşımına uğradı (her ikisinde istemci kapanır: `reconnect()`).
     def is_connection_error(self: RedisError) -> bool:
-        return self.kind == "connection"
+        return self.kind == "connection" or self.kind == "timeout"
+
+    def is_timeout(self: RedisError) -> bool:
+        return self.kind == "timeout"
 
     def is_noscript(self: RedisError) -> bool:
         return self.code == "NOSCRIPT"
@@ -40,6 +44,11 @@ class RedisError(Exception):
 
 extern def nox_redis_open_raw(host: str, port: int, use_tls: int, user: str, password: str, db: int) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_redis_open_tls_ca_raw(host: str, port: int, ca_file: str, cert_file: str, key_file: str, user: str, password: str, db: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_redis_set_read_timeout_raw(conn: ptr, ms: int) -> None from "zig-out/lib/noxrt.o"
+extern def nox_redis_timed_out_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_redis_queue_raw(conn: ptr, args: list[str]) -> int from "zig-out/lib/noxrt.o"
+extern def nox_redis_flush_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_redis_recv_raw(conn: ptr) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_redis_status_raw(conn: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_redis_errmsg_raw(conn: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_redis_close_raw(conn: ptr) -> None from "zig-out/lib/noxrt.o"
@@ -123,6 +132,7 @@ class Client:
     ca_file: str
     cert_file: str
     key_file: str
+    read_timeout_ms: int
 
     def __init__(self: Client, host: str, port: int, tls: bool, username: str, password: str, db: int, handle: ptr, ca_file: str = "", cert_file: str = "", key_file: str = "") -> None:
         self.host = host
@@ -136,6 +146,7 @@ class Client:
         self.ca_file = ca_file
         self.cert_file = cert_file
         self.key_file = key_file
+        self.read_timeout_ms = 0
 
     def is_ok(self: Client) -> bool:
         return nox_redis_status_raw(self.handle) != 0
@@ -149,6 +160,18 @@ class Client:
         h: ptr = _open(self.host, self.port, self.tls, self.username, self.password, self.db, self.ca_file, self.cert_file, self.key_file)
         self.handle = h
         self.scripts = {}
+        nox_redis_set_read_timeout_raw(h, self.read_timeout_ms)
+
+    # Yanıt başına okuma zaman aşımı (ms; 0 = kapalı, varsayılan). Süre dolarsa komut `RedisError(kind="timeout")` ile biter ve bağlantı KAPANIR (geç yanıt sonraki komutla karışmasın):
+    # `reconnect()` çağırın. `xreadgroup`un `block_ms` süresi bu sınıra eklenir (BLOCK 0 = yalnızca bu sınır).
+    def set_read_timeout(self: Client, ms: int) -> None:
+        self.read_timeout_ms = ms
+        nox_redis_set_read_timeout_raw(self.handle, ms)
+
+    def _raise_io(self: Client, what: str) -> None:
+        if nox_redis_timed_out_raw(self.handle) != 0:
+            raise RedisError(what + ": " + nox_redis_errmsg_raw(self.handle), "", "timeout")
+        raise RedisError(what + ": " + nox_redis_errmsg_raw(self.handle), "", "connection")
 
     # Genel yol: komutu gönderir ve yanıtı döndürür. Sunucu hata yanıtı `RedisError(kind="server")`, G/Ç hatası `RedisError(kind="connection")`.
     def command(self: Client, args: list[str]) -> Reply:
@@ -156,7 +179,7 @@ class Client:
             raise RedisError("connection is closed: " + nox_redis_errmsg_raw(self.handle), "", "connection")
         raw: ptr = nox_redis_command_raw(self.handle, args)
         if nox_redis_is_null_raw(raw) != 0:
-            raise RedisError("connection error: " + nox_redis_errmsg_raw(self.handle), "", "connection")
+            self._raise_io("connection error")
         r: Reply = Reply(raw, True, None)
         if r.is_error():
             msg: str = r.as_str()
@@ -233,7 +256,32 @@ class Client:
         args.append("STREAMS")
         args.append(stream)
         args.append(id)
+        if self.read_timeout_ms > 0 and block_ms > 0:
+            nox_redis_set_read_timeout_raw(self.handle, self.read_timeout_ms + block_ms)
+            try:
+                return self.command(args)
+            finally:
+                nox_redis_set_read_timeout_raw(self.handle, self.read_timeout_ms)
         return self.command(args)
+
+    # Pipeline: tüm komutlar tek yazmada gider, yanıtlar sırayla okunur. Sunucu hata yanıtı İSTİSNA DEĞİL, ilgili `Reply`dır (`is_error()`); G/Ç hatası/zaman aşımı istisnadır ve bağlantıyı kapatır.
+    def pipeline(self: Client, commands: list[list[str]]) -> list[Reply]:
+        out: list[Reply] = []
+        if not self.is_ok():
+            raise RedisError("connection is closed: " + nox_redis_errmsg_raw(self.handle), "", "connection")
+        for cmd in commands:
+            if nox_redis_queue_raw(self.handle, cmd) == 0:
+                self._raise_io("pipeline queue failed")
+        if nox_redis_flush_raw(self.handle) == 0:
+            self._raise_io("pipeline write failed")
+        i: int = 0
+        while i < len(commands):
+            raw: ptr = nox_redis_recv_raw(self.handle)
+            if nox_redis_is_null_raw(raw) != 0:
+                self._raise_io("pipeline read failed")
+            out.append(Reply(raw, True, None))
+            i = i + 1
+        return out
 
     # `XAUTOCLAIM stream group consumer min-idle start [COUNT n]`. Ham yanıt: `[next-start-id, [[id, [f, v, ...]], ...], [silinen kimlikler]]`.
     def xautoclaim(self: Client, stream: str, group: str, consumer: str, min_idle_ms: int, start: str = "0-0", count: int = 100) -> Reply:

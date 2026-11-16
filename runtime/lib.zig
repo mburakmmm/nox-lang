@@ -83,6 +83,7 @@ pub const http_server = @import("stdlib_shims/http_server.zig");
 pub const strings_shim = @import("stdlib_shims/strings.zig");
 pub const math_shim = @import("stdlib_shims/math.zig");
 pub const os_shim = @import("stdlib_shims/os.zig");
+pub const dns_shim = @import("stdlib_shims/dns.zig");
 pub const fs_shim = @import("stdlib_shims/fs.zig");
 pub const wasm_vfs = @import("wasm_vfs.zig");
 pub const path_shim = @import("stdlib_shims/path.zig");
@@ -182,6 +183,7 @@ comptime {
     _ = strings_shim;
     _ = math_shim;
     _ = os_shim;
+    _ = dns_shim;
     _ = fs_shim;
     _ = path_shim;
     _ = time_shim;

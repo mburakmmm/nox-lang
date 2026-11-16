@@ -56,6 +56,17 @@ try:
                 print(f"[{backend}] beklenmeyen sonuç (çıkış {r.returncode})\n--- stdout\n{r.stdout}\n--- stderr\n{r.stderr}\n--- beklenen\n{expected}")
                 sys.exit(1)
 
+        # Okuma zaman aşımı + pipeline (v2.1.195): ağ yerel; wasm ana makine soketlerinde zaman aşımı yok, bu yüzden ortak programdan ayrı.
+        tt = open(os.path.join(ROOT, "tests/golden/redis_timeout_program.nox.in")).read()
+        te = open(os.path.join(ROOT, "tests/golden/redis_timeout_program.expected")).read()
+        tpath = os.path.join(tmp, "timeout_program.nox")
+        open(tpath, "w").write(tt.replace("@PORT@", str(port)))
+        for backend in ("llvm", "qbe"):
+            r = subprocess.run([noxc, "run", "--backend", backend, tpath], capture_output=True, text=True, timeout=300)
+            if r.returncode != 0 or r.stdout != te:
+                print(f"[timeout {backend}] beklenmeyen sonuç (çıkış {r.returncode})\n--- stdout\n{r.stdout}\n--- stderr\n{r.stderr}\n--- beklenen\n{te}")
+                sys.exit(1)
+
     # --- TLS: özel CA (ca_file) ile güvenilir bağlantı ve güvenilmeyen kendinden imzalı sertifikanın reddi (v2.1.39). redis-server TLS'siz derlenmişse ya da openssl yoksa atlanır. ---
     if shutil.which("openssl"):
         with tempfile.TemporaryDirectory() as tdir:

@@ -16,6 +16,8 @@ from nox.os import OsError
 | `arg_count()` | the number of command-line arguments, **including** the program name at index 0 |
 | `arg(i)` | argument `i` as a `str` |
 | `getenv(name)` | the value of an environment variable; raises `OsError` if it is not set |
+| `environ()` | every environment variable of this process as a `dict[str, str]` |
+| `env_names()` | the names of those variables as a `list[str]` |
 | `set_var(name, value)` | sets an environment variable for this process and its children |
 | `current_dir()` | the current working directory |
 | `exit(code)` | terminates the program immediately with exit status `code` |
@@ -46,4 +48,5 @@ not set
 - `exit` ends the process without running `finally` blocks or `defer`s that are still pending — flush and close what you need first. A normal return
   from the top level exits with status 0, an uncaught exception with status 1.
 - `getenv` has no default-value form; test for absence with `try`/`except OsError`.
+- On Windows `set_var(name, "")` deletes the variable (Win32 `_putenv_s`), so an empty-valued variable never appears in `environ()` there.
 - Environment changes made with `set_var` are visible to child processes started with [`nox.process`](process.md).

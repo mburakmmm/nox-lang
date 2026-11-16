@@ -30,6 +30,8 @@ from nox.redis import Client, Reply, RedisError
 | `xautoclaim(stream, group, consumer, min_idle_ms, start="0-0", count=100)` | `XAUTOCLAIM`: `[next-id, [[id, [field, value, ...]], ...], [deleted ids]]` |
 | `xack(stream, group, ids)` | `XACK`; returns how many entries were acknowledged |
 | `script_load(script)`, `eval_cached(script, keys, args)` | `SCRIPT LOAD` + `EVALSHA`, caching the sha per connection; a `NOSCRIPT` reply (server restart, `SCRIPT FLUSH`) reloads the script and retries once |
+| `set_read_timeout(ms)` | per-reply read deadline (`0` = off, the default); see *Read timeout* below |
+| `pipeline(commands: list[list[str]]) -> list[Reply]` | sends every command in one write, then reads the replies in order; a server error is the matching `Reply` (`is_error()`), not an exception |
 | `is_ok()`, `reconnect()`, `close()` | connection management |
 
 ## Replies
@@ -49,12 +51,13 @@ if not r.is_nil():
 `RedisError` has `kind` and `code`:
 
 - `kind == "server"`: the server answered with an error (`-WRONGTYPE ...`). `code` is its first word (`"WRONGTYPE"`, `"NOSCRIPT"`, `"BUSYGROUP"`, `"NOAUTH"`, `"NOPERM"`); helpers `is_wrongtype()`, `is_noscript()`, `is_busygroup()`.
+- `kind == "timeout"` (`is_timeout()`; also `is_connection_error()`): a reply did not arrive within `set_read_timeout`. The client is closed afterwards (a late reply must not be mistaken for the next command's): call `reconnect()`.
 - `kind == "connection"` (`is_connection_error()`): connecting failed, or the connection broke. The client is closed afterwards: call `reconnect()` (it repeats `AUTH`/`SELECT` and clears the script cache).
   A command interrupted by a broken connection may or may not have run on the server; whether to retry is up to the caller.
 
 ## Notes
 
-- There is no read timeout: blocking commands such as `XREADGROUP ... BLOCK` legitimately wait. Inside a task only that task waits.
-- RESP2 only; no pub/sub push messages, no pipelining and no cluster redirection (`MOVED`/`ASK` surface as `RedisError`).
+- **Read timeout:** off by default (blocking commands such as `XREADGROUP ... BLOCK` legitimately wait; inside a task only that task waits). `set_read_timeout(ms)` bounds every reply; `xreadgroup` adds its own `block_ms` to the bound, so `BLOCK 0` is bounded by the timeout alone. Inside a fiber only that fiber is suspended. Not available on wasm hosts (their socket bridge blocks).
+- RESP2 only; no pub/sub push messages and no cluster redirection (`MOVED`/`ASK` surface as `RedisError`).
 - Verified against real `redis-server` for commands, binary payloads, Streams, scripts, `AUTH`/ACL and reconnecting. TLS reuses the client of [`nox.tls`](tls.md) (an untrusted
   certificate is rejected); a successful handshake with a publicly trusted server certificate has not been exercised against a Redis in this repository's tests.

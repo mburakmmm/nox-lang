@@ -1,0 +1,46 @@
+import nox.crypto
+from nox.crypto import CryptoError
+
+# Sabit anahtar/nonce (RFC 8439 §2.8.2 değerleri; bilinen-cevap vektörleri `runtime/stdlib_shims/crypto.zig` testlerinde, str UTF-8 olduğundan ikili AAD burada yazılamaz).
+key: str = "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f"
+nonce: str = "070000004041424344454647"
+aad: str = "PQRS context"
+msg: str = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it."
+sealed: str = nox.crypto.aead_seal(key, nonce, msg, aad)
+print(len(sealed) == (len(msg) + 16) * 2)
+print(nox.crypto.aead_open(key, nonce, sealed, aad) == msg)
+
+# Her algoritma gidiş-dönüş yapar; aad/anahtar/mühür bozulursa CryptoError.
+k16: str = nox.crypto.secure_random_hex(16)
+k32: str = nox.crypto.secure_random_hex(32)
+n12: str = nox.crypto.secure_random_hex(12)
+n24: str = nox.crypto.secure_random_hex(24)
+print(nox.crypto.aead_open(k16, n12, nox.crypto.aead_seal(k16, n12, "aes128", "ctx", "aes-128-gcm"), "ctx", "aes-128-gcm"))
+print(nox.crypto.aead_open(k32, n12, nox.crypto.aead_seal(k32, n12, "aes256", "", "aes-256-gcm"), "", "aes-256-gcm"))
+print(nox.crypto.aead_open(k32, n24, nox.crypto.aead_seal(k32, n24, "xchacha", "x", "xchacha20-poly1305"), "x", "xchacha20-poly1305"))
+print(nox.crypto.aead_open(k32, n12, nox.crypto.aead_seal(k32, n12, ""), ""))
+
+s2: str = nox.crypto.aead_seal(k32, n12, "payload", "a")
+try:
+    nox.crypto.aead_open(k32, n12, s2, "b")
+except CryptoError as e:
+    print("aad mismatch rejected")
+flipped: str = "0" + s2[1:len(s2)]
+if s2[0] == "0":
+    flipped = "1" + s2[1:len(s2)]
+try:
+    nox.crypto.aead_open(k32, n12, flipped, "a")
+except CryptoError as e:
+    print("tamper rejected")
+try:
+    nox.crypto.aead_seal(k16, n12, "x")
+except CryptoError as e:
+    print("key length rejected")
+try:
+    nox.crypto.aead_seal(k32, n24, "x")
+except CryptoError as e:
+    print("nonce length rejected")
+try:
+    nox.crypto.aead_seal(k32, n12, "x", "", "rot13")
+except CryptoError as e:
+    print("unknown algorithm rejected")

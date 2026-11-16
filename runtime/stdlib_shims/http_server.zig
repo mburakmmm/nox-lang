@@ -604,6 +604,18 @@ export fn nox_http_listen_fd_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:0]co
 /// `serve_multicore` portu KULLANMASI TİPİK, çoklu port NADİR AMA
 /// desteklenir); girdiler ASLA TAHLİYE EDİLMEZ (soketler süreç ömrü
 /// boyunca YAŞAR, `owns_fd=false` disipliniyle TUTARLI).
+/// 2.2 limitasyon turu (worker ölçek raporu): macOS'ta `SO_REUSEPORT` bağlantıları worker soketleri arasında DAĞITMAZ (BSD semantiği: yeni bağlantılar tek dinleyiciye gider); 1/2/4/8 worker'da
+/// çıplak `serve_multicore` ping'i ~270k istek/s'de sabit kaldı ve yalnızca bir çekirdek doldu. Windows gibi Darwin'de de TEK paylaşılan dinleme soketi kullanılır; her worker kendi `accept` döngüsünde
+/// o fd'yi dinler (kernel bağlantıyı yalnızca bir `accept`e verir). Linux'ta `SO_REUSEPORT` çekirdek-düzeyi dağıtım yapar ve korunur.
+const shared_listen_platform = builtin.os.tag == .windows or builtin.os.tag.isDarwin();
+
+/// Paylaşılan dinleme soketi: `configure(ip_family)` IPv6 seçtiyse (Windows hariç) çift/yalnız-IPv6, değilse IPv4; `SO_REUSEPORT` YOK (tek soket).
+fn bindAndListenShared(port: i64) ?posix.fd_t {
+    const fam = g_serve_config.ip_family.load(.monotonic);
+    if (fam != 0 and builtin.os.tag != .windows) return bindAndListenV6(port, fam == 2, false);
+    return bindAndListen(port, false);
+}
+
 var windows_listen_cache: [8]?struct { port: i64, fd: i64 } = @splat(null);
 var windows_listen_cache_lock: asap.SpinLock = .{};
 
@@ -620,7 +632,7 @@ var windows_listen_cache_lock: asap.SpinLock = .{};
 /// (`owns_fd=false`, SIFIR davranış değişikliği).
 export fn nox_http_server_listen_multicore_worker(rt: ?*anyopaque, port: i64) callconv(.c) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
-    if (builtin.os.tag == .windows) {
+    if (shared_listen_platform) {
         windows_listen_cache_lock.lock();
         defer windows_listen_cache_lock.unlock();
         for (windows_listen_cache) |slot| {
@@ -632,7 +644,7 @@ export fn nox_http_server_listen_multicore_worker(rt: ?*anyopaque, port: i64) ca
                 }
             }
         }
-        const fd = bindAndListen(port, false) orelse return null;
+        const fd = bindAndListenShared(port) orelse return null;
         for (&windows_listen_cache) |*slot| {
             if (slot.* == null) {
                 slot.* = .{ .port = port, .fd = fdToI64(fd) };
@@ -697,7 +709,7 @@ export fn nox_http_make_port_tls_payload(rt: ?*anyopaque, port: i64, tls_ctx: ?*
 /// listen_fd_tls`nin PAYLAŞILAN-bağlam disipliniyle TUTARLI).
 export fn nox_http_server_listen_multicore_worker_tls(rt: ?*anyopaque, port: i64, tls_ctx: ?*anyopaque) callconv(.c) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
-    if (builtin.os.tag == .windows) {
+    if (shared_listen_platform) {
         windows_listen_cache_lock.lock();
         defer windows_listen_cache_lock.unlock();
         for (windows_listen_cache) |slot| {
@@ -709,7 +721,7 @@ export fn nox_http_server_listen_multicore_worker_tls(rt: ?*anyopaque, port: i64
                 }
             }
         }
-        const fd = bindAndListen(port, false) orelse return null;
+        const fd = bindAndListenShared(port) orelse return null;
         for (&windows_listen_cache) |*slot| {
             if (slot.* == null) {
                 slot.* = .{ .port = port, .fd = fdToI64(fd) };
@@ -3937,4 +3949,41 @@ test "v1.142.10: v6_only=true dinleyici IPv4 istemciyi KABUL ETMEZ" {
     defer _ = closeSocket(c4);
     var a4: std.c.sockaddr.in = .{ .port = laddr.port, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
     try std.testing.expect(std.c.connect(c4, @ptrCast(&a4), @sizeOf(std.c.sockaddr.in)) != 0);
+}
+
+test "serve_multicore dinleyicisi: Darwin/Windows'ta tüm worker'lar TEK paylaşılan dinleme soketini kullanır, Linux'ta her worker kendi SO_REUSEPORT soketini açar" {
+    // macOS'ta `SO_REUSEPORT` yük dağıtmadığından worker başına soket, tüm bağlantıları tek worker'a yığıyordu (2.2 limitasyon turu, worker ölçek raporu).
+    const rt1 = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt1);
+    const rt2 = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt2);
+    // boş bir port: 0'a bağlanıp çekirdeğin seçtiğini oku
+    const probe = bindAndListen(0, false) orelse return error.SkipZigTest;
+    var addr: std.c.sockaddr.in = undefined;
+    var alen: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+    if (std.c.getsockname(probe, @ptrCast(&addr), &alen) != 0) {
+        _ = closeSocket(probe);
+        return error.SkipZigTest;
+    }
+    const port: i64 = std.mem.bigToNative(u16, addr.port);
+    _ = closeSocket(probe);
+
+    const h1: *ServerHandle = @ptrCast(@alignCast(nox_http_server_listen_multicore_worker(rt1, port) orelse return error.SkipZigTest));
+    const h2: *ServerHandle = @ptrCast(@alignCast(nox_http_server_listen_multicore_worker(rt2, port) orelse return error.SkipZigTest));
+    defer {
+        if (builtin.os.tag == .windows or builtin.os.tag.isDarwin()) {
+            _ = closeSocket(h1.listen_fd); // paylaşılan soketi (önbellekteki tek fd) test kapatır
+            nox_http_server_close(rt1, h1);
+            nox_http_server_close(rt2, h2);
+        } else {
+            nox_http_server_close(rt1, h1);
+            nox_http_server_close(rt2, h2);
+        }
+    }
+    // Beklenti sabit koda DEĞİL platforma bağlıdır: `shared_listen_platform` yanlışlıkla daraltılırsa bu test kırılır.
+    if (builtin.os.tag == .windows or builtin.os.tag.isDarwin()) {
+        try std.testing.expectEqual(h1.listen_fd, h2.listen_fd);
+    } else {
+        try std.testing.expect(h1.listen_fd != h2.listen_fd);
+    }
 }

@@ -866,3 +866,76 @@ test "C15d: modul onekli jenerik tip aciklamasi ve cagrisi (m.Box[int])" {
         try std.testing.expectEqualStrings("2\nheld\n7\nx none\n5\n", run_result.stdout);
     }
 }
+
+/// 2.2 limitasyon turu: proje dosyalarını (ad, içerik) yazar, `main.nox`u iki arka uçta derleyip çalıştırır ve stdout'u karşılaştırır (stderr boş olmalı).
+fn expectProjectOutput(files: []const [2][]const u8, expected: []const u8) !void {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+    for (files) |f| {
+        if (std.mem.lastIndexOfScalar(u8, f[0], '/')) |slash| try proj.dir.createDirPath(io, f[0][0..slash]);
+        try proj.dir.writeFile(io, .{ .sub_path = f[0], .data = f[1] });
+    }
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const bin_path = try std.fmt.allocPrint(a, "{s}/main", .{proj_path});
+    for ([_][]const u8{ "llvm", "qbe" }) |backend| {
+        const build_result = try std.process.run(std.testing.allocator, io, .{
+            .argv = &.{ noxcPath(), "build", "--backend", backend, main_path },
+            .environ_map = &env_map,
+        });
+        defer std.testing.allocator.free(build_result.stdout);
+        defer std.testing.allocator.free(build_result.stderr);
+        if (build_result.term != .exited or build_result.term.exited != 0) {
+            std.debug.print("build basarisiz ({s}), stderr: {s}\n", .{ backend, build_result.stderr });
+        }
+        try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+        const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+        defer std.testing.allocator.free(run_result.stdout);
+        defer std.testing.allocator.free(run_result.stderr);
+        try std.testing.expectEqualStrings("", run_result.stderr);
+        try std.testing.expectEqualStrings(expected, run_result.stdout);
+    }
+}
+
+test "NXL-003: kapsamdaki bir degisken (modul-duzeyi, yerel, parametre) ice aktarilan modul adini golgeler" {
+    try expectProjectOutput(&.{
+        .{ "nox.json", "{\"name\":\"proj\",\"entry\":\"main.nox\"}" },
+        .{ "clock.nox", "class FakeClock:\n    ms: int\n\n    def __init__(self: FakeClock, ms: int) -> None:\n        self.ms = ms\n\n    def advance(self: FakeClock, d: int) -> None:\n        self.ms = self.ms + d\n\n    def now(self: FakeClock) -> int:\n        return self.ms\n\ndef real_now() -> int:\n    return 999\n" },
+        .{ "main.nox", "import clock\nfrom clock import FakeClock\n\n" ++
+            "# modul-duzeyi degisken, `clock` modulunun adini tasir\nclock: FakeClock = FakeClock(10)\nclock.advance(5)\nprint(clock.now())\n\n" ++
+            "def local_shadow() -> int:\n    clock: FakeClock = FakeClock(1)\n    clock.advance(2)\n    return clock.now()\n\n" ++
+            "def param_shadow(clock: FakeClock) -> int:\n    clock.advance(100)\n    return clock.now()\n\n" ++
+            "print(local_shadow())\nprint(param_shadow(FakeClock(7)))\n" },
+    }, "15\n3\n107\n");
+}
+
+test "NXL-007: paket kendi nox.json adiyla ice aktarir (kok, ic ice modul, ad-dizini olan duzen) ve davranis iki arka uctur" {
+    try expectProjectOutput(&.{
+        .{ "nox.json", "{\"name\":\"widgets\",\"entry\":\"main.nox\"}" },
+        .{ "units.nox", "def twice(x: int) -> int:\n    return x * 2\n" },
+        .{ "shapes/area.nox", "from widgets.units import twice\n\ndef square_area(side: int) -> int:\n    return twice(side) * side // 2\n" },
+        .{ "main.nox", "import widgets.units\nfrom widgets.shapes.area import square_area\n\nprint(widgets.units.twice(21))\nprint(square_area(4))\n" },
+    }, "42\n16\n");
+}
+
+test "NXL-007 geriye uyum: proje adiyla ayni adli alt dizin varsa (<kok>/<ad>/modul.nox) eski cozumleme korunur" {
+    try expectProjectOutput(&.{
+        .{ "nox.json", "{\"name\":\"kit\",\"entry\":\"main.nox\"}" },
+        .{ "kit/core.nox", "def label() -> str:\n    return \"from-dir\"\n" },
+        .{ "core.nox", "def label() -> str:\n    return \"from-root\"\n" },
+        .{ "main.nox", "import kit.core\n\nprint(kit.core.label())\n" },
+    }, "from-dir\n");
+}

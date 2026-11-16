@@ -1,0 +1,40 @@
+import nox.template
+
+class Headers:
+    items: dict[str, str]
+
+    def __init__(self: Headers) -> None:
+        self.items = {}
+        self.items["a"] = "1"
+        self.items["b"] = "2"
+
+    def to_dict(self: Headers) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for k in self.items:
+            out[k] = self.items[k]
+        return out
+
+class Base:
+    def table(self: Base) -> dict[str, int]:
+        return {"x": 1, "y": 2}
+
+class Derived(Base):
+    pass
+
+def count(d: dict[str, str]) -> int:
+    return len(d)
+
+def build(h: Headers) -> str:
+    return nox.template.render("v={{ a }}-{{ b }}", h.to_dict())
+
+def use_base(b: Base) -> int:
+    return len(b.table())
+
+h: Headers = Headers()
+total: int = 0
+i: int = 0
+while i < 5000:
+    total = total + len(build(h)) + count(h.to_dict()) + len(h.to_dict()) + use_base(Derived())
+    i = i + 1
+print(total)
+print(build(h), h.to_dict()["b"], Derived().table()["y"])

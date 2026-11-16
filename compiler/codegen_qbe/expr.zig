@@ -402,6 +402,12 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
                 try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
                 const t = try self.newTemp();
                 try self.qbeLoad(t, g.info.qtype, g.info.qtype, addr);
+                // 2.2 limitasyon turu: modül düzeyi (üst düzey betik) Optional-ilkel global, daraltılmış bir gövdede çıplak skaler olarak okunur (yereller için olan FF.6.4 mekanizmasının aynısı).
+                if (g.info.heap == .boxed_scalar and self.narrowed_unbox.contains(name)) {
+                    const payload = try self.newTemp();
+                    try self.qbeLoad(payload, g.info.elem_qtype, g.info.elem_qtype, t);
+                    break :blk .{ .text = payload, .qtype = g.info.elem_qtype };
+                }
                 break :blk .{ .text = t, .qtype = g.info.qtype, .heap = g.info.heap, .elem_qtype = g.info.elem_qtype, .class_name = g.info.class_name, .elem_heap_info = g.info.elem_heap_info, .elem_is_str = g.info.elem_is_str, .dict_info = g.info.dict_info, .func_sig = g.info.func_sig, .fixed_int = g.info.fixed_int, .elem_fixed_int = g.info.elem_fixed_int };
             }
             break :blk try self.buildFunctionValueForIdentifier(name);
@@ -2002,7 +2008,22 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
         const short_pred = self.current_label;
         try self.qbeJmp(done_label);
         try self.qbeLabel(rhs_label);
+        // 2.2 limitasyon turu: sağ işlenen YALNIZCA soldaki koşulun sonucuna göre çalışır, bu yüzden checker'ın orada uyguladığı Optional daraltması (`x is None or x < y`,
+        // `x != None and x > 0`) codegen'de de geçerlidir: kutulu bir Optional-ilkel (`int | None` / `float | None`) sağ işlenende çıplak skaler olarak okunur. Önceden bu daraltma yalnızca
+        // `if`/`while`/üçlü ifadede yansıtılıyordu; `or`/`and` sağ işleneni `error.Unsupported` ile düşüyordu. `and`: sağ işlenen sol DOĞRUYKEN, `or`: sol YANLIŞKEN çalışır.
+        var rhs_narrowed: NameList = .{};
+        self.collectNarrowedBoxed(b.left.*, b.op == .and_, &rhs_narrowed);
+        const mc_snap = try self.snapshotModCache();
+        var was_narrowed: [8]bool = .{false} ** 8;
+        for (rhs_narrowed.slice(), 0..) |n, i| {
+            was_narrowed[i] = self.narrowed_unbox.contains(n);
+            try self.narrowed_unbox.put(self.allocator, n, {});
+        }
         const r = try self.genExpr(b.right.*);
+        for (rhs_narrowed.slice(), 0..) |n, i| if (!was_narrowed[i]) {
+            _ = self.narrowed_unbox.remove(n);
+        };
+        self.restoreModCache(mc_snap);
         // KRİTİK: `b.right` KEYFİ bir ifadedir — KENDİ İçİNDE BAŞKA bir
         // `and`/`or`/istisna-kontrolü/vb. İçEREBİLİR, bu YÜZDEN `genExpr`
         // döndüğünde "şu anki blok" ARTIK `rhs_label` OLMAYABİLİR (o alt-

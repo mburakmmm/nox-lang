@@ -336,6 +336,8 @@ const RequestCtx = struct {
     /// > 0 ise bekçi iş parçacığı bu süre (ms) dolunca bağlantıyı iptal eder (bkz. `Shared`); DNS + bağlanma aşaması da aynı süreyle sınırlıdır (`net_dial.zig`).
     shared: ?*Shared = null,
     timeout_ms: u64 = 0,
+    /// Boş değilse (v2.1.195): ad ÇÖZÜMLENMEDEN bu IP'ye bağlanılır (TLS adı/sertifikası yine URL'deki ana makine adına karşı doğrulanır). Sabitlenmiş istek havuzu, HTTP/3'ü ve vekili kullanmaz.
+    connect_ip: []const u8 = "",
 
     status: u16 = 0,
     response_body: []u8 = &.{},
@@ -346,6 +348,7 @@ const RequestCtx = struct {
 
     fn destroyOwned(self: *RequestCtx) void {
         self.allocator.free(self.url);
+        if (self.connect_ip.len > 0) self.allocator.free(self.connect_ip);
         if (self.body) |b| self.allocator.free(b);
         for (self.request_headers) |h| {
             self.allocator.free(h.name);
@@ -899,7 +902,7 @@ fn workerThreadFn(ctx: *RequestCtx) void {
     var alt_host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
     var alt_host: []const u8 = "";
     var alt_port: u16 = 443;
-    if (https and g_client_h3.load(.monotonic) == 1) {
+    if (https and ctx.connect_ip.len == 0 and g_client_h3.load(.monotonic) == 1) {
         if (uri.getHost(&alt_host_buf)) |hn| {
             alt_host = hn.bytes;
             alt_port = uri.port orelse 443;
@@ -914,7 +917,7 @@ fn workerThreadFn(ctx: *RequestCtx) void {
     var request_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer request_arena.deinit();
     var local_client: std.http.Client = .{ .allocator = request_arena.allocator(), .io = io };
-    const pooled = g_pool_size.load(.monotonic) > 0;
+    const pooled = g_pool_size.load(.monotonic) > 0 and ctx.connect_ip.len == 0;
     defer if (!pooled) {
         releaseSharedCa(&local_client); // `deinit`ten ÖNCE
         local_client.deinit();
@@ -925,7 +928,8 @@ fn workerThreadFn(ctx: *RequestCtx) void {
             return;
         }
     else blk: {
-        applyProxyEnv(&local_client, request_arena.allocator());
+        // Sabitlenmiş istek vekilsiz doğrudan gider (vekil adı çözer: sabitleme anlamını yitirirdi).
+        if (ctx.connect_ip.len == 0) applyProxyEnv(&local_client, request_arena.allocator());
         // iOS'ta sistem kökleri yalnızca bu yolla alınabilir: yüklenemezse istek başarısız olur. Diğer platformlarda yükleme başarısızlığı istemcinin kendi yoluna düşer (aynı hata).
         if (https and !adoptSharedCa(&local_client) and builtin.os.tag == .ios) {
             ctx.failed = true;
@@ -974,6 +978,26 @@ fn workerThreadFn(ctx: *RequestCtx) void {
                 return;
             };
             net_dial.setTunnel(null);
+        }
+        if (ctx.connect_ip.len > 0) pin: {
+            var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
+            const hn = uri.getHost(&host_buf) catch {
+                net_dial.end();
+                ctx.failed = true;
+                return;
+            };
+            const port: u16 = uri.port orelse (if (https) @as(u16, 443) else @as(u16, 80));
+            const pin: net_dial.Pin = .{ .ip = ctx.connect_ip };
+            net_dial.setPin(&pin);
+            direct_conn = client.connectTcp(hn, port, if (https) .tls else .plain) catch {
+                net_dial.setPin(null);
+                net_dial.end();
+                if (net_dial.timedOut()) if (ctx.shared) |sh| sh.timed_out.store(true, .release);
+                ctx.failed = true;
+                return;
+            };
+            net_dial.setPin(null);
+            break :pin;
         }
         var req = client.request(ctx.method, uri, .{
             .extra_headers = ctx.request_headers,
@@ -1204,6 +1228,8 @@ fn doRequest(
     timeout_ms: i64,
     /// `true` ise başarısız bir istek de (`ok == 0`, `error_kind` ile) tutamaç olarak döner; `false` ise `null` (eski davranış).
     keep_failed: bool,
+    /// Boş değilse bağlantı bu IP'ye (literal) kurulur; ad çözümlenmez.
+    connect_ip: []const u8,
 ) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const gpa = state.allocator();
@@ -1243,7 +1269,16 @@ fn doRequest(
         .request_headers = headers_copy,
         .write_fd = fds[1],
         .timeout_ms = if (timeout_ms > 0) @intCast(timeout_ms) else 0,
+        .connect_ip = if (connect_ip.len > 0) (gpa.dupe(u8, connect_ip) catch "") else "",
     };
+    // Sabitleme istendi ama IP kopyalanamadı: sabitlemeden SESSİZCE vazgeçme (güvenlik), isteği reddet.
+    if (connect_ip.len > 0 and ctx.connect_ip.len == 0) {
+        ctx.destroyOwned();
+        gpa.destroy(ctx);
+        closeFd(fds[0]);
+        closeFd(fds[1]);
+        return null;
+    }
 
     if (timeout_ms > 0) {
         const shared = std.heap.page_allocator.create(Shared) catch {
@@ -1349,11 +1384,11 @@ pub fn parseMethod(name: []const u8) ?std.http.Method {
 }
 
 export fn nox_http_get_raw(rt: ?*anyopaque, url: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
-    return doRequest(rt, .GET, url, null, headers, 0, false);
+    return doRequest(rt, .GET, url, null, headers, 0, false, "");
 }
 
 export fn nox_http_post_raw(rt: ?*anyopaque, url: ?[*:0]const u8, body: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
-    return doRequest(rt, .POST, url, body, headers, 0, false);
+    return doRequest(rt, .POST, url, body, headers, 0, false, "");
 }
 
 /// Genel istek: `method` GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS (büyük harf) olmalıdır; bilinmeyen ad sessizce GET'e
@@ -1372,7 +1407,26 @@ export fn nox_http_request_raw(
     const m = parseMethod(str_mod.nox_str_slice(method orelse return null)) orelse return null;
     // `std.http` yalnızca POST/PUT/PATCH'te gövde gönderebilir; diğer metodlarda gövde SESSİZCE düşürülmez, istek reddedilir.
     if (has_body != 0 and !m.requestHasBody()) return null;
-    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true);
+    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true, "");
+}
+
+/// `nox_http_request_raw` + `connect_ip` (v2.1.195): ad çözümlenmeden `connect_ip` literal adresine bağlanır (SSRF/DNS-rebinding savunması: önce `nox.dns.resolve`, adresleri doğrula, sonra bu IP'ye bağlan).
+/// TLS sunucu adı ve sertifika doğrulaması URL'deki ORİJİNAL ana makine adına karşı yapılır. Geçersiz bir IP literal'i isteği başarısız yapar (ad çözümlemesine DÜŞMEZ).
+export fn nox_http_request_pinned_raw(
+    rt: ?*anyopaque,
+    method: ?[*:0]const u8,
+    url: ?[*:0]const u8,
+    body: ?[*:0]const u8,
+    has_body: i32,
+    headers: ?*anyopaque,
+    connect_ip: ?[*:0]const u8,
+    timeout_ms: i64,
+) callconv(.c) ?*anyopaque {
+    const m = parseMethod(str_mod.nox_str_slice(method orelse return null)) orelse return null;
+    if (has_body != 0 and !m.requestHasBody()) return null;
+    const ip = str_mod.nox_str_slice(connect_ip orelse return null);
+    if (ip.len == 0) return null;
+    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true, ip);
 }
 
 /// 0 = başarılı, 1 = zaman aşımı, 2 = diğer hata, 3 = geçersiz istek (tutamaç `null`: bilinmeyen metod, gövdesiz metodda gövde,
@@ -1408,14 +1462,44 @@ export fn nox_http_response_body(rt: ?*anyopaque, h: ?*anyopaque) callconv(.c) ?
 export fn nox_http_response_headers(rt: ?*anyopaque, h: ?*anyopaque) callconv(.c) ?*anyopaque {
     const ctx: *RequestCtx = @ptrCast(@alignCast(h orelse return null));
     const d = dict_mod.nox_dict_new(rt, 1) orelse return null;
+    // 2.2 limitasyon turu (Nova 16): aynı adlı yanıt başlıkları (birden çok `Set-Cookie`, `Link`, `Vary` ...) ÖNCEDEN sonuncusu dışında kayboluyordu. Şimdi (ad büyük/küçük harf duyarsız) tek anahtarda
+    // `\n` ile birleştirilir: sunucu tarafındaki `nox.http.multi` kuralının simetriği (`nox.strings.split(v, "\n")` ile ayrılabilir). İlk görülen yazım anahtar olur; yinelenmeyen başlıklar değişmez.
+    const gpa = ctx.allocator;
+    const Merged = struct { name: []const u8, value: []u8 };
+    var merged: std.ArrayListUnmanaged(Merged) = .empty;
+    defer {
+        for (merged.items) |m| gpa.free(m.value);
+        merged.deinit(gpa);
+    }
     for (ctx.response_headers) |header| {
-        const key_str = dupeToNoxStr(rt, header.name) orelse continue;
-        const value_str = dupeToNoxStr(rt, header.value) orelse continue;
+        var found: ?usize = null;
+        for (merged.items, 0..) |m, idx| {
+            if (std.ascii.eqlIgnoreCase(m.name, header.name)) {
+                found = idx;
+                break;
+            }
+        }
+        if (found) |idx| {
+            const old = merged.items[idx].value;
+            const joined = gpa.alloc(u8, old.len + 1 + header.value.len) catch continue;
+            @memcpy(joined[0..old.len], old);
+            joined[old.len] = '\n';
+            @memcpy(joined[old.len + 1 ..], header.value);
+            gpa.free(old);
+            merged.items[idx].value = joined;
+        } else {
+            const copy = gpa.dupe(u8, header.value) catch continue;
+            merged.append(gpa, .{ .name = header.name, .value = copy }) catch {
+                gpa.free(copy);
+                continue;
+            };
+        }
+    }
+    for (merged.items) |m| {
+        const key_str = dupeToNoxStr(rt, m.name) orelse continue;
+        const value_str = dupeToNoxStr(rt, m.value) orelse continue;
         dict_mod.nox_dict_set(rt, d, 1, 1, 0, @as(i64, @bitCast(@as(u64, @intFromPtr(key_str)))), @as(i64, @bitCast(@as(u64, @intFromPtr(value_str)))));
-        // `nox_dict_set` KENDİ kopyasını SAKLAR (str'i doğrudan payload
-        // olarak depolar, bkz. onun belge notu — "sahiplik ÇAĞIRANDAN
-        // devralınır") — `dupeToNoxStr`nin ürettiği YENİ referans artık
-        // dict'in mülkiyetindedir, burada AYRICA serbest bırakılmaz.
+        // `nox_dict_set` KENDİ kopyasını SAKLAR (str'i doğrudan payload olarak depolar — "sahiplik ÇAĞIRANDAN devralınır"): `dupeToNoxStr`nin ürettiği YENİ referans artık dict'in mülkiyetindedir.
     }
     return d;
 }

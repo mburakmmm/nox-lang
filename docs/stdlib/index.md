@@ -24,7 +24,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 |---|---|---|
 | none | pure computation | `strings`, `mathx`, `bigint`, `decimal`, `fraction`, `argparse`, `fnmatch`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `tar`, `zip`, `zstd`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `ed25519`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `glob`, `tempfile`, `sqlite`, `timezone`, `wasm` |
-| `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `grpc`, `grpc_server`, `udp` |
+| `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `grpc`, `grpc_server`, `udp`, `dns` |
 | `network` + `filesystem` | both | `transfer` |
 | `process` | the process and its children | `os`, `process`, `signal`, `terminal` |
 | `threads` | native threads | `thread`, `atomic` |
@@ -112,6 +112,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.websocket`](websocket.md) | WebSocket client and server connection |
 | [`nox.tls`](tls.md) | client TLS streams |
 | [`nox.udp`](udp.md) | UDP datagram sockets (loopback/telemetry/discovery), fiber-friendly receive |
+| [`nox.dns`](dns.md) | explicit DNS resolution (`resolve(host)`) for resolve-validate-connect SSRF defences; pairs with `nox.http.request(..., connect_ip=...)` |
 | [`nox.smtp`](smtp.md) | send e-mail |
 
 ### Databases

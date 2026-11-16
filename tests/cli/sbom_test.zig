@@ -46,3 +46,18 @@ test "noxc sbom: deterministik CycloneDX 1.5, native proje işaretlenir, kilitli
     // önbellekte olmayan bağımlılık "taranmadı" diye işaretlenir
     try std.testing.expect(std.mem.indexOf(u8, one, "\"nox:scanned\", \"value\": \"false\"") != null);
 }
+
+test "noxc sbom: yalnızca bin bildiren saf Nox paketi nox:native=false, nox:bin=true" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(io, &buf)];
+    try tmp.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\": \"demo\", \"entry\": \"main.nox\", \"bin\": {\"name\": \"demo\", \"path\": \"main.nox\"}, \"requires\": []}" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.nox", .data = "print(1)\n" });
+    const out = try runSbom(a, io, dir);
+    defer a.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"nox:native\", \"value\": \"false\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\"nox:bin\", \"value\": \"true\"") != null);
+}
