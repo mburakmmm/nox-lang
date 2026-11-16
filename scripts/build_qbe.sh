@@ -19,7 +19,9 @@ patched='emit(Ocopy, instr->cls, instr->to, SLOT(-slot_offset), R);'
 
 mkdir -p "$work"
 archive="$work/qbe-${version}.tar.xz"
-curl -fsSL -o "$archive" "$url"
+# Önce depodaki kopya (c9x.me kesintilerinde CI düşmesin); yoksa ağdan. Her iki durumda da aşağıdaki sağlama toplamı doğrulanır.
+local_copy="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/third_party/qbe/qbe-${version}.tar.xz"
+if [ -f "$local_copy" ]; then cp "$local_copy" "$archive"; else curl -fsSL -o "$archive" "$url"; fi
 if command -v sha256sum >/dev/null 2>&1; then actual="$(sha256sum "$archive" | awk '{print $1}')"; else actual="$(shasum -a 256 "$archive" | awk '{print $1}')"; fi
 if [ "$actual" != "$sha256" ]; then
   echo "build_qbe: sağlama toplamı uyuşmuyor (beklenen $sha256, gelen $actual)" >&2

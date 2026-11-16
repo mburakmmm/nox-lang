@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.192]
+
+### Altyapı (CI)
+
+- **QBE kaynak arşivi depoya alındı (`third_party/qbe/qbe-1.3.tar.xz`, 281 KB, MIT):** 2026-11-16'da `c9x.me` ulaşılamaz oldu (GitHub Actions koşucularından ve geliştirici makinesinden bağlantı zaman aşımı) ve QBE'yi oradan indiren her CI işi "qbe kur" adımında düştü; v2.1.187-191'in CI ve Release koşuları bu yüzden kırmızıydı (kodla ilgisiz). Arşiv Internet Archive'dan alındı ve `scripts/build_qbe.sh`'deki sabit SHA-256 (`d587905d...`) ile birebir doğrulandı. `ci.yml`, `stress.yml`, `external-fixtures.yml`, `release.yml` ve üç hizmet `Dockerfile`ı artık depodaki kopyayı kullanır; `scripts/build_qbe.sh` önce depodaki kopyayı, yoksa ağı kullanır (sağlama toplamı her iki durumda doğrulanır). Kaynak ve güncelleme adımları: `third_party/qbe/NOX_VENDOR.md`.
+
 ## [2.1.191]
 
 ### Performans + ÖNEMLİ DÜZELTME (2.2 aşama 12)

@@ -23,8 +23,9 @@ RUN curl -sSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.16.0/zig-aarch64
     && rm /tmp/zig.tar.xz
 ENV PATH="/opt/zig:${PATH}"
 
-RUN curl -sSL -o /tmp/qbe.tar.xz https://c9x.me/compile/release/qbe-1.3.tar.xz \
-    && tar xf /tmp/qbe.tar.xz -C /tmp \
+# QBE kaynağı depoda (c9x.me kesintisi; bkz. third_party/qbe/NOX_VENDOR.md)
+COPY third_party/qbe/qbe-1.3.tar.xz /tmp/qbe.tar.xz
+RUN tar xf /tmp/qbe.tar.xz -C /tmp \
     && make -C /tmp/qbe-1.3 -j"$(nproc)" \
     && cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe \
     && rm -rf /tmp/qbe.tar.xz /tmp/qbe-1.3
