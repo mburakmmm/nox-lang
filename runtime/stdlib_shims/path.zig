@@ -15,6 +15,12 @@ const abi_layout = @import("abi_layout");
 const bridge = @import("../async_rt/bridge.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
+
+/// Sonuç girdinin ALT DİZESİdir: girdi saf ASCII ise sonuç da ASCII (`len()` O(1) olur); aksi halde bilinmiyor (2.2 aşama 12: `len(basename(...))` her seferinde UTF-8 taraması yapıyordu).
+fn dupeSubstr(rt: ?*anyopaque, bytes: []const u8, input: [*:0]const u8) ?[*:0]u8 {
+    const state: u64 = if (str_mod.strAsciiState(input) == abi_layout.STR_ASCII_TRUE) abi_layout.STR_ASCII_TRUE else abi_layout.STR_ASCII_UNKNOWN;
+    return str_mod.allocStr(rt, bytes, state);
+}
 /// Dize API'si her konakta `/` üretir. `\` yalnızca girdi ayracıdır.
 const path_cap = 4096;
 
@@ -73,11 +79,15 @@ const STR_HEADER_SIZE = abi_layout.STR_HEADER_SIZE;
 /// yalnızca `..`/`.` NORMALİZASYONU YAPILMAZ, ki ZATEN ESKİ `std.fs.path.
 /// join` de YAPMIYORDU (davranış DEĞİŞMEDİ, yalnızca tahsis stratejisi).
 export fn nox_path_join_raw(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const a_slice = str_mod.nox_str_slice(a orelse return null);
-    const b_slice = str_mod.nox_str_slice(b orelse return null);
+    const pa = a orelse return null;
+    const pb = b orelse return null;
+    const a_slice = str_mod.nox_str_slice(pa);
+    const b_slice = str_mod.nox_str_slice(pb);
+    // Birleşik ASCII durumu: ikisi de ASCII ise ASCII (ayırıcı `/` ASCII'dir), aksi halde bilinmiyor.
+    const joined_state: u64 = if (str_mod.strAsciiState(pa) == abi_layout.STR_ASCII_TRUE and str_mod.strAsciiState(pb) == abi_layout.STR_ASCII_TRUE) abi_layout.STR_ASCII_TRUE else abi_layout.STR_ASCII_UNKNOWN;
 
-    if (a_slice.len == 0) return dupeToNoxStr(rt, b_slice);
-    if (b_slice.len == 0) return dupeToNoxStr(rt, a_slice);
+    if (a_slice.len == 0) return dupeSubstr(rt, b_slice, pb);
+    if (b_slice.len == 0) return dupeSubstr(rt, a_slice, pa);
 
     const a_ends_sep = isPathSep(a_slice[a_slice.len - 1]);
     const b_starts_sep = isPathSep(b_slice[0]);
@@ -88,7 +98,7 @@ export fn nox_path_join_raw(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u
     const raw = arc.nox_rc_alloc(rt, STR_HEADER_SIZE + total_len + 1) orelse return null;
     const base: [*]u8 = @ptrCast(raw);
     const header: *align(1) i64 = @ptrCast(base);
-    header.* = abi_layout.packStrHeader(total_len, abi_layout.STR_ASCII_UNKNOWN);
+    header.* = abi_layout.packStrHeader(total_len, joined_state);
     const data = base + STR_HEADER_SIZE;
     copyAsPosix(data[0..a_slice.len], a_slice);
     var off: usize = a_slice.len;
@@ -103,25 +113,28 @@ export fn nox_path_join_raw(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u
 }
 
 export fn nox_path_basename_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = str_mod.nox_str_slice(p orelse return null);
+    const pp = p orelse return null;
+    const slice = str_mod.nox_str_slice(pp);
     var buf: [path_cap]u8 = undefined;
-    return dupeToNoxStr(rt, std.fs.path.basenamePosix(posixPath(&buf, slice)));
+    return dupeSubstr(rt, std.fs.path.basenamePosix(posixPath(&buf, slice)), pp);
 }
 
 /// `std.fs.path.dirname` bir üst dizin YOKSA (ör. `"foo.txt"`) `null`
 /// döner — Nox `str`ın nullable bir karşılığı OLMADIĞINDAN bu durumda boş
 /// dize (`""`) döndürülür (belgelenen, kasıtlı bir varsayılan).
 export fn nox_path_dirname_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = str_mod.nox_str_slice(p orelse return null);
+    const pp = p orelse return null;
+    const slice = str_mod.nox_str_slice(pp);
     var buf: [path_cap]u8 = undefined;
     const d = std.fs.path.dirnamePosix(posixPath(&buf, slice)) orelse "";
-    return dupeToNoxStr(rt, d);
+    return dupeSubstr(rt, d, pp);
 }
 
 export fn nox_path_extension_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
-    const slice = str_mod.nox_str_slice(p orelse return null);
+    const pp = p orelse return null;
+    const slice = str_mod.nox_str_slice(pp);
     var buf: [path_cap]u8 = undefined;
-    return dupeToNoxStr(rt, extensionPosix(posixPath(&buf, slice)));
+    return dupeSubstr(rt, extensionPosix(posixPath(&buf, slice)), pp);
 }
 
 /// Diğer "sonuç" extern'lerin (`nox_fs_last_op_ok` vb.) AYNI kuralı —

@@ -847,11 +847,13 @@ pub fn build(b: *std.Build) void {
     });
 
     // Faz 9.0 F6: `-Dsanitize-thread` çalışma zamanını (fiber geçişleri `__tsan_*` ile açıklanmış) ThreadSanitizer ile derler; `NOX_SANITIZE_THREAD=1 noxc build --backend llvm` ile birlikte kullanılır (scripts/tsan_check.sh).
+    // Profil için: Release çalışma zamanı nesnesi varsayılan olarak strip'lidir (ikili boyutu); `-Dkeep-symbols` sembolleri korur (`sample`/`perf` işlev adlarını görür).
+    const keep_symbols = b.option(bool, "keep-symbols", "Release noxrt.o'da sembolleri koru (profil çıkarmak için; ikili boyutunu büyütür)") orelse false;
     const sanitize_thread = b.option(bool, "sanitize-thread", "noxrt.o'yu ThreadSanitizer ile derle (yalnız ana makine, hosted; scripts/tsan_check.sh)") orelse false;
     const noxrt_mod = b.createModule(.{
         .sanitize_thread = if (sanitize_thread) true else null,
         // 2.2 aşama 9: Release* çalışma zamanı nesnesi DWARF taşımaz (kullanıcı ikilisine zaten girmez: bağlayıcı `--strip-debug`; paketlenen `noxrt.o` Linux'ta 30 MB'tan küçülür).
-        .strip = if (optimize == .Debug or target.result.os.tag == .windows) null else true,
+        .strip = if (optimize == .Debug or keep_symbols or target.result.os.tag == .windows) null else true,
         // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
         // freestanding hedeflerde `runtime/lib_freestanding.zig` KÖK olarak
         // kullanılır (SADECE ARC/scheduler/dict/handle çekirdeği — bkz. onun

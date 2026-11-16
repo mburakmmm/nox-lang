@@ -14,6 +14,17 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.194]
+
+### Performans (2.2 aşama 2/12, toplu)
+
+- **Koleksiyonlarda karma değeri bir kez hesaplanır:** `_hx_find_h`/`_hx_find_slot_h` (`Set.add`, `Counter.add`, `OrderedDict.set`, `LRUCache.get/put` önceden `__nox_hash`i 2-3 kez çağırıyordu); `Set` 20,4x -> 18,8x, `LRUCache` 12,0x -> 11,1x (C'ye oran). Kalan fark yapısaldır (genel karma çağrısı + her çağrı sonrası istisna denetimi); `Deque` ring buffer'a çevrilmedi: popla bırakılan nesnelerin yıkıcılarını (`__del__`) geciktirirdi.
+- **`nox.path` sonuçları ASCII bayrağı taşır** (`join` iki girdi ASCII ise, `basename`/`dirname`/`extension` girdi ASCII ise): `len(basename(...))` her seferinde UTF-8 taraması yapıyordu (profilde `nox_str_char_count` %9, şimdi 0). UTF-8 yol uzunlukları Python'la doğrulandı.
+- **`nox_str_concat_n` tamsayı biçimlendirme:** `log10` tabanlı O(1) uzunluk + iki basamak birden yazım (önceden basamak başına bölme döngüsü, iki geçiş); `fstring_300k` 5,3 -> 4,4 ms. Birim test 20 değerle (0, 9/10, 99/100, 999/1000, negatifler, `i64` uçları) çapraz denenir.
+- **`-Dkeep-symbols`:** Release `noxrt.o` varsayılan strip'lidir; profil için semboller korunabilir (`zig build -Doptimize=ReleaseFast -Dkeep-symbols=true --prefix /tmp/zsym`, ardından `sample`). Bu seçenek, `path` ve f-string profillerinde darboğazları bulmayı sağladı.
+- **Sürüm notları ve ölçümler:** `docs/whatsnew/2.2.md` performans tablosu (önce/sonra, C'ye göre kalan açıklar); `benchmarks/RESULTS.md` "2.2 son durum" (39 iş, nox/C geometrik ortalaması 2,05, nox/Python 0,42); taban çizgisi güncellendi.
+- v2.1.187-193'te yayınlanamayan sürümlerin içeriği (regresyon kapısı, f-string/zincir birleştirme, sarkan işaretçi düzeltmesi, QBE kaynağının depoya alınması) bu sürümle yayınlanır.
+
 ## [2.1.193]
 
 ### Altyapı (CI)

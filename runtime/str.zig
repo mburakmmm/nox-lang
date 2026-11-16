@@ -155,7 +155,7 @@ pub fn strByteLen(str_ptr: [*:0]const u8) u64 {
     return abi_layout.unpackStrLength(strHeaderField(str_ptr).*);
 }
 
-fn strAsciiState(str_ptr: [*:0]const u8) u64 {
+pub fn strAsciiState(str_ptr: [*:0]const u8) u64 {
     return abi_layout.unpackStrAsciiState(strHeaderField(str_ptr).*);
 }
 
@@ -310,28 +310,43 @@ pub export fn nox_str_concat_n(rt: ?*anyopaque, parts: ?[*]const i64, n: i64) ?[
     return @ptrCast(data);
 }
 
-/// `v`nin ondalık yazımının bayt uzunluğu (eksi işareti dahil; `i64` en küçük değeri dahil).
+/// `v`nin ondalık yazımının bayt uzunluğu (eksi işareti dahil; `i64` en küçük değeri dahil). `log10` tabanlı O(1) (önceden basamak başına bir bölme döngüsü).
 fn intDecimalLen(v: i64) u64 {
-    var u: u64 = if (v < 0) 0 -% @as(u64, @bitCast(v)) else @as(u64, @bitCast(v));
-    var len: u64 = if (v < 0) 1 else 0;
-    while (true) {
-        len += 1;
-        u /= 10;
-        if (u == 0) break;
-    }
-    return len;
+    const u: u64 = if (v < 0) 0 -% @as(u64, @bitCast(v)) else @as(u64, @bitCast(v));
+    const digits: u64 = if (u == 0) 1 else @as(u64, std.math.log10_int(u)) + 1;
+    return digits + @intFromBool(v < 0);
 }
 
-/// `v`yi `dst`ye ondalık yazar, yazılan bayt sayısını döner (`intDecimalLen(v)` kadar).
+const DIGIT_PAIRS: *const [200]u8 = blk: {
+    var t: [200]u8 = undefined;
+    for (0..100) |i| {
+        t[2 * i] = '0' + @as(u8, @intCast(i / 10));
+        t[2 * i + 1] = '0' + @as(u8, @intCast(i % 10));
+    }
+    const final = t;
+    break :blk &final;
+};
+
+/// `v`yi `dst`ye ondalık yazar, yazılan bayt sayısını döner (`intDecimalLen(v)` kadar). Sondan başa, iki basamak birden.
 fn writeIntDecimal(dst: [*]u8, v: i64) usize {
     var u: u64 = if (v < 0) 0 -% @as(u64, @bitCast(v)) else @as(u64, @bitCast(v));
     const len: usize = @intCast(intDecimalLen(v));
     var pos: usize = len;
-    while (true) {
+    while (u >= 100) {
+        const r: usize = @intCast(u % 100);
+        u /= 100;
+        pos -= 2;
+        dst[pos] = DIGIT_PAIRS[2 * r];
+        dst[pos + 1] = DIGIT_PAIRS[2 * r + 1];
+    }
+    if (u >= 10) {
+        const r: usize = @intCast(u);
+        pos -= 2;
+        dst[pos] = DIGIT_PAIRS[2 * r];
+        dst[pos + 1] = DIGIT_PAIRS[2 * r + 1];
+    } else {
         pos -= 1;
-        dst[pos] = @intCast('0' + u % 10);
-        u /= 10;
-        if (u == 0) break;
+        dst[pos] = @intCast('0' + u);
     }
     if (v < 0) dst[0] = '-';
     return len;
@@ -345,13 +360,13 @@ test "nox_str_concat_n: str + int parçaları str(x) + zinciriyle birebir aynı 
     defer nox_str_release(rt, colon);
     const tail = nox_str_from_bytes(rt, " caf\xc3\xa9") orelse return error.AllocFailed;
     defer nox_str_release(rt, tail);
-    const cases = [_]i64{ 0, 7, -1, 42, -42, 1234567890123, std.math.maxInt(i64), std.math.minInt(i64) };
+    const cases = [_]i64{ 0, 7, 9, 10, 99, 100, 101, 999, 1000, -1, -9, -10, -99, -100, 42, -42, 12345, 1234567890123, std.math.maxInt(i64), std.math.minInt(i64) };
     for (cases) |a| {
         for (cases) |b| {
             const parts = [_]i64{ 1, a, 0, @intCast(@intFromPtr(colon)), 1, b, 0, @intCast(@intFromPtr(tail)) };
             const got = nox_str_concat_n(rt, &parts, 4) orelse return error.ConcatFailed;
             defer nox_str_release(rt, got);
-            var buf: [96]u8 = undefined;
+            var buf: [128]u8 = undefined;
             const want = try std.fmt.bufPrint(&buf, "{d}:{d} caf\xc3\xa9", .{ a, b });
             try std.testing.expectEqualStrings(want, std.mem.span(got));
             try std.testing.expectEqual(@as(u64, want.len), strByteLen(got));

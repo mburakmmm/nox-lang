@@ -47,12 +47,12 @@
 # `list[int]` (0 = boş, değer = `items` indeksi + 1), doğrusal problama, yük <= 0.5. Yardımcılar
 # `.append()` ÇAĞIRMAZ (parametre listesine append desteklenmez); büyütme/yeniden kurma çağıranın
 # yerel dansıyla yapılır.
-def _hx_find[T](items: list[T], slots: list[int], v: T) -> int:
+def _hx_find_h[T](items: list[T], slots: list[int], v: T, h: int) -> int:
     cap: int = len(slots)
     if cap == 0:
         return -1
     mask: int = cap - 1
-    pos: int = __nox_hash(v) & mask
+    pos: int = h & mask
     probes: int = 0
     while probes < cap:
         s: int = slots[pos]
@@ -65,13 +65,17 @@ def _hx_find[T](items: list[T], slots: list[int], v: T) -> int:
         probes = probes + 1
     return -1
 
+# 2.2 aşama 12: karma değeri çağıran tarafından bir kez hesaplanıp `find` ve `place`e verilir (önceden `add` yolu `__nox_hash`i iki kez çağırıyordu).
+def _hx_find[T](items: list[T], slots: list[int], v: T) -> int:
+    return _hx_find_h(items, slots, v, __nox_hash(v))
+
 # `_hx_find` gibi, ama bulunan SLOTUN konumunu döndürür (silme için); yoksa -1.
-def _hx_find_slot[T](items: list[T], slots: list[int], v: T) -> int:
+def _hx_find_slot_h[T](items: list[T], slots: list[int], v: T, h: int) -> int:
     cap: int = len(slots)
     if cap == 0:
         return -1
     mask: int = cap - 1
-    pos: int = __nox_hash(v) & mask
+    pos: int = h & mask
     probes: int = 0
     while probes < cap:
         s: int = slots[pos]
@@ -82,6 +86,9 @@ def _hx_find_slot[T](items: list[T], slots: list[int], v: T) -> int:
         pos = (pos + 1) & mask
         probes = probes + 1
     return -1
+
+def _hx_find_slot[T](items: list[T], slots: list[int], v: T) -> int:
+    return _hx_find_slot_h(items, slots, v, __nox_hash(v))
 
 def _hx_place(slots: list[int], h: int, idx: int) -> None:
     mask: int = len(slots) - 1
@@ -266,7 +273,8 @@ class Set[T]:
         return _hx_find(self._items, self._slots, v) >= 0
 
     def add(self: Set, v: T) -> None:
-        if _hx_find(self._items, self._slots, v) >= 0:
+        h: int = __nox_hash(v)
+        if _hx_find_h(self._items, self._slots, v, h) >= 0:
             return
         items: list[T] = self._items
         items.append(v)
@@ -277,7 +285,7 @@ class Set[T]:
             else:
                 self._slots = _hx_rebuild(items, _hx_cap_for(len(items), len(self._slots)))
         else:
-            _hx_place(self._slots, __nox_hash(v), len(items) - 1)
+            _hx_place(self._slots, h, len(items) - 1)
 
     def remove(self: Set, v: T) -> bool:
         pos: int = _hx_find_slot(self._items, self._slots, v)
@@ -358,7 +366,8 @@ class Counter[T]:
         return _hx_find(self._keys, self._slots, v)
 
     def add(self: Counter, v: T) -> None:
-        idx: int = self._index_of(v)
+        h: int = __nox_hash(v)
+        idx: int = _hx_find_h(self._keys, self._slots, v, h)
         if idx < 0:
             keys: list[T] = self._keys
             counts: list[int] = self._counts
@@ -369,7 +378,7 @@ class Counter[T]:
             if len(keys) * 2 > len(self._slots):
                 self._slots = _hx_rebuild(keys, _hx_cap_for(len(keys), len(self._slots)))
             else:
-                _hx_place(self._slots, __nox_hash(v), len(keys) - 1)
+                _hx_place(self._slots, h, len(keys) - 1)
         else:
             self._counts[idx] = self._counts[idx] + 1
 
@@ -438,7 +447,8 @@ class OrderedDict[K, V]:
         return self._index_of(k) >= 0
 
     def set(self: OrderedDict, k: K, v: V) -> None:
-        idx: int = self._index_of(k)
+        h: int = __nox_hash(k)
+        idx: int = _hx_find_h(self._keys, self._slots, k, h)
         if idx >= 0:
             self._values[idx] = v
         else:
@@ -457,7 +467,7 @@ class OrderedDict[K, V]:
                 else:
                     self._slots = _hx_rebuild(keys, _hx_cap_for(len(keys), len(self._slots)))
             else:
-                _hx_place(self._slots, __nox_hash(k), len(keys) - 1)
+                _hx_place(self._slots, h, len(keys) - 1)
 
     def get(self: OrderedDict, k: K) -> V:
         idx: int = self._index_of(k)
@@ -544,8 +554,8 @@ class LRUCache[K, V]:
         # Sıkıştırma sonrası canlı girdi sayısının 2 katı kadar ekleme payı bırakılır (aksi halde her ~n/40 eklemede yeniden kurulurdu).
         self._slots = _hx_rebuild(new_keys, _hx_cap_for(len(new_keys) * 2, len(self._slots)))
 
-    # Girdiyi (anahtar+değer) listelerin sonuna ekler ve karma dizinine yerleştirir.
-    def _append(self: LRUCache, k: K, v: V) -> None:
+    # Girdiyi (anahtar+değer) listelerin sonuna ekler ve karma dizinine yerleştirir (`h`: `k`nin karma değeri, çağıran bir kez hesaplar).
+    def _append(self: LRUCache, k: K, v: V, h: int) -> None:
         keys: list[K] = self._keys
         values: list[V] = self._values
         dead: list[bool] = self._dead
@@ -561,11 +571,10 @@ class LRUCache[K, V]:
             else:
                 self._slots = _hx_rebuild(keys, _hx_cap_for(len(keys), len(self._slots)))
         else:
-            _hx_place(self._slots, __nox_hash(k), len(keys) - 1)
+            _hx_place(self._slots, h, len(keys) - 1)
 
-    # `k` canlı girdisini ölü işaretler (karma yuvası mezar taşı olur).
-    def _kill(self: LRUCache, k: K) -> None:
-        pos: int = _hx_find_slot(self._keys, self._slots, k)
+    # Karma yuvası `pos`taki canlı girdiyi ölü işaretler (yuva mezar taşı olur).
+    def _kill_at(self: LRUCache, pos: int) -> None:
         idx: int = self._slots[pos] - 1
         self._slots[pos] = -1
         self._dead[idx] = True
@@ -576,22 +585,25 @@ class LRUCache[K, V]:
             self._compact()
 
     def get(self: LRUCache, k: K) -> V:
-        idx: int = self._index_of(k)
-        if idx < 0:
+        h: int = __nox_hash(k)
+        pos: int = _hx_find_slot_h(self._keys, self._slots, k, h)
+        if pos < 0:
             raise KeyError("key not in LRUCache")
+        idx: int = self._slots[pos] - 1
         v: V = self._values[idx]
         if idx != len(self._keys) - 1:
-            self._kill(k)
-            self._append(k, v)
+            self._kill_at(pos)
+            self._append(k, v, h)
             self._maybe_compact()
         return v
 
     def put(self: LRUCache, k: K, v: V) -> None:
-        idx: int = self._index_of(k)
-        if idx >= 0:
-            self._kill(k)
+        h: int = __nox_hash(k)
+        pos: int = _hx_find_slot_h(self._keys, self._slots, k, h)
+        if pos >= 0:
+            self._kill_at(pos)
             self._n = self._n - 1
-        self._append(k, v)
+        self._append(k, v, h)
         self._n = self._n + 1
         if self._n > self.capacity:
             self._evict_oldest()
@@ -601,7 +613,7 @@ class LRUCache[K, V]:
         i: int = self._first
         while self._dead[i]:
             i = i + 1
-        self._kill(self._keys[i])
+        self._kill_at(_hx_find_slot(self._keys, self._slots, self._keys[i]))
         self._n = self._n - 1
         self._first = i + 1
 

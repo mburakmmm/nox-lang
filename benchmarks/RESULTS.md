@@ -1809,3 +1809,51 @@ Okuma: C'nin yanında yalnızca "iş aynı" satırlar adildir. `str_split` ilk C
 | `list` -> işaretçi, öğe başına (sıfır kopya) | 0,07 | 0,08 | 0,09 | - | 1,14 |
 
 Sonuç: çağrı maliyeti, tramplen ve sıfır kopyalı sıralama C ile aynıdır; kalan fark geri çağrının fazladan bir dolaylı çağrısı (1 ns) ve kopyalı liste sıralamasıdır (0,15 ns/öğe). `nox_bulk_sum_1M_x100` (aynı toplamın Nox döngüsüyle yazılmışı) C'nin 1,8x'idir: bu FFI değil, döngü vektörleştirmesidir (aşama 12). HTTP/IO: v2.1.169 ölçümü (`wrk -t4 -c100`, "ok" yanıtı) Nox 273k istek/s, tek iş parçacıklı C kqueue sunucusu 251k, Go `net/http` 118k; `fs` yazma+okuma (1 MiB x 8) C ile aynı (3,0 vs 3,1 ms, `stdlib_perf2`).
+
+## 2.2 son durum (v2.1.194): tüm 39 iş
+
+`benchmarks/gate.py` kümeleri (Apple M4, ReleaseFast, ortanca, 5 tekrar). C sütunu `-` ise C standart kütüphanesinde karşılığı yoktur. Nox/C < 1: Nox C'den hızlı.
+
+| iş | nox ms | C ms | Python ms | nox/C | nox/Python |
+|---|---:|---:|---:|---:|---:|
+| `base64_decode_4MB` | 1.2 | 1.2 | 1.3 | 0.99 | 0.92 |
+| `base64_encode_4MB` | 1.4 | 1.2 | 1.9 | 1.13 | 0.72 |
+| `bigint_factorial_3000_str` | 2.9 | 2.1 | 4.0 | 1.37 | 0.73 |
+| `counter_add_500k` | 2.5 | 0.40 | 19.7 | 6.32 | 0.13 |
+| `csv_parse_50k_rows` | 5.6 | 1.1 | 17.8 | 5.10 | 0.32 |
+| `deque_push_pop_1M` | 12.2 | 0.51 | 42.7 | 23.97 | 0.29 |
+| `dict_str_insert_lookup_300k` | 37.2 | 14.8 | 63.0 | 2.51 | 0.59 |
+| `fnmatch_200k` | 19.3 | 24.1 | 57.2 | 0.80 | 0.34 |
+| `fs_write_read_1MiB_x8` | 3.5 | 3.3 | 4.3 | 1.09 | 0.83 |
+| `fstring_300k` | 4.4 | 2.6 | 29.0 | 1.69 | 0.15 |
+| `gzip_compress_4MB` | 2.6 | - | 6.5 | - | 0.39 |
+| `gzip_decompress_4MB` | 0.92 | 0.69 | 0.88 | 1.33 | 1.05 |
+| `heap_push_pop_200k` | 23.0 | 6.7 | 67.7 | 3.43 | 0.34 |
+| `hmac_sha256_20k` | 3.1 | 6.6 | 23.6 | 0.47 | 0.13 |
+| `json_dump_50k_objs` | 6.0 | - | 16.1 | - | 0.37 |
+| `json_parse_50k_objs` | 6.3 | - | 18.4 | - | 0.34 |
+| `lru_get_put_300k` | 11.0 | 0.97 | 28.7 | 11.36 | 0.38 |
+| `path_join_basename_300k` | 14.0 | 4.3 | 108.7 | 3.27 | 0.13 |
+| `random_3M` | 15.0 | - | 66.9 | - | 0.22 |
+| `regex_find_all_digits` | 3.7 | - | 3.4 | - | 1.09 |
+| `regex_replace_digits` | 4.2 | - | 3.9 | - | 1.06 |
+| `set_add_contains_200k` | 5.9 | 0.29 | 9.4 | 19.98 | 0.62 |
+| `sha1_md5_64KiB_x16` | 2.1 | 1.6 | 1.5 | 1.34 | 1.40 |
+| `sha256_64KiB_x128` | 3.1 | 2.7 | 2.8 | 1.14 | 1.12 |
+| `sha512_64KiB_x16` | 1.5 | 0.62 | 0.63 | 2.41 | 2.39 |
+| `sort_1M_ints` | 68.7 | 73.1 | 262.2 | 0.94 | 0.26 |
+| `sort_200k_strs` | 41.4 | 31.9 | 51.4 | 1.30 | 0.80 |
+| `str_build_join_200k` | 4.5 | 0.80 | 9.8 | 5.68 | 0.46 |
+| `str_concat_1M` | 2.7 | 0.27 | 28.0 | 10.21 | 0.10 |
+| `str_find_300k_small` | 7.6 | 1.4 | 23.8 | 5.25 | 0.32 |
+| `str_replace_x5` | 5.6 | 1.9 | 11.7 | 2.90 | 0.48 |
+| `str_split_200k_x5` | 11.3 | 18.4 | 14.5 | 0.62 | 0.78 |
+| `str_upper_lower_trim_x20` | 4.9 | 58.2 | 13.9 | 0.08 | 0.35 |
+| `time_from_epoch_to_str_100k` | 11.5 | 32.1 | 133.2 | 0.36 | 0.09 |
+| `toml_parse_3000_tables` | 3.7 | - | 18.2 | - | 0.21 |
+| `unicode_nfc_x20` | 8.7 | - | 5.6 | - | 1.55 |
+| `url_parse_100k` | 48.0 | - | 131.8 | - | 0.36 |
+| `url_percent_roundtrip_100k` | 63.1 | - | 184.5 | - | 0.34 |
+| `uuid4_100k` | 27.7 | - | 131.1 | - | 0.21 |
+
+Geometrik ortalama: nox/C = **2.05** (28 iş), nox/Python = **0.42** (39 iş).
