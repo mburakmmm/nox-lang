@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.188]
+
+### Performans (2.2 aşama 2/12)
+
+- **Koleksiyon karma dizini büyütme/sıkıştırma 20x hızlandı:** `_hx_rebuild` tablo yuvalarını `cap` kez `append(0)` ile dolduruyordu (524 288 yuvada 1,6 ms); `[0] * cap` tek tahsis + sıfırlama (0,08 ms). `Set`, `Counter`, `OrderedDict`, `LRUCache` ortak kullanır: `set_add_contains_200k` C'nin 22,6x'inden 16,8x'ine, `lru_get_put_300k` 17x'ten 12,2x'e, `counter_add_500k` 6,1x'ten 5,4x'e. Ölçüm bulgusu: `contains` ~10 ns (IR'de ARC yok: yalnızca çağrı + istisna denetimi); kalan fark genel karma çağrısı ve her çağrı sonrası bekleyen-istisna denetimidir (derleyici çalışması).
+- Taban çizgisi (`benchmarks/baseline.json`) güncellendi.
+
 ## [2.1.187]
 
 ### Performans / ölçüm (2.2 aşama 2, 4, 7)

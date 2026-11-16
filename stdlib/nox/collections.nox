@@ -91,11 +91,7 @@ def _hx_place(slots: list[int], h: int, idx: int) -> None:
     slots[pos] = idx + 1
 
 def _hx_rebuild[T](items: list[T], cap: int) -> list[int]:
-    slots: list[int] = []
-    i: int = 0
-    while i < cap:
-        slots.append(0)
-        i = i + 1
+    slots: list[int] = [0] * cap  # tek tahsis + sıfırlama (cap kez append(0) 20x yavaştı)
     j: int = 0
     while j < len(items):
         _hx_place(slots, __nox_hash(items[j]), j)
