@@ -14,6 +14,12 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.193]
+
+### Altyapı (CI)
+
+- `external-fixtures.yml`: nox-lang `nox-lang/` alt dizinine çıkarıldığından QBE arşiv yolu `nox-lang/third_party/qbe/...` (2.1.192'de çalışma alanı köküne göre yazılmıştı).
+
 ## [2.1.192]
 
 ### Altyapı (CI)
