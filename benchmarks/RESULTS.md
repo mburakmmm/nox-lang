@@ -1775,10 +1775,10 @@ Açık (sonraki dilimler): `Deque` iki-liste tasarımı (halka tampon ~2x kazand
 | `str_split_200k_x5` (her parça ayrı `str`/`strndup`) | 10,7 | 20,5 | **0,52** | 15,1 |
 | `str_replace_x5` | 5,6 | 3,2 | 1,7 | 11,6 |
 | `str_find_300k_small` | 11,5 | 1,5 | 7,6 | 24,0 |
-| `str_upper_lower_trim_x20` | 5,3 | 0,4 | 12 | 13,9 |
+| `str_upper_lower_trim_x20` | 5,3 | 58,2 | **0,09** | 14,0 |
 | `str_concat_1M` | 2,7 | 0,3 | 9,9 | 27,8 |
 | `fstring_300k` | 13,4 | 2,5 | 5,5 | 29,1 |
-| `base64_encode_4MB` / `decode` | 1,4 / 1,2 | 1,2 / 0,4 | 1,15 / 2,8 | 1,9 / 1,3 |
+| `base64_encode_4MB` / `decode` | 1,4 / 1,2 | 1,2 / 1,2 | 1,13 / 0,96 | 1,9 / 1,3 |
 | `sha256_64KiB_x128` | 3,1 | 2,7 | 1,13 | 2,8 |
 | `gzip_decompress_4MB` | 0,9 | 0,7 | 1,3 | 0,9 |
 | `csv_parse_50k_rows` (C yalnızca satır sayar) | 5,4 | 1,1 | 4,8 | 18,3 |
@@ -1787,6 +1787,8 @@ Açık (sonraki dilimler): `Deque` iki-liste tasarımı (halka tampon ~2x kazand
 | `dict_str_insert_lookup_300k` | 36,6 | 15,4 | 2,4 | 66,2 |
 | `sort_1M_ints` | 67,5 | 73,2 | **0,92** | 263,0 |
 | `sort_200k_strs` | 41,5 | 31,9 | 1,3 | 51,7 |
+
+**Düzeltme (v2.1.189):** ilk C sürümünde kullanılmayan çıktılar (`upper_lower_trim` ve `base64_decode`) clang tarafından silinmişti (78 MB'ı 0,55 ms'de işlemek fiziksel olarak imkânsız); çıktılar `volatile` sink ile gözlemlenebilir kılındı: `upper_lower_trim` C'de 58 ms (Nox 11x hızlı), `base64_decode` C'de 1,2 ms (eşit). Tablo düzeltilmiş değerleri gösterir. Kural: C referansında her çıktı okunmalıdır.
 
 Okuma: C'nin yanında yalnızca "iş aynı" satırlar adildir. `str_split` ilk C sürümünde parça saymakla yetiniyordu (13,8×); `list[str]` döndürmeye denk olacak biçimde her parçayı ayırınca Nox 2× hızlı çıktı. `str_find`, `upper_lower_trim`, `concat` ve `fstring`te Nox her adımda yeni bir ARC `str` ayırır, C yığın tamponu kullanır; bu fark dilin değer semantiğinden gelir ve ancak tahsis sayısını azaltan derleyici çalışmasıyla (aşama 12) kapanır. Gerçek açık: `Set[int]` (21×; genel karma dizin çağrıları) ve `str_build_join`/`csv`/`path` (4-6×).
 

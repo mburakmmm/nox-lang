@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.189]
+
+### Ölçüm doğruluğu
+
+- **C referansı düzeltildi:** `stdlib_perf.c`te kullanılmayan çıktıları üreten döngüler clang tarafından siliniyordu (`str_upper_lower_trim_x20` C'de 0,55 ms görünüyordu; gerçek 58 ms, Nox 5,3 ms yani 11x hızlı; `base64_decode` 0,4 -> 1,2 ms, Nox ile eşit). Tüm çıktılar `volatile` sink ile gözlemlenebilir. `RESULTS.md` tablosu ve taban çizgisi düzeltildi; v2.1.183-188'deki "C'nin 12x'i / 2,8x'i" okumaları geçersizdir.
+- `benchmarks/gate.py`: disk/çekirdek önbelleğine bağlı işler (`fs_write_read`) için 4x geniş tolerans (aynı makinede 3x oynuyordu; taban çizgisi yazımında şanssız düşük değer kapıyı kırmıştı).
+
 ## [2.1.188]
 
 ### Performans (2.2 aşama 2/12)

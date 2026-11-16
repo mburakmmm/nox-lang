@@ -13,6 +13,8 @@ import argparse, json, os, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASELINE = os.path.join(HERE, "baseline.json")
 SUITES = [1, 2]
+# Disk/çekirdek önbelleğine bağlı işler gürültülüdür (aynı makinede bile 3x oynar): yalnızca bu çarpanı aşan yavaşlama hata sayılır.
+NOISY = {"fs_write_read_1MiB_x8": 4.0}
 
 ap = argparse.ArgumentParser()
 g = ap.add_mutually_exclusive_group(required=True)
@@ -60,7 +62,8 @@ for name in sorted(results):
     ref = b["value"] if b and b["kind"] == kind else None
     ratio = now / ref if ref and ref > 0 else float("nan")
     flag = ""
-    if ref is not None and v["nox"] >= a.min_ms and ratio > 1 + a.tolerance:
+    tol = NOISY.get(name, 1 + a.tolerance)
+    if ref is not None and v["nox"] >= a.min_ms and ratio > tol:
         flag = "  YAVAŞLAMA"
         bad.append(f"{name}: {kind} {ref:.2f} -> {now:.2f} (x{ratio:.2f})")
     if kind == "ratio" and v["nox"] >= a.min_ms and now > a.c_ratio_max:

@@ -17,6 +17,7 @@ static double now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &
 static void report(const char *n, double t0, long long c) { printf("%s\t%f\t%lld\n", n, now_ms() - t0, c); }
 
 static char *src; static size_t srclen;
+static volatile unsigned char sink; /* çıktıları gözlemlenebilir kılar: aksi halde clang kullanılmayan çıktıyı üreten döngüleri siler ve C sütunu gerçek dışı hızlı olur */
 
 /* El yazımı tamsayı biçimlendirme (sprintf'in ek yükü olmadan; ölçüt C adil olmalı). */
 static int fmt_i64(char *o, long long v) {
@@ -37,7 +38,7 @@ static void strings(void) {
     for (int r = 0; r < 5; r++) { /* Nox'un list[str] döndürmesine karşılık: her parça ayrı ayrılır (strndup) ve bir diziye konur. */
         char **pieces = malloc(200001 * sizeof *pieces); long long np = 0; size_t start = 0;
         for (size_t i = 0; i <= n; i++) if (i == n || src[i] == ',') { pieces[np++] = strndup(src + start, i - start); start = i + 1; }
-        tot += np; for (long long k = 0; k < np; k++) free(pieces[k]); free(pieces);
+        sink ^= (unsigned char)pieces[np / 2][0]; tot += np; for (long long k = 0; k < np; k++) free(pieces[k]); free(pieces);
     }
     report("str_split_200k_x5", t, tot);
 
@@ -45,7 +46,7 @@ static void strings(void) {
     for (int r = 0; r < 5; r++) {
         char *o = malloc(n * 3 + 1); size_t m = 0;
         for (size_t i = 0; i < n; i++) { if (src[i] == '1') { memcpy(o + m, "xyz", 3); m += 3; } else o[m++] = src[i]; }
-        tot += (long long)m; free(o);
+        sink ^= (unsigned char)o[m / 2]; tot += (long long)m; free(o);
     }
     report("str_replace_x5", t, tot);
 
@@ -58,16 +59,16 @@ static void strings(void) {
         char *u = malloc(n + 5), *l = malloc(n + 5), *w = malloc(n + 5);
         for (size_t i = 0; i < n; i++) { u[i] = (char)toupper((unsigned char)src[i]); l[i] = (char)tolower((unsigned char)src[i]); }
         w[0] = ' '; w[1] = ' '; memcpy(w + 2, src, n); w[n + 2] = ' '; w[n + 3] = ' '; size_t b = 0, e = n + 4; while (b < e && w[b] == ' ') b++; while (e > b && w[e - 1] == ' ') e--;
-        tot += (long long)n + (long long)n + (long long)(e - b); free(u); free(l); free(w);
+        sink ^= (unsigned char)(u[n / 2] ^ l[n / 3] ^ w[b + (e - b) / 2]); tot += (long long)n + (long long)n + (long long)(e - b); free(u); free(l); free(w);
     }
     report("str_upper_lower_trim_x20", t, tot);
 
     t = now_ms(); size_t acap = 16, alen = 0; char *acc = malloc(acap);
     for (int i = 0; i < 1000000; i++) { if (alen + 1 > acap) { acap *= 2; acc = realloc(acc, acap); } acc[alen++] = 'x'; }
-    report("str_concat_1M", t, (long long)alen); free(acc);
+    sink ^= (unsigned char)acc[alen / 2]; report("str_concat_1M", t, (long long)alen); free(acc);
 
     t = now_ms(); tot = 0;
-    for (int i = 0; i < 300000; i++) { int l = fmt_i64(buf, i); buf[l++] = ':'; l += fmt_i64(buf + l, (long long)i * 2); tot += l; }
+    for (int i = 0; i < 300000; i++) { int l = fmt_i64(buf, i); buf[l++] = ':'; l += fmt_i64(buf + l, (long long)i * 2); tot += l; sink ^= (unsigned char)buf[l - 1]; }
     report("fstring_300k", t, tot);
 }
 
@@ -80,7 +81,7 @@ static void codecs(void) {
         uint32_t v = (uint32_t)(unsigned char)blob[i] << 16; if (i + 1 < n) v |= (uint32_t)(unsigned char)blob[i + 1] << 8; if (i + 2 < n) v |= (unsigned char)blob[i + 2];
         enc[o++] = B64[v >> 18]; enc[o++] = B64[(v >> 12) & 63]; enc[o++] = i + 1 < n ? B64[(v >> 6) & 63] : '='; enc[o++] = i + 2 < n ? B64[v & 63] : '=';
     }
-    report("base64_encode_4MB", t, (long long)o);
+    sink ^= (unsigned char)enc[o / 2]; report("base64_encode_4MB", t, (long long)o);
     int8_t rev[256]; memset(rev, -1, sizeof rev); for (int i = 0; i < 64; i++) rev[(unsigned char)B64[i]] = (int8_t)i;
     t = now_ms(); char *dec = malloc(n + 4); size_t d = 0;
     for (size_t i = 0; i + 3 < o + 0; i += 4) {
@@ -88,7 +89,7 @@ static void codecs(void) {
         dec[d++] = (char)(v >> 16);
         if (enc[i + 2] != '=') { v |= (uint32_t)rev[(unsigned char)enc[i + 2]] << 6; dec[d++] = (char)(v >> 8); if (enc[i + 3] != '=') { v |= (uint32_t)rev[(unsigned char)enc[i + 3]]; dec[d++] = (char)v; } }
     }
-    report("base64_decode_4MB", t, (long long)d);
+    sink ^= (unsigned char)dec[d / 2]; report("base64_decode_4MB", t, (long long)d);
     char *chunk = malloc(65536); for (int i = 0; i < 8192; i++) memcpy(chunk + i * 8, "abcdefgh", 8);
     t = now_ms(); long long tot = 0; unsigned char out[32];
     for (int i = 0; i < 128; i++) {
