@@ -264,6 +264,118 @@ pub export fn nox_str_concat(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const 
     return @ptrCast(data);
 }
 
+/// 2.2 aşama 12: f-string zinciri için TEK tahsisli birleştirme. `parts`, `n` adet (etiket, değer) çiftidir (her biri 2 x i64): etiket 0 = değer bir `str` işaretçisi,
+/// etiket 1 = değer düz bir `int` (ondalık yazılır). Önceden `f"{a}:{b}"` her `str(int)` için ve her `+` için ayrı bir ARC dizesi tahsis ediyordu (4 tahsis); bu işlev
+/// tek bir tahsisle sonucu yazar. Anlam, parçaların soldan sağa `str(x)` + `+` zinciriyle birebir aynıdır (ASCII bayrağı dahil). Bir `str` parçası null ise `nox_str_concat` gibi null döner.
+pub export fn nox_str_concat_n(rt: ?*anyopaque, parts: ?[*]const i64, n: i64) ?[*:0]u8 {
+    const ps = parts orelse return null;
+    const count: usize = @intCast(n);
+    var total: u64 = 0;
+    var any_false = false;
+    var all_true = true;
+    var i: usize = 0;
+    while (i < count) : (i += 1) {
+        const tag = ps[2 * i];
+        const val = ps[2 * i + 1];
+        if (tag == 0) {
+            const p: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(val)));
+            total += strByteLen(p);
+            const st = strAsciiState(p);
+            if (st == ASCII_FALSE) any_false = true;
+            if (st != ASCII_TRUE) all_true = false;
+        } else {
+            total += intDecimalLen(val);
+        }
+    }
+    const ascii_state: u64 = if (any_false) ASCII_FALSE else if (all_true) ASCII_TRUE else ASCII_UNKNOWN;
+    const raw = arc.nox_rc_alloc(rt, @intCast(STR_HEADER_SIZE + total + 1)) orelse return null;
+    const base: [*]u8 = @ptrCast(raw);
+    const header: *align(1) i64 = @ptrCast(base);
+    header.* = abi_layout.packStrHeader(total, ascii_state);
+    const data = base + STR_HEADER_SIZE;
+    var off: usize = 0;
+    i = 0;
+    while (i < count) : (i += 1) {
+        const val = ps[2 * i + 1];
+        if (ps[2 * i] == 0) {
+            const p: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(val)));
+            const l: usize = @intCast(strByteLen(p));
+            @memcpy(data[off..][0..l], p[0..l]);
+            off += l;
+        } else {
+            off += writeIntDecimal(data + off, val);
+        }
+    }
+    data[@intCast(total)] = 0;
+    return @ptrCast(data);
+}
+
+/// `v`nin ondalık yazımının bayt uzunluğu (eksi işareti dahil; `i64` en küçük değeri dahil).
+fn intDecimalLen(v: i64) u64 {
+    var u: u64 = if (v < 0) 0 -% @as(u64, @bitCast(v)) else @as(u64, @bitCast(v));
+    var len: u64 = if (v < 0) 1 else 0;
+    while (true) {
+        len += 1;
+        u /= 10;
+        if (u == 0) break;
+    }
+    return len;
+}
+
+/// `v`yi `dst`ye ondalık yazar, yazılan bayt sayısını döner (`intDecimalLen(v)` kadar).
+fn writeIntDecimal(dst: [*]u8, v: i64) usize {
+    var u: u64 = if (v < 0) 0 -% @as(u64, @bitCast(v)) else @as(u64, @bitCast(v));
+    const len: usize = @intCast(intDecimalLen(v));
+    var pos: usize = len;
+    while (true) {
+        pos -= 1;
+        dst[pos] = @intCast('0' + u % 10);
+        u /= 10;
+        if (u == 0) break;
+    }
+    if (v < 0) dst[0] = '-';
+    return len;
+}
+
+test "nox_str_concat_n: str + int parçaları str(x) + zinciriyle birebir aynı sonucu verir" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const colon = nox_str_from_bytes(rt, ":") orelse return error.AllocFailed;
+    defer nox_str_release(rt, colon);
+    const tail = nox_str_from_bytes(rt, " caf\xc3\xa9") orelse return error.AllocFailed;
+    defer nox_str_release(rt, tail);
+    const cases = [_]i64{ 0, 7, -1, 42, -42, 1234567890123, std.math.maxInt(i64), std.math.minInt(i64) };
+    for (cases) |a| {
+        for (cases) |b| {
+            const parts = [_]i64{ 1, a, 0, @intCast(@intFromPtr(colon)), 1, b, 0, @intCast(@intFromPtr(tail)) };
+            const got = nox_str_concat_n(rt, &parts, 4) orelse return error.ConcatFailed;
+            defer nox_str_release(rt, got);
+            var buf: [96]u8 = undefined;
+            const want = try std.fmt.bufPrint(&buf, "{d}:{d} caf\xc3\xa9", .{ a, b });
+            try std.testing.expectEqualStrings(want, std.mem.span(got));
+            try std.testing.expectEqual(@as(u64, want.len), strByteLen(got));
+            // `nox_str_from_bytes` ASCII durumunu taramaz (UNKNOWN): birleşik durum `nox_str_concat` ile aynı kurala uyar.
+            try std.testing.expectEqual(ASCII_UNKNOWN, strAsciiState(got));
+        }
+    }
+    // saf ASCII parçalar: ASCII bayrağı doğru
+    const ascii_colon = allocStr(rt, ":", ASCII_TRUE) orelse return error.AllocFailed;
+    defer nox_str_release(rt, ascii_colon);
+    const parts2 = [_]i64{ 1, 5, 0, @intCast(@intFromPtr(ascii_colon)) };
+    const g2 = nox_str_concat_n(rt, &parts2, 2) orelse return error.ConcatFailed;
+    defer nox_str_release(rt, g2);
+    try std.testing.expectEqualStrings("5:", std.mem.span(g2));
+    try std.testing.expectEqual(ASCII_TRUE, strAsciiState(g2));
+    // gerçekten ASCII olmayan parça: durum FALSE
+    const non_ascii = allocStr(rt, "\xc3\xa9", ASCII_FALSE) orelse return error.AllocFailed;
+    defer nox_str_release(rt, non_ascii);
+    const parts3 = [_]i64{ 1, 5, 0, @intCast(@intFromPtr(non_ascii)) };
+    const g3 = nox_str_concat_n(rt, &parts3, 2) orelse return error.ConcatFailed;
+    defer nox_str_release(rt, g3);
+    try std.testing.expectEqual(ASCII_FALSE, strAsciiState(g3));
+}
+
 /// Sınıf `__str__`/`__repr__` sonucunu stdout'a yazar. QBE'nin Windows
 /// variadic `printf("%s", p)` çağrısı yerine uzunluğu başlıktan okur;
 /// `null` ve boş dize bir şey yazmaz (Windows CRT `printf("%s", NULL)`

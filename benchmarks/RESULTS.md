@@ -1777,7 +1777,7 @@ Açık (sonraki dilimler): `Deque` iki-liste tasarımı (halka tampon ~2x kazand
 | `str_find_300k_small` | 11,5 | 1,5 | 7,6 | 24,0 |
 | `str_upper_lower_trim_x20` | 5,3 | 58,2 | **0,09** | 14,0 |
 | `str_concat_1M` | 2,7 | 0,3 | 9,9 | 27,8 |
-| `fstring_300k` | 13,4 | 2,5 | 5,5 | 29,1 |
+| `fstring_300k` (v2.1.190: tek tahsisli birleştirme) | 5,3 | 2,6 | 2,0 | 29,1 |
 | `base64_encode_4MB` / `decode` | 1,4 / 1,2 | 1,2 / 1,2 | 1,13 / 0,96 | 1,9 / 1,3 |
 | `sha256_64KiB_x128` | 3,1 | 2,7 | 1,13 | 2,8 |
 | `gzip_decompress_4MB` | 0,9 | 0,7 | 1,3 | 0,9 |

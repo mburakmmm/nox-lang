@@ -447,6 +447,65 @@ fn checkInsideLowlevel(self: *Codegen) CodegenError!void {
     if (self.in_lowlevel_depth == 0) return error.Unsupported;
 }
 
+/// `str(<arg>)`nin, `arg` ZATEN değerlendirilmiş (`v`) iken sonucu üreten gövdesi: `genCall`in `str` dalı ve f-string zinciri (`genFStringChain`) paylaşır; `arg`ı BİR KEZ
+/// değerlendirmek (yan etki) çağırana aittir. Sonuç TAZE (+1) bir `str`dir (`str` argümanında takma ad `retainIfAliasing` ile korunur).
+pub fn genStrFromValue(self: *Codegen, arg: ast.Expr, v: Value) CodegenError!Value {
+    if (v.heap == .str) {
+        return self.retainIfAliasing(arg, v);
+    }
+    // v1.167.0: liste/sözlük/sınıf/tuple — `print`in yapısal biçimi bir `str` olarak (bkz. `genReprString`).
+    if (v.heap == .list or v.heap == .dict or v.heap == .class or v.heap == .boxed_scalar) {
+        const r = try self.genReprString(v);
+        try self.releaseIfTemporary(arg, v);
+        return r;
+    }
+    // v2.0 madde 4: sabit-genişlikli bir kind — `genPrint`in
+    // AYNI widen+işaretlilik-farkında dallanmasi (bkz. onun
+    // belge notu); `bool`in AŞAĞIDAKİ `.w`+`.heap==.none`
+    // dalından ÖNCE kontrol edilmeli (u8/i8/u16/i16/u32/i32
+    // de AYNI `.w` qtype'ı PAYLAŞIYOR).
+    if (v.fixed_int) |kind| {
+        const widened = try self.widenFixedIntForPrint(v, kind);
+        const result_t = try self.newTemp();
+        if (kind.isSigned()) {
+            try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_int_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = widened.text } });
+        } else {
+            try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_uint_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = widened.text } });
+        }
+        return .{ .text = result_t, .qtype = .l, .heap = .str };
+    }
+    // `bool` — `int` (`.l`) VE `float` (`.d`)DEN AYRI, `.w`
+    // qtype'lı TEK ilkel (bkz. `registration.zig`nin `resolveType`
+    // `.boolean` dalı). `nox_bool_to_str` runtime fonksiyonu YOK —
+    // ikisi de PINNED (retain/release GEREKTİRMEYEN) statik
+    // literal olan "True"/"False"den `v`ye göre BİRİNİ QBE
+    // `jnz`+`phi` İLE seçmek yeterli (YENİ bir runtime fonksiyonu
+    // GEREKMEZ).
+    if (v.qtype == .w and v.heap == .none) {
+        const true_label = try self.newLabel("str_bool_true");
+        const false_label = try self.newLabel("str_bool_false");
+        const done_label = try self.newLabel("str_bool_done");
+        try self.qbeJnz(v.text, true_label, false_label);
+        try self.qbeLabel(true_label);
+        const true_v = try self.emitStringLiteral("True");
+        try self.qbeJmp(done_label);
+        try self.qbeLabel(false_label);
+        const false_v = try self.emitStringLiteral("False");
+        try self.qbeJmp(done_label);
+        try self.qbeLabel(done_label);
+        const result_t = try self.newTemp();
+        try self.qbePhi(result_t, .l, true_label, true_v.text, false_label, false_v.text);
+        return .{ .text = result_t, .qtype = .l, .heap = .str };
+    }
+    const result_t = try self.newTemp();
+    if (v.qtype == .d) {
+        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_float_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .d, .text = v.text } });
+    } else {
+        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_int_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = v.text } });
+    }
+    return .{ .text = result_t, .qtype = .l, .heap = .str };
+}
+
 pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
     self.pending_eval_order = c.eval_order;
     defer self.pending_eval_order = null;
@@ -522,60 +581,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                 // tarafının KENDİ refcount'unu YANLIŞLIKLA azaltmasını
                 // ÖNLEMEK İçin) GEREKLİDİR — `v` ZATEN TAZE (ör. `str(a+b)`)
                 // İSE bu bir no-op'tur (bkz. `retainIfAliasing`in belge notu).
-                if (v.heap == .str) {
-                    return self.retainIfAliasing(c.args[0], v);
-                }
-                // v1.167.0: liste/sözlük/sınıf/tuple — `print`in yapısal biçimi bir `str` olarak (bkz. `genReprString`).
-                if (v.heap == .list or v.heap == .dict or v.heap == .class or v.heap == .boxed_scalar) {
-                    const r = try self.genReprString(v);
-                    try self.releaseIfTemporary(c.args[0], v);
-                    return r;
-                }
-                // v2.0 madde 4: sabit-genişlikli bir kind — `genPrint`in
-                // AYNI widen+işaretlilik-farkında dallanmasi (bkz. onun
-                // belge notu); `bool`in AŞAĞIDAKİ `.w`+`.heap==.none`
-                // dalından ÖNCE kontrol edilmeli (u8/i8/u16/i16/u32/i32
-                // de AYNI `.w` qtype'ı PAYLAŞIYOR).
-                if (v.fixed_int) |kind| {
-                    const widened = try self.widenFixedIntForPrint(v, kind);
-                    const result_t = try self.newTemp();
-                    if (kind.isSigned()) {
-                        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_int_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = widened.text } });
-                    } else {
-                        try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_uint_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = widened.text } });
-                    }
-                    return .{ .text = result_t, .qtype = .l, .heap = .str };
-                }
-                // `bool` — `int` (`.l`) VE `float` (`.d`)DEN AYRI, `.w`
-                // qtype'lı TEK ilkel (bkz. `registration.zig`nin `resolveType`
-                // `.boolean` dalı). `nox_bool_to_str` runtime fonksiyonu YOK —
-                // ikisi de PINNED (retain/release GEREKTİRMEYEN) statik
-                // literal olan "True"/"False"den `v`ye göre BİRİNİ QBE
-                // `jnz`+`phi` İLE seçmek yeterli (YENİ bir runtime fonksiyonu
-                // GEREKMEZ).
-                if (v.qtype == .w and v.heap == .none) {
-                    const true_label = try self.newLabel("str_bool_true");
-                    const false_label = try self.newLabel("str_bool_false");
-                    const done_label = try self.newLabel("str_bool_done");
-                    try self.qbeJnz(v.text, true_label, false_label);
-                    try self.qbeLabel(true_label);
-                    const true_v = try self.emitStringLiteral("True");
-                    try self.qbeJmp(done_label);
-                    try self.qbeLabel(false_label);
-                    const false_v = try self.emitStringLiteral("False");
-                    try self.qbeJmp(done_label);
-                    try self.qbeLabel(done_label);
-                    const result_t = try self.newTemp();
-                    try self.qbePhi(result_t, .l, true_label, true_v.text, false_label, false_v.text);
-                    return .{ .text = result_t, .qtype = .l, .heap = .str };
-                }
-                const result_t = try self.newTemp();
-                if (v.qtype == .d) {
-                    try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_float_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .d, .text = v.text } });
-                } else {
-                    try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_int_to_str", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = v.text } });
-                }
-                return .{ .text = result_t, .qtype = .l, .heap = .str };
+                return try self.genStrFromValue(c.args[0], v);
             }
             // `int(s)`/`float(s)` — stdlib fazı §E. Ayrıştırma
             // BAŞARISIZSA bir `ValueError` `raise` eder (bkz.

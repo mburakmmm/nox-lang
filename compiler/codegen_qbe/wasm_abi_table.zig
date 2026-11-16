@@ -569,6 +569,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_str_char_count", Entry{ .params = "P", .ret = 'L' } },
     .{ "nox_str_chars", Entry{ .params = "PP", .ret = 'P' } },
     .{ "nox_str_concat", Entry{ .params = "PPP", .ret = 'P' } },
+    .{ "nox_str_concat_n", Entry{ .params = "PPL", .ret = 'P' } },
     .{ "nox_str_contains", Entry{ .params = "PP", .ret = 'L' } },
     .{ "nox_str_count", Entry{ .params = "PP", .ret = 'L' } },
     .{ "nox_str_find", Entry{ .params = "PP", .ret = 'L' } },

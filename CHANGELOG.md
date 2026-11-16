@@ -14,6 +14,13 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.190]
+
+### Performans (2.2 aşama 12: derleyici düzeyi)
+
+- **f-string zinciri tek tahsisli birleştirme (`fstring_300k` 13,3 → 5,3 ms, 2,5x; C'ye oran 5,1x → 2,0x):** `f"{a}:{b}"` = `str(a) + ":" + str(b)` her `str(int)` ve her `+` için ayrı bir ARC dizesi tahsis ediyordu (3 parçada 4-5 tahsis). Parser'ın `fstring` bayrağıyla işaretlediği zincir artık `genFStringChain` ile tek `nox_str_concat_n(rt, parts, n)` çağrısına iner: düz `int` parçalar (`qtype .l`, etiketsiz) çalışma zamanında doğrudan hedef tamponuna yazılır (ara `str` yok), diğer parçalar kopyalanır; ASCII bayrağı `nox_str_concat` kuralıyla türetilir. Parçalar soldan sağa, her biri tam bir kez değerlendirilir (yan etki sırası korunur); geçici `str` parçaları eskisi gibi bırakılır. `str()` dönüşümü `genStrFromValue` olarak ayrıldı (tek kaynak). 3'ten az parça eski yolda kalır. Her iki arka uç için; golden `fstring_fused_chain` (int/negatif/`i64` sınırı/bool/float/`u8`/liste/biçim belirteci/sıra/takma ad/UTF-8, Python ile bağımsız üretilen beklenen çıktı; iki arka uçta aynı) ve çalışma zamanı birim testi (`nox_str_concat_n`, sızıntısız).
+- Taban çizgisi güncellendi.
+
 ## [2.1.189]
 
 ### Ölçüm doğruluğu

@@ -1864,7 +1864,79 @@ fn genTernaryImpl(self: *Codegen, t: ast.Ternary, target: anytype, comptime use_
     return result;
 }
 
+/// 2.2 aşama 12: f-string zinciri (`f"{a}:{b}"` = `str(a) + ":" + str(b)`, parser `fstring` bayrağıyla işaretler) TEK tahsisli birleştirmeye indirilir. Önceden her `str(int)` ve her `+`
+/// ayrı bir ARC dizesiydi (3 parçalı bir f-string'de 4-5 tahsis); şimdi düz `int` parçalar çalışma zamanında doğrudan hedef tamponuna yazılır (ara `str` yok), diğer parçalar
+/// tek `nox_str_concat_n` çağrısıyla birleşir. Anlam birebir aynıdır (parçalar soldan sağa değerlendirilir, her parça tam bir kez; ASCII bayrağı dahil). 3'ten az parça için `null` (eski yol).
+fn genFStringChain(self: *Codegen, b: ast.Binary) CodegenError!?Value {
+    var pieces: std.ArrayList(*const ast.Expr) = .empty;
+    defer pieces.deinit(self.allocator);
+    var cur: *const ast.Binary = &b;
+    while (true) {
+        try pieces.append(self.allocator, cur.right);
+        switch (cur.left.*) {
+            .binary => |lb| if (lb.op == .add and lb.fstring) {
+                cur = &lb;
+                continue;
+            },
+            else => {},
+        }
+        try pieces.append(self.allocator, cur.left);
+        break;
+    }
+    if (pieces.items.len < 3) return null;
+    std.mem.reverse(*const ast.Expr, pieces.items);
+    const n = pieces.items.len;
+
+    const slot = try self.newTemp();
+    try self.qbeAlloc(slot, .eight, 16 * n);
+    const vals = try self.allocator.alloc(?Value, n);
+    defer self.allocator.free(vals);
+    for (pieces.items, 0..) |pe, i| {
+        // `str(<düz int>)` parçası: değer doğrudan (etiket 1); aksi halde parça bir `str` değeridir (etiket 0).
+        var is_int = false;
+        var v: Value = undefined;
+        var owned_expr: *const ast.Expr = pe;
+        switch (pe.*) {
+            .call => |pc| if (pc.fstring and pc.callee.* == .identifier and std.mem.eql(u8, pc.callee.identifier, "str") and pc.args.len == 1) {
+                const av = try self.genExpr(pc.args[0]);
+                if (av.heap == .none and av.qtype == .l and av.fixed_int == null) {
+                    is_int = true;
+                    v = av;
+                } else {
+                    v = try self.genStrFromValue(pc.args[0], av);
+                }
+            } else {
+                v = try self.genExpr(pe.*);
+            },
+            else => {
+                v = try self.genExpr(pe.*);
+            },
+        }
+        _ = &owned_expr;
+        if (!is_int) {
+            if (v.heap != .str) return error.Unsupported;
+            try self.checkNoLowlevelEscape(v);
+        }
+        const tag_addr = try self.newTemp();
+        try self.qbeOp2Imm(tag_addr, .l, "add", slot, @intCast(16 * i));
+        try self.qbeStoreImmL(if (is_int) 1 else 0, tag_addr);
+        const val_addr = try self.newTemp();
+        try self.qbeOp2Imm(val_addr, .l, "add", slot, @intCast(16 * i + 8));
+        try self.qbeStoreL(v.text, val_addr);
+        vals[i] = if (is_int) null else v;
+    }
+    const result_t = try self.newTemp();
+    try self.qbeCall(.{ .name = result_t, .ty = .l }, "$nox_str_concat_n", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = slot }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{n}) } });
+    for (pieces.items, 0..) |pe, i| {
+        if (vals[i]) |v| try self.releaseIfTemporary(pe.*, v);
+    }
+    return .{ .text = result_t, .qtype = .l, .heap = .str };
+}
+
 pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
+    if (b.op == .add and b.fstring) {
+        if (try genFStringChain(self, b)) |fused| return fused;
+    }
     // Darboğaz analizi bulgu #3 (bkz. `Codegen.mod_cache`nin belge
     // notu): `<isim> % <tam-sayı-sabiti>` İçin ÖNCE önbelleğe bak —
     // İSABET varsa `l0`/`r0`yı HİÇ üretmeden (döngü/koşul İfadesinin

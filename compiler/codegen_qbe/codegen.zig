@@ -458,6 +458,7 @@ pub const Codegen = struct {
     pub const markRecursiveFuncs = exceptions.markRecursiveFuncs;
 
     pub const genCall = calls.genCall;
+    pub const genStrFromValue = calls.genStrFromValue;
     pub const genParseOrRaise = calls.genParseOrRaise;
     pub const emitHpyErrorCheckOrRaise = calls.emitHpyErrorCheckOrRaise;
     pub const genHpyPackageCall = calls.genHpyPackageCall;
