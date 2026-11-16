@@ -24,6 +24,7 @@ def run(cmd, timeout=900):
 ap = argparse.ArgumentParser()
 ap.add_argument("--backend", default="llvm")
 ap.add_argument("--repeat", type=int, default=3)
+ap.add_argument("--json", default="", help="sonuçları {ad: {nox, c, py}} (ms) olarak bu dosyaya yaz")
 ap.add_argument("--suite", type=int, default=1, help="1: stdlib_perf (metin/json/regex/...), 2: stdlib_perf2 (koleksiyon/özet/bigint/toml/...)")
 a = ap.parse_args()
 with tempfile.TemporaryDirectory() as d:
@@ -71,6 +72,18 @@ valid = [r for r in ratios if r == r and r > 0]
 if valid:
     import math
     print(f"\ngeometrik ortalama nox/python: {math.exp(sum(math.log(r) for r in valid) / len(valid)):.2f}  (1.0 = Python ile aynı; <1 Nox daha hızlı)")
+if a.json:
+    import json as _json
+    dump = {}
+    for n in names:
+        entry = {"nox": statistics.median(r[n][0] for r in nox_runs)}
+        if c_runs and n in c_runs[0]:
+            entry["c"] = statistics.median(r[n][0] for r in c_runs)
+        if n in py_runs[0]:
+            entry["py"] = statistics.median(r[n][0] for r in py_runs)
+        dump[n] = entry
+    with open(a.json, "w", encoding="utf-8") as fh:
+        _json.dump(dump, fh, indent=1, sort_keys=True)
 cvalid = [r for r in cratios if r == r and r > 0]
 if cvalid:
     import math

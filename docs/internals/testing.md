@@ -55,3 +55,14 @@ A feature without a golden test is not accepted.
 
 The most valuable bugs were found by writing real programs, not by unit tests: `for` over module-level lists, a router that ignored query strings, integer power computed through floating point, spawn statements that leaked their handle,
 `int()` of fixed-width values, `print(None)`, `return` inside `with`. This documentation is itself a test: writing and running every example found several of them, which is why `check_docs.py` is part of the process.
+
+## Performance regression gate
+
+`benchmarks/gate.py` runs the core-language kernels (`benchmarks/lang_perf`) and the two standard-library suites (`benchmarks/stdlib_perf`, 39 jobs) and compares them with a checked-in baseline. Install a release build first (`zig build -Doptimize=ReleaseFast`; a Debug runtime is about 100 times slower, and a full `zig build test` leaves `zig-out` in Debug).
+
+```sh
+benchmarks/gate.py --check            # exit status 1 if a job is more than 35% slower than the baseline
+benchmarks/gate.py --update           # rewrite benchmarks/baseline.json (review the diff before committing)
+```
+
+The baseline is machine independent where it can be: a job that has a C reference (`stdlib_perf*.c`, compiled with `clang -O2`) is stored as the Nox/C ratio, the others as milliseconds, which only mean something on the same machine. The gate also fails any job that is more than 40 times slower than its C reference. Jobs under 1 ms are treated as noise.

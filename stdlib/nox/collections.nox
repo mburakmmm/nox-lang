@@ -258,15 +258,11 @@ class Set[T]:
         new_items: list[T] = []
         i: int = 0
         while i < len(items):
-            if not dead[i]:
+            if i >= len(dead) or not dead[i]:
                 new_items.append(items[i])
             i = i + 1
         self._items = new_items
         self._dead = []
-        j: int = 0
-        while j < len(new_items):
-            self._dead.append(False)
-            j = j + 1
         self._ndead = 0
         self._slots = _hx_rebuild(new_items, _hx_cap_for(len(new_items) * 2, len(self._slots)))
 
@@ -277,11 +273,8 @@ class Set[T]:
         if _hx_find(self._items, self._slots, v) >= 0:
             return
         items: list[T] = self._items
-        dead: list[bool] = self._dead
         items.append(v)
-        dead.append(False)
         self._items = items
-        self._dead = dead
         if len(items) * 2 > len(self._slots):
             if self._ndead > 0:
                 self._compact()
@@ -296,6 +289,11 @@ class Set[T]:
             return False
         idx: int = self._slots[pos] - 1
         self._slots[pos] = -1
+        # `_dead` tembeldir: ilk silmeye kadar boştur (ekleme yolu onu hiç dokunmaz); gerektiğinde `_items` uzunluğuna tamamlanır.
+        dead: list[bool] = self._dead
+        while len(dead) < len(self._items):
+            dead.append(False)
+        self._dead = dead
         self._dead[idx] = True
         self._ndead = self._ndead + 1
         if self._ndead >= 16 and self._ndead * 2 > len(self._items):

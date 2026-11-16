@@ -14,6 +14,14 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.187]
+
+### Performans / ölçüm (2.2 aşama 2, 4, 7)
+
+- **`Set.add`:** `_dead` listesi tembel (ilk silmeye kadar boş); ekleme yolu bir liste eklemesi ve alan yazımı daha az yapar (~%15; `Set` davranışı değişmez, golden `collections_set_remove_tombstones` ve `collections_*` geçer). Kalan `Set[int]` farkının (C'nin ~20x'i) ana nedeni genel karma çağrısı ve sınıf alanı ARC'sidir; derleyici çalışması (aşama 12).
+- **FFI (aşama 7) ve HTTP/IO (aşama 4) ölçümü:** `ffi_perf` C ile aynı seviyede (skaler 1,0x, sıfır kopya 1,14x, geri çağrı +1 ns), HTTP 273k istek/s; tablo `benchmarks/RESULTS.md`. İki aşama ölçüm kanıtıyla kapatıldı (ek kod gerekmedi); açıklar aşama 12'ye taşındı.
+- **Performans regresyon kapısı (aşama 12 altyapısı):** `benchmarks/gate.py --check|--update`: `lang_perf` + `stdlib_perf` 1 ve 2 (39 iş); C karşılığı olan işler Nox/C oranı olarak (makineden bağımsız), diğerleri ms olarak taban çizgisine (`benchmarks/baseline.json`) karşı %35 toleransla; Nox/C > 40x her iş hata. İlk çalıştırmada oranlar ±%5 içinde kararlıydı. `run.py --json` eklendi. Belge: `docs/internals/testing.md`.
+
 ## [2.1.186]
 
 ### Ölçüm (2.2 aşama 2, dilim 3)

@@ -1791,3 +1791,19 @@ Açık (sonraki dilimler): `Deque` iki-liste tasarımı (halka tampon ~2x kazand
 Okuma: C'nin yanında yalnızca "iş aynı" satırlar adildir. `str_split` ilk C sürümünde parça saymakla yetiniyordu (13,8×); `list[str]` döndürmeye denk olacak biçimde her parçayı ayırınca Nox 2× hızlı çıktı. `str_find`, `upper_lower_trim`, `concat` ve `fstring`te Nox her adımda yeni bir ARC `str` ayırır, C yığın tamponu kullanır; bu fark dilin değer semantiğinden gelir ve ancak tahsis sayısını azaltan derleyici çalışmasıyla (aşama 12) kapanır. Gerçek açık: `Set[int]` (21×; genel karma dizin çağrıları) ve `str_build_join`/`csv`/`path` (4-6×).
 
 `Set.remove` (20 000 eleman, hepsini sil): 3598 ms → **3,9 ms** (Python 0,85 ms): önceden her silme listeyi ve karma dizinini yeniden kuruyordu; mezar taşı deseni (v2.1.186).
+
+## FFI ve HTTP/IO durumu (2.2 aşama 7 ve 4, v2.1.187)
+
+`benchmarks/ffi_perf/run.py` (ns/çağrı, Apple M4, ReleaseFast): Nox, C tabanıyla aynı seviyede; ctypes 150-300x geride.
+
+| iş | C | Nox LLVM | Nox QBE | ctypes | Nox/C |
+|---|---:|---:|---:|---:|---:|
+| `extern def` skaler int | 0,72 | 0,74 | 0,73 | 211,4 | 1,04 |
+| `extern def` skaler float | 0,71 | 0,71 | 0,81 | 215,5 | 1,00 |
+| `str` argüman (1 KB) | 0,70 | 0,70 | 0,71 | 110,1 | 1,01 |
+| toplu toplam (1M x 100, C işlevi) | 74 260 | 72 090 | 70 790 | - | 0,97 |
+| geri çağrı (`@ffi.callback`) | 0,73 | 1,73 | 1,99 | - | 2,37 (mutlak fark 1 ns) |
+| `list` -> işaretçi, öğe başına (kopyalı) | 0,22 | 0,37 | 0,58 | - | 1,65 |
+| `list` -> işaretçi, öğe başına (sıfır kopya) | 0,07 | 0,08 | 0,09 | - | 1,14 |
+
+Sonuç: çağrı maliyeti, tramplen ve sıfır kopyalı sıralama C ile aynıdır; kalan fark geri çağrının fazladan bir dolaylı çağrısı (1 ns) ve kopyalı liste sıralamasıdır (0,15 ns/öğe). `nox_bulk_sum_1M_x100` (aynı toplamın Nox döngüsüyle yazılmışı) C'nin 1,8x'idir: bu FFI değil, döngü vektörleştirmesidir (aşama 12). HTTP/IO: v2.1.169 ölçümü (`wrk -t4 -c100`, "ok" yanıtı) Nox 273k istek/s, tek iş parçacıklı C kqueue sunucusu 251k, Go `net/http` 118k; `fs` yazma+okuma (1 MiB x 8) C ile aynı (3,0 vs 3,1 ms, `stdlib_perf2`).
