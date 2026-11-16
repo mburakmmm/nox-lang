@@ -2993,6 +2993,7 @@ export function $worker(l %rt, l %p_id, l %p_out) {
     %t3 =l alloc8 8
     %t4 =l alloc8 8
     %t5 =l alloc8 8
+    %t24 =l alloc8 64
     storel 0, %t5
     storel %p_id, %t0
     storel %p_out, %t1
@@ -3029,24 +3030,42 @@ export function $worker(l %rt, l %p_id, l %p_out) {
     storel %t23, %t4
     jmp @while_cond3
 @while_end5
-    %t24 =l add $str4, 16
-    %t25 =l loadl %t0
-    %t26 =l call $nox_int_to_str(l %rt, l %t25)
-    %t27 =l call $nox_str_concat(l %rt, l %t24, l %t26)
-    %t28 =w ceql %t26, 0
-    jnz %t28, @release_skip7, @release6
+    %t25 =l add $str4, 16
+    %t26 =l add %t24, 0
+    storel 0, %t26
+    %t27 =l add %t24, 8
+    storel %t25, %t27
+    %t28 =l loadl %t0
+    %t29 =l add %t24, 16
+    storel 1, %t29
+    %t30 =l add %t24, 24
+    storel %t28, %t30
+    %t31 =l add $str5, 16
+    %t32 =l add %t24, 32
+    storel 0, %t32
+    %t33 =l add %t24, 40
+    storel %t31, %t33
+    %t34 =l loadl %t3
+    %t35 =l add %t24, 48
+    storel 1, %t35
+    %t36 =l add %t24, 56
+    storel %t34, %t36
+    %t37 =l call $nox_str_concat_n(l %rt, l %t24, l 4)
+    %t38 =l loadl %t5
+    %t39 =w ceql %t38, 0
+    jnz %t39, @release_skip7, @release6
 @release6
-    %t29 =l sub %t26, 16
-    %t30 =l loadl %t29
-    %t31 =w csgel %t30, 536870912
-    jnz %t31, @str_free_done11, @str_rel_atomic12
+    %t40 =l sub %t38, 16
+    %t41 =l loadl %t40
+    %t42 =w csgel %t41, 536870912
+    jnz %t42, @str_free_done11, @str_rel_atomic12
 @str_rel_atomic12
-    %t32 =l sub %t26, 16
-    %t33 =l call $nox_atomic_rc_sub(l %t32, l 1)
-    %t34 =w cslel %t33, 0
-    jnz %t34, @str_free9, @str_free_skip10
+    %t43 =l sub %t38, 16
+    %t44 =l call $nox_atomic_rc_sub(l %t43, l 1)
+    %t45 =w cslel %t44, 0
+    jnz %t45, @str_free9, @str_free_skip10
 @str_free9
-    call $nox_str_free_now(l %rt, l %t26)
+    call $nox_str_free_now(l %rt, l %t38)
     jmp @str_free_done11
 @str_free_skip10
     jmp @str_free_done11
@@ -3055,219 +3074,125 @@ export function $worker(l %rt, l %p_id, l %p_out) {
 @release_skip7
     jmp @release_done8
 @release_done8
-    %t35 =l add $str5, 16
-    %t36 =l call $nox_str_concat(l %rt, l %t27, l %t35)
-    %t37 =w ceql %t27, 0
-    jnz %t37, @release_skip14, @release13
-@release13
-    %t38 =l sub %t27, 16
-    %t39 =l loadl %t38
-    %t40 =w csgel %t39, 536870912
-    jnz %t40, @str_free_done18, @str_rel_atomic19
-@str_rel_atomic19
-    %t41 =l sub %t27, 16
-    %t42 =l call $nox_atomic_rc_sub(l %t41, l 1)
-    %t43 =w cslel %t42, 0
-    jnz %t43, @str_free16, @str_free_skip17
-@str_free16
-    call $nox_str_free_now(l %rt, l %t27)
-    jmp @str_free_done18
-@str_free_skip17
-    jmp @str_free_done18
-@str_free_done18
-    jmp @release_done15
-@release_skip14
-    jmp @release_done15
-@release_done15
-    %t44 =l loadl %t3
-    %t45 =l call $nox_int_to_str(l %rt, l %t44)
-    %t46 =l call $nox_str_concat(l %rt, l %t36, l %t45)
-    %t47 =w ceql %t36, 0
-    jnz %t47, @release_skip21, @release20
-@release20
-    %t48 =l sub %t36, 16
-    %t49 =l loadl %t48
-    %t50 =w csgel %t49, 536870912
-    jnz %t50, @str_free_done25, @str_rel_atomic26
-@str_rel_atomic26
-    %t51 =l sub %t36, 16
-    %t52 =l call $nox_atomic_rc_sub(l %t51, l 1)
-    %t53 =w cslel %t52, 0
-    jnz %t53, @str_free23, @str_free_skip24
-@str_free23
-    call $nox_str_free_now(l %rt, l %t36)
-    jmp @str_free_done25
-@str_free_skip24
-    jmp @str_free_done25
-@str_free_done25
-    jmp @release_done22
-@release_skip21
-    jmp @release_done22
-@release_done22
-    %t54 =w ceql %t45, 0
-    jnz %t54, @release_skip28, @release27
-@release27
-    %t55 =l sub %t45, 16
-    %t56 =l loadl %t55
-    %t57 =w csgel %t56, 536870912
-    jnz %t57, @str_free_done32, @str_rel_atomic33
-@str_rel_atomic33
-    %t58 =l sub %t45, 16
-    %t59 =l call $nox_atomic_rc_sub(l %t58, l 1)
-    %t60 =w cslel %t59, 0
-    jnz %t60, @str_free30, @str_free_skip31
-@str_free30
-    call $nox_str_free_now(l %rt, l %t45)
-    jmp @str_free_done32
-@str_free_skip31
-    jmp @str_free_done32
-@str_free_done32
-    jmp @release_done29
-@release_skip28
-    jmp @release_done29
-@release_done29
-    %t61 =l loadl %t5
-    %t62 =w ceql %t61, 0
-    jnz %t62, @release_skip35, @release34
-@release34
-    %t63 =l sub %t61, 16
-    %t64 =l loadl %t63
-    %t65 =w csgel %t64, 536870912
-    jnz %t65, @str_free_done39, @str_rel_atomic40
-@str_rel_atomic40
-    %t66 =l sub %t61, 16
-    %t67 =l call $nox_atomic_rc_sub(l %t66, l 1)
-    %t68 =w cslel %t67, 0
-    jnz %t68, @str_free37, @str_free_skip38
-@str_free37
-    call $nox_str_free_now(l %rt, l %t61)
-    jmp @str_free_done39
-@str_free_skip38
-    jmp @str_free_done39
-@str_free_done39
-    jmp @release_done36
-@release_skip35
-    jmp @release_done36
-@release_done36
     storel 0, %t5
-    storel %t46, %t5
-    %t69 =l call $nox_globals_get(l %rt)
-    %t70 =l add %t69, 0
-    %t71 =l loadl %t70
-    %t72 =l loadl %t5
-    %t73 =w ceql %t72, 0
-    jnz %t73, @retain_skip42, @retain41
-@retain41
-    %t74 =l sub %t72, 16
-    %t75 =l loadl %t74
-    %t76 =w csgel %t75, 536870912
-    jnz %t76, @retain_done43, @retain_bump44
-@retain_bump44
-    %t77 =l call $nox_atomic_rc_add(l %t74, l 1)
-    jmp @retain_done43
-@retain_skip42
-    jmp @retain_done43
-@retain_done43
-    %t78 =l loadl %t5
-    %t79 =l loadl %t3
-    %t80 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 2, %t80
-    %t81 =l add %t80, 8
+    storel %t37, %t5
+    %t46 =l call $nox_globals_get(l %rt)
+    %t47 =l add %t46, 0
+    %t48 =l loadl %t47
+    %t49 =l loadl %t5
+    %t50 =w ceql %t49, 0
+    jnz %t50, @retain_skip14, @retain13
+@retain13
+    %t51 =l sub %t49, 16
+    %t52 =l loadl %t51
+    %t53 =w csgel %t52, 536870912
+    jnz %t53, @retain_done15, @retain_bump16
+@retain_bump16
+    %t54 =l call $nox_atomic_rc_add(l %t51, l 1)
+    jmp @retain_done15
+@retain_skip14
+    jmp @retain_done15
+@retain_done15
+    %t55 =l loadl %t5
+    %t56 =l loadl %t3
+    %t57 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 2, %t57
+    %t58 =l add %t57, 8
+    storel 0, %t58
+    %t59 =l add %t57, 16
+    storel 0, %t59
+    %t60 =l add %t57, 8
+    %t61 =w ceql %t55, 0
+    jnz %t61, @retain_skip18, @retain17
+@retain17
+    %t62 =l sub %t55, 16
+    %t63 =l loadl %t62
+    %t64 =w csgel %t63, 536870912
+    jnz %t64, @retain_done19, @retain_bump20
+@retain_bump20
+    %t65 =l call $nox_atomic_rc_add(l %t62, l 1)
+    jmp @retain_done19
+@retain_skip18
+    jmp @retain_done19
+@retain_done19
+    storel %t55, %t60
+    %t66 =l add %t57, 16
+    storel %t56, %t66
+    call $nox_dict_set(l %rt, l %t48, w 1, w 0, w 1, l %t49, l %t57)
+    %t67 =l add $str6, 16
+    %t68 =l loadl %t0
+    %t69 =l call $nox_int_to_str(l %rt, l %t68)
+    %t70 =l call $nox_str_concat(l %rt, l %t67, l %t69)
+    %t71 =w ceql %t69, 0
+    jnz %t71, @release_skip22, @release21
+@release21
+    %t72 =l sub %t69, 16
+    %t73 =l loadl %t72
+    %t74 =w csgel %t73, 536870912
+    jnz %t74, @str_free_done26, @str_rel_atomic27
+@str_rel_atomic27
+    %t75 =l sub %t69, 16
+    %t76 =l call $nox_atomic_rc_sub(l %t75, l 1)
+    %t77 =w cslel %t76, 0
+    jnz %t77, @str_free24, @str_free_skip25
+@str_free24
+    call $nox_str_free_now(l %rt, l %t69)
+    jmp @str_free_done26
+@str_free_skip25
+    jmp @str_free_done26
+@str_free_done26
+    jmp @release_done23
+@release_skip22
+    jmp @release_done23
+@release_done23
+    %t78 =l loadl %t3
+    %t79 =l call $nox_rc_alloc(l %rt, l 24)
+    storel 2, %t79
+    %t80 =l add %t79, 8
+    storel 0, %t80
+    %t81 =l add %t79, 16
     storel 0, %t81
-    %t82 =l add %t80, 16
-    storel 0, %t82
-    %t83 =l add %t80, 8
-    %t84 =w ceql %t78, 0
-    jnz %t84, @retain_skip46, @retain45
-@retain45
-    %t85 =l sub %t78, 16
-    %t86 =l loadl %t85
-    %t87 =w csgel %t86, 536870912
-    jnz %t87, @retain_done47, @retain_bump48
-@retain_bump48
-    %t88 =l call $nox_atomic_rc_add(l %t85, l 1)
-    jmp @retain_done47
-@retain_skip46
-    jmp @retain_done47
-@retain_done47
+    %t82 =l add %t79, 8
+    storel %t70, %t82
+    %t83 =l add %t79, 16
     storel %t78, %t83
-    %t89 =l add %t80, 16
-    storel %t79, %t89
-    call $nox_dict_set(l %rt, l %t71, w 1, w 0, w 1, l %t72, l %t80)
-    %t90 =l add $str6, 16
-    %t91 =l loadl %t0
-    %t92 =l call $nox_int_to_str(l %rt, l %t91)
-    %t93 =l call $nox_str_concat(l %rt, l %t90, l %t92)
-    %t94 =w ceql %t92, 0
-    jnz %t94, @release_skip50, @release49
-@release49
-    %t95 =l sub %t92, 16
-    %t96 =l loadl %t95
-    %t97 =w csgel %t96, 536870912
-    jnz %t97, @str_free_done54, @str_rel_atomic55
-@str_rel_atomic55
-    %t98 =l sub %t92, 16
-    %t99 =l call $nox_atomic_rc_sub(l %t98, l 1)
-    %t100 =w cslel %t99, 0
-    jnz %t100, @str_free52, @str_free_skip53
-@str_free52
-    call $nox_str_free_now(l %rt, l %t92)
-    jmp @str_free_done54
-@str_free_skip53
-    jmp @str_free_done54
-@str_free_done54
-    jmp @release_done51
-@release_skip50
-    jmp @release_done51
-@release_done51
-    %t101 =l loadl %t3
-    %t102 =l call $nox_rc_alloc(l %rt, l 24)
-    storel 2, %t102
-    %t103 =l add %t102, 8
-    storel 0, %t103
-    %t104 =l add %t102, 16
-    storel 0, %t104
-    %t105 =l add %t102, 8
-    storel %t93, %t105
-    %t106 =l add %t102, 16
-    storel %t101, %t106
-    %t107 =l call $nox_globals_get(l %rt)
-    %t108 =l add %t107, 8
-    %t109 =l loadl %t108
-    %t110 =l call $nox_slist_append(l %rt, l %t109, l 8, w 2, l %t102)
-    %t111 =l loadl %t3
-    %t112 =l add %t111, 1
-    storel %t112, %t3
+    %t84 =l call $nox_globals_get(l %rt)
+    %t85 =l add %t84, 8
+    %t86 =l loadl %t85
+    %t87 =l call $nox_slist_append(l %rt, l %t86, l 8, w 2, l %t79)
+    %t88 =l loadl %t3
+    %t89 =l add %t88, 1
+    storel %t89, %t3
     jmp @while_cond0
 @while_end2
-    %t113 =l loadl %t1
-    %t114 =l loadl %t2
-    call $nox_channel_send(l %rt, l %t113, l %t114)
-    %t115 =l loadl %t5
-    %t116 =w ceql %t115, 0
-    jnz %t116, @release_skip57, @release56
-@release56
-    %t117 =l sub %t115, 16
-    %t118 =l loadl %t117
-    %t119 =w csgel %t118, 536870912
-    jnz %t119, @str_free_done61, @str_rel_atomic62
-@str_rel_atomic62
-    %t120 =l sub %t115, 16
-    %t121 =l call $nox_atomic_rc_sub(l %t120, l 1)
-    %t122 =w cslel %t121, 0
-    jnz %t122, @str_free59, @str_free_skip60
-@str_free59
-    call $nox_str_free_now(l %rt, l %t115)
-    jmp @str_free_done61
-@str_free_skip60
-    jmp @str_free_done61
-@str_free_done61
-    jmp @release_done58
-@release_skip57
-    jmp @release_done58
-@release_done58
+    %t90 =l loadl %t1
+    %t91 =l loadl %t2
+    call $nox_channel_send(l %rt, l %t90, l %t91)
+    %t92 =l loadl %t5
+    %t93 =w ceql %t92, 0
+    jnz %t93, @release_skip29, @release28
+@release28
+    %t94 =l sub %t92, 16
+    %t95 =l loadl %t94
+    %t96 =w csgel %t95, 536870912
+    jnz %t96, @str_free_done33, @str_rel_atomic34
+@str_rel_atomic34
+    %t97 =l sub %t92, 16
+    %t98 =l call $nox_atomic_rc_sub(l %t97, l 1)
+    %t99 =w cslel %t98, 0
+    jnz %t99, @str_free31, @str_free_skip32
+@str_free31
+    call $nox_str_free_now(l %rt, l %t92)
+    jmp @str_free_done33
+@str_free_skip32
+    jmp @str_free_done33
+@str_free_done33
+    jmp @release_done30
+@release_skip29
+    jmp @release_done30
+@release_done30
     storel 0, %t5
-@fn_end63
+@fn_end35
     ret
 }
 export function $main_task(l %rt) {

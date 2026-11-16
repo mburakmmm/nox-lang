@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.191]
+
+### Performans + ÖNEMLİ DÜZELTME (2.2 aşama 12)
+
+- **v2.1.190'daki f-string birleştirmesinde bellek hatası düzeltildi:** zincir düzleştirmede bir `switch` yakalama değişkeninin (`|lb|`) adresi alınıp döngüde kullanılıyordu (yığındaki kopyaya sarkan işaretçi, tanımsız davranış). f-string zincirlerinde şans eseri doğru çalışmış, ama v2.1.190'a güvenmeyin: v2.1.191'e yükseltin. Düzeltme: AST düğümünün adresi (`&cur.left.binary`). Elle yazılmış zincirlere genişletilirken `"x" * 5 + "!!" + "y" * 3`ün çarpmayı düşürmesiyle yakalandı (golden `v2.1.88 replace/split` fixture'ı kırmızıya döndü); üç satır regresyon eklendi.
+- **Elle yazılmış `+` zincirleri de tek tahsisli birleştirmeye iner** (zincirde bir dize literali varsa: `str + int` tip hatası olduğundan literal tüm `+`ların `str` olduğunu kanıtlar): `"item" + str(i) + "tail"`. `str(<düz int>)` parçaları (yerleşik `str`; kullanıcı tanımı gölgelemez, denendi) ara `str` üretmeden yazılır. `str_find_300k` 11,4 → 6,5 ms (C'ye oran 8x → 4,5x), `path_join_basename_300k` 20,7 → 15,9 ms. Golden `str_literal_chain_fused` (yan etki sırası, UTF-8, iç içe zincir, `str * n` parçaları, `t = t + "y" + "z"`; Python ile bağımsız beklenen çıktı; iki arka uç).
+- Not: çalışma zamanına yeni bir `nox_*` sembolü eklendiğinde yerel `zig build test` için `zig build mobile-rt` ile mobil çalışma zamanı nesneleri yenilenmelidir (iOS simülatör gömme korpusu eski nesneyle bağlanamaz).
+- Taban çizgisi güncellendi.
+
 ## [2.1.190]
 
 ### Performans (2.2 aşama 12: derleyici düzeyi)

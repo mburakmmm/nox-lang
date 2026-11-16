@@ -3945,39 +3945,27 @@ export function l $item_of(l %rt, l %p_n) {
 export function l $upper_tag(l %rt, l %p_n) {
 @start
     %t0 =l alloc8 8
+    %t1 =l alloc8 48
     storel %p_n, %t0
-    %t1 =l add $str6, 16
-    %t2 =l loadl %t0
-    %t3 =l call $nox_str_concat(l %rt, l %t1, l %t2)
-    %t4 =l add $str7, 16
-    %t5 =l call $nox_str_concat(l %rt, l %t3, l %t4)
-    %t6 =w ceql %t3, 0
-    jnz %t6, @release_skip1, @release0
-@release0
-    %t7 =l sub %t3, 16
-    %t8 =l loadl %t7
-    %t9 =w csgel %t8, 536870912
-    jnz %t9, @str_free_done5, @str_rel_atomic6
-@str_rel_atomic6
-    %t10 =l sub %t3, 16
-    %t11 =l loadl %t10
-    %t12 =l sub %t11, 1
-    storel %t12, %t10
-    %t13 =w cslel %t12, 0
-    jnz %t13, @str_free3, @str_free_skip4
-@str_free3
-    call $nox_str_free_now(l %rt, l %t3)
-    jmp @str_free_done5
-@str_free_skip4
-    jmp @str_free_done5
-@str_free_done5
-    jmp @release_done2
-@release_skip1
-    jmp @release_done2
-@release_done2
-    ret %t5
-@after_return7
-@fn_end8
+    %t2 =l add $str6, 16
+    %t3 =l add %t1, 0
+    storel 0, %t3
+    %t4 =l add %t1, 8
+    storel %t2, %t4
+    %t5 =l loadl %t0
+    %t6 =l add %t1, 16
+    storel 0, %t6
+    %t7 =l add %t1, 24
+    storel %t5, %t7
+    %t8 =l add $str7, 16
+    %t9 =l add %t1, 32
+    storel 0, %t9
+    %t10 =l add %t1, 40
+    storel %t8, %t10
+    %t11 =l call $nox_str_concat_n(l %rt, l %t1, l 3)
+    ret %t11
+@after_return0
+@fn_end1
     ret 0
 }
 export function w $main(w %argc, l %argv) {

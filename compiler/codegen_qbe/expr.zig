@@ -1867,18 +1867,35 @@ fn genTernaryImpl(self: *Codegen, t: ast.Ternary, target: anytype, comptime use_
 /// 2.2 aşama 12: f-string zinciri (`f"{a}:{b}"` = `str(a) + ":" + str(b)`, parser `fstring` bayrağıyla işaretler) TEK tahsisli birleştirmeye indirilir. Önceden her `str(int)` ve her `+`
 /// ayrı bir ARC dizesiydi (3 parçalı bir f-string'de 4-5 tahsis); şimdi düz `int` parçalar çalışma zamanında doğrudan hedef tamponuna yazılır (ara `str` yok), diğer parçalar
 /// tek `nox_str_concat_n` çağrısıyla birleşir. Anlam birebir aynıdır (parçalar soldan sağa değerlendirilir, her parça tam bir kez; ASCII bayrağı dahil). 3'ten az parça için `null` (eski yol).
+/// Elle yazılmış `a + b + c` zinciri de (parser `fstring` bayrağı olmadan) aynı birleştirmeye uygundur ancak ve ancak zincirde (sol omurga + sağ operandlar) bir DİZE LİTERALİ varsa:
+/// `str + int` tip hatası olduğundan literal, zincirdeki tüm `+`ların `str` olduğunu KANITLAR (operand tipleri değerlendirmeden önce bilinemez).
+fn isLiteralStrChain(b: ast.Binary) bool {
+    var cur: *const ast.Binary = &b;
+    var count: usize = 1;
+    var has_lit = false;
+    while (true) {
+        if (cur.right.* == .string_lit) has_lit = true;
+        if (cur.left.* == .binary and cur.left.binary.op == .add) {
+            cur = &cur.left.binary; // yığındaki bir kopyanın değil, AST düğümünün adresi
+            count += 1;
+            continue;
+        }
+        if (cur.left.* == .string_lit) has_lit = true;
+        break;
+    }
+    return has_lit and count >= 2;
+}
+
 fn genFStringChain(self: *Codegen, b: ast.Binary) CodegenError!?Value {
     var pieces: std.ArrayList(*const ast.Expr) = .empty;
     defer pieces.deinit(self.allocator);
     var cur: *const ast.Binary = &b;
+    const flagged = b.fstring;
     while (true) {
         try pieces.append(self.allocator, cur.right);
-        switch (cur.left.*) {
-            .binary => |lb| if (lb.op == .add and lb.fstring) {
-                cur = &lb;
-                continue;
-            },
-            else => {},
+        if (cur.left.* == .binary and cur.left.binary.op == .add and (cur.left.binary.fstring or !flagged)) {
+            cur = &cur.left.binary; // yığındaki bir kopyanın değil, AST düğümünün adresi
+            continue;
         }
         try pieces.append(self.allocator, cur.left);
         break;
@@ -1897,7 +1914,7 @@ fn genFStringChain(self: *Codegen, b: ast.Binary) CodegenError!?Value {
         var v: Value = undefined;
         var owned_expr: *const ast.Expr = pe;
         switch (pe.*) {
-            .call => |pc| if (pc.fstring and pc.callee.* == .identifier and std.mem.eql(u8, pc.callee.identifier, "str") and pc.args.len == 1) {
+            .call => |pc| if (pc.callee.* == .identifier and std.mem.eql(u8, pc.callee.identifier, "str") and pc.args.len == 1) {
                 const av = try self.genExpr(pc.args[0]);
                 if (av.heap == .none and av.qtype == .l and av.fixed_int == null) {
                     is_int = true;
@@ -1934,7 +1951,7 @@ fn genFStringChain(self: *Codegen, b: ast.Binary) CodegenError!?Value {
 }
 
 pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
-    if (b.op == .add and b.fstring) {
+    if (b.op == .add and (b.fstring or isLiteralStrChain(b))) {
         if (try genFStringChain(self, b)) |fused| return fused;
     }
     // Darboğaz analizi bulgu #3 (bkz. `Codegen.mod_cache`nin belge
