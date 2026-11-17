@@ -683,6 +683,8 @@ pub const Codegen = struct {
     pub const collectLoopInvariantStrBases = optimizations.collectLoopInvariantStrBases;
     pub const markBorrowedFieldLocals = optimizations.markBorrowedFieldLocals;
     pub const markBorrowedAliasLocals = optimizations.markBorrowedAliasLocals;
+    pub const markMoveSites = optimizations.markMoveSites;
+    pub const findCtorMoveSite = optimizations.findCtorMoveSite;
     pub const detectWhileBoundsElideCtx = optimizations.detectWhileBoundsElideCtx;
     pub const enterStrLenCacheScope = optimizations.enterStrLenCacheScope;
     pub const exitStrLenCacheScope = optimizations.exitStrLenCacheScope;
@@ -1627,6 +1629,10 @@ pub const Codegen = struct {
     /// IO çağrıları) HİÇ DEĞİŞTİRMEDİĞİ KANITLANAN (geçişli) fonksiyon/metod sembolleri —
     /// bkz. `markBorrowedAliasLocals`.
     heap_readonly: std.StringHashMapUnmanaged(void) = .empty,
+    /// B1/I6: taşıma noktaları (kaynak metindeki tanımlayıcı olayının `@intFromPtr(name.ptr)` anahtarı). `move_sites`: taze-bağlı yerellerin kalıcı kümesi; `active_param_moves`: yalnızca bir inline
+    /// ayrıştırma (splice) süresince, taze geçici argümanla beslenen parametreler için etkin. Bkz. `optimizations.zig` blok notu.
+    move_sites: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    active_param_moves: std.AutoHashMapUnmanaged(usize, void) = .empty,
     /// Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): "inline edilebilir"
     /// KANITLANMIŞ serbest fonksiyonların (isim → AST gövdesi) haritası —
     /// `computeInlinableFunctions` tarafından doldurulur, `prepareInlineSites`

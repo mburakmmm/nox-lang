@@ -4344,75 +4344,63 @@ export function l $nox_udp_UdpSocket_recv(l %rt, l %p_self, l %p_max_len, l %p_t
     %t145 =l add %t142, 24
     storel 0, %t145
     %t146 =l add %t142, 8
-    %t147 =w ceql %t133, 0
-    jnz %t147, @retain_skip89, @retain88
-@retain88
-    %t148 =l sub %t133, 16
-    %t149 =l loadl %t148
-    %t150 =w csgel %t149, 536870912
-    jnz %t150, @retain_done90, @retain_bump91
-@retain_bump91
-    %t151 =l call $nox_atomic_rc_add(l %t148, l 1)
-    jmp @retain_done90
-@retain_skip89
-    jmp @retain_done90
-@retain_done90
+    storel 0, %t3
     storel %t133, %t146
-    %t152 =l add %t142, 16
-    storel %t137, %t152
-    %t153 =l add %t142, 24
-    storel %t141, %t153
-    %t154 =l loadl %t3
-    %t155 =w ceql %t154, 0
-    jnz %t155, @release_skip93, @release92
-@release92
-    %t156 =l sub %t154, 16
-    %t157 =l loadl %t156
-    %t158 =w csgel %t157, 536870912
-    jnz %t158, @str_free_done97, @str_rel_atomic98
-@str_rel_atomic98
-    %t159 =l sub %t154, 16
-    %t160 =l call $nox_atomic_rc_sub(l %t159, l 1)
-    %t161 =w cslel %t160, 0
-    jnz %t161, @str_free95, @str_free_skip96
-@str_free95
-    call $nox_str_free_now(l %rt, l %t154)
-    jmp @str_free_done97
-@str_free_skip96
-    jmp @str_free_done97
-@str_free_done97
-    jmp @release_done94
-@release_skip93
-    jmp @release_done94
-@release_done94
+    %t147 =l add %t142, 16
+    storel %t137, %t147
+    %t148 =l add %t142, 24
+    storel %t141, %t148
+    %t149 =l loadl %t3
+    %t150 =w ceql %t149, 0
+    jnz %t150, @release_skip89, @release88
+@release88
+    %t151 =l sub %t149, 16
+    %t152 =l loadl %t151
+    %t153 =w csgel %t152, 536870912
+    jnz %t153, @str_free_done93, @str_rel_atomic94
+@str_rel_atomic94
+    %t154 =l sub %t149, 16
+    %t155 =l call $nox_atomic_rc_sub(l %t154, l 1)
+    %t156 =w cslel %t155, 0
+    jnz %t156, @str_free91, @str_free_skip92
+@str_free91
+    call $nox_str_free_now(l %rt, l %t149)
+    jmp @str_free_done93
+@str_free_skip92
+    jmp @str_free_done93
+@str_free_done93
+    jmp @release_done90
+@release_skip89
+    jmp @release_done90
+@release_done90
     storel 0, %t3
     ret %t142
-@after_return99
-    %t162 =l loadl %t3
-    %t163 =w ceql %t162, 0
-    jnz %t163, @release_skip101, @release100
-@release100
-    %t164 =l sub %t162, 16
-    %t165 =l loadl %t164
-    %t166 =w csgel %t165, 536870912
-    jnz %t166, @str_free_done105, @str_rel_atomic106
-@str_rel_atomic106
-    %t167 =l sub %t162, 16
-    %t168 =l call $nox_atomic_rc_sub(l %t167, l 1)
-    %t169 =w cslel %t168, 0
-    jnz %t169, @str_free103, @str_free_skip104
-@str_free103
-    call $nox_str_free_now(l %rt, l %t162)
-    jmp @str_free_done105
-@str_free_skip104
-    jmp @str_free_done105
-@str_free_done105
-    jmp @release_done102
-@release_skip101
-    jmp @release_done102
-@release_done102
+@after_return95
+    %t157 =l loadl %t3
+    %t158 =w ceql %t157, 0
+    jnz %t158, @release_skip97, @release96
+@release96
+    %t159 =l sub %t157, 16
+    %t160 =l loadl %t159
+    %t161 =w csgel %t160, 536870912
+    jnz %t161, @str_free_done101, @str_rel_atomic102
+@str_rel_atomic102
+    %t162 =l sub %t157, 16
+    %t163 =l call $nox_atomic_rc_sub(l %t162, l 1)
+    %t164 =w cslel %t163, 0
+    jnz %t164, @str_free99, @str_free_skip100
+@str_free99
+    call $nox_str_free_now(l %rt, l %t157)
+    jmp @str_free_done101
+@str_free_skip100
+    jmp @str_free_done101
+@str_free_done101
+    jmp @release_done98
+@release_skip97
+    jmp @release_done98
+@release_done98
     storel 0, %t3
-@fn_end107
+@fn_end103
     ret 0
 }
 export function $nox_udp_UdpSocket_close(l %rt, l %p_self) {

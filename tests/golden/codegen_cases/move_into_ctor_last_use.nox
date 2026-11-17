@@ -1,0 +1,141 @@
+# 2.3 B1/I6: son kullanımda sahiplik taşıma (bir yerel ya da inline-edilen çağrının taze argümanı, basit-`__init__`li bir kurucuya son kullanımında retain/release çifti OLMADAN devredilir).
+# Doğruluk (değerler) + sızıntı yok (canlı blok sayısı sabit) + taşıma uygulanmaması gereken durumlar (ikinci kullanım, döngü dışı bildirim, çift saklama).
+import nox.mem
+
+class Leaf:
+    v: int
+    def __init__(self: Leaf, v: int) -> None:
+        self.v = v
+
+class Pair:
+    a: Leaf
+    b: Leaf
+    def __init__(self: Pair, a: Leaf, b: Leaf) -> None:
+        self.a = a
+        self.b = b
+
+class Twice:
+    x: Leaf
+    y: Leaf
+    def __init__(self: Twice, x: Leaf) -> None:
+        self.x = x
+        self.y = x
+
+class Holder:
+    h: Leaf
+    def __init__(self: Holder, h: Leaf) -> None:
+        self.h = h
+
+def make_pair(a: Leaf, b: Leaf) -> Pair:
+    return Pair(a, b)
+
+def maybe_pair(a: Leaf, b: Leaf, ok: bool) -> int:
+    if not ok:
+        return -1
+    p: Pair = Pair(a, b)
+    return p.a.v + p.b.v
+
+def sum_pair(p: Pair) -> int:
+    return p.a.v + p.b.v
+
+# 1) taze yerel, son kullanımda kurucuya
+def local_move(n: int) -> int:
+    a: Leaf = Leaf(n)
+    b: Leaf = Leaf(n + 1)
+    p: Pair = Pair(a, b)
+    return sum_pair(p)
+
+# 2) ikinci kullanım var: taşıma YOK
+def local_reuse(n: int) -> int:
+    a: Leaf = Leaf(n)
+    b: Leaf = Leaf(n + 1)
+    p: Pair = Pair(a, b)
+    return sum_pair(p) + a.v
+
+# 3) döngü içinde bildirim + taşıma (her yineleme taze)
+def loop_move(n: int) -> int:
+    t: int = 0
+    i: int = 0
+    while i < n:
+        a: Leaf = Leaf(i)
+        b: Leaf = Leaf(i * 2)
+        p: Pair = Pair(a, b)
+        t = t + sum_pair(p)
+        i = i + 1
+    return t
+
+# 4) bildirim döngü DIŞINDA, kurucu döngü İÇİNDE: taşıma YOK (her yinelemede aynı değer gerekir)
+def loop_outer_decl(n: int) -> int:
+    a: Leaf = Leaf(7)
+    b: Leaf = Leaf(9)
+    t: int = 0
+    i: int = 0
+    while i < n:
+        p: Pair = Pair(a, b)
+        t = t + sum_pair(p)
+        i = i + 1
+    return t
+
+# 5) çift saklama: taşıma YOK
+def twice_store(n: int) -> int:
+    t: Twice = Twice(Leaf(n))
+    return t.x.v + t.y.v
+
+# 6) inline sarmalayıcı, taze argümanlar
+def wrapper_fresh(n: int) -> int:
+    p: Pair = make_pair(Leaf(n), Leaf(n * 3))
+    return sum_pair(p)
+
+# 7) inline sarmalayıcı, adlandırılmış (taze OLMAYAN) argümanlar: çağıran sahipliği korur
+def wrapper_named(n: int) -> int:
+    a: Leaf = Leaf(n)
+    b: Leaf = Leaf(n + 5)
+    p: Pair = make_pair(a, b)
+    return sum_pair(p) + a.v + b.v
+
+# 8) kurucuya ulaşılmayan yol: taze argümanlar çağıran tarafından bırakılmalı
+def wrapper_early(n: int) -> int:
+    t: int = 0
+    i: int = 0
+    while i < n:
+        t = t + maybe_pair(Leaf(i), Leaf(i + 1), i % 2 == 0)
+        i = i + 1
+    return t
+
+# 9) istisna: taşımadan ÖNCE fırlar (yerel kapsam sonunda bırakılır, sızmaz)
+def raises_before(n: int) -> int:
+    a: Leaf = Leaf(n)
+    b: Leaf = Leaf(n)
+    if n > 2:
+        raise ValueError("boom")
+    p: Pair = Pair(a, b)
+    return sum_pair(p)
+
+def run() -> int:
+    total: int = 0
+    total = total + local_move(3)
+    total = total + local_reuse(3)
+    total = total + loop_move(5)
+    total = total + loop_outer_decl(4)
+    total = total + twice_store(6)
+    total = total + wrapper_fresh(4)
+    total = total + wrapper_named(2)
+    total = total + wrapper_early(6)
+    try:
+        total = total + raises_before(5)
+    except ValueError:
+        total = total + 1000
+    total = total + raises_before(1)
+    return total
+
+print(local_move(3), local_reuse(3), loop_move(5), loop_outer_decl(4), twice_store(6))
+print(wrapper_fresh(4), wrapper_named(2), wrapper_early(6), raises_before(1))
+print(run())
+nox.mem.stats()
+r0: int = run()
+m1: nox.mem.MemStats = nox.mem.stats()
+r1: int = run()
+r2: int = run()
+m2: nox.mem.MemStats = nox.mem.stats()
+print(r0 == r1 and r1 == r2)
+print(m2.live - m1.live)

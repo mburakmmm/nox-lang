@@ -2323,6 +2323,7 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     try self.collectLocals(&locals, fd.body, false);
     // v1.142.15: bkz. `markBorrowedAliasLocals`.
     try self.markBorrowedAliasLocals(&locals, fd.body, fd.name);
+    try self.markMoveSites(fd.body);
 
     const fn_sym = try self.userFnSym(fd.name);
     try self.qbeFuncHeaderStart(if (ret_info.qtype == .none) null else ret_info.qtype, fn_sym);
@@ -2423,6 +2424,7 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     {
         const alias_sym = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ class_name, m.name });
         try self.markBorrowedAliasLocals(&locals, m.body, alias_sym);
+        try self.markMoveSites(m.body);
     }
 
     const fn_name = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ class_name, m.name });

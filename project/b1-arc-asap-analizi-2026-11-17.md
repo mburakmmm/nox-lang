@@ -122,3 +122,9 @@ Kümülatif tavan (AST): I1+I2+I4 ≈ 28 % (gerçek iş) / (28 + kalan ~25) ≈ 
 - B1-1 `NOX_RC_STATS` tanılaması (runtime `nox_rcstat`, `RuntimeState.rcstat*`, codegen `emitRcStat`, `wasm_abi_table`); üç iş yükü + Aether ölçüldü.
 - Yan bulgu: Aether sunucusu `NOX_POOL_WORKERS` ayarlanmadan ~%40-60 oranında açılışta çöküyor (v2.2.7'de de var; `nox_os_OsError_release` içinde bozuk işaretçi) → ayrı görev açıldı.
 - B1-0 (`explain`/`--dump` etiket düzeltmesi) henüz yapılmadı.
+
+## 9. I6 uygulandı (v2.2.10) ve önceki varsayımın düzeltmesi
+
+Ölçümle (AST iş yükü, sarmalayıcı `add(a, b)` = `return Node(1, 0, a, b)` inline edilince): `build` düğüm başına bir retain/release çifti üretiyordu (taze geçici argüman → parametre yuvası → kurucu alana retain → splice sonrası geçicinin release'i); her release sayacı sıfırlamadığı için döngü toplayıcıya olası-kök kaydı da yapıyordu (983 k kayıt). I1'in beklenen "alan okuması yereli" durumu zaten uygulanmıştı (v1.142.15, `heap_readonly` + `markBorrowedAliasLocals`; `eval_node` retain'siz); asıl kaynak **taze geçiciyi kurucuya taşımayan ödünç-parametre çağrı sözleşmesi** çıktı. Çözüm: son kullanımda taşıma (`CHANGELOG [2.2.10]`). Sonuç: retain 983 k → 0, `ast_eval` 27,9 → 19,5 ms (−%30), toplam bugünkü 28,4 → 19,5 ms (−%31).
+
+Kalan ve sıradaki adaylar: I1'in genelleştirilmesi (salt-okunur olmayan işlevlerde alan okuması yerelleri, statement-düzeyi etki analizi), `list.append(x)` / alan ataması `obj.f = x` / `dict[k] = x` için aynı son-kullanım taşıması (kurucu dışı tüketim noktaları), `return` dışı çağrılan işlevlerin "sahiplik alan" parametre çıkarımı (ABI değişikliği, `[K]`), satır içi serbest-liste tahsisi (I4).

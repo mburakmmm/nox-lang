@@ -991,6 +991,18 @@ pub fn retainIfAliasing(self: *Codegen, value: ast.Expr, v0: Value) CodegenError
     if (value == .identifier) {
         if (self.vars.get(value.identifier)) |info| {
             if (info.is_pinned_str) return v0;
+            // B1/I6: son-kullanımda sahiplik TAŞIMA (bkz. `optimizations.zig` "SON KULLANIMDA SAHİPLİK TAŞIMA" notu). Retain yapılmaz; yuva sıfırlanır, böylece kapsam sonu release'i atlanır.
+            const key = @intFromPtr(value.identifier.ptr);
+            const is_local_site = self.move_sites.contains(key);
+            const is_param_site = self.active_param_moves.contains(key);
+            if ((is_local_site or is_param_site) and !v0.always_fresh and isHeapManaged(v0.heap) and v0.heap != .boxed_scalar and
+                !info.arena and !info.borrowed_field and !info.is_stack_local and !info.manual and info.growable_arena == null and !info.ref_param and
+                (is_param_site or !info.is_param))
+            {
+                try self.qbeStoreImmL(0, info.slot);
+                try self.modCacheInvalidateSlot(info.slot);
+                return v0;
+            }
         }
     }
     // `v0.always_fresh` (bkz. `Value`nin belge notu, stdlib fazı §G):

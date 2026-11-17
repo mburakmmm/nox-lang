@@ -549,6 +549,164 @@ fn aliasBorrowEligible(v: ast.VarDecl, locals: []const LocalDecl, full_body: []c
     return true;
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// B1/I6 (2.3, `project/b1-arc-asap-analizi-2026-11-17.md`): "SON KULLANIMDA SAHİPLİK TAŞIMA" (move). Taze bir değere (çağrı/kurucu/literal sonucu) bağlı yerel `x`, ya da bir inline-edilen çağrıda
+// taze bir geçici argümanla beslenen parametre, `x`in SON kullanımı basit-`__init__`li (yalnızca `self.alan = parametre` atamaları) bir sınıf kurucusunun argümanıysa, kurucu alana yazarken retain
+// yapmak ve sonra `x`i kapsam sonunda/çağrıdan sonra release etmek yerine sahiplik alana TAŞINIR (retain/release çifti ve her çiftin döngü-toplayıcı olası-kök kaydı yok olur). Taşıma noktasında
+// `x`in yuvası SIFIRLANIR: kapsam sonu/yeniden-bildirim release'leri boş işaretçiyi atlar, dolayısıyla koşullu/yinelenen yollar dinamik olarak güvenlidir. Analiz yalnızca "bu ad, bu noktadan SONRA
+// hiçbir yoldan okunmaz" garantisini verir (ön-sıra son anma + aynı döngü/try/with bağlamı + iç içe def yok).
+const MoveItem = struct { stmt: ?ast.Stmt = null, mentions: bool = false, ctx: usize = 0, decl: bool = false };
+
+fn moveItemsFromBody(body: []const ast.Stmt, name: []const u8, ctx: usize, items: *std.ArrayListUnmanaged(MoveItem), a: std.mem.Allocator) std.mem.Allocator.Error!void {
+    for (body) |stmt| {
+        switch (stmt.kind) {
+            .var_decl => |v| try items.append(a, .{ .stmt = stmt, .mentions = exprMentionsName(v.value, name), .ctx = ctx, .decl = std.mem.eql(u8, v.name, name) }),
+            .assign => |as| try items.append(a, .{ .stmt = stmt, .mentions = exprMentionsName(as.target, name) or exprMentionsName(as.value, name), .ctx = ctx }),
+            .expr_stmt => |e| try items.append(a, .{ .stmt = stmt, .mentions = exprMentionsName(e, name), .ctx = ctx }),
+            .return_stmt => |me| try items.append(a, .{ .stmt = stmt, .mentions = if (me) |e| exprMentionsName(e, name) else false, .ctx = ctx }),
+            .raise_stmt => |e| try items.append(a, .{ .mentions = exprMentionsName(e, name), .ctx = ctx }),
+            .del_stmt => |e| try items.append(a, .{ .mentions = exprMentionsName(e, name), .ctx = ctx }),
+            .defer_stmt => |d| try items.append(a, .{ .mentions = callMentionsName(d.call, name), .ctx = ctx }),
+            .if_stmt => |f| {
+                try items.append(a, .{ .mentions = exprMentionsName(f.cond, name), .ctx = ctx });
+                try moveItemsFromBody(f.then_body, name, ctx, items, a);
+                for (f.elif_clauses) |ec| {
+                    try items.append(a, .{ .mentions = exprMentionsName(ec.cond, name), .ctx = ctx });
+                    try moveItemsFromBody(ec.body, name, ctx, items, a);
+                }
+                if (f.else_body) |eb| try moveItemsFromBody(eb, name, ctx, items, a);
+            },
+            .while_stmt => |w| {
+                const lc = @intFromPtr(w.body.ptr) | 1;
+                try items.append(a, .{ .mentions = exprMentionsName(w.cond, name), .ctx = lc });
+                try moveItemsFromBody(w.body, name, lc, items, a);
+            },
+            .for_stmt => |f| {
+                try items.append(a, .{ .mentions = exprMentionsName(f.iterable, name), .ctx = ctx });
+                try moveItemsFromBody(f.body, name, @intFromPtr(f.body.ptr) | 1, items, a);
+            },
+            .try_stmt => |t| {
+                const tc = @intFromPtr(t.try_body.ptr) | 1;
+                try moveItemsFromBody(t.try_body, name, tc, items, a);
+                for (t.except_clauses) |ec| try moveItemsFromBody(ec.body, name, tc, items, a);
+                if (t.finally_body) |fb| try moveItemsFromBody(fb, name, tc, items, a);
+            },
+            .lowlevel_stmt => |ll| try moveItemsFromBody(ll.body, name, @intFromPtr(ll.body.ptr) | 1, items, a),
+            .with_stmt => |w| {
+                try items.append(a, .{ .mentions = exprMentionsName(w.ctx_expr, name), .ctx = ctx });
+                try moveItemsFromBody(w.body, name, @intFromPtr(w.body.ptr) | 1, items, a);
+            },
+            else => {},
+        }
+    }
+}
+
+/// `expr` basit-`__init__`li bir sınıf kurucu çağrısıysa ve `name` bu çağrının BİR argümanı olarak (kimlik olarak, tam bir kez, başka hiçbir argümanda anılmadan) geçiyorsa, o argüman
+/// ifadesinin tanımlayıcı işaretçisini (`@intFromPtr(name.ptr)`: kaynak metindeki tekil olay) döndürür. İlgili parametre `__init__`te TAM BİR kez saklanmalıdır (çift saklama ⇒ çift sahiplik gerekir).
+fn ctorMoveKey(self: *Codegen, expr: ast.Expr, name: []const u8) ?usize {
+    if (expr != .call) return null;
+    const c = expr.call;
+    if (c.callee.* != .identifier) return null;
+    const cname = c.callee.identifier;
+    const cinfo = self.classes.get(cname) orelse return null;
+    if (!(cinfo.has_init and cinfo.simple_init_ok)) return null;
+    const owner = cinfo.init_owner orelse return null;
+    if (!std.mem.eql(u8, owner, cname)) return null;
+    if (cinfo.init_params.len != c.args.len) return null;
+    var found: ?usize = null;
+    for (c.args, 0..) |arg, k| {
+        if (arg == .identifier and std.mem.eql(u8, arg.identifier, name)) {
+            if (found != null) return null;
+            found = k;
+        } else if (exprMentionsName(arg, name)) return null;
+    }
+    const k = found orelse return null;
+    var stores: usize = 0;
+    for (cinfo.simple_init) |st| {
+        if (st.param_index) |pi| if (pi == k) {
+            stores += 1;
+        };
+    }
+    if (stores != 1) return null;
+    return @intFromPtr(c.args[k].identifier.ptr);
+}
+
+fn stmtMoveKey(self: *Codegen, stmt: ast.Stmt, name: []const u8) ?usize {
+    return switch (stmt.kind) {
+        .return_stmt => |me| if (me) |e| ctorMoveKey(self, e, name) else null,
+        .var_decl => |v| ctorMoveKey(self, v.value, name),
+        .assign => |as| if (exprMentionsName(as.target, name)) null else ctorMoveKey(self, as.value, name),
+        .expr_stmt => |e| ctorMoveKey(self, e, name),
+        else => null,
+    };
+}
+
+/// `body` içinde `name`in tek taşıma noktasını arar (bkz. blok notu). `is_param`: ad bir parametredir (bildirimi yok; taşıma noktası fonksiyon üst bağlamında olmalı). Bulunamazsa `null`.
+pub fn findCtorMoveSite(self: *Codegen, body: []const ast.Stmt, name: []const u8, is_param: bool) ?usize {
+    if (bodyHasNestedFuncDef(body)) return null;
+    var arena = std.heap.ArenaAllocator.init(self.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var items: std.ArrayListUnmanaged(MoveItem) = .empty;
+    moveItemsFromBody(body, name, 0, &items, a) catch return null;
+    var last: ?usize = null;
+    var decl: ?usize = null;
+    for (items.items, 0..) |it, i| {
+        if (it.mentions) last = i;
+        if (it.decl) {
+            if (decl != null) return null; // birden çok bildirim
+            decl = i;
+        }
+    }
+    const l = last orelse return null;
+    const item = items.items[l];
+    const stmt = item.stmt orelse return null;
+    if (is_param) {
+        if (item.ctx != 0 or decl != null) return null;
+    } else {
+        const d = decl orelse return null;
+        if (d >= l) return null;
+        if (items.items[d].ctx != item.ctx) return null;
+        // bildirim çıplak (kendi değerinde `name`i anmayan) taze bir ifadeyle yapılmalı
+        const dstmt = items.items[d].stmt orelse return null;
+        if (dstmt.kind != .var_decl) return null;
+        const dv = dstmt.kind.var_decl;
+        if (!abi.isTemporaryExpr(dv.value) or exprMentionsName(dv.value, name)) return null;
+    }
+    if (nameReassignedAfterDecl(body, name)) return null;
+    return stmtMoveKey(self, stmt, name);
+}
+
+/// Bir fonksiyon/metod gövdesindeki taze-bağlı yerellerin taşıma noktalarını `self.move_sites`e yazar (idempotent).
+pub fn markMoveSites(self: *Codegen, full_body: []const ast.Stmt) CodegenError!void {
+    try markMoveSitesIn(self, full_body, full_body);
+}
+
+fn markMoveSitesIn(self: *Codegen, body: []const ast.Stmt, full_body: []const ast.Stmt) CodegenError!void {
+    for (body) |stmt| {
+        switch (stmt.kind) {
+            .var_decl => |v| {
+                if (findCtorMoveSite(self, full_body, v.name, false)) |key| try self.move_sites.put(self.allocator, key, {});
+            },
+            .if_stmt => |f| {
+                try markMoveSitesIn(self, f.then_body, full_body);
+                for (f.elif_clauses) |ec| try markMoveSitesIn(self, ec.body, full_body);
+                if (f.else_body) |eb| try markMoveSitesIn(self, eb, full_body);
+            },
+            .while_stmt => |w| try markMoveSitesIn(self, w.body, full_body),
+            .for_stmt => |f| try markMoveSitesIn(self, f.body, full_body),
+            .try_stmt => |t| {
+                try markMoveSitesIn(self, t.try_body, full_body);
+                for (t.except_clauses) |ec| try markMoveSitesIn(self, ec.body, full_body);
+                if (t.finally_body) |fb| try markMoveSitesIn(self, fb, full_body);
+            },
+            .with_stmt => |w| try markMoveSitesIn(self, w.body, full_body),
+            else => {},
+        }
+    }
+}
+
 /// `loop_var`: `for x in ...` döngüsünün değişkeni — her yinelemede yeniden atandığı için ASLA döngü-değişmez DEĞİLDİR.
 pub fn collectLoopInvariantStrBases(self: *Codegen, body: []const ast.Stmt, loop_var: ?[]const u8) CodegenError!std.StringHashMapUnmanaged(void) {
     var result: std.StringHashMapUnmanaged(void) = .empty;

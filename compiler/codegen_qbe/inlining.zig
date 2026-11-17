@@ -1669,10 +1669,28 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
             .growable_arena => try self.arena_local_construct_sites.put(self.allocator, cs.node_key, cs.handle),
         }
     }
+    // B1/I6: taze geçici argümanla beslenen, callee gövdesinde yalnızca bir basit-`__init__`li kurucuya SON kullanımda aktarılan parametreler: sahiplik kurucuya TAŞINIR (retain yok), splice sonrası çağıranın
+    // release'i dinamik olarak yuvanın o anki değerine bakar (taşındıysa yuva boştur). Bkz. `optimizations.zig` "SON KULLANIMDA SAHİPLİK TAŞIMA".
+    const moved_params = try self.allocator.alloc(bool, site.params.len);
+    @memset(moved_params, false);
+    var moved_keys: std.ArrayListUnmanaged(usize) = .empty;
+    try self.markMoveSites(site.callee.body);
+    for (site.params, 0..) |p, i| {
+        if (!abi.isHeapManaged(p.info.heap) or p.info.heap == .boxed_scalar) continue;
+        if (callee_reassigned.contains(p.orig_name)) continue;
+        const av = arg_v0s[i];
+        if (av.is_pinned or av.is_stack_slot or !(av.always_fresh or abi.isTemporaryExpr(c.args[i]))) continue;
+        if (self.findCtorMoveSite(site.callee.body, p.orig_name, true)) |key| {
+            try self.active_param_moves.put(self.allocator, key, {});
+            try moved_keys.append(self.allocator, key);
+            moved_params[i] = true;
+        }
+    }
     const saved_pending_stack_slot = self.pending_stack_slot;
     self.pending_stack_slot = self.stack_slot_call_sites.get(@intFromPtr(c.callee));
     try self.genStmts(site.callee.body, callee_ret_info.qtype);
     self.pending_stack_slot = saved_pending_stack_slot;
+    for (moved_keys.items) |k| _ = self.active_param_moves.remove(k);
     // GG.19: splice BİTTİĞİNDE bu GEÇİCİ girdileri SİL — `helper()` AYNI
     // caller İçİnde BİRDEN FAZLA çağrılırsa HER splice KENDİ TAZE
     // tutamağını İSTER (bkz. `InlineConstructSite`nin belge notu, "save/
@@ -1721,7 +1739,20 @@ pub fn genInlinedCall(self: *Codegen, c: ast.Call, site: InlineSiteInfo) Codegen
     // ele alındığından (`is_param = true`, `.return_stmt`in `releaseNamedLocalsExcept`si
     // ASLA dokunmaz), sahiplikleri HÂLÂ ÇAĞIRANDADIR — BURADA serbest
     // bırakılır.
-    try self.releaseTemporaryArgs(c.args, arg_v0s);
+    var rel_exprs: std.ArrayListUnmanaged(ast.Expr) = .empty;
+    var rel_values: std.ArrayListUnmanaged(Value) = .empty;
+    for (c.args, 0..) |ae, i| {
+        if (moved_params[i]) continue;
+        try rel_exprs.append(self.allocator, ae);
+        try rel_values.append(self.allocator, arg_v0s[i]);
+    }
+    try self.releaseTemporaryArgs(rel_exprs.items, rel_values.items);
+    for (site.params, 0..) |p, i| {
+        if (!moved_params[i]) continue;
+        const cur = try self.newTemp();
+        try self.qbeLoadL(cur, p.slot);
+        try self.releaseValueIfSet(cur, p.info.heap, p.info.elem_qtype, p.info.class_name, p.info.elem_heap_info, p.info.dict_info);
+    }
 
     // 7) Sonucu üret.
     if (site.result) |r| {

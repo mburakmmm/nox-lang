@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.10]
+
+B1 (ARC/ASAP) devamı: son kullanımda sahiplik taşıma (move).
+
+- **Derleyici (B1/I6):** taze bir değere bağlı yerel, ya da inline-edilen bir çağrıda taze geçici argümanla beslenen parametre, son kullanımı basit-`__init__`li (yalnızca `self.alan = parametre` atamaları) bir sınıf kurucusunun argümanıysa, kurucu alana yazarken retain yapmak ve sonra release etmek yerine sahiplik alana TAŞINIR. Taşıma noktasında yerelin yuvası sıfırlanır (kapsam sonu/yeniden-bildirim/inline sonrası release'leri boş işaretçiyi atlar), bu yüzden koşullu ve döngü yolları dinamik olarak güvenlidir. Analiz (`optimizations.zig` `findCtorMoveSite`): ad bu noktadan sonra hiçbir yoldan okunmaz (ön-sıra son anma), aynı döngü/try/with bağlamı, tek bildirim, iç içe `def` yok, parametre kurucuda tam bir kez saklanır. Her çift retain/release aynı zamanda bir döngü-toplayıcı olası-kök kaydıydı; sarmalayıcı yardımcılarla (`add(build(), build())`) kurulan AST iş yükünde retain sayısı 983 k → 0, süre 27,9 → 19,5 ms (−%30). Golden: `move_into_ctor_last_use` (değerler, sızıntı yok, taşıma uygulanmaması gereken durumlar: ikinci kullanım, döngü dışı bildirim, çift saklama).
+- 22 IR anlık görüntüsü yenilendi.
+
 ## [2.2.9]
 
 Kullanıcı listesi (2026-11-17): paket sürümleri (K1), ARC/ASAP gerçek-dünya ölçümü ve ilk hızlandırmalar (B1).
