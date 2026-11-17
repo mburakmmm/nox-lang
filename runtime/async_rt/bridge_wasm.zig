@@ -101,6 +101,11 @@ pub export fn nox_async_deinit(rt: ?*anyopaque) void {
     g_sched = null;
 }
 
+/// Çalma yoktur (iç içe çalıştırma benzetimi): sabitleme `nox_async_spawn` ile aynıdır; yalnızca sembolü tamamlar (`bridge_native.zig`nin 1.7 girişi).
+pub export fn nox_async_spawn_pinned(rt: ?*anyopaque, func: TaskFn, arg: ?*anyopaque) ?*anyopaque {
+    return nox_async_spawn(rt, func, arg);
+}
+
 pub export fn nox_async_spawn(rt: ?*anyopaque, func: TaskFn, arg: ?*anyopaque) ?*anyopaque {
     const s = &g_sched.?;
     const t = allocatorFromRt(rt).create(Task) catch @panic("OOM: spawn");

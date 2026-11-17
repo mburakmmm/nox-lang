@@ -3915,8 +3915,9 @@ pub fn genGenericConstruct(self: *Codegen, g: ast.GenericConstruct) CodegenError
         // `fn(rt, ptr)` bırakma işlevi tutamağa yazılır (bkz. `runtime/async_rt/task_local_entry.zig`). Sınıf için `release_dispatch`
         // (çok biçimli sınıfları da etiketten çözer); `str`/`list`/`dict` için kendi bırakıcıları.
         const release_arg: []const u8 = switch (elem.heap) {
-            .str => "$nox_str_release",
-            .class => "$nox_rc_release_enqueue_dynamic",
+            // wasm32'de çalışma zamanı bırakıcıları (i32, i32) imzalıdır ama geri-çağrı (i64, i64) bekler: i64 imzalı sarmalayıcılar (bkz. `task_local.zig`).
+            .str => if (self.isWasmTarget()) "$nox_tasklocal_release_str_cb" else "$nox_str_release",
+            .class => if (self.isWasmTarget()) "$nox_tasklocal_release_class_cb" else "$nox_rc_release_enqueue_dynamic",
             .list => blk: {
                 const li: ElemHeapInfo = .{ .heap = .list, .elem_qtype = elem.elem_qtype, .nested = elem.elem_heap_info, .elem_is_str = elem.elem_is_str };
                 break :blk try std.fmt.allocPrint(self.allocator, "${s}_release", .{try self.releaseFnNameFor(li)});

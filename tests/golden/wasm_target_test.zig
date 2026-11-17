@@ -598,6 +598,45 @@ test "wasm32-freestanding --asyncify: nox.signal host sinyalini nox_host_signal 
     }
 }
 
+// 2.3 madde 5.5: Nox dışı araç zinciriyle derlenmiş gerçek C `pthread` programı Nox host'unda çalışır. `WASI_SDK_PATH` (wasi-sdk >= 25) yoksa ya da `node` yoksa atlanır (CI'a bağımlılık eklemez).
+test "wasm32-wasip1-threads: wasi-sdk ile derlenmiş gerçek C pthread programı Nox host'unda çalışır" {
+    const allocator = std.testing.allocator;
+    const sdk_z = std.c.getenv("WASI_SDK_PATH") orelse return error.SkipZigTest;
+    const sdk = std.mem.span(sdk_z);
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir_len = try tmp.dir.realPath(io, &path_buf);
+    const dir = path_buf[0..dir_len];
+    try tmp.dir.writeFile(io, .{ .sub_path = "t.c", .data = @embedFile("wasm_c_pthreads.c") });
+    const clang = try std.fmt.allocPrint(allocator, "{s}/bin/clang", .{sdk});
+    defer allocator.free(clang);
+    const src = try std.fmt.allocPrint(allocator, "{s}/t.c", .{dir});
+    defer allocator.free(src);
+    const out = try std.fmt.allocPrint(allocator, "{s}/t.wasm", .{dir});
+    defer allocator.free(out);
+    const cc = std.process.run(allocator, io, .{ .argv = &.{ clang, "--target=wasm32-wasip1-threads", "-pthread", "-O2", src, "-o", out, "-Wl,--import-memory,--max-memory=268435456" } }) catch return error.SkipZigTest;
+    defer allocator.free(cc.stdout);
+    defer allocator.free(cc.stderr);
+    if (cc.term != .exited or cc.term.exited != 0) {
+        std.debug.print("wasi-sdk clang basarisiz: {s}\n", .{cc.stderr});
+        return error.BuildFailed;
+    }
+    // Yarış yakalamak için birkaç tekrar: her koşu aynı sonucu vermeli.
+    var run: usize = 0;
+    while (run < 5) : (run += 1) {
+        const r = std.process.run(allocator, io, .{ .argv = &.{ "node", "--no-warnings", build_options.wasm_host_path, out } }) catch return error.SkipZigTest;
+        defer allocator.free(r.stdout);
+        defer allocator.free(r.stderr);
+        if (r.term != .exited or r.term.exited != 0) {
+            std.debug.print("c pthread surucu basarisiz: {s}\n{s}\n", .{ r.stderr, r.stdout });
+            return error.ProgramFailed;
+        }
+        try std.testing.expectEqualStrings("atomic=4000 locked=4000 joined=60\n", r.stdout);
+    }
+}
+
 test "wasm32-freestanding --asyncify: host ağ yeteneğini vermezse HttpCapabilityError" {
     const src =
         \\import nox.http

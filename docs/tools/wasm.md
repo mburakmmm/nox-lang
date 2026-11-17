@@ -113,6 +113,13 @@ NOX_POOL_WORKERS=4 noxc run --target wasm32-wasi --threads prog.nox
 
 `--threads` brings the work-stealing M:N pool of the native `--release` runtime to WebAssembly: `spawn`/`await`, `Channel` and `nox.thread` really run in parallel on several threads (shared memory plus atomics). The module imports `env.memory` (shared) and `wasi::thread-spawn`; `compiler/wasm_host.mjs` provides them with Node Workers (wasmtime 50 removed `-Sthreads`, so `noxc run` uses only Node for this target). Another host can run the module by providing the same two imports. The worker count is set with `NOX_POOL_WORKERS`. Limits and rationale: [ADR-015](../internals/adr/015-wasm-threads.md). `--threads` also exists for `wasm32-freestanding`: the host provides `nox_host.thread_spawn(arg) -> tid` and calls `nox_host_thread_start(tid, arg)` on each new thread (with a shared `env.memory`).
 
+### How `--threads` is verified
+
+- **Differential corpus.** `scripts/wasm_corpus.py --target wasm32-wasi-threads` (and `wasm32-freestanding-threads`) builds every `codegen_cases` fixture and compares its output with the native `.expected` in Node (`worker_threads` + `SharedArrayBuffer`): 590 of 590 comparable fixtures agree (the rest are compile-time rejections of modules WebAssembly does not have, and documented platform limits: no signals other than SIGINT/SIGTERM/SIGHUP, no child processes, `memset`/`memcmp` externs declared with 64-bit `int`).
+- **Real Windows.** `scripts/wasm_threads_remote.py --host user@pc` builds the threaded concurrency fixtures here and runs them on a remote Windows machine (Node 26, `compiler/wasm_host.mjs`): 109 of 109 modules match.
+- **A real C program.** `tests/golden/wasm_c_pthreads.c` (4 `pthread_create` threads, an atomic counter, a mutex, `pthread_join`) is compiled by an independent toolchain (wasi-sdk 25, `wasm32-wasip1-threads`) and runs on the Nox host: `wasm_target_test.zig` builds and runs it five times when `WASI_SDK_PATH` points at a wasi-sdk (skipped otherwise). Link it with `-Wl,--import-memory`: the host provides the shared memory.
+- **ThreadSanitizer.** WebAssembly has no TSan, but the M:N runtime sources are shared with the native runtime: `scripts/tsan_check.sh` runs the shared-state fixtures under TSan (38 runs, 0 reports).
+
 ## SQLite
 
 `nox.sqlite` compiles on every WebAssembly target; the SQLite library is linked into the program statically (only programs that use `nox.sqlite` grow, by about 700 KB). On `wasm32-wasi`, file-based databases work in the directories the host pre-opens (`wasmtime run --dir=. app.wasm`) and persist between runs; there is no locking (a single process is assumed). On `wasm32-freestanding`, file-based databases live in the virtual file system (below).

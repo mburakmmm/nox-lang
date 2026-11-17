@@ -26,6 +26,8 @@ const std = @import("std");
 const asap = @import("../alloc/asap.zig");
 const bridge = @import("bridge.zig");
 const tl = @import("task_local_entry.zig");
+const str_mod = @import("../str.zig");
+const arc = @import("../alloc/arc.zig");
 
 fn allocatorFromRt(rt: ?*anyopaque) std.mem.Allocator {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
@@ -91,4 +93,19 @@ export fn nox_tasklocal_clear(rt: ?*anyopaque, handle: ?*anyopaque) callconv(.c)
     const locals = bridge.currentTaskLocals() orelse return null;
     if (locals.fetchRemove(h)) |kv| return kv.value.value;
     return null;
+}
+
+// wasm32 (2.3 madde 5.5): derlenmiş kodun geri-çağrılarında işaretçi `i64`dür (`task_local_entry.ReleaseFn`), ama çalışma zamanının kendi bırakıcıları (`nox_str_release`,
+// `nox_rc_release_enqueue_dynamic`) wasm32'de `(i32, i32)` imzalıdır; adres olarak verilince `call_indirect` "function signature mismatch" tuzağı üretirdi
+// (`TaskLocal[str]`/`TaskLocal[Sınıf]` değerleri görev bitince bırakılırken). Bu sarmalayıcılar geri-çağrı imzasını (i64, i64) sağlar; codegen wasm hedefinde bunları geçirir.
+inline fn cbPtr(v: u64) ?*anyopaque {
+    return @ptrFromInt(@as(usize, @intCast(v)));
+}
+
+pub export fn nox_tasklocal_release_str_cb(rt: u64, p: u64) callconv(.c) void {
+    str_mod.nox_str_release(cbPtr(rt), @ptrCast(@alignCast(cbPtr(p))));
+}
+
+pub export fn nox_tasklocal_release_class_cb(rt: u64, p: u64) callconv(.c) void {
+    arc.nox_rc_release_enqueue_dynamic(cbPtr(rt), cbPtr(p));
 }

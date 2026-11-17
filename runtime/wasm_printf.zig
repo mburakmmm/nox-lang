@@ -40,9 +40,18 @@ pub fn printfImpl(comptime emit: fn ([]const u8) void, f: [*:0]const u8, ap: *st
             '%' => piece = "%",
             else => {},
         }
-        const n = @min(piece.len, out.len - pos);
-        @memcpy(out[pos..][0..n], piece[0..n]);
-        pos += n;
+        // Parça tamponun kalanından uzunsa (ör. 1 KiB'den uzun bir `%s`) KIRPILMAZ: önce biriken kısım, sonra parçanın tamamı tek `emit` ile yazılır
+        // (2.3 madde 5.5: iş parçacıklı WASI'de 1 KiB'den uzun her `print` sessizce kesiliyordu).
+        if (piece.len > out.len - pos) {
+            if (pos > 0) {
+                emit(out[0..pos]);
+                pos = 0;
+            }
+            emit(piece);
+            continue;
+        }
+        @memcpy(out[pos..][0..piece.len], piece);
+        pos += piece.len;
         if (pos == out.len) {
             emit(out[0..pos]);
             pos = 0;
@@ -58,4 +67,32 @@ fn fmt64i(buf: []u8, v: anytype) []const u8 {
 
 fn fmt64u(buf: []u8, v: anytype) []const u8 {
     return std.fmt.bufPrint(buf, "{d}", .{v}) catch "";
+}
+
+test "printfImpl: tampondan uzun %s parçası kırpılmaz" {
+    const Sink = struct {
+        var buf: [8192]u8 = undefined;
+        var len: usize = 0;
+        fn emit(b: []const u8) void {
+            @memcpy(buf[len..][0..b.len], b);
+            len += b.len;
+        }
+    };
+    Sink.len = 0;
+    var big: [3000:0]u8 = undefined;
+    @memset(&big, 'x');
+    big[big.len] = 0;
+    const T = struct {
+        fn call(fmt: [*:0]const u8, ...) callconv(.c) usize {
+            var ap = @cVaStart();
+            defer @cVaEnd(&ap);
+            return printfImpl(Sink.emit, fmt, &ap);
+        }
+    };
+    _ = T.call("a%sb\n", @as(?[*:0]const u8, &big));
+    try std.testing.expectEqual(@as(usize, 3000 + 3), Sink.len);
+    try std.testing.expectEqual(@as(u8, 'a'), Sink.buf[0]);
+    try std.testing.expectEqual(@as(u8, 'x'), Sink.buf[3000]);
+    try std.testing.expectEqual(@as(u8, 'b'), Sink.buf[3001]);
+    try std.testing.expectEqual(@as(u8, '\n'), Sink.buf[3002]);
 }

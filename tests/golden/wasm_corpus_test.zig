@@ -14,11 +14,32 @@ const build_options = @import("build_options");
 const fixture_corpus = @import("fixture_corpus.zig");
 const wasm_helpers = @import("wasm_helpers.zig");
 
+/// Her WASM hedefinde bilinçli fark (2.3 madde 5.5 triyajı): `ptr_of_zero_copy` libc `memset/memcmp` extern'lerini 64-bit `int` imzasıyla çağırır (wasm32 libc imzası 32-bit: wasm-ld imza saplaması);
+/// `http_request_body_on_get_rejected` iletisi ağ yeteneğine bağlıdır; `process_child_inherits_env` WASM'da alt süreç yoktur; `signal_*` fixture'ları `sigusr1` kullanır (WASM'da yalnızca SIGINT/SIGTERM/SIGHUP).
+const EVERY_TARGET_SOURCES = [_][]const u8{
+    @embedFile("codegen_cases/mathx_trig_log_constants.nox"),
+    @embedFile("codegen_cases/ptr_of_zero_copy.nox"),
+    @embedFile("codegen_cases/http_request_body_on_get_rejected.nox"),
+    @embedFile("codegen_cases/process_child_inherits_env.nox"),
+    @embedFile("codegen_cases/signal_install_take_wait.nox"),
+    @embedFile("codegen_cases/signal_portable_shutdown.nox"),
+};
+
+/// Gerçek iş parçacığı olmayan kipler (varsayılan, asyncify): zaman aşımlı bekleme, kooperatif uyku ve paylaşılan durum paralelliği tek iş parçacığında farklı çalışır.
+const SINGLE_THREAD_SOURCES = [_][]const u8{
+    @embedFile("codegen_cases/channel_wait_any_select.nox"),
+    @embedFile("codegen_cases/channel_wait_timeout.nox"),
+    @embedFile("codegen_cases/task_wait_timeout_first_done.nox"),
+    @embedFile("codegen_cases/sleep_ms_cooperative_in_fiber.nox"),
+    @embedFile("codegen_cases/task_group_basic.nox"),
+    @embedFile("codegen_cases/mn_shared_scalar.nox"),
+};
+
 const DENYLISTED_SOURCES = [_][]const u8{
     @embedFile("codegen_cases/thread_spawn_ordering.nox"),
     @embedFile("codegen_cases/task_local_basic.nox"),
-    @embedFile("codegen_cases/mathx_trig_log_constants.nox"),
     @embedFile("codegen_cases/channel_rendezvous_pingpong.nox"),
+    @embedFile("codegen_cases/mn_shared_channel.nox"),
 };
 
 /// İş parçacıklı varyant (ADR-015) yerel `--release` M:N çalışma zamanıyla aynı denylist'i paylaşır (`backend_differential_corpus_test.zig`): zamanlayıcıya bağlı sıra
@@ -28,13 +49,10 @@ const THREADS_DENYLISTED_SOURCES = [_][]const u8{
     @embedFile("codegen_cases/thread_spawn_ordering.nox"),
     @embedFile("codegen_cases/task_reassignment_frees_old.nox"),
     @embedFile("codegen_cases/task_local_basic.nox"),
-    @embedFile("codegen_cases/mathx_trig_log_constants.nox"),
 };
 
 /// Asyncify varyantlarında (gerçek fiber, ADR-014) yalnızca libm farkı kalır: zamanlayıcı/iş parçacığı sırası native ile aynıdır.
-const ASYNCIFY_DENYLISTED_SOURCES = [_][]const u8{
-    @embedFile("codegen_cases/mathx_trig_log_constants.nox"),
-};
+const ASYNCIFY_DENYLISTED_SOURCES = [_][]const u8{};
 
 fn isDenylisted(source: []const u8, target: wasm_helpers.Target) bool {
     const list: []const []const u8 = switch (target) {
@@ -43,6 +61,16 @@ fn isDenylisted(source: []const u8, target: wasm_helpers.Target) bool {
         .wasi_threads, .freestanding_threads => &THREADS_DENYLISTED_SOURCES,
     };
     for (list) |s| if (std.mem.eql(u8, s, source)) return true;
+    for (EVERY_TARGET_SOURCES) |s| if (std.mem.eql(u8, s, source)) return true;
+    switch (target) {
+        .wasi, .freestanding, .wasi_asyncify, .freestanding_asyncify => for (SINGLE_THREAD_SOURCES) |s| if (std.mem.eql(u8, s, source)) return true,
+        .wasi_threads, .freestanding_threads => {},
+    }
+    // freestanding'de libc yoktur: `blocking_ffi_pool_growth` libc `usleep` extern'i çağırır (wasi-libc'de var).
+    switch (target) {
+        .freestanding, .freestanding_asyncify, .freestanding_threads => if (std.mem.eql(u8, @embedFile("codegen_cases/blocking_ffi_pool_growth.nox"), source)) return true,
+        else => {},
+    }
     return false;
 }
 

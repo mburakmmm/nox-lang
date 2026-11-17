@@ -24,6 +24,7 @@ pub const spawnPinnedForCurrentThread = impl.spawnPinnedForCurrentThread;
 pub const nox_async_init = impl.nox_async_init;
 pub const nox_async_deinit = impl.nox_async_deinit;
 pub const nox_async_spawn = impl.nox_async_spawn;
+pub const nox_async_spawn_pinned = impl.nox_async_spawn_pinned;
 pub const nox_async_await = impl.nox_async_await;
 pub const nox_task_retain = impl.nox_task_retain;
 pub const nox_task_cancel = impl.nox_task_cancel;

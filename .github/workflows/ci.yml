@@ -166,6 +166,9 @@ jobs:
       # v2.0.144: WASM'da nox.http stub'ları (runtime/stdlib_shims/http_wasm.zig) gerçek çalışma zamanıyla sembol adı ve imza olarak aynı kalmalı.
       - name: WASM http stub'ları gerçek çalışma zamanıyla uyumlu mu
         run: python3 scripts/check_wasm_http_stubs.py
+      # 2.3 madde 5.5: IR korpusunun çağırdığı her çalışma zamanı sembolü WASM ABI tablosunda olmalı (eksik girdi WASM'da `unreachable` saplamasına dönüşür).
+      - name: WASM ABI tablosu eksiksiz mi
+        run: python3 scripts/check_wasm_abi_table.py
       # v2.0.180: release'in SBOM üreteci (sürümler depodan okunur) çürümesin: SQLite/QBE/Zig sürümü okunamazsa burada kırmızı olur, release'te değil.
       - name: SBOM üreteci
         run: python3 scripts/gen_sbom.py --check v0.0.0-ci

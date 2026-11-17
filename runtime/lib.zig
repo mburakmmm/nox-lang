@@ -174,6 +174,7 @@ comptime {
     _ = list_ops;
     _ = shared_list;
     _ = shared_obj;
+    _ = @import("wasm_printf.zig"); // yalnızca std'ye bağlı saf biçimleyici; birim testi (1 KiB'den uzun %s kırpılmaz) yerel test kökünde de koşar
     _ = embed;
     _ = http_client;
     _ = @import("stdlib_shims/net_dial.zig");

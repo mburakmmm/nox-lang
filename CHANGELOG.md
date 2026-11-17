@@ -11,6 +11,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.6]
+
+2.3 yol haritası: WASM çok iş parçacıklı aşama 4 (5.5), Linux sunucu ölçümü (5.1), çalınan fiber modül-global hatası (1.7), `clibs_*` fixture'ları (1.8) + yol üstünde bulunan gerçek hatalar.
+
+- **Çalıştırma zamanı hatası (1.7):** `--release` havuz yolunda `$main_body` çalınabilir görevdi; bir işçi onu çalarsa modül-global ilklendirme o işçinin bloğuna yazılıyor, slot 0'da çalışan fiber global'i 0/ilklenmemiş okuyordu (~%0,07, ağır CPU yarışında). `$main_body` artık slot 0'a sabitlenir (`nox_async_spawn_pinned`); 43 200 yük altı koşuda 0 hata.
+- **WASM düzeltmeleri (5.5 doğrulamasında bulundu):** `nox.collections` Set/Counter/OrderedDict/LRUCache WASM'da v1.142.20'den beri çalışmıyordu (`nox_hash_*` ABI tablosunda yoktu); WASM `--threads` çalışma zamanında paylaşılan modül durumu yoktu (modül-düzeyi durumlu programlar bağlanamıyordu); `TaskLocal[str]/[Sınıf]` bırakma geri-çağrısı `call_indirect` imza uyuşmazlığı veriyordu; iş parçacıklı WASI `printf` 1 KiB'den uzun çıktıyı kırpıyordu; Node host ana makinenin `TMPDIR`ini WASI'ye geçirdiği için `nox.tempfile`/`glob` düşüyordu; freestanding çalışma zamanında `task_wait`/`udp`/`tz`/`terminal` shim'leri yoktu (`Channel.wait`/`Task.wait` bağlanamıyordu). Yeni denetim `scripts/check_wasm_abi_table.py` (precheck + CI).
+- **WASM doğrulaması:** 6 hedefte tüm korpus Node'da native ile karşılaştırıldı (karşılaştırılabilir 590/590, denylist'ler gerekçeli); evdeki Windows'ta iş parçacıklı modüller 109/109 aynı (`scripts/wasm_threads_remote.py`); wasi-sdk ile derlenmiş gerçek C `pthread` programı Nox host'unda çalışıyor (`WASI_SDK_PATH` varsa test koşar); TSan 38 koşu 0 rapor.
+- **Sunucu ölçümü (5.1):** Linux'ta (WSL2) `SO_REUSEPORT` dağılımı çalışıyor: Nox 1→4 işçide 5,0×, 8 işçide çok iş parçacıklı C ile aynı düzey, Go'dan 1,2-1,4× hızlı; TLS HTTP/1.1 Go'dan %8-10, HTTP/2 3-6,5× hızlı. Betikler ve tablo `benchmarks/`.
+- **1.8:** `clibs_*` fixture'ları standart testte koşar (harness gömülü C kütüphane arşivini bağlar).
+- **Açık:** 5.4 (M:N paylaşılan modül durumu kalan dilimler), 5.3 kalanı, 5.6, 3.3 (yönetilen Redis hesabı), D.1/D.2.
+
 ## [2.2.5]
 
 2.3 yol haritası: 2.3 listesinde kalan dil/çalışma zamanı maddelerinin kapatılması (3.8b, 3.9, 4.5) ve 6.2 incelemesi.

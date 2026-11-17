@@ -867,7 +867,22 @@ fn renderOperand(self: *Codegen, text: []const u8) CodegenError![]const u8 {
         return iv;
     }
     if (text.len > 0 and text[0] == '$') {
-        return std.fmt.allocPrint(self.allocator, "ptrtoint (ptr @{s} to i64)", .{text[1..]});
+        // wasm32: yalnızca ADRESİ alınan (hiç çağrılmayan) bir çalışma zamanı sembolü için `declare` yoktur; tablodaki imzasıyla bir kez bildirilir
+        // (örn. `TaskLocal` bırakma geri-çağrısı sarmalayıcıları). Çağrılan semboller `ensureDeclared`da zaten bildirilir; aynı ad ikinci kez bildirilmez.
+        const sym = text[1..];
+        if (wasmEntry(self, sym)) |e| {
+            if (!self.llvm_declared_externs.contains(sym) and !self.functions.contains(sym)) {
+                var params_buf: std.ArrayListUnmanaged(u8) = .empty;
+                for (e.params, 0..) |cls, i| {
+                    if (i != 0) try params_buf.appendSlice(self.allocator, ", ");
+                    try params_buf.appendSlice(self.allocator, wasmClassType(cls));
+                }
+                const decl_line = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s}) nounwind\n", .{ wasmClassType(e.ret), sym, params_buf.items });
+                try self.llvm_pending_declares.append(self.allocator, .{ .name = sym, .line = decl_line });
+                try self.llvm_declared_externs.put(self.allocator, sym, {});
+            }
+        }
+        return std.fmt.allocPrint(self.allocator, "ptrtoint (ptr @{s} to i64)", .{sym});
     }
     if (text.len > 2 and text[0] == 'd' and text[1] == '_') {
         const num = text[2..];

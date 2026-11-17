@@ -1314,7 +1314,7 @@ async function nodeMain() {
   const wasi = new WASI({
     version: 'preview1',
     args: [file, ...progArgs],
-    env: process.env,
+    env: wasiEnv(),
     preopens: await wasiPreopens(),
     returnOnExit: true,
   });
@@ -1386,6 +1386,11 @@ async function runThreaded(file, mod, memImport, args, kind = 'wasi', vfsDir = n
 
 const EXIT_CHANNEL = 'nox-wasm-exit';
 
+/** WASI ortamı: ana makinenin ortamı geçirilir, ama geçici dizin değişkenleri modülün görebildiği ön-açım `/tmp`ye çevrilir (ana makine yolu — macOS `/var/folders/...`, Windows `C:\\Users\\...` — sandbox'ta yoktur; `nox.tempfile` bunlara bakar). */
+function wasiEnv() {
+  return { ...process.env, TMPDIR: '/tmp', TEMP: '/tmp', TMP: '/tmp' };
+}
+
 /** WASI ön-açımları: çalışma dizini ve geçici dizin (`/tmp` olarak). Windows'ta `/tmp` yoktur; gerçek geçici dizine eşlenir. */
 async function wasiPreopens() {
   const os = await import('node:os');
@@ -1455,7 +1460,7 @@ async function workerMain() {
     startName = 'nox_host_thread_start';
   } else {
     const { WASI } = await import('node:wasi');
-    const wasi = new WASI({ version: 'preview1', args: [file, ...(args ?? [])], env: process.env, preopens: await wasiPreopens(), returnOnExit: true });
+    const wasi = new WASI({ version: 'preview1', args: [file, ...(args ?? [])], env: wasiEnv(), preopens: await wasiPreopens(), returnOnExit: true });
     const imp = { ...wasi.getImportObject(), env: { memory }, wasi: { 'thread-spawn': spawnThread } };
     imp.wasi_snapshot_preview1.proc_exit = (code) => {
       exitAll(code);

@@ -13,13 +13,14 @@ async def killer(sig: int) -> None:
     nox.time.sleep_ms(40)
     nox.signal.send_self(sig)
 
-# Sinyal numarası `run`a PARAMETRE olarak verilir: çalınan bir fiber modül-global `s`yi okursa bu, başka bir işçinin modül-global kopyasını okur; ağır CPU yarışında o kopyanın henüz
-# ilklenmemiş (Debug'da 0xAA) olduğu bir koşu gözlendi (project/v2-3-yapilacaklar 1.7). Fixture bu belirsiz yoldan bağımsız kalır.
-async def run(sig: int) -> None:
-    k: Task[None] = spawn killer(sig)
-    print(nox.signal.wait(sig, 20000))
-    print(nox.signal.wait(sig, 30))
+# 2.3 madde 1.7 regresyonu: `run` modül-global `s`yi DOĞRUDAN okur. `$main_body` eskiden çalınabilir bir görev olarak başlatılıyordu; bir işçi onu çalarsa modül-global ilklendirme
+# slot 0'ın yerine o işçinin bloğuna yazılır, slot 0'da çalışan `run` ise `s`yi 0/ilklenmemiş okurdu (ağır CPU yarışında ~%0,07). Artık `$main_body` slot 0'a sabitlenir
+# (`scripts/globals_race_stress.sh` yarışı yük altında yineler).
+async def run() -> None:
+    k: Task[None] = spawn killer(s)
+    print(nox.signal.wait(s, 20000))
+    print(nox.signal.wait(s, 30))
     await k
 
-m: Task[None] = spawn run(s)
+m: Task[None] = spawn run()
 await m

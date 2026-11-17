@@ -33,6 +33,8 @@ pub const task_local = @import("async_rt/task_local.zig");
 pub const str = @import("str.zig");
 pub const format = @import("format.zig");
 pub const dict = @import("collections/dict.zig");
+pub const shared_list = @import("collections/shared_list.zig");
+pub const shared_obj = @import("alloc/shared_obj.zig");
 pub const list_sort = @import("collections/list_sort.zig");
 pub const list_ops = @import("collections/list_ops.zig");
 pub const strings_shim = @import("stdlib_shims/strings.zig");
@@ -97,6 +99,8 @@ comptime {
     _ = @import("unicode_norm.zig");
     _ = format;
     _ = dict;
+    _ = shared_list;
+    _ = shared_obj;
     _ = list_sort;
     _ = list_ops;
     _ = strings_shim;

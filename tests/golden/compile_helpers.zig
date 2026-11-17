@@ -32,6 +32,22 @@ pub fn compileAndRun(allocator: std.mem.Allocator, source: []const u8) !std.proc
 }
 
 /// `compileAndRun` + bağlama satırına ek nesne dosyaları (ör. `@ffi.callback` testlerinin C/Zig yardımcıları).
+/// 2.3 madde 1.8: program `extern def ... from "zig-out/lib/noxclibs.a"` (gömülü C kütüphaneleri: nox.lz4/xxhash/yyjson/zstd/brotli/pcre2) içeriyorsa arşiv bağlamaya eklenir; `noxc build`in
+/// `appendExternLinkArgs`ının harness karşılığı. Arşiv `zig build` ile üretilir (testler depo kökünden çalışır).
+fn withClibs(allocator: std.mem.Allocator, module: anytype, extra_objs: []const []const u8) ![]const []const u8 {
+    const clibs = "zig-out/lib/noxclibs.a";
+    for (module.body) |stmt| {
+        if (stmt.kind != .extern_def) continue;
+        if (!std.mem.eql(u8, stmt.kind.extern_def.from_lib, clibs)) continue;
+        for (extra_objs) |o| if (std.mem.eql(u8, o, clibs)) return extra_objs;
+        const out = try allocator.alloc([]const u8, extra_objs.len + 1);
+        @memcpy(out[0..extra_objs.len], extra_objs);
+        out[extra_objs.len] = clibs;
+        return out;
+    }
+    return extra_objs;
+}
+
 pub fn compileAndRunWithObjs(allocator: std.mem.Allocator, source: []const u8, extra_objs: []const []const u8) !std.process.RunResult {
     const io = std.testing.io;
 
@@ -101,7 +117,7 @@ pub fn compileAndRunWithObjs(allocator: std.mem.Allocator, source: []const u8, e
     // `-rdynamic` ZORUNLUDUR — `runtime/stdlib_shims/json.zig`nin `dlsym`i
     // ana programın KENDİ sembollerini dinamik sembol tablosunda bulmayı
     // gerektirir (bkz. `compiler/main.zig`nin AYNI satırı).
-    const link_argv = try hostLinkArgv(allocator, &.{ "cc", hostLinkVisibility() }, bin_path, asm_path, extra_objs);
+    const link_argv = try hostLinkArgv(allocator, &.{ "cc", hostLinkVisibility() }, bin_path, asm_path, try withClibs(allocator, module, extra_objs));
     defer allocator.free(link_argv);
     const cc_result = try std.process.run(allocator, io, .{
         .argv = link_argv,
@@ -184,7 +200,7 @@ pub fn compileAndRunLlvmWithObjs(allocator: std.mem.Allocator, source: []const u
 
     try tmp.dir.writeFile(io, .{ .sub_path = "prog.ll", .data = ir });
 
-    const link_argv = try hostLinkArgv(allocator, &.{ "clang", "-O2", hostLinkVisibility() }, bin_path, ll_path, extra_objs);
+    const link_argv = try hostLinkArgv(allocator, &.{ "clang", "-O2", hostLinkVisibility() }, bin_path, ll_path, try withClibs(allocator, module, extra_objs));
     defer allocator.free(link_argv);
     const clang_result = std.process.run(allocator, io, .{
         .argv = link_argv,

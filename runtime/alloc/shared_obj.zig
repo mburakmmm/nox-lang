@@ -7,7 +7,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const abi_layout = @import("abi_layout");
-const atomic64 = @import("../async_rt/atomic_compat.zig");
+const atomic64 = @import("../async_rt/atomic64.zig");
 
 const SHARED: u64 = abi_layout.HDR_SHARED_BIT;
 const LOCK: u64 = abi_layout.HDR_LOCK_BIT;

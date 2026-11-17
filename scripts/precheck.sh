@@ -14,6 +14,7 @@ step "belge sözleşmesi (sürümler, hedefler)";           "$PY" scripts/check_
 step "ayrılmış semboller";                              "$PY" scripts/check_reserved_symbols.py; "$PY" scripts/gen_reserved_symbol_fixture.py --check
 step "fixture kaydı (yeni codegen_cases fixture'ı bir test dosyasında anılmalı)"; "$PY" scripts/check_fixture_registration.py
 step "WASM http stub uyumu";                            "$PY" scripts/check_wasm_http_stubs.py
+step "WASM ABI tablosu eksiksizliği";                    "$PY" scripts/check_wasm_abi_table.py
 step "SBOM üreteci";                                    "$PY" scripts/gen_sbom.py --check v0.0.0-ci
 step "hizmetler tip denetimi";                          zig-out/bin/noxc check services/noxpkg/main.nox
 (cd services/noxlang-site && ../../zig-out/bin/noxc fetch >/dev/null && ../../zig-out/bin/noxc check main.nox)

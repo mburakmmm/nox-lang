@@ -6,10 +6,6 @@ import glob, os, re, sys
 ROOT = os.path.join(os.path.dirname(__file__), "..", "tests", "golden")
 # Bilinçli istisnalar: standart `zig build test` harness'i bunları çalıştıramaz (gerekçe sağda).
 BASELINE = {
-    "clibs_brotli": "noxclibs arşivi harness'e bağlı değil (project/v2-3-yapilacaklar 1.8)",
-    "clibs_lz4_zstd_xxhash": "noxclibs arşivi harness'e bağlı değil (1.8)",
-    "clibs_pcre2": "noxclibs arşivi harness'e bağlı değil (1.8)",
-    "clibs_yyjson": "noxclibs arşivi harness'e bağlı değil (1.8)",
 }
 
 embedded = set()

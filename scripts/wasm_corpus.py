@@ -28,10 +28,15 @@ CASES = os.path.join(ROOT, "tests/golden/codegen_cases")
 
 # `wasm_corpus_test.zig`deki denylist'lerle AYNI (gerekçeler orada).
 LIBM = {"mathx_trig_log_constants"}
+# Her WASM hedefinde bilinçli fark (gerekçeler `wasm_corpus_test.zig`de): `memset/memcmp` extern'leri 32-bit libc imzasına uymaz; ağ yeteneği iletisi yerelden farklı; WASM'da alt süreç yok;
+# sinyal fixture'ları `sigusr1` kullanır (WASM'da yalnızca SIGINT/SIGTERM/SIGHUP).
+EVERY = LIBM | {"ptr_of_zero_copy", "http_request_body_on_get_rejected", "process_child_inherits_env", "signal_install_take_wait", "signal_portable_shutdown"}
+# Gerçek iş parçacığı olmayan kipler (varsayılan, asyncify): zaman aşımlı bekleme, kooperatif uyku ve paylaşılan durum paralelliği tek iş parçacığında farklı çalışır.
+SINGLE_THREAD = {"channel_wait_any_select", "channel_wait_timeout", "task_wait_timeout_first_done", "sleep_ms_cooperative_in_fiber", "task_group_basic", "mn_shared_scalar"}
 DENY = {
-    "default": LIBM | {"thread_spawn_ordering", "task_local_basic", "channel_rendezvous_pingpong"},
-    "asyncify": LIBM,
-    "threads": LIBM | {"async_deadlock", "thread_spawn_ordering", "task_reassignment_frees_old", "task_local_basic"},
+    "default": EVERY | SINGLE_THREAD | {"thread_spawn_ordering", "task_local_basic", "channel_rendezvous_pingpong", "mn_shared_channel"},
+    "asyncify": EVERY | SINGLE_THREAD,
+    "threads": EVERY | {"async_deadlock", "thread_spawn_ordering", "task_reassignment_frees_old", "task_local_basic"},
 }
 
 
@@ -67,7 +72,7 @@ def one(args, work, case):
     wasm = os.path.join(d, name + ".wasm")
     if b.returncode != 0 or not os.path.exists(wasm):
         # Hedefte olmayan modül (http/sqlite/...) kullanan fixture'ı derleyici açık iletiyle reddeder; bu başarıdır.
-        if "wasm32-wasi target" in b.stderr or "wasm32-freestanding target" in b.stderr:
+        if "wasm32-wasi target" in b.stderr or "wasm32-freestanding target" in b.stderr or "has no embedded C libraries" in b.stderr:
             return name, "rejected", ""
         return name, "build", (b.stderr or b.stdout)[-300:]
     try:
@@ -94,7 +99,9 @@ def main():
     args = ap.parse_args()
     if args.engine == "wasmtime" and (args.target.endswith("-threads") or "freestanding" in args.target):
         sys.exit("wasmtime yalnızca wasm32-wasi ve wasm32-wasi-asyncify için kullanılabilir")
-    deny = DENY[family(args.target)]
+    deny = set(DENY[family(args.target)])
+    if "freestanding" in args.target:
+        deny |= {"blocking_ffi_pool_growth"}  # libc `usleep` extern'i: freestanding'de libc yok (wasi-libc'de var)
     cases = [c for c in sorted(glob.glob(CASES + "/*.nox")) if args.filter in c and os.path.basename(c)[:-4] not in deny]
     res = {}
     with tempfile.TemporaryDirectory(prefix="nox-wasm-corpus-") as work, cf.ThreadPoolExecutor(args.jobs) as ex:

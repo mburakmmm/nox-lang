@@ -250,6 +250,15 @@ pub fn spawnPinnedForCurrentThread(func: *const fn (scheduler_mod.TaskArg) callc
     return task;
 }
 
+/// 2.3 madde 1.7: `$main_body` görevini ÇAĞIRAN iş parçacığının (slot 0) zamanlayıcısına SABİTLEYEN codegen girişi. `nox_async_spawn` ile spawn edilen `$main_body` (çalınabilir) havuzun başlayan bir
+/// işçisi tarafından çalınabiliyordu; o durumda modül-global ilklendirme deyimleri (`$main_body` içinde kaynak sırasıyla çalışır) o işçinin globals bloğuna yazılır, slot 0'ın bloğu (yalnız tahsis
+/// edilmişti) hiç ilklenmezdi ve sonradan slot 0'da çalışan bir fiber (ör. çalınan `run()`) modül-globali 0/ilklenmemiş (Debug'da 0xAA) okurdu (~%0,07, ağır CPU yarışında). Yalnızca `--release`
+/// havuz yolunda kullanılır.
+pub export fn nox_async_spawn_pinned(rt: ?*anyopaque, func: *const fn (scheduler_mod.TaskArg) callconv(.c) i64, arg: ?*anyopaque) ?*anyopaque {
+    _ = rt;
+    return spawnPinnedForCurrentThread(func, arg.?);
+}
+
 /// Bir `Task`ı bekler — tamamlanmışsa sonucu hemen, değilse çağıran fiber'ı
 /// askıya alıp döner (bkz. `Task.await_`).
 pub export fn nox_async_await(rt: ?*anyopaque, task: ?*anyopaque) i64 {

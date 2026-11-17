@@ -67,7 +67,7 @@ Kök neden: `return _global` retain etmiyordu; çağıran sonucu kendi sahipliğ
 
 ### E3. IPv6 çok çekirdekli dinleme (KAPANDI v2.1.32)
 
-`nox.http.configure(ip_family=1|2)`: her `serve_multicore*` worker'ı kendi `SO_REUSEPORT` IPv6 soketini açar (`bindAndListenMulticore`). Windows'ta yok sayılır (Winsock yolu `sockaddr_in6` işlemiyor ve CI'da doğrulanamıyor). Test: `scripts/http_ipv6_probe.py` (iki arka uç × dual-stack/yalnızca-IPv6).
+`nox.http.configure(ip_family=1|2)`: her `serve_multicore*` worker'ı kendi `SO_REUSEPORT` IPv6 soketini açar (`bindAndListenMulticore`). Windows'ta da çalışır (v2.2.4: Winsock `AF_INET6`, gerçek Windows'ta doğrulandı; CI'da IPv6 sondası yok). Test: `scripts/http_ipv6_probe.py` (iki arka uç × dual-stack/yalnızca-IPv6).
 
 ### E4. `list`/`dict` paylaşımı worker'lar arasında
 

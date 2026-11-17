@@ -2762,7 +2762,9 @@ pub fn genMainAsync(self: *Codegen, stmts: []const ast.Stmt, wants_multicore_poo
     try self.qbeCall(.{ .name = closure_t, .ty = .l }, "$nox_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "8" } });
     try self.qbeStoreL(RT_PARAM, closure_t);
     const task_t = try self.newTemp();
-    try self.qbeCall(.{ .name = task_t, .ty = .l }, "$nox_async_spawn", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "$main_body" }, .{ .ty = .l, .text = closure_t } });
+    // 2.3 madde 1.7: havuz yolunda `$main_body` slot 0'a SABİTLENİR (çalınamaz): modül-global ilklendirme deyimleri main_body içinde çalışır ve slot 0'ın bloğuna yazmalıdır.
+    const main_spawn_fn: []const u8 = if (self.mn() and (!self.isWasmTarget() or self.isWasmThreads())) "$nox_async_spawn_pinned" else "$nox_async_spawn";
+    try self.qbeCall(.{ .name = task_t, .ty = .l }, main_spawn_fn, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "$main_body" }, .{ .ty = .l, .text = closure_t } });
     // Faz MN.9.2: kardeş worker'lar `$main_body` GÖREVİ spawn EDİLDİKTEN
     // HEMEN SONRA başlatılır — MN.8'in KENDİ, KANITLANMIŞ sıralama
     // düzeltmesiyle TUTARLI (entry görevi HER ZAMAN kardeşler BAŞLAMADAN

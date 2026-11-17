@@ -1741,6 +1741,34 @@ sarmalayıcı + kabuk katmanından geçmesidir. Not: `yyjson_arr_get(i)` değiş
 **Eşit-iş uyarısı (Faz 9.13, v2.1.127):** gezinme sütunundaki iki taraf AYNI arama stratejisini kullanmaz: `nox.json` yolu (`walk_nox`) bir nesnenin alanlarını sırayla gezip anahtar karşılaştırırken, yyjson yolu (`walk_yyjson`) `yyjson_obj_get` ile anahtarı doğrudan arar (C tarafında hash/doğrusal arama). Yani 4,8x/8,4x oranı "aynı işin" iki gerçekleştirimi değil, iki farklı erişim biçiminin toplam maliyetidir; yalnız yönü (bağlama katmanı pahalı değil) gösterir, kesin bir kütüphane-hız oranı olarak alıntılanmamalıdır. Eşit-iş için iki taraf da aynı sırayla `n` alanı okuyan bir varyant gerekir.
 QBE ve LLVM backend'leri aynı sıralamayı verir (QBE gezinme 2,15 ms).
 
+## Linux'ta sunucu işçi ölçeği, çok iş parçacıklı C ve TLS/HTTP/2 (2.3 Aşama 5.1)
+
+Ortam: WSL2 Ubuntu 24.04 (çekirdek 6.6, **sanal makine**), 12 mantıksal çekirdek, `wrk -t4 -c64 -d10s` (istemci 4 iş parçacığı sunucuyla çekirdek paylaşır), Nox `--release` (LLVM), Zig 0.16 ReleaseFast çalışma zamanı, Go 1.22. Betikler: `benchmarks/http_compare/run_ping_worker_sweep.sh`, `run_tls_ping_sweep.sh`; C referansı `c_server.c` (her iş parçacığı kendi `SO_REUSEPORT` soketi + epoll, Nox ile aynı yanıt: 200, `x: x`, `ok`). İki tam tur arasındaki fark %2'den küçüktür.
+
+**Düz HTTP/1.1 ping (istek/s):**
+
+| işçi | Nox `serve_multicore` | çok iş parçacıklı C | Go (`GOMAXPROCS`=n) | Nox/C |
+|---:|---:|---:|---:|---:|
+| 1 | 96 463 / 98 409 | 183 379 / 193 444 | 71 866 / 72 706 | 0,51-0,53 |
+| 2 | 200 050 / 198 937 | 718 778 / 706 786 | 152 697 / 151 475 | 0,28 |
+| 4 | 492 126 / 491 978 | 863 372 / 872 702 | 418 103 / 414 011 | 0,57 |
+| 8 | 567 349 / 569 674 | 538 467 / 523 245 | 405 223 / 408 348 | 1,05-1,09 |
+
+- **Linux'ta `SO_REUSEPORT` dağılımı çalışıyor** (macOS'taki tek-dinleyiciye yığılma yok): Nox 1 → 4 işçide **5,0×** ölçekleniyor (C 4,5×, Go 5,8×), 8 işçide (4 wrk iş parçacığıyla 12 çekirdek dolu) C ile aynı düzeye geliyor. Nox Go'dan her sayıda ~1,2-1,4× hızlı.
+- **Tek işçide Nox C'nin ~%51'i.** Fark kullanıcı kodunda değil: istek başına Nox 1,38 µs kullanıcı + 8,79 µs çekirdek, C 0,24 µs + 5,05 µs (`/proc/<pid>/stat`). Sistem çağrıları eşit (istek başına 1 `read` + 1 `write`; Nox yüklüyken neredeyse hiç `epoll_wait` çağırmıyor, `strace -c`), sayfa hatası ve bağlam değişimi istek başına ~0. `perf` her iki sunucuda da baskın maliyeti WSL2'nin loopback uyandırma yolunda (`_raw_spin_unlock_irqrestore`: Nox %42, C %52) gösteriyor; yani çekirdek zamanı farkı sanallaştırılmış uyandırma/ağ yolunda ve bu ortamda Nox'a özgü bir sıcak nokta ayırt edilemiyor. Gerçek donanımda ölçüm aynı betiklerle tekrarlanabilir.
+- 2 işçide C'nin sıçraması (719k) tek bir sanal CPU çifti üzerindeki wrk/sunucu yerleşiminin sonucudur; 4/8 işçi eğrisi güvenilir.
+
+**TLS ve HTTP/2 (RSA-2048 kendinden imzalı, `wrk` HTTP/1.1; `h2load -c64 -m10 -t4`, istek/s):**
+
+| işçi | proto | Nox `serve_multicore_tls` | Go `net/http` TLS | Nox/Go |
+|---:|---|---:|---:|---:|
+| 1 | HTTPS HTTP/1.1 | 74 060 | 68 577 | 1,08 |
+| 1 | HTTP/2 | 264 133 | 40 881 | 6,5 |
+| 4 | HTTPS HTTP/1.1 | 355 205 | 321 704 | 1,10 |
+| 4 | HTTP/2 | 481 661 | 158 657 | 3,0 |
+
+TLS/HTTP/2 sıcak yolunda Go'nun gerisinde değil, önündedir; ek bir iyileştirme gerekmedi.
+
 ## `nox.json` ayrıştırma/yazma sıcak yol turu (2.3 Aşama 5.2, v2.2.4 öncesi)
 
 `benchmarks/yyjson/run.py --repeat 5`, Apple M4, ReleaseFast, LLVM; 20 000 nesneli belge. Makine yükü ölçümü etkiler: oranlar aynı koşudaki C sütununa göre okunmalı.
