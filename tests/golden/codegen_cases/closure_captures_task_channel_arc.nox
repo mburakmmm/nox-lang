@@ -1,0 +1,25 @@
+# v2.2.3 (2.3 listesi 4.4): Task/Channel yakalayan kapanışlar — yakalama retain eder, kapanış bırakılınca release; döngüde tekrarlanınca sızıntı/çift serbest bırakma olmamalı (Debug ayırıcı stderr'e rapor eder, harness boş stderr bekler).
+async def produce(n: int) -> int:
+    return n * 2
+
+def make_reader(t: Task[int], ch: Channel[int]) -> () -> int:
+    def read() -> int:
+        seen: bool = t.is_done()
+        return 7
+    return read
+
+async def run() -> int:
+    total: int = 0
+    i: int = 0
+    while i < 200:
+        t: Task[int] = spawn produce(i)
+        ch: Channel[int] = Channel[int](2)
+        reader: () -> int = make_reader(t, ch)
+        total = total + reader()
+        v: int = await t
+        total = total + v
+        i = i + 1
+    return total
+
+m: Task[int] = spawn run()
+print(await m)

@@ -8,11 +8,18 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `[1.0.0]` girişi altında toplanmıştır; öncesi için
 `nox-teknik-spesifikasyon.md`nin tam geliştirme geçmişine bakın.
 
-`v1.0.0`dan SONRA (2026-07-24'ten itibaren) `VERSIONING.md` §4'ün "her
-commit bir sürümdür" politikası GEÇERLİDİR — `main`e giden HER commit
-KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
-ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
-BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
+`v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) "her commit bir sürümdür" politikası uygulandı; 2026-11-17'den itibaren
+`VERSIONING.md` §4'ün **toplu (batch) sürümleme** politikası geçerlidir: sürüm numarası/tag/Release yalnızca bir iş paketi
+(yol haritası aşaması) bitince verilir, ara commit'ler tag'siz birikir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
+
+## [2.2.3]
+
+2.3 yol haritası Aşama 4 (dil rötuşları) + toplu sürümleme politikası.
+
+- **İç içe `async def` (kısıtlı):** iç `async def` derleyicide modül düzeyine kaldırılır; dıştaki fonksiyonun `int/float/bool/str/None` değişkenleri `spawn` anındaki değer olarak yakalanır, yalnızca `spawn inner(...)` ile başlatılır (iki arka uç). Doğrudan çağrı, `list/dict/class` yakalama ve `await` edilmemiş `Channel.send/recv` için açık hata mesajları. `docs/language/concurrency.md` "Nested `async def`".
+- **Task/Channel yakalayan kapanışlarda ARC testi:** golden `closure_captures_task_channel_arc`.
+- **Ertelenen:** `list[Task[T]]` (TaskGroup kalıbı yeterli, 4.3); `while` içinde döngü değişkenini yakalayan iç `def` codegen boşluğu (4.5) açık.
+- **Politika:** `VERSIONING.md` §4 toplu sürümlemeye çevrildi; `scripts/bump_version.sh` açıklaması güncellendi.
 
 ## [2.2.2]
 

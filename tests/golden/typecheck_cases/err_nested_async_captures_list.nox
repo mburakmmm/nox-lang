@@ -1,0 +1,9 @@
+async def outer() -> int:
+    xs: list[int] = [1, 2]
+    async def inner(x: int) -> int:
+        return x + len(xs)
+    t: Task[int] = spawn inner(2)
+    return await t
+
+t: Task[int] = spawn outer()
+print(await t)

@@ -1,0 +1,32 @@
+import nox.time
+
+# İç içe `async def` (v2.2.3): yakalamalar (int/str...) `spawn` anındaki DEĞERLERdir; her `spawn inner(...)` ayrı bir görevdir.
+async def outer(base: int, label: str) -> str:
+    tag: str = label + "!"
+    async def part(i: int) -> str:
+        nox.time.sleep_ms(2)
+        return tag + str(base + i)
+    async def wrap(n: int) -> int:
+        async def deep(z: int) -> int:
+            return z * 2 + n
+        d: Task[int] = spawn deep(5)
+        return await d + base
+    a: Task[str] = spawn part(1)
+    b: Task[str] = spawn part(2)
+    w: Task[int] = spawn wrap(7)
+    return await a + "," + await b + "," + str(await w)
+
+async def second() -> int:
+    scale: int = 10
+    async def inner(x: int) -> int:
+        nox.time.sleep_ms(5)
+        return x * scale
+    t1: Task[int] = spawn inner(1)
+    scale = 100
+    t2: Task[int] = spawn inner(2)
+    return await t1 + await t2
+
+o: Task[str] = spawn outer(10, "x")
+print(await o)
+s: Task[int] = spawn second()
+print(await s)

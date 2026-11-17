@@ -1,0 +1,7 @@
+async def outer() -> int:
+    async def inner(x: int) -> int:
+        return x
+    return await inner(2)
+
+t: Task[int] = spawn outer()
+print(await t)

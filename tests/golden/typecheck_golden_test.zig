@@ -1262,10 +1262,17 @@ test "golden(typecheck): Faz U.4.2 — generic iç içe def reddedilir" {
     );
 }
 
-test "golden(typecheck): Faz U.4.2 — async iç içe def reddedilir" {
+test "golden(typecheck): v2.2.3 — iç içe async def doğrudan çağrılamaz (spawn ile başlatılır)" {
     try expectGolden(
-        @embedFile("typecheck_cases/err_nested_def_async.nox"),
-        @embedFile("typecheck_cases/err_nested_def_async.expected"),
+        @embedFile("typecheck_cases/err_nested_async_call_directly.nox"),
+        @embedFile("typecheck_cases/err_nested_async_call_directly.expected"),
+    );
+}
+
+test "golden(typecheck): v2.2.3 — iç içe async def yalnızca değişmez değerleri yakalar (list yakalamak reddedilir)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_nested_async_captures_list.nox"),
+        @embedFile("typecheck_cases/err_nested_async_captures_list.expected"),
     );
 }
 

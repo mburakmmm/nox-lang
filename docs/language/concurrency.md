@@ -25,6 +25,36 @@ print(await a + await b)
 
 A call to an async function without `spawn` is a compile error: starting a task is always explicit.
 
+### Nested `async def`
+
+An `async def` may be written inside another function, which keeps small task bodies next to the code that starts them:
+
+```nox
+import nox.time
+
+async def total(base: int) -> int:
+    scale: int = 10
+    async def part(i: int) -> int:
+        nox.time.sleep_ms(2)
+        return base + i * scale
+    a: Task[int] = spawn part(1)
+    scale = 100
+    b: Task[int] = spawn part(2)
+    return await a + await b
+
+t: Task[int] = spawn total(5)
+print(await t)
+```
+
+```output
+220
+```
+
+- It is started like any other async function, with `spawn part(...)`; calling it directly or using it as a value is a compile error.
+- It reads variables of the enclosing function **by value, at the moment of the `spawn`** (above, `a` sees `scale == 10` and `b` sees `100`). Only `int`, `float`, `bool`, `str`, `None` and fixed-width integers can be
+  captured: a task may run on another worker, so a captured `list`, `dict` or class instance is rejected with a message asking you to pass it as a parameter instead.
+- It cannot assign to captured variables, cannot be generic, and cannot spawn itself (move such a function to module level).
+
 ### Failures propagate through `await`
 
 If a task raises, the exception is delivered to whoever awaits it — `await` re-raises it, so ordinary `try`/`except` works across tasks:

@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # `build.zig.zon`'un `version` alanını semver kuralına göre artırır (bkz.
-# VERSIONING.md "Sürüm Artış Otomasyonu" — HER commit'te bir sürüm artışı +
-# git tag + push politikası). `-dev` son eki artık KULLANILMIYOR: her
-# commit KENDİ BAŞINA gerçek/tag'lenebilir bir sürümdür, "geliştirme
-# aşamasında" ayrı bir ara durum yok.
+# VERSIONING.md §4 "toplu (batch) sürümleme": yalnızca bir iş paketi/aşama
+# bitince çalıştırılır, ara commit'lerde DEĞİL). `-dev` son eki KULLANILMIYOR.
 #
 # Kullanım: scripts/bump_version.sh {patch|minor|major}
 #   patch — hata düzeltmesi/performans/dokümantasyon (VERSIONING.md §1)

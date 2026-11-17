@@ -53,10 +53,12 @@ Kural (AGENTS §16): yeni dil özelliği / API biçimi / bellek modeli etkisi ol
 
 ## Aşama 4 — Dil
 
-- [ ] **4.1 (S) İç içe `async def` için yönlendirici hata mesajı:** `a nested function definition CANNOT be 'async def'` yerine "modül düzeyine taşı, değerleri parametre olarak geçir". Risksiz.
-- [ ] **4.2 (L) İç içe `async def` (değişmez yakalamalı).** Faz U.4.2 "v1 kesintisi", ilke değil. Güvenli ilk biçim: yalnızca `int/float/bool/str/None` yakalayan iç içe `async def`; heap nesnesi yakalayan "parametre olarak geçir" hatasıyla reddedilir. Neden temkinli: yakalanan `list/dict/sınıf` ARC ile paylaşılır ve `spawn` başka işçide çalışabilir; mevcut `SpawnSharedMutation` analizi yakalama yolunu görmüyor. İş: checker + closure codegen + spawn analizi + iki backend + wasm. `[K]`
-- [ ] **4.3 (L) `list[Task[T]]`** (bilinçli desteklenmiyor, hata `TaskGroup`'a yönlendirir). Yalnızca tasarım kararıyla. `[K]`
-- [ ] **4.4 (M) Yakalamada ARC dersleri için test genişletme:** `Channel/Task` yakalayan closure retain/release (v2.1.x'te bulunan aşırı serbest bırakma) iki backend + wasm32 taşma denetimiyle golden.
+- [x] **4.1 İç içe `async def` hata mesajı** (v2.2.3): artık gerekmedi — özellik 4.2 ile geldi; doğrudan çağrı hatası yönlendirir (`start it with 'spawn inner(...)'`).
+- [x] **4.2 İç içe `async def` (değişmez yakalamalı)** (v2.2.3): gövde bir kez iç içe `def` gibi denetlenir (yakalamalar bulunur), sonra modül düzeyine KALDIRILIR (yakalananlar öne eklenen parametreler, gövde `substituteStmts` ile derin kopya, `registerFunc`/`checkFunctionBody`; `spawn ad(...)` `spawn kaldırılmış(yakalananlar..., args...)`e yeniden yazılır, iç içe `def` ifadesi `pass` olur). Yakalamalar `spawn` anındaki DEĞERLER; yalnızca int/float/bool/str/None/sabit-genişlikli tamsayı (list/dict/sınıf reddedilir: görev başka işçide çalışır). Doğrudan çağrı/değer olarak kullanım ve özyineleme yok. Testler: golden `nested_async_def` (iki backend; iç içe iç içe, aynı ad iki fonksiyonda, spawn-anı değeri) + iki typecheck hata golden'ı. Codegen DEĞİŞMEDİ (mevcut spawn mekanizması).
+- [-] **4.3 `list[Task[T]]` — BİLİNÇLİ ERTELENDİ (v2.2.3 kararı):** liste elemanı olarak Task/Channel'ın ARC'si ayrı (`destroy` yolu) ve tür sistemine örtük kutulama (`TaskHandle[T]` sarma/açma) eklemek her ekleme/indeksleme/dilimleme/yineleme sitesinde dönüşüm gerektirir; mevcut `nox.tasks.TaskGroup[T]` (+ `Channel` ile toplama) aynı işi sağlıyor ve hata mesajı oraya yönlendiriyor. Gerçek bir ihtiyaç somutlaşırsa tasarım dilimlenir. `[K]`
+- [x] **4.4 Task/Channel yakalayan kapanışlarda ARC testi** (v2.2.3): golden `closure_captures_task_channel_arc` (200 turluk döngüde Task + Channel yakalayan döndürülen kapanış; iki backend, Debug ayırıcı sızıntı/çift serbest bırakma raporlamıyor). Gözlem (ayrı iş 4.5): bir `Channel` bir kapanışa yakalanıp aynı fonksiyonda `send`/`recv` ile kullanılınca codegen `not supported` veriyor; döngü içinde iç içe `def` + döngü değişkeni yakalama da desteklenmiyor.
+
+- [ ] **4.5 (S) Codegen `not supported` boşluğu (4.4 sırasında bulundu):** `while` içinde bildirilen iç içe `def` döngü değişkenini yakalayınca codegen reddediyor (checker kabul ediyor). (a) `await`sız `ch.send/recv` artık net bir tip hatası veriyor (v2.2.3, çalışma ağacında, henüz commit edilmedi).
 
 ## Aşama 5 — Performans (2.2'den kalan yapısal açıklar)
 

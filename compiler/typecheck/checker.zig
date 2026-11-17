@@ -391,6 +391,8 @@ pub const CaptureVar = struct { name: []const u8, ty: Type };
 pub const ClosureInfo = struct { captures: []const CaptureVar };
 
 /// Bir fonksiyon/metod gövdesi denetlenirken taşınan bağlam.
+const AsyncLocal = struct { lifted: []const u8, captures: []const []const u8 };
+
 const FnCtx = struct {
     scope: *Scope,
     /// `null`: modül-seviyesi gevşek deyimler (fonksiyon dışı) — `return` burada geçersizdir.
@@ -410,6 +412,9 @@ const FnCtx = struct {
     /// `"<dış_yol>.<iç_isim>"`) — `Checker.closure_infos`ın anahtarı olarak
     /// kullanılır (bkz. `checkNestedFuncDef`).
     path: []const u8 = "",
+    /// v2.2.3: bu fonksiyon gövdesinde bildirilen İÇ İÇE `async def`ler (ad → modül düzeyine kaldırılmış gerçek `async def` + yakaladığı değerler). `spawn ad(...)` çağrısı
+    /// `spawn kaldırılmış_ad(yakalananlar..., args...)`e yeniden yazılır; doğrudan çağrı/değer olarak kullanım reddedilir.
+    async_locals: std.StringHashMapUnmanaged(AsyncLocal) = .{},
     /// Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): `checkStmt`in
     /// `.if_stmt`/`.while_stmt` dallarının `detectNarrowing` İLE açtığı
     /// GEÇİCİ "bu isim şu an daraltılmış" örtüsü — `ctx.scope.vars`ı
@@ -753,6 +758,10 @@ pub const Checker = struct {
     /// `checkNestedFuncDef` tarafından doldurulur. U.4.3'ün codegen'i
     /// TARAFINDAN (closure heap bloğunun İNŞASI İÇİN) TÜKETİLECEKTİR.
     closure_infos: std.StringHashMapUnmanaged(ClosureInfo) = .{},
+    /// v2.2.3: iç içe `async def` kaldırma sayacı (kaldırılmış fonksiyon adları benzersiz olsun).
+    nested_async_counter: u32 = 0,
+    /// v2.2.3: şu an `await` operandı olan çağrının `callee` adresi (0 = yok): `Channel.send/recv` yalnızca doğrudan `await` operandı olarak geçerlidir, yoksa codegen belirsiz bir "desteklenmiyor" verirdi.
+    awaited_callee: usize = 0,
     /// Faz T.2: `checkModule`nin üst-düzey döngüsünde (fonksiyon/sınıf/gevşek
     /// deyim SINIRINDA) VE `checkClassBody`nin metod döngüsünde YAKALANIP
     /// KURTARILAN tanılamalar — bkz. modül üstü not. `recordDiagnostic`
@@ -6355,7 +6364,8 @@ pub const Checker = struct {
                     return self.fail(error.TypeMismatch, "a nested function definition CANNOT be generic: {s}", .{fd.name});
                 }
                 if (fd.is_async) {
-                    return self.fail(error.TypeMismatch, "a nested function definition CANNOT be 'async def': {s}", .{fd.name});
+                    try self.hoistNestedAsync(ctx, stmt, fd);
+                    return;
                 }
                 const func_type = try self.checkNestedFuncDef(ctx, fd);
                 try ctx.scope.declare(self.allocator, fd.name, func_type);
@@ -6589,6 +6599,59 @@ pub const Checker = struct {
     /// TAMAMLANINCA yakalama listesi `self.closure_infos`e (anahtar:
     /// `"<ctx.path>.<fd.name>"`) YAZILIR VE iç fonksiyonun `Type.func`
     /// tipi DÖNDÜRÜLÜR (çağıran, bunu `fd.name` yerel değişkenine BAĞLAR).
+    /// v2.2.3: İÇ İÇE `async def`. Gövde bir kez, normal iç içe `def` gibi denetlenir (yakalamalar bulunur); sonra bir MODÜL-DÜZEYİ `async def`e KALDIRILIR: yakalanan değişkenler öne eklenen
+    /// parametreler olur, gövde derin kopyalanır (`substituteStmts`), `registerFunc`/`checkFunctionBody` ile üretilir (`resolveSpawnAttributeCallee`in sarmalayıcı kalıbıyla aynı). İç içe `def`
+    /// ifadesi `pass`e çevrilir (codegen görmez); `spawn ad(...)` çağrısı `.spawn_expr` dalında kaldırılmış fonksiyona yeniden yazılır. Yakalamalar `spawn` ANINDAKİ değerlerdir (kapanışta olduğu gibi
+    /// tanım anındaki değil). Yalnızca değişmez yakalamalar (int/float/bool/str/None/sabit-genişlikli tamsayı) izinlidir: başka bir işçide çalışan görev bir `list`/`dict`/sınıf nesnesini paylaşırdı.
+    fn hoistNestedAsync(self: *Checker, ctx: *FnCtx, stmt: *const ast.Stmt, fd: ast.FuncDef) TypeError!void {
+        if (fd.type_params.len > 0) {
+            return self.fail(error.TypeMismatch, "a nested function definition CANNOT be generic: {s}", .{fd.name});
+        }
+        _ = try self.checkNestedFuncDef(ctx, fd);
+        const info_path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ ctx.path, fd.name });
+        const info = self.closure_infos.get(info_path) orelse return self.fail(error.TypeMismatch, "internal error: capture information for the nested 'async def' {s} is missing", .{fd.name});
+        _ = self.closure_infos.remove(info_path); // kaldırılıyor: codegen bir kapanış üretmemeli
+
+        const caps = try self.allocator.dupe(CaptureVar, info.captures);
+        std.mem.sort(CaptureVar, caps, {}, struct {
+            fn lt(_: void, a: CaptureVar, b: CaptureVar) bool {
+                return std.mem.lessThan(u8, a.name, b.name);
+            }
+        }.lt);
+        const params = try self.allocator.alloc(ast.Param, caps.len + fd.params.len);
+        const cap_names = try self.allocator.alloc([]const u8, caps.len);
+        for (caps, 0..) |c, i| {
+            const ok = switch (c.ty) {
+                .int, .float, .boolean, .str, .none, .fixed_int => true,
+                else => false,
+            };
+            if (!ok) {
+                return self.fail(error.TypeMismatch, "the nested 'async def' {s} captures '{s}', whose type cannot be shared with a task: a nested 'async def' may only capture int, float, bool, str and None values from the enclosing function — pass '{s}' as a parameter instead", .{ fd.name, c.name, c.name });
+            }
+            params[i] = .{ .name = c.name, .type_expr = try self.typeToTypeExpr(c.ty), .default = null };
+            cap_names[i] = c.name;
+        }
+        @memcpy(params[caps.len..], fd.params);
+
+        self.nested_async_counter += 1;
+        var sane: std.ArrayListUnmanaged(u8) = .empty;
+        for (ctx.path) |ch| try sane.append(self.allocator, if (std.ascii.isAlphanumeric(ch) or ch == '_') ch else '_');
+        const lifted = try std.fmt.allocPrint(self.allocator, "__nested_async_{s}__{s}_{d}", .{ sane.items, fd.name, self.nested_async_counter });
+
+        var no_bindings: std.StringHashMapUnmanaged(Type) = .{};
+        var concrete = fd;
+        concrete.name = lifted;
+        concrete.params = params;
+        concrete.body = try self.substituteStmts(fd.body, &no_bindings);
+        concrete.is_async = true;
+        try self.registerFunc(concrete);
+        try self.instantiations.append(self.allocator, concrete);
+        try self.checkFunctionBody(concrete);
+
+        try ctx.async_locals.put(self.allocator, fd.name, .{ .lifted = lifted, .captures = cap_names });
+        @constCast(stmt).kind = .pass_stmt;
+    }
+
     fn checkNestedFuncDef(self: *Checker, ctx: *FnCtx, fd: ast.FuncDef) TypeError!Type {
         var captures: std.StringHashMapUnmanaged(Type) = .{};
         var inner_scope: Scope = .{ .parent = ctx.scope, .captures = &captures };
@@ -6600,7 +6663,7 @@ pub const Checker = struct {
         var inner_ctx: FnCtx = .{
             .scope = &inner_scope,
             .expected_return = ret,
-            .in_async = fd.allow_await,
+            .in_async = fd.allow_await or fd.is_async,
             .path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ ctx.path, fd.name }),
         };
         for (fd.body) |*s| try self.checkStmt(&inner_ctx, s);
@@ -7502,6 +7565,9 @@ pub const Checker = struct {
             .await_expr => |operand_ptr| blk: {
                 if (!ctx.in_async) return self.fail(error.TypeMismatch, "'await' can only be used inside an 'async def' body", .{});
                 const operand = operand_ptr.*;
+                const saved_awaited = self.awaited_callee;
+                defer self.awaited_callee = saved_awaited;
+                self.awaited_callee = if (operand == .call) @intFromPtr(operand.call.callee) else 0;
                 const t = try self.checkExpr(ctx, operand);
                 if (t == .task) break :blk t.task.*;
                 // Task DEĞİLSE, yalnızca bir Channel.send/recv YA DA (Faz
@@ -7537,7 +7603,14 @@ pub const Checker = struct {
                 const real: *ast.Call = @constCast(&operand_ptr.call);
                 switch (real.callee.*) {
                     .identifier => |n| {
-                        if (!self.functions.contains(n)) {
+                        if (ctx.async_locals.get(n)) |al| {
+                            // İç içe `async def`: kaldırılmış fonksiyona yeniden yaz; yakalananlar öne eklenen argümanlardır.
+                            const new_args = try self.allocator.alloc(ast.Expr, al.captures.len + real.args.len);
+                            for (al.captures, 0..) |cn, i| new_args[i] = .{ .identifier = cn };
+                            @memcpy(new_args[al.captures.len..], real.args);
+                            real.args = new_args;
+                            real.callee.* = .{ .identifier = al.lifted };
+                        } else if (!self.functions.contains(n)) {
                             if (self.from_imports.get(n)) |m| {
                                 if (self.functions.contains(m)) real.callee.* = .{ .identifier = m };
                             }
@@ -9029,6 +9102,9 @@ pub const Checker = struct {
     }
 
     fn checkCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!Type {
+        if (c.callee.* == .identifier and ctx.async_locals.contains(c.callee.identifier) and (try ctx.scope.lookup(self.allocator, c.callee.identifier)) == null) {
+            return self.fail(error.TypeMismatch, "'{s}' is a nested 'async def': start it with 'spawn {s}(...)' (an async function is never called directly)", .{ c.callee.identifier, c.callee.identifier });
+        }
         // Faz C.2: `obj.metod[T](...)` / çıkarımlı `obj.metod(...)` generic
         // metod çağrısı — callee YERİNDE somut metod adına yeniden yazılır,
         // AŞAĞIDAKİ normal metod-çağrısı yolu aynen devam eder.
@@ -10140,6 +10216,9 @@ pub const Checker = struct {
                         return .int;
                     }
                     return self.fail(error.UndefinedMethod, "Task has no method '{s}' (only cancel, is_done, wait and wait_any)", .{a.attr});
+                }
+                if ((obj_t == .channel or obj_t == .thread_channel) and (std.mem.eql(u8, a.attr, "send") or std.mem.eql(u8, a.attr, "recv")) and @intFromPtr(c.callee) != self.awaited_callee) {
+                    return self.fail(error.TypeMismatch, "'{s}' suspends the task: write 'await ch.{s}(...)'", .{ a.attr, a.attr });
                 }
                 if (obj_t == .channel) {
                     const elem_t = obj_t.channel.*;

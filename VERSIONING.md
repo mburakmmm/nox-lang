@@ -69,48 +69,26 @@ açıkça belgelenir) — GERÇEK kaldırma yalnızca bir SONRAKİ MAJOR sürüm
 gerçekleşir. Örnek: `v1.3.0`da kullanımdan kaldırılan bir özellik EN
 ERKEN `v2.0.0`da kaldırılabilir, `v1.x`in HİÇBİR sürümünde KALDIRILMAZ.
 
-## 4. Sürüm Artış Otomasyonu — "her commit bir sürümdür" (2026-07-24'ten itibaren)
+## 4. Sürüm Artış Politikası — toplu (batch) sürümleme (2026-11-17'den itibaren)
 
-`v1.0.0`dan sonra, `main`e giden HER commit KENDİ BAŞINA gerçek,
-tag'lenmiş, YAYIMLANMIŞ bir sürümdür — commit'ler artık bir SONRAKİ
-sürüme doğru sessizce BİRİKMEZ (eski `X.Y.0-dev` son eki BU YÜZDEN
-KALDIRILDI, bkz. `build.zig.zon`; "geliştirme aşamasında" ayrı bir ara
-durum artık YOK).
+`v1.0.0` ile `v2.2.2` arasında "her commit bir sürümdür" politikası uygulandı; bu, `2.1.196` gibi anlamsız ince numaralar üretti ve KALDIRILDI.
+Artık `main`e giden her commit sürüm DEĞİLDİR: ara commit'ler tag'siz birikir, **sürüm yalnızca bir iş paketi/aşama (ör. 2.3 yol haritasının bir aşaması) bittiğinde** verilir.
 
-**Mekanik** — her commit'te:
-1. `scripts/bump_version.sh {patch|minor|major}` çalıştırılır —
-   `build.zig.zon`nin `.version` alanını, bu commit'in İÇERDİĞİ
-   değişikliğin GERÇEK semver kategorisine göre (§1'deki TANIMLAR
-   AYNEN uygulanır — yeni bir stdlib fonksiyonu/CLI alt komutu/
-   sözdizimi MINOR'dur, salt bir hata düzeltmesi PATCH'tir) artırır.
-2. `build.zig.zon`, o commit'in DİĞER dosyalarıyla BİRLİKTE stage
-   edilip TEK bir commit olarak yapılır (AYRI bir "chore: bump
-   version" commit'i YOK — bir commit = bir sürüm).
-3. O commit `vX.Y.Z` OLARAK tag'lenir.
-4. Commit + tag `origin`a push edilir — bu, `.github/workflows/
-   release.yml`i (`v*` deseni İLE eşleşen HERHANGİ bir tag push'unda
-   TETİKLENİR) OTOMATİK olarak çalıştırır: 3 platform İçin `noxc`/
-   `noxlsp`/`noxrt.o`/stdlib ReleaseFast'ta derlenir, `qbe` gömülür,
-   GERÇEK bir GitHub Release (otomatik oluşturulan notlarla)
-   YAYIMLANIR.
+**Ne zaman sürüm verilir:**
+- Bir yol haritası aşaması ya da tutarlı bir iş paketi tamamlandığında; tam `zig build test` (VERDICT/çıkış kodu okunur) ve `scripts/precheck.sh` yeşil olmalıdır.
+- Kullanıcıya yetişmesi gereken ivedi bir düzeltme (güvenlik, veri kaybı, kırık yayın) için ayrıca bir PATCH verilebilir.
 
-**Neden:** `install.sh`/`install.ps1` HER ZAMAN "en son Release"i
-çeker — sürüm numarasının GERÇEK zamanlı, HER geliştirmeyi yansıtır
-durumda kalması, VE gelecekteki `noxc upgrade` komutunun (bkz.
-`nox-teknik-spesifikasyon.md`, henüz tasarım aşamasında) HER ZAMAN
-tazeyi bulabilmesi İçindir — kullanıcı açıkça bu davranışı SEÇTİ (bkz.
-proje belleği `project_versioning_automation.md`), alternatifi
-("yalnızca bir özellik/oturum bitince bump+tag+release") daha az
-CI/release trafiği ÜRETİRDİ ama "her geliştirmede" isteğine TAM
-UYMAZDI.
+**Sürüm numarası** (§1 tanımları aynen geçerli): salt hata düzeltmeleri/iç iyileştirmeler PATCH; yeni stdlib API/CLI alt komutu/sözdizimi paketi MINOR.
+Bir pakette birden fazla kategori varsa en yükseği alınır; paket başına TEK numara artar.
 
-**Sınır:** bu politika yalnızca `main`e giden GERÇEK, tamamlanmış
-commit'ler İçindir — bir özelliğin ORTASINDAKİ ara/WIP durumlar HİÇ
-commit edilmiyorsa (bu projenin ZATEN mevcut disiplini) hiçbir sorun
-YOK; eğer bir commit SONRADAN hatalı çıkar/geri alınırsa, O sürüm
-etiketi/release'i SİLİNMEZ (semver'in KENDİ "bir sürüm YAYIMLANDIKTAN
-sonra asla değiştirilmez" ilkesiyle TUTARLI) — düzeltme her zaman
-YENİ bir PATCH sürümüyle gelir.
+**Mekanik** — yalnızca sürüm commit'inde:
+1. `scripts/bump_version.sh {patch|minor|major}` (`build.zig.zon` `.version`; `shared/hpy_host_contract.zig` sürüm sabiti ve `nox_commit` özeti birlikte güncellenir) + CHANGELOG girişi.
+2. Tek `&&` zincirinde: commit + `git tag vX.Y.Z` + `git push origin main` + `git push origin vX.Y.Z`. (Ayrı "bump" commit'i yoktur.)
+3. Tag push'u `.github/workflows/release.yml`i tetikler (3 platform derlemesi + GitHub Release). Önceki sürümün Release'i bitmeden yenisi etiketlenmez.
+
+**Ara commit'ler:** tag'siz `main`e gidebilir (CI yine koşar); `build.zig.zon` sürümü değişmez. Yarım/WIP durum yine commit edilmez.
+
+**Sınır:** yayımlanmış bir sürümün etiketi/release'i silinmez; düzeltme yeni bir sürümle gelir. `install.sh`/`noxc upgrade` "en son Release"i çekmeye devam eder (artık daha seyrek ama anlamlı sürümler).
 
 ## 5. `v0.1` → `v1.0.0` Geçişi
 
