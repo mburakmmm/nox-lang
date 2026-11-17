@@ -45,7 +45,8 @@ True False
 
 ## Notes
 
-- Windows, WebAssembly and freestanding targets have no signals: `install` returns `False`, `take`/`pending` always `False`.
+- **Windows** has no POSIX signals but has console events, and `nox.signal` maps them: `sigint()` (2) is Ctrl+C, `sigterm()` (15) is Ctrl+Break, closing the console, logging off and shutting down. `install`, `pending`, `take`, `wait` and `send_self` work as on POSIX, so a `while not take(sigterm())` loop is portable. Windows ends the process about 5 seconds after the handler returns for close/logoff/shutdown events: finish draining within that time. `sigusr1()`/`sigusr2()` do not exist there (0), a process without a console receives no events, and stopping a Windows *service* (SCM) is not covered. `nox.http.serve*` shuts down gracefully on the same events.
+- WebAssembly and freestanding targets have no signals: `install` returns `False`, `take`/`pending` always `False`.
 - `nox.http.serve*` installs its own `SIGTERM`/`SIGINT` handler when it starts; the last installer wins, so do not combine the two on the same signal. Use
   `nox.http.shutdown()` to stop a server from code.
 - Signal numbers differ between platforms (`SIGUSR1` is 10 on Linux and 30 on macOS), which is why they come from functions rather than constants.

@@ -176,9 +176,28 @@ fn onTermSignal(sig: posix.SIG) callconv(.c) void {
     if (g_shutdown.swap(true, .acq_rel)) std.c._exit(128 + @as(c_int, @intCast(@intFromEnum(sig))));
 }
 
-/// POSIX'te SIGTERM/SIGINT'i graceful shutdown'a bağlar (süreç başına bir kez). Windows'ta konsol olayları için bir işleyici yok: yalnızca `nox.http.shutdown()`.
+/// Windows (v2.2.2): Ctrl+C / Ctrl+Break / konsol kapatma / oturum kapatma / kapanış olayları graceful shutdown'a bağlanır (POSIX'in SIGINT/SIGTERM'iyle aynı: ilk olay `serve`i durdurur, ikincisi hemen çıkar).
+fn winShutdownHandler(ctrl: u32) callconv(.winapi) i32 {
+    switch (ctrl) {
+        0, 1, 2, 5, 6 => {},
+        else => return 0,
+    }
+    if (g_shutdown.swap(true, .acq_rel)) std.c._exit(130);
+    return 1;
+}
+
+const win_console = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn SetConsoleCtrlHandler(handler: ?*const fn (u32) callconv(.winapi) i32, add: i32) callconv(.winapi) i32;
+} else struct {};
+
+/// POSIX'te SIGTERM/SIGINT'i, Windows'ta konsol olaylarını graceful shutdown'a bağlar (süreç başına bir kez).
 fn installShutdownSignals() void {
-    if (comptime builtin.os.tag == .windows or builtin.os.tag == .freestanding or builtin.os.tag == .wasi) return;
+    if (comptime builtin.os.tag == .windows) {
+        if (g_signals_installed.swap(true, .acq_rel)) return;
+        _ = win_console.SetConsoleCtrlHandler(winShutdownHandler, 1);
+        return;
+    }
+    if (comptime builtin.os.tag == .freestanding or builtin.os.tag == .wasi) return;
     if (g_signals_installed.swap(true, .acq_rel)) return;
     const act: posix.Sigaction = .{
         .handler = .{ .handler = onTermSignal },

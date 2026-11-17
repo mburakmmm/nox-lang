@@ -1587,6 +1587,7 @@ pub const Checker = struct {
         .{ .name = "dns", .caps = &.{.network} },
         .{ .name = "safehttp", .caps = &.{.network} },
         .{ .name = "redis", .caps = &.{.network} },
+        .{ .name = "redis_cluster", .caps = &.{.network} },
         .{ .name = "router", .caps = &.{} },
         .{ .name = "sharedmem", .caps = &.{.shared_memory} },
         .{ .name = "smtp", .caps = &.{.network} },

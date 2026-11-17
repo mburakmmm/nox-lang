@@ -13,6 +13,32 @@ const supported = switch (builtin.os.tag) {
     else => !builtin.cpu.arch.isWasm(),
 };
 
+const is_win = builtin.os.tag == .windows;
+
+// Windows (v2.2.2, Ember NX-004): POSIX sinyali yoktur ama KONSOL OLAYLARI vardır; `SIGINT`/`SIGTERM`/`SIGHUP` (C `signal.h` numaraları 2/15/1) bunlara eşlenir:
+// Ctrl+C → SIGINT, Ctrl+Break ve konsol kapatma/oturum kapatma/kapanış olayları → SIGTERM. `SIGUSR1`/`SIGUSR2` Windows'ta yoktur (0). `raise`, işleyici kurulu sinyal için bayrağı doğrudan kurar
+// (`send_self` testleri ve "kendi kendini durdur" kalıbı çalışır). Konsol yoksa (hizmet/arka plan) olay gelmez; Windows HİZMET durdurma (SCM) bu soyutlamanın dışındadır.
+const WIN_SIGINT: usize = 2;
+const WIN_SIGTERM: usize = 15;
+const WIN_SIGHUP: usize = 1;
+var g_win_installed: [MAX_SIG]std.atomic.Value(bool) = [_]std.atomic.Value(bool){.init(false)} ** MAX_SIG;
+var g_win_handler_registered: std.atomic.Value(bool) = .init(false);
+const win_k32 = if (is_win) struct {
+    extern "kernel32" fn SetConsoleCtrlHandler(handler: ?*const fn (u32) callconv(.winapi) i32, add: i32) callconv(.winapi) i32;
+} else struct {};
+
+fn winCtrlHandler(ctrl: u32) callconv(.winapi) i32 {
+    // 0 CTRL_C, 1 CTRL_BREAK, 2 CTRL_CLOSE, 5 CTRL_LOGOFF, 6 CTRL_SHUTDOWN
+    const sig: usize = switch (ctrl) {
+        0 => WIN_SIGINT,
+        1, 2, 5, 6 => WIN_SIGTERM,
+        else => return 0,
+    };
+    if (!g_win_installed[sig].load(.acquire)) return 0; // kurulu değil: varsayılan davranış (süreç sonlanır)
+    g_flags[sig].store(true, .release);
+    return 1;
+}
+
 const MAX_SIG = 32;
 var g_flags: [MAX_SIG]std.atomic.Value(bool) = [_]std.atomic.Value(bool){.init(false)} ** MAX_SIG;
 
@@ -28,6 +54,12 @@ fn validSig(sig: i64) ?usize {
 
 /// `which`: 0 = SIGINT, 1 = SIGTERM, 2 = SIGHUP, 3 = SIGUSR1, 4 = SIGUSR2 → platformun sinyal numarası; desteklenmiyorsa 0.
 pub export fn nox_signal_number_raw(which: i64) i64 {
+    if (comptime is_win) return switch (which) {
+        0 => WIN_SIGINT,
+        1 => WIN_SIGTERM,
+        2 => WIN_SIGHUP,
+        else => 0,
+    };
     if (comptime !supported) return 0;
     return switch (which) {
         0 => @intFromEnum(std.posix.SIG.INT),
@@ -41,6 +73,19 @@ pub export fn nox_signal_number_raw(which: i64) i64 {
 
 /// Sinyali bayrak-kuran işleyiciye bağlar. Başarılıysa 1.
 pub export fn nox_signal_install_raw(sig: i64) i32 {
+    if (comptime is_win) {
+        const n = validSig(sig) orelse return 0;
+        if (n != WIN_SIGINT and n != WIN_SIGTERM and n != WIN_SIGHUP) return 0;
+        if (!g_win_handler_registered.swap(true, .acq_rel)) {
+            if (win_k32.SetConsoleCtrlHandler(winCtrlHandler, 1) == 0) {
+                g_win_handler_registered.store(false, .release);
+                return 0;
+            }
+        }
+        // SIGHUP için ayrı bir konsol olayı yok (SIGTERM'e eşlenir): kurulum kabul edilir ama bayrağı yalnızca `raise` kurar.
+        g_win_installed[n].store(true, .release);
+        return 1;
+    }
     if (comptime !supported) return 0;
     const n = validSig(sig) orelse return 0;
     const act: std.posix.Sigaction = .{
@@ -66,6 +111,12 @@ pub export fn nox_signal_take_raw(sig: i64) i32 {
 
 /// Bu sürece `sig` sinyalini gönderir (testler ve kendi kendini durdurma için). Başarılıysa 1.
 pub export fn nox_signal_raise_raw(sig: i64) i32 {
+    if (comptime is_win) {
+        const n = validSig(sig) orelse return 0;
+        if (!g_win_installed[n].load(.acquire)) return 0;
+        g_flags[n].store(true, .release);
+        return 1;
+    }
     if (comptime !supported) return 0;
     const n = validSig(sig) orelse return 0;
     // Yük altında (çok sayıda süreç, 1/1500) `raise` başarısız dönüp sinyali HİÇ göndermiyordu (`send_self` False, ardından `wait` zaman aşımı): geçici hatalar (EAGAIN/EINTR vb.) için

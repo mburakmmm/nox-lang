@@ -1477,6 +1477,24 @@ pub fn build(b: *std.Build) void {
         m.addObjectFile(b.path(swap_asm_o_path));
         break :blk m;
     } else noxrt_mod;
+    // v2.2.2: iOS/Android'in saf Zig PostgreSQL istemcisi (istemci tarafı zaman aşımı/iptal) masaüstünde GERÇEK PostgreSQL'e karşı. PostgreSQL ikilileri (initdb/postgres) yoksa test atlanır.
+    const pg_mobile_test_mod = b.createModule(.{
+        .root_source_file = b.path("runtime/pg_mobile_test_root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "diag_sink", .module = diag_sink_mod },
+        },
+    });
+    pg_mobile_test_mod.addObjectFile(b.path(swap_asm_o_path)); // `nox_swap_context` (fiber bağlam değiştirme)
+    const pg_mobile_test = b.addTest(.{ .root_module = pg_mobile_test_mod });
+    pg_mobile_test.step.dependOn(&compile_swap_asm.step);
+    test_step.dependOn(&addTimedTestRun(b, pg_mobile_test, win_test_timeout_s).step);
+    const pg_mobile_test_step = b.step("pg-mobile-test", "Saf Zig (iOS/Android) PostgreSQL istemcisinin zaman aşımı/iptal testini gerçek PostgreSQL'e karşı çalıştırır (initdb/postgres yoksa atlanır)");
+    pg_mobile_test_step.dependOn(&addTimedTestRun(b, pg_mobile_test, win_test_timeout_s).step);
+
     // v2.1.66: `-Druntime-test-filter=<alt dize>` + `zig build runtime-test` yalnızca runtime birim testlerini (shim'ler dahil) süzerek çalıştırır.
     const runtime_test_filter = b.option([]const u8, "runtime-test-filter", "runtime-test adımında yalnızca adı bu alt dizeyi içeren testleri çalıştır");
     const noxrt_test = b.addTest(.{ .root_module = noxrt_test_mod, .filters = if (runtime_test_filter) |f| b.dupeStrings(&.{f}) else &.{} });
@@ -1569,6 +1587,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/terminal_pty_test.zig",
         "tests/cli/postgres_diagnostics_test.zig",
         "tests/cli/redis_test.zig",
+        "tests/cli/redis_cluster_test.zig",
         "tests/cli/grpc_test.zig",
         "tests/cli/http_multicore_factory_test.zig",
         "tests/cli/run_script_args_test.zig",

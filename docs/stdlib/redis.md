@@ -58,6 +58,6 @@ if not r.is_nil():
 ## Notes
 
 - **Read timeout:** off by default (blocking commands such as `XREADGROUP ... BLOCK` legitimately wait; inside a task only that task waits). `set_read_timeout(ms)` bounds every reply; `xreadgroup` adds its own `block_ms` to the bound, so `BLOCK 0` is bounded by the timeout alone. Inside a fiber only that fiber is suspended. Not available on wasm hosts (their socket bridge blocks).
-- RESP2 only; no pub/sub push messages and no cluster redirection (`MOVED`/`ASK` surface as `RedisError`).
+- RESP2 only; no pub/sub push messages. A single `Client` talks to one node: `MOVED`/`ASK` surface as `RedisError` there; use [`nox.redis_cluster`](redis_cluster.md) for a Redis Cluster.
 - Verified against real `redis-server` for commands, binary payloads, Streams, scripts, `AUTH`/ACL and reconnecting. TLS reuses the client of [`nox.tls`](tls.md) (an untrusted
   certificate is rejected); a successful handshake with a publicly trusted server certificate has not been exercised against a Redis in this repository's tests.

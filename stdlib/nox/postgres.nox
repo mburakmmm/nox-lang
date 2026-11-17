@@ -276,7 +276,7 @@ class Connection:
 
     # İstemci tarafı sorgu zaman aşımı: `ms` milisaniyeyi aşan her deyim `PQcancel` ile iptal edilir (sunucu `kind == "query_canceled"` döner) ve bağlantı kullanılabilir kalır.
     # `statement_timeout`un aksine sunucu yanıt veremese de çalışır (sunucuya ayrı kısa bir iptal bağlantısı açılır). `0` sınırı kaldırır.
-    # Mobil/wasm saf Zig istemcisinde etkisizdir (sunucu tarafı `set_statement_timeout` kullanın).
+    # iOS/Android'in saf Zig istemcisinde de çalışır (süre dolunca `CancelRequest` ayrı bir bağlantıdan gönderilir, sunucunun 57014 yanıtı beklenir, bağlantı kullanılabilir kalır); wasm ana makine soketlerinde etkisizdir (sunucu tarafı `set_statement_timeout` kullanın).
     def set_query_timeout(self: Connection, ms: int) -> None:
         nox_pg_set_timeout_raw(self.handle, ms)
 

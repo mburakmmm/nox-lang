@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.2.2]
+
+2.3 yol haritası Aşama 3 (Redis / PostgreSQL / Windows).
+
+- **`nox.redis_cluster`:** Redis Cluster istemcisi: CRC16 yuva hesabı (`{etiket}` dahil), yuva sahibine yönlendirme, `-MOVED` (yuva tablosu güncellenir) / `-ASK` (`ASKING` + komut) / bağlantı kopması (topoloji yenileme), tembel düğüm bağlantıları. Gerçek 3 düğümlü kümeyle doğrulandı (yuvalar sunucunun `CLUSTER KEYSLOT`ıyla çapraz, 200 anahtar 3 düğümde, MOVED kendini düzeltir, göç sırasında ASK; iki arka uç). Sınırlar: çok anahtarlı komutlar aynı yuvada olmalı, kopyalardan okuma ve pub/sub yok.
+- **PostgreSQL (iOS/Android saf Zig istemcisi): `set_query_timeout`/`cancel()` artık çalışır:** süre dolunca ayrı bağlantıdan `CancelRequest`, sunucunun `57014` yanıtı beklenir, bağlantı kullanılabilir kalır. Gerçek PostgreSQL'e karşı test (`zig build pg-mobile-test`; initdb/postgres yoksa atlanır). wasm ana makine soketlerinde etkisiz.
+- **Taşınabilir kapanış olayı (Windows):** `nox.signal` Windows konsol olaylarına eşlendi (`sigint()` 2 = Ctrl+C, `sigterm()` 15 = Ctrl+Break/konsol kapatma/oturum kapatma/kapanış); `nox.http.serve*` aynı olaylarda zarif kapanır. Gerçek Windows'ta doğrulandı (`GenerateConsoleCtrlEvent(CTRL_BREAK)` → `wait(sigterm)` True; arka plandaki `serve` Ctrl+Break'te döner). `sigusr1/2`, Windows hizmeti (SCM) ve WASM host iptali yok.
+- **Dahili:** `scripts/redis_cluster_probe.py` + `tests/cli/redis_cluster_test.zig`, `pg_mobile_test_root.zig`, ayrılmış sembol listesine `SetConsoleCtrlHandler`, global-durum listesine Windows sinyal durumu.
+- 2.3 listesi: 3.2/3.3/3.9 (WASM host ABI / yönetilen Redis hesabı) ve 3.8b (modül görünürlüğü, dil kararı) `[K]` olarak açık; 3.8a (kooperatif iptal) tasarım gereği.
+
 ## [2.2.1]
 
 2.3 yol haritası Aşama 1 (güvenilirlik ve CI) ve Aşama 2 (güvenli ağ API'si). 2.2.0'dan sonra ilk sürüm; dil davranışı değişmedi, yalnızca yeni API'ler eklendi.

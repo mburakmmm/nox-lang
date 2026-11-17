@@ -1,0 +1,206 @@
+# nox.redis_cluster — Redis Cluster istemcisi (v2.2.2, 2.3 yol haritası 3.1). `nox.redis` üzerine saf Nox.
+#
+# Anahtarın hash yuvası (CRC16/XMODEM mod 16384, `{etiket}` kuralı dahil) hesaplanır, komut yuvayı SAHİPLENEN düğüme gider; düğüm `-MOVED` derse yuva tablosu güncellenir ve komut yeniden denenir,
+# `-ASK` derse hedef düğüme `ASKING` + komut gönderilir (yuva göçü sürerken), bağlantı koparsa topoloji (`CLUSTER SLOTS`) yenilenir. Düğüm bağlantıları tembel açılır ve yeniden kullanılır.
+#
+#     import nox.redis_cluster
+#     c: nox.redis_cluster.ClusterClient = nox.redis_cluster.connect(["127.0.0.1:7000", "127.0.0.1:7001"])
+#     c.command("user:1", ["SET", "user:1", "ada"])
+#     print(c.command("user:1", ["GET", "user:1"]).as_str())
+#
+# Sınırlar (bilinçli): RESP2; pub/sub ve çok-anahtarlı işlemlerin yuvalar ARASI bölünmesi yoktur — çok anahtarlı komutlar (MGET/MSET/Lua) için tüm anahtarlar AYNI yuvada olmalıdır (`{etiket}` ile;
+# `same_slot(keys)` denetler, değilse sunucu `-CROSSSLOT` döner). Kopyalardan (replica) okuma yoktur: tüm komutlar yuvanın birincil düğümüne gider.
+
+import nox.redis
+import nox.strings
+from nox.redis import Reply
+
+class ClusterError(Exception):
+    pass
+
+def _crc16(s: str) -> int:
+    crc: int = 0
+    n: int = nox.strings.byte_len(s)
+    i: int = 0
+    while i < n:
+        crc = crc ^ (nox.strings.byte_at(s, i) << 8)
+        bit: int = 0
+        while bit < 8:
+            if (crc & 32768) != 0:
+                crc = ((crc << 1) ^ 4129) & 65535
+            else:
+                crc = (crc << 1) & 65535
+            bit = bit + 1
+        i = i + 1
+    return crc
+
+# Redis Cluster'ın anahtar yuvası (0..16383). `{etiket}` varsa yalnızca etiket (boş değilse) hash'lenir.
+def key_slot(key: str) -> int:
+    k: str = key
+    start: int = key.find("{")
+    if start >= 0:
+        rest: str = key[start + 1:len(key)]
+        end: int = rest.find("}")
+        if end > 0:
+            k = rest[0:end]
+    return _crc16(k) % 16384
+
+# Tüm anahtarlar aynı yuvada mı? (Boş liste: True.)
+def same_slot(keys: list[str]) -> bool:
+    if len(keys) == 0:
+        return True
+    s: int = key_slot(keys[0])
+    for k in keys:
+        if key_slot(k) != s:
+            return False
+    return True
+
+class ClusterClient:
+    seeds: list[str]
+    tls: bool
+    username: str
+    password: str
+    ca_file: str
+    owner: list[str]
+    nodes: dict[str, nox.redis.Client]
+    read_timeout_ms: int
+    max_redirects: int
+    refreshes: int
+    redirects: int
+
+    def __init__(self, seeds: list[str], tls: bool, username: str, password: str, ca_file: str, read_timeout_ms: int, max_redirects: int) -> None:
+        self.seeds = seeds
+        self.tls = tls
+        self.username = username
+        self.password = password
+        self.ca_file = ca_file
+        self.owner = []
+        self.nodes = {}
+        self.read_timeout_ms = read_timeout_ms
+        self.max_redirects = max_redirects
+        self.refreshes = 0
+        self.redirects = 0
+        i: int = 0
+        while i < 16384:
+            self.owner.append("")
+            i = i + 1
+
+    def _client(self, addr: str) -> nox.redis.Client:
+        if addr in self.nodes:
+            c: nox.redis.Client = self.nodes[addr]
+            if c.is_ok():
+                return c
+            c.reconnect()
+            return c
+        sep: int = addr.rfind(":")
+        if sep <= 0:
+            raise ClusterError("invalid node address: " + addr)
+        host: str = addr[0:sep]
+        port: int = int(addr[sep + 1:len(addr)])
+        c2: nox.redis.Client = nox.redis.connect(host, port, self.tls, self.username, self.password, 0, self.ca_file)
+        if self.read_timeout_ms > 0:
+            c2.set_read_timeout(self.read_timeout_ms)
+        self.nodes[addr] = c2
+        return c2
+
+    # Topolojiyi yeniler: bilinen düğümlerden ve tohumlardan ilk yanıt verenin `CLUSTER SLOTS` çıktısı yuva tablosunu yeniden kurar.
+    def refresh(self) -> None:
+        self.refreshes = self.refreshes + 1
+        candidates: list[str] = []
+        for a in self.nodes:
+            candidates.append(a)
+        for s in self.seeds:
+            candidates.append(s)
+        last: str = ""
+        for addr in candidates:
+            try:
+                r: Reply = self._client(addr).command(["CLUSTER", "SLOTS"])
+                self._apply_slots(r, addr)
+                return
+            except nox.redis.RedisError as e:
+                last = e.message
+        raise ClusterError("could not read the cluster topology from any node: " + last)
+
+    def _apply_slots(self, r: Reply, via: str) -> None:
+        fresh: list[str] = []
+        i: int = 0
+        while i < 16384:
+            fresh.append("")
+            i = i + 1
+        n: int = r.len()
+        j: int = 0
+        while j < n:
+            e: Reply = r.at(j)
+            first: int = e.at(0).as_int()
+            last: int = e.at(1).as_int()
+            m: Reply = e.at(2)
+            host: str = m.at(0).as_str()
+            if len(host) == 0:
+                # Düğüm kendi adresini boş bildiriyorsa (tek-düğüm/bazı yapılandırmalar) sorgulanan düğümün adresi kullanılır.
+                host = via[0:via.rfind(":")]
+            addr: str = host + ":" + str(m.at(1).as_int())
+            s: int = first
+            while s <= last:
+                fresh[s] = addr
+                s = s + 1
+            j = j + 1
+        self.owner = fresh
+
+    def slot_owner(self, slot: int) -> str:
+        return self.owner[slot]
+
+    # `key` yuvasının sahibine `args` komutunu gönderir; `-MOVED`/`-ASK`/bağlantı kopması yönetilir.
+    def command(self, key: str, args: list[str]) -> Reply:
+        slot: int = key_slot(key)
+        target: str = self.owner[slot]
+        asking: bool = False
+        attempt: int = 0
+        refreshed_for_conn: bool = False
+        while attempt <= self.max_redirects:
+            if len(target) == 0:
+                self.refresh()
+                target = self.owner[slot]
+                if len(target) == 0:
+                    raise ClusterError("no node serves slot " + str(slot))
+            try:
+                c: nox.redis.Client = self._client(target)
+                if asking:
+                    c.command(["ASKING"])
+                    asking = False
+                return c.command(args)
+            except nox.redis.RedisError as e:
+                if e.code == "MOVED" or e.code == "ASK":
+                    # "MOVED <slot> <host>:<port>"
+                    parts: list[str] = e.message.split(" ")
+                    if len(parts) < 3:
+                        raise e
+                    self.redirects = self.redirects + 1
+                    target = parts[2]
+                    if e.code == "MOVED":
+                        self.owner[int(parts[1])] = target
+                    else:
+                        asking = True
+                elif e.is_connection_error():
+                    if refreshed_for_conn:
+                        raise e
+                    refreshed_for_conn = True
+                    self.refresh()
+                    target = self.owner[slot]
+                else:
+                    raise e
+            attempt = attempt + 1
+        raise ClusterError("too many redirects for key '" + key + "'")
+
+    # Her düğüm bağlantısını kapatır.
+    def close(self) -> None:
+        for a in self.nodes:
+            self.nodes[a].close()
+        self.nodes = {}
+
+# `seeds`: `"host:port"` listesi (en az biri erişilebilir olmalı). Topoloji hemen okunur.
+def connect(seeds: list[str], tls: bool = False, username: str = "", password: str = "", ca_file: str = "", read_timeout_ms: int = 0, max_redirects: int = 5) -> ClusterClient:
+    if len(seeds) == 0:
+        raise ClusterError("at least one seed node is required")
+    c: ClusterClient = ClusterClient(seeds, tls, username, password, ca_file, read_timeout_ms, max_redirects)
+    c.refresh()
+    return c

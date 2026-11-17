@@ -1,0 +1,12 @@
+import nox.signal
+
+# Taşınabilir kapanış sinyali: SIGTERM/SIGINT POSIX'te işlem sinyali, Windows'ta konsol olayıdır (Ctrl+C → SIGINT, Ctrl+Break/kapatma/kapanış → SIGTERM); `install`/`send_self`/`pending`/`take` her ikisinde aynı çalışır.
+st: int = nox.signal.sigterm()
+print(st > 0)
+print(nox.signal.install(st))
+print(nox.signal.pending(st))
+print(nox.signal.send_self(st))
+print(nox.signal.pending(st))
+print(nox.signal.take(st), nox.signal.take(st))
+si: int = nox.signal.sigint()
+print(si > 0 and si != st)

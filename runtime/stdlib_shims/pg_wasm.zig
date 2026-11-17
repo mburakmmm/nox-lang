@@ -21,6 +21,13 @@ const Conn = struct {
     ok: bool = false,
     errmsg: []const u8 = "",
     errmsg_owned: bool = false,
+    /// İstemci tarafı sorgu zaman aşımı (v2.2.2; ms, 0 = kapalı): süre dolunca `CancelRequest` ayrı bir bağlantıdan gönderilir, sunucunun `57014` yanıtı beklenir ve bağlantı kullanılabilir kalır.
+    timeout_ms: u32 = 0,
+    /// `BackendKeyData` (iptal için) ve ana makine/port (iptal bağlantısı için; `gpa` sahibi).
+    pid: u32 = 0,
+    secret: u32 = 0,
+    host: []u8 = &.{},
+    port: u16 = 0,
 
     fn setErr(self: *Conn, msg: []const u8) void {
         if (self.errmsg_owned) gpa.free(self.errmsg);
@@ -71,6 +78,14 @@ fn readExact(c: *tcp.Conn, out: []u8) bool {
 }
 
 const Msg = struct { tag: u8, body: []u8 };
+
+/// `readMsg`in `deadline_ms` sınırlı biçimi: ileti BAŞLAMADAN en çok `wait_ms` bekler (`tcp.waitReadable`); süre dolarsa `error.TimedOut`. İleti başladıktan sonra gövde normal okunur.
+const ReadError = error{ TimedOut, Closed };
+
+fn readMsgWithin(c: *tcp.Conn, wait_ms: u32) ReadError!Msg {
+    if (!tcp.waitReadable(c, wait_ms)) return error.TimedOut;
+    return readMsg(c) orelse error.Closed;
+}
 
 /// Bir arka uç iletisi okur (gövde `gpa` ile tahsislidir). Hata/EOF\'ta `null`.
 fn readMsg(c: *tcp.Conn) ?Msg {
@@ -202,7 +217,11 @@ fn authenticate(conn: *Conn, info: proto.ConnInfo) bool {
                 conn.setErr(e);
                 return false;
             },
-            'S', 'K', 'N' => {}, // ParameterStatus / BackendKeyData / Notice
+            'K' => if (m.body.len >= 8) { // BackendKeyData: iptal isteği için süreç kimliği + gizli anahtar
+                conn.pid = std.mem.readInt(u32, m.body[0..4], .big);
+                conn.secret = std.mem.readInt(u32, m.body[4..8], .big);
+            },
+            'S', 'N' => {}, // ParameterStatus / Notice
             'Z' => return true, // ReadyForQuery: oturum hazır
             else => {},
         }
@@ -220,7 +239,8 @@ export fn nox_pg_connect_raw(conninfo: ?[*:0]const u8) callconv(.c) ?*anyopaque 
         tcp.close(t);
         return null;
     };
-    conn.* = .{ .tcp = t };
+    conn.* = .{ .tcp = t, .port = info.port };
+    conn.host = gpa.dupe(u8, info.host) catch &.{};
     if (!t.ok) {
         conn.setErr(t.errmsg);
         return conn;
@@ -263,15 +283,15 @@ export fn nox_pg_errmsg_raw(rt: ?*anyopaque, conn: ?*anyopaque) callconv(.c) ?[*
     return shim_util.dupeToNoxStr(rt, c.errmsg);
 }
 
-/// Mobil/wasm saf Zig istemcisinde istemci tarafı sorgu zaman aşımı/iptal yok (`nox_pg_set_timeout_raw` etkisiz, `nox_pg_cancel_raw` 0); sunucu tarafı `statement_timeout` çalışır.
+/// Saf Zig istemcisinde (iOS/Android yerel soketleri) istemci tarafı sorgu zaman aşımı ve iptal vardır (v2.2.2); wasm ana makine soketlerinde yoktur (süre sınırı etkisiz, `cancel` yalnızca yerel hedeflerde çalışır) — sunucu tarafı `statement_timeout` her yerde çalışır.
 export fn nox_pg_set_timeout_raw(conn: ?*anyopaque, ms: i64) callconv(.c) void {
-    _ = conn;
-    _ = ms;
+    const c: *Conn = @ptrCast(@alignCast(conn orelse return));
+    c.timeout_ms = if (ms <= 0) 0 else @intCast(@min(ms, std.math.maxInt(u32)));
 }
 
 export fn nox_pg_cancel_raw(conn: ?*anyopaque) callconv(.c) i64 {
-    _ = conn;
-    return 0;
+    const c: *Conn = @ptrCast(@alignCast(conn orelse return 0));
+    return if (sendCancel(c)) 1 else 0;
 }
 
 export fn nox_pg_finish_raw(conn: ?*anyopaque) callconv(.c) void {
@@ -279,6 +299,7 @@ export fn nox_pg_finish_raw(conn: ?*anyopaque) callconv(.c) void {
     if (c.ok) _ = sendTagged(c.tcp, 'X', "");
     tcp.close(c.tcp);
     if (c.errmsg_owned) gpa.free(c.errmsg);
+    if (c.host.len > 0) gpa.free(c.host);
     gpa.destroy(c);
 }
 
@@ -338,16 +359,64 @@ fn parseDataRow(r: *Result, body: []const u8) void {
     r.ntuples += 1;
 }
 
-/// `ReadyForQuery` gelene kadar yanıtları okur; son sonucu döner (PQexec gibi son komutun sonucu).
+/// Sunucunun `CancelRequest`e verdiği yanıt (`57014` + `ReadyForQuery`) için bekleme payı.
+const CANCEL_GRACE_MS: u64 = 10_000;
+
+fn nowMs() u64 {
+    if (comptime builtin.cpu.arch.isWasm()) return 0; // wasm host soketlerinde zaman aşımı yok (`tcp_host.waitReadable` hep hazır)
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(u64, @intCast(ts.sec)) * 1000 + @as(u64, @intCast(@divTrunc(ts.nsec, std.time.ns_per_ms)));
+}
+
+/// `CancelRequest` (protokol 3.0): AYRI, düz bir TCP bağlantısından 16 bayt (uzunluk, 80877102, süreç kimliği, gizli anahtar); sunucu iptali işleyip bağlantıyı kapatır. Gönderildiyse `true`.
+fn sendCancel(conn: *Conn) bool {
+    if (conn.host.len == 0 or conn.pid == 0) return false;
+    const t = tcp.connect(conn.host, conn.port, false) orelse return false;
+    defer tcp.close(t);
+    if (!t.ok) return false;
+    var msg: [16]u8 = undefined;
+    std.mem.writeInt(u32, msg[0..4], 16, .big);
+    std.mem.writeInt(u32, msg[4..8], 80877102, .big);
+    std.mem.writeInt(u32, msg[8..12], conn.pid, .big);
+    std.mem.writeInt(u32, msg[12..16], conn.secret, .big);
+    if (!sendAll(t, &msg)) return false;
+    // Sunucu işleyip bağlantıyı kapatır: EOF'u kısa süre bekle (yanıt gelmez).
+    if (tcp.waitReadable(t, 2000)) _ = tcp.readSome(t, 1);
+    return true;
+}
+
+/// `ReadyForQuery` gelene kadar yanıtları okur; son sonucu döner (PQexec gibi son komutun sonucu). `conn.timeout_ms > 0` ise süre dolunca iptal istenir (bkz. `sendCancel`), sunucunun hata yanıtı okunur ve bağlantı kullanılabilir kalır.
 fn collect(conn: *Conn) *Result {
     const r = gpa.create(Result) catch unreachable;
     r.* = .{ .ok = true };
+    var deadline: u64 = if (conn.timeout_ms > 0) nowMs() + conn.timeout_ms else 0;
+    var cancelled = false;
     while (true) {
-        const m = readMsg(conn.tcp) orelse {
-            conn.ok = false;
-            conn.setErr("server closed the connection unexpectedly");
-            failResult(r, "server closed the connection unexpectedly\n");
-            return r;
+        const got: ReadError!Msg = if (deadline != 0) blk: {
+            const now = nowMs();
+            const left: u32 = if (deadline > now) @intCast(@min(deadline - now, std.math.maxInt(u32))) else 0;
+            break :blk readMsgWithin(conn.tcp, left);
+        } else (readMsg(conn.tcp) orelse error.Closed);
+        const m = got catch |e| switch (e) {
+            error.TimedOut => {
+                if (!cancelled) {
+                    cancelled = true;
+                    _ = sendCancel(conn);
+                    deadline = nowMs() + CANCEL_GRACE_MS;
+                    continue;
+                }
+                conn.ok = false;
+                conn.setErr("query timed out and the server did not answer the cancel request");
+                failResult(r, "query timed out and the server did not answer the cancel request\n");
+                return r;
+            },
+            error.Closed => {
+                conn.ok = false;
+                conn.setErr("server closed the connection unexpectedly");
+                failResult(r, "server closed the connection unexpectedly\n");
+                return r;
+            },
         };
         defer gpa.free(m.body);
         switch (m.tag) {
@@ -527,4 +596,136 @@ export fn nox_pg_clear_raw(r: ?*anyopaque) callconv(.c) void {
 
 export fn nox_pg_is_null_ptr(p: ?*anyopaque) callconv(.c) i64 {
     return if (p == null) 1 else 0;
+}
+
+// ---- Test: gerçek PostgreSQL'e karşı istemci tarafı zaman aşımı ve iptal (v2.2.2; `zig build pg-mobile-test`; PostgreSQL ikilileri yoksa atlanır) ----
+
+fn findPgBin(io: std.Io, name: []const u8, buf: []u8) ?[]const u8 {
+    const roots = [_][]const u8{ "/opt/homebrew/opt/postgresql@{d}/bin", "/usr/local/opt/postgresql@{d}/bin", "/usr/lib/postgresql/{d}/bin" };
+    var v: u32 = 20;
+    while (v >= 12) : (v -= 1) {
+        inline for (roots) |root| {
+            var rb: [96]u8 = undefined;
+            if (std.fmt.bufPrint(&rb, root, .{v})) |dir| {
+                if (std.fmt.bufPrint(buf, "{s}/{s}", .{ dir, name })) |full| {
+                    if (std.Io.Dir.cwd().access(io, full, .{})) |_| return full else |_| {}
+                } else |_| {}
+            } else |_| {}
+        }
+    }
+    return null;
+}
+
+fn testFreePort() !u16 {
+    const fd = std.c.socket(std.c.AF.INET, std.c.SOCK.STREAM, 0);
+    if (fd < 0) return error.SocketFailed;
+    defer _ = std.c.close(fd);
+    var addr: std.c.sockaddr.in = .{ .port = 0, .addr = std.mem.nativeToBig(u32, 0x7f000001) };
+    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) return error.BindFailed;
+    var got: std.c.sockaddr.in = undefined;
+    var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+    if (std.c.getsockname(fd, @ptrCast(&got), &len) != 0) return error.GetsocknameFailed;
+    return std.mem.bigToNative(u16, got.port);
+}
+
+test "nox_pg_set_timeout_raw: yavaş sorgu istemci tarafında iptal edilir (57014), bağlantı kullanılabilir kalır; nox_pg_cancel_raw başka bir görevden iptal eder" {
+    if (comptime builtin.cpu.arch.isWasm() or builtin.os.tag == .windows) return error.SkipZigTest;
+    const asap = @import("../alloc/asap.zig");
+    const io = std.testing.io;
+    var initdb_buf: [160]u8 = undefined;
+    var postgres_buf: [160]u8 = undefined;
+    const initdb = findPgBin(io, "initdb", &initdb_buf) orelse return error.SkipZigTest;
+    const postgres = findPgBin(io, "postgres", &postgres_buf) orelse return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var dir_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const data_dir = dir_buf[0..try tmp.dir.realPath(io, &dir_buf)];
+    var data_sub_buf: [std.Io.Dir.max_path_bytes + 8]u8 = undefined;
+    const pgdata = try std.fmt.bufPrint(&data_sub_buf, "{s}/data", .{data_dir});
+
+    // macOS'ta geçersiz/Türkçe yerel ayar `postmaster became multithreaded during startup` ile sunucuyu düşürür: çocuklara `LC_ALL=C` verilir.
+    var env = try std.testing.environ.createMap(std.testing.allocator);
+    defer env.deinit();
+    try env.put("LC_ALL", "C");
+    const init = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ initdb, "-D", pgdata, "-A", "trust", "-U", "nox", "--no-sync" }, .environ_map = &env });
+    defer std.testing.allocator.free(init.stdout);
+    defer std.testing.allocator.free(init.stderr);
+    if (init.term != .exited or init.term.exited != 0) return error.SkipZigTest;
+
+    const port = try testFreePort();
+    var port_buf: [8]u8 = undefined;
+    const port_s = try std.fmt.bufPrint(&port_buf, "{d}", .{port});
+    var child = try std.process.spawn(io, .{
+        // Unix soketi kapalı: geçici dizin yolu (+ `.s.PGSQL.<port>`) macOS'un 104 baytlık `sun_path` sınırını aşabilir.
+        .argv = &.{ postgres, "-D", pgdata, "-p", port_s, "-c", "unix_socket_directories=", "-c", "listen_addresses=127.0.0.1", "-c", "fsync=off" },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+        .environ_map = &env,
+    });
+    defer child.kill(io);
+
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const str = @import("../str.zig");
+    var conninfo_buf: [128]u8 = undefined;
+    const conninfo = try std.fmt.bufPrint(&conninfo_buf, "host=127.0.0.1 port={d} user=nox dbname=postgres", .{port});
+    const conninfo_s = str.nox_str_from_bytes(rt, conninfo) orelse return error.Failed;
+    defer str.nox_str_release(rt, conninfo_s);
+
+    // Sunucunun hazır olmasını bekle (en çok ~20 sn).
+    var conn: ?*anyopaque = null;
+    var attempt: usize = 0;
+    while (attempt < 100) : (attempt += 1) {
+        const c = nox_pg_connect_raw(conninfo_s);
+        if (c != null and nox_pg_status_ok_raw(c) == 1) {
+            conn = c;
+            break;
+        }
+        if (c) |cc| nox_pg_finish_raw(cc);
+        var ts: std.c.timespec = .{ .sec = 0, .nsec = 200 * std.time.ns_per_ms };
+        _ = std.c.nanosleep(&ts, null);
+    }
+    const c = conn orelse return error.SkipZigTest; // sunucu bu ortamda başlatılamadı (sandbox/yerel ayar): testi başarısız saymak yerine atla
+    defer nox_pg_finish_raw(c);
+
+    const sleep_q = str.nox_str_from_bytes(rt, "select pg_sleep(30)") orelse return error.Failed;
+    defer str.nox_str_release(rt, sleep_q);
+    const one_q = str.nox_str_from_bytes(rt, "select 1") orelse return error.Failed;
+    defer str.nox_str_release(rt, one_q);
+
+    // 1) İstemci zaman aşımı: 400 ms sonra iptal, SQLSTATE 57014, bağlantı kullanılabilir.
+    nox_pg_set_timeout_raw(c, 400);
+    const t0 = nowMs();
+    const r1 = nox_pg_exec_raw(c, sleep_q) orelse return error.Failed;
+    const elapsed = nowMs() - t0;
+    try std.testing.expectEqual(@as(i64, 0), nox_pg_result_ok_raw(r1));
+    const sqlstate = nox_pg_result_field_raw(rt, r1, 'C') orelse return error.Failed;
+    defer str.nox_str_release(rt, sqlstate);
+    try std.testing.expectEqualStrings("57014", std.mem.span(sqlstate));
+    try std.testing.expect(elapsed >= 350 and elapsed < 8000);
+    nox_pg_clear_raw(r1);
+    try std.testing.expectEqual(@as(i64, 1), nox_pg_status_ok_raw(c));
+    nox_pg_set_timeout_raw(c, 0);
+    const r2 = nox_pg_exec_raw(c, one_q) orelse return error.Failed;
+    try std.testing.expectEqual(@as(i64, 1), nox_pg_result_ok_raw(r2));
+    nox_pg_clear_raw(r2);
+
+    // 2) `cancel` başka bir iş parçacığından: yavaş sorgu sürerken iptal edilir.
+    const Canceller = struct {
+        fn run(conn_ptr: *anyopaque) void {
+            var ts: std.c.timespec = .{ .sec = 0, .nsec = 300 * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+            _ = nox_pg_cancel_raw(conn_ptr);
+        }
+    };
+    const th = try std.Thread.spawn(.{}, Canceller.run, .{c});
+    const r3 = nox_pg_exec_raw(c, sleep_q) orelse return error.Failed;
+    th.join();
+    try std.testing.expectEqual(@as(i64, 0), nox_pg_result_ok_raw(r3));
+    const st3 = nox_pg_result_field_raw(rt, r3, 'C') orelse return error.Failed;
+    defer str.nox_str_release(rt, st3);
+    try std.testing.expectEqualStrings("57014", std.mem.span(st3));
+    nox_pg_clear_raw(r3);
 }

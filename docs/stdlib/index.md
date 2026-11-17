@@ -24,7 +24,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 |---|---|---|
 | none | pure computation | `strings`, `mathx`, `bigint`, `decimal`, `fraction`, `argparse`, `fnmatch`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `tar`, `zip`, `zstd`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `ed25519`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `glob`, `tempfile`, `sqlite`, `timezone`, `wasm` |
-| `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `grpc`, `grpc_server`, `udp`, `dns`, `safehttp` |
+| `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `redis_cluster`, `grpc`, `grpc_server`, `udp`, `dns`, `safehttp` |
 | `network` + `filesystem` | both | `transfer` |
 | `process` | the process and its children | `os`, `process`, `signal`, `terminal` |
 | `threads` | native threads | `thread`, `atomic` |
@@ -125,6 +125,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.sqlite`](sqlite.md), [`nox.postgres`](postgres.md), [`nox.mysql`](mysql.md) | drivers |
 | [`nox.grpc`](grpc.md) | gRPC client over HTTP/2 (h2c or TLS): unary, streaming, bidirectional streams, metadata, mTLS, gzip |
 | [`nox.grpc_server`](grpc_server.md) | gRPC server on top of `nox.http`: unary, server and client streaming, status codes |
+| [`nox.redis_cluster`](redis_cluster.md) | Redis Cluster client: hash slots, `-MOVED`/`-ASK` redirects, topology refresh |
 | [`nox.redis`](redis.md) | Redis client: commands, Streams, scripts, AUTH/TLS |
 | [`nox.orm`](orm.md) | parameterised CRUD helpers over any driver |
 

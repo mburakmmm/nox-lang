@@ -10,7 +10,9 @@
 #
 # `install`: sinyali bayrak-kuran işleyiciye bağlar. `pending`: bayrak kurulu mu (tüketmez). `take`: bayrağı oku ve temizle.
 # `wait(sig, timeout_ms)`: sinyal gelene ya da süre dolana kadar kooperatif bekler, geldiyse bayrağı tüketip True döner.
-# Windows, wasm ve freestanding'de sinyal yoktur: `install` False döner. `nox.http.serve*` kendi SIGTERM/SIGINT işleyicisini
+# Windows (v2.2.2): POSIX sinyali yoktur ama konsol olayları vardır; `sigint()` 2, `sigterm()` 15, `sighup()` 1 döner. Ctrl+C → SIGINT; Ctrl+Break, konsol kapatma, oturum kapatma ve kapanış olayları → SIGTERM
+# (Windows kapatma olaylarında süreç, işleyici döndükten ~5 sn sonra sonlandırılır: boşaltmayı bu sürede bitirin). `sigusr1/sigusr2` ve Windows HİZMET durdurma (SCM) yoktur. Konsolu olmayan süreçte olay gelmez.
+# wasm ve freestanding'de sinyal yoktur: `install` False döner. `nox.http.serve*` kendi SIGTERM/SIGINT işleyicisini
 # kurar; son kuran kazanır, ikisini birlikte kullanmayın.
 extern def nox_signal_number_raw(which: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_signal_install_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
