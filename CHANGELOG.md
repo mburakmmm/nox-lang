@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.9]
+
+Kullanıcı listesi (2026-11-17): paket sürümleri (K1), ARC/ASAP gerçek-dünya ölçümü ve ilk hızlandırmalar (B1).
+
+- **noxlang paket kayıt defteri (K1):** kayıt defteri artık paketin sürümünü (yayıncının `noxc publish --ref` ile bildirdiği etiket/dal) saklar ve son güncelleme zamanını tutar. Kartlarda sürüm rozeti, paket sayfasında sürüm satırı ve imzalı bildirimlerden "Releases" tablosu (ref, commit, tarih, imzalayan) var; `index.json`da `version` alanı (eski istemciler yok sayar), `noxc search` çıktısında sürüm. Eski kayıtlar yayıncı yeniden yayınlayana kadar "Version not declared yet" gösterir. (Canlıya alma ayrıca yapılır.)
+- **Tanılama (B1-1):** `NOX_RC_STATS=1` ile derlenen/çalıştırılan program çıkışta heap türüne göre satır içi retain/release sayısını ve tahsis/serbest bırakma toplamlarını stderr'e yazar (bkz. `docs/language/memory.md`). Kapalıyken sıfır maliyet.
+- **Performans (B1, `project/b1-arc-asap-analizi-2026-11-17.md`):** sınıf-ağırlıklı (AST/ağaç) iş yükünde süre %72 bellek yönetimindeydi; üç güvenli iyileştirme: (a) kullanıcı kodundaki sınıf release'leri artık `$Sınıf_release`i doğrudan çağırır (derinlik korumalı `nox_rc_release_enqueue_fixed` yalnızca sınıf yıkıcılarının alan release'lerinde kalır), (b) havuz hiç etkinleşmediyse döngü-toplayıcı olası-kök kaydı/forget kilidi alınmaz, (c) tahsis/serbest bırakmada havuzsuz programda `noinline poolSlotFor` çağrısı atlanır. AST iş yükü 28,4 → 24,3 ms (−%14). 321+4 IR anlık görüntüsü yenilendi.
+- **Açık:** alan okuması yerellerinde retain/release elemesi (I1, bellek modeli etkisi, onay bekliyor), satır içi serbest-liste tahsisi, `NOX_POOL_WORKERS` ayarsızken Aether sunucusunun açılış çökmesi (ayrı görev).
+
 ## [2.2.8]
 
 2.3 yol haritası 5.3 devamı: `LRUCache`/`Counter`/`Deque` C'ye yaklaştırma + CI'da kırmızı kalan hataların düzeltilmesi.

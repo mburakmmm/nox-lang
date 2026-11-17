@@ -159,7 +159,7 @@ pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
             // `WorkerPool` YARATILMAMIŞ (`state.pool_ever_active == false`)
             // programlarda TAMAMEN ATLANIR — BÖYLE bir programda slot
             // ZATEN HER ZAMAN 0'dır (bkz. `pool_ever_active`nin belge notu).
-            const slot = poolSlotFor(state);
+            const slot = if (!state.pool_ever_active.load(.monotonic)) @as(usize, 0) else poolSlotFor(state); // B1/I4: havuzsuz programda `noinline` çağrı atlanır (`releaseStateForRt` ile aynı kısa yol)
             const row = &asap.poolFreeListsRow(state, slot).classes;
             const popped = row[idx];
             if (popped) |node| row[idx] = node.next;
@@ -175,6 +175,13 @@ pub export fn nox_rc_alloc(rt: ?*anyopaque, payload_size: usize) ?*anyopaque {
     rc.* = 1;
     const base_bytes: [*]u8 = @ptrCast(base);
     return base_bytes + HEADER_SIZE;
+}
+
+/// B1-1: satır içi retain/release sayacı (`id = heap_kind * 2 + (0 retain | 1 release)`). Yalnızca `NOX_RC_STATS=1` ile derlenen programlar çağırır; çalışma zamanında da `NOX_RC_STATS=1` yoksa hiçbir şey yapmaz.
+pub export fn nox_rcstat(rt: ?*anyopaque, id: i64) void {
+    const st: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return));
+    if (!st.rcstat_on) return;
+    st.rcstat[@as(usize, @intCast(id)) & 63] += 1;
 }
 
 /// `nox.mem.stats()` için: `which` 0 = tahsis sayısı, 1 = serbest bırakılan blok sayısı, 2 = tahsis edilen toplam yük baytı.
@@ -338,7 +345,7 @@ pub export fn nox_rc_free_payload(rt: ?*anyopaque, ptr: ?*anyopaque, payload_siz
             const node: *asap.PoolNode = @ptrCast(@alignCast(base));
             // Faz MN.10 — bkz. `nox_rc_alloc`nin AYNI notu. Faz [YENİ] —
             // bkz. `nox_rc_alloc`nin AYNI `pool_ever_active` kısa-yolu notu.
-            const slot = poolSlotFor(state);
+            const slot = if (!state.pool_ever_active.load(.monotonic)) @as(usize, 0) else poolSlotFor(state); // B1/I4: havuzsuz programda `noinline` çağrı atlanır (`releaseStateForRt` ile aynı kısa yol)
             const row = &asap.poolFreeListsRow(state, slot).classes;
             node.* = .{ .next = row[idx] };
             row[idx] = node;
@@ -728,6 +735,20 @@ pub export fn nox_rc_release_enqueue_dynamic(rt: ?*anyopaque, ptr: ?*anyopaque) 
         return;
     }
     enqueueAndMaybePump(rt, tag, p, rs);
+}
+
+test "nox_rcstat: yalnızca rcstat_on iken sayar, kimlik 64'e sarılır" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const st: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    nox_rcstat(rt, 3); // kapalı: sayılmaz
+    try std.testing.expectEqual(@as(u64, 0), st.rcstat[3]);
+    st.rcstat_on = true;
+    nox_rcstat(rt, 3);
+    nox_rcstat(rt, 3);
+    nox_rcstat(rt, 3 + 64); // 64'e sarılır
+    try std.testing.expectEqual(@as(u64, 3), st.rcstat[3]);
+    st.rcstat_on = false; // deinit dökümü bu testte basmasın
 }
 
 test "rc_alloc 1 ile başlar, retain artırır, release azaltır ve sıfırda serbest bırakır" {

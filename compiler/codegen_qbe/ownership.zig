@@ -6,6 +6,7 @@
 //! (`retainIfAliasing`/`returnNeedsRetain`) burada toplanır.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
 const abi = @import("abi.zig");
@@ -433,7 +434,11 @@ pub fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_q
                 try self.qbeCall(null, "$nox_rc_release_enqueue_dynamic", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr } });
             } else {
                 const cn_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{cn});
-                try self.qbeCall(null, "$nox_rc_release_enqueue_fixed", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr }, .{ .ty = .l, .text = cn_sym } });
+                if (!self.in_class_release and self.profile == .hosted and !self.isWasmTarget()) {
+                    try self.qbeCall(null, cn_sym, &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr } });
+                } else {
+                    try self.qbeCall(null, "$nox_rc_release_enqueue_fixed", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr }, .{ .ty = .l, .text = cn_sym } });
+                }
             }
         } else {
             const cn_sym = try std.fmt.allocPrint(self.allocator, "${s}_release", .{cn});
@@ -782,6 +787,18 @@ fn retainOffset(heap: HeapKind) usize {
     return if (heap == .str) ARC_HEADER_SIZE + types.STR_HEADER_SIZE else ARC_HEADER_SIZE;
 }
 
+/// B1-1: `NOX_RC_STATS=1` ile derlenen programlarda satır içi retain/release sitelerine sayaç çağrısı (`nox_rcstat`) ekler. Tanılama; yalnızca derleme anındaki ortam değişkeniyle açılır.
+fn emitRcStat(self: *Codegen, heap: HeapKind, release: bool) CodegenError!void {
+    // Tarayıcı ön yüzü (wasm32-freestanding) libc/`getenv` içermez; tanılama yalnızca yerel derleyicide vardır.
+    if (comptime builtin.os.tag == .freestanding or builtin.cpu.arch.isWasm()) return;
+    if (std.c.getenv("NOX_RC_STATS") == null) return;
+    if (self.profile != .hosted or self.isWasmTarget()) return;
+    const id: i64 = @as(i64, @intFromEnum(heap)) * 2 + @as(i64, @intFromBool(release));
+    var buf: [24]u8 = undefined;
+    const id_text = std.fmt.bufPrint(&buf, "{d}", .{id}) catch return;
+    try self.qbeCall(null, "$nox_rcstat", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try self.allocator.dupe(u8, id_text) } });
+}
+
 pub fn emitInlineRetain(self: *Codegen, ptr: []const u8, heap: HeapKind) CodegenError!void {
     const is_null = try self.newTemp();
     try self.qbeOp2Imm(is_null, .w, "ceql", ptr, 0);
@@ -790,6 +807,7 @@ pub fn emitInlineRetain(self: *Codegen, ptr: []const u8, heap: HeapKind) Codegen
     const done_label = try self.newLabel("retain_done");
     try self.qbeJnz(is_null, skip_label, retain_label);
     try self.qbeLabel(retain_label);
+    try emitRcStat(self, heap, false);
     const hdr = try self.newTemp();
     try self.qbeOp2Imm(hdr, .l, "sub", ptr, @intCast(retainOffset(heap)));
     // Faz MN.1 (bkz. plan dosyası): `load → add → store` dizisi
@@ -824,6 +842,7 @@ pub fn emitInlineRetain(self: *Codegen, ptr: []const u8, heap: HeapKind) Codegen
 /// çağrısı — gerçek `free` allocator'a ihtiyaç duyduğundan inline
 /// edilemez); `0` — nesne hâlâ canlı (başka bir sahibi var).
 pub fn emitInlinePredecrement(self: *Codegen, ptr: []const u8, heap: HeapKind) CodegenError![]const u8 {
+    try emitRcStat(self, heap, true);
     const hdr = try self.newTemp();
     try self.qbeOp2Imm(hdr, .l, "sub", ptr, @intCast(retainOffset(heap)));
     // Faz MN.1 (bkz. plan dosyası, VE `emitInlineRetain`nin AYNI notu):

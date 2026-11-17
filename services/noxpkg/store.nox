@@ -24,12 +24,14 @@ from nox.sqlite import Connection, SqliteError
 from nox.db import Row, Statement
 
 class IndexEntry:
-    def __init__(self: IndexEntry, name: str, repo: str, description: str, tags: list[str], source: str = "") -> None:
+    def __init__(self: IndexEntry, name: str, repo: str, description: str, tags: list[str], source: str = "", version: str = "", updated_ms: int = 0) -> None:
         self.name = name
         self.repo = repo
         self.description = description
         self.tags = tags
         self.source = source
+        self.version = version
+        self.updated_ms = updated_ms
 
 # Paketin kaynak dili etiketi (yayıncı beyanı; `noxc publish` yerelde dosya taramasıyla doğrular, sunucu doğrulamaz): `nox` (saf Nox), `c`, `cpp`, `rust`, `go`, `zig`, `mixed`.
 def valid_source(s: str) -> bool:
@@ -212,7 +214,7 @@ def _tags_parse(raw: str) -> list[str]:
     return _json_to_str_array(v)
 
 def _entry_from_row(row: Row) -> IndexEntry:
-    return IndexEntry(row.get_str(0), row.get_str(1), row.get_str(2), _tags_parse(row.get_str(3)), row.get_str(4))
+    return IndexEntry(row.get_str(0), row.get_str(1), row.get_str(2), _tags_parse(row.get_str(3)), row.get_str(4), row.get_str(5), row.get_int(6))
 
 def _exec(db: Connection, sql: str) -> None:
     db.execute(sql)
@@ -243,6 +245,9 @@ def _ensure(db: Connection) -> None:
     _add_column_if_missing(db, "submissions", "publisher_id", "INTEGER")
     _add_column_if_missing(db, "packages", "source", "TEXT NOT NULL DEFAULT ''")
     _add_column_if_missing(db, "submissions", "source", "TEXT NOT NULL DEFAULT ''")
+    # 2.3: katalogdaki sürüm (yayıncının bildirdiği ref: etiket ya da dal) ve son güncelleme zamanı. Eski satırlarda boş/0 (sayfa "sürüm bildirilmedi" der).
+    _add_column_if_missing(db, "packages", "version", "TEXT NOT NULL DEFAULT ''")
+    _add_column_if_missing(db, "packages", "updated_ms", "INTEGER NOT NULL DEFAULT 0")
     _import_json_once(db)
     _sync_admin(db)
     _mirror(db)
@@ -391,7 +396,7 @@ def _read_inbox_file(path: str) -> list[Submission]:
 
 def load_packages() -> list[IndexEntry]:
     db: Connection = _open()
-    rows: list[Row] = db.query("SELECT name, repo, description, tags, source FROM packages ORDER BY name")
+    rows: list[Row] = db.query("SELECT name, repo, description, tags, source, version, updated_ms FROM packages ORDER BY name")
     db.close()
     out: list[IndexEntry] = []
     i: int = 0
@@ -402,7 +407,7 @@ def load_packages() -> list[IndexEntry]:
 
 def find_package(name: str) -> IndexEntry | None:
     db: Connection = _open()
-    st: Statement = db.prepare("SELECT name, repo, description, tags, source FROM packages WHERE name = ?")
+    st: Statement = db.prepare("SELECT name, repo, description, tags, source, version, updated_ms FROM packages WHERE name = ?")
     st.bind_str(0, name)
     rows: list[Row] = st.query()
     db.close()
@@ -425,6 +430,9 @@ def _index_document(entries: list[IndexEntry]) -> str:
         if len(e.source) > 0:
             keys.append("source")
             fields.append(_json_str(e.source))
+        if len(e.version) > 0:
+            keys.append("version")
+            fields.append(_json_str(e.version))
         vals.append(_json_object(keys, fields))
         i = i + 1
     root_keys: list[str] = ["packages"]
@@ -445,7 +453,7 @@ def _inbox_document(subs: list[Submission]) -> str:
     return nox.json.dump(_json_object(root_keys, root_vals))
 
 def _entries_of(db: Connection) -> list[IndexEntry]:
-    rows: list[Row] = db.query("SELECT name, repo, description, tags, source FROM packages ORDER BY name")
+    rows: list[Row] = db.query("SELECT name, repo, description, tags, source, version, updated_ms FROM packages ORDER BY name")
     out: list[IndexEntry] = []
     i: int = 0
     while i < len(rows):
@@ -493,13 +501,15 @@ def load_inbox() -> list[Submission]:
 # adresi değişmediği için inceleyecek yeni bir şey yoktur. Yeni ad ve repo değişikliği hep onaya düşer.
 def add_submission(name: str, repo: str, ref: str, description: str, tags: list[str], publisher_id: int, source: str = "") -> int:
     db: Connection = _open()
-    live: Statement = db.prepare("UPDATE packages SET description = ?, tags = ?, source = ? WHERE name = ? AND repo = ? AND publisher_id = ?")
+    live: Statement = db.prepare("UPDATE packages SET description = ?, tags = ?, source = ?, version = ?, updated_ms = ? WHERE name = ? AND repo = ? AND publisher_id = ?")
     live.bind_str(0, description)
     live.bind_str(1, _tags_dump(tags))
     live.bind_str(2, source)
-    live.bind_str(3, name)
-    live.bind_str(4, repo)
-    live.bind_int(5, publisher_id)
+    live.bind_str(3, ref)
+    live.bind_int(4, nox.time.now_ms())
+    live.bind_str(5, name)
+    live.bind_str(6, repo)
+    live.bind_int(7, publisher_id)
     if publisher_id != 0 and live.execute() > 0:
         # Aynı pakete ait bekleyen eski gönderimler artık gereksizdir.
         drop: Statement = db.prepare("DELETE FROM submissions WHERE name = ? AND repo = ? AND publisher_id = ?")
@@ -566,7 +576,7 @@ def latest_submission_id(name: str, repo: str) -> str:
 
 def approve_submission(id: str) -> bool:
     db: Connection = _open()
-    st: Statement = db.prepare("SELECT name, repo, description, tags, COALESCE(publisher_id, 0), source FROM submissions WHERE id = ?")
+    st: Statement = db.prepare("SELECT name, repo, description, tags, COALESCE(publisher_id, 0), source, ref FROM submissions WHERE id = ?")
     st.bind_str(0, id)
     rows: list[Row] = st.query()
     if len(rows) == 0:
@@ -574,7 +584,7 @@ def approve_submission(id: str) -> bool:
         return False
     row: Row = rows[0]
     # Yayıncı çakışmada KORUNUR (COALESCE): sahipsiz (eski) bir paket ilk sahibini alır, sahipli paketin sahibi değişmez.
-    up: Statement = db.prepare("INSERT INTO packages (name, repo, description, tags, created_at_ms, publisher_id, source) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0), ?) ON CONFLICT(name) DO UPDATE SET repo = excluded.repo, description = excluded.description, tags = excluded.tags, source = excluded.source, publisher_id = COALESCE(packages.publisher_id, excluded.publisher_id)")
+    up: Statement = db.prepare("INSERT INTO packages (name, repo, description, tags, created_at_ms, publisher_id, source, version, updated_ms) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0), ?, ?, ?) ON CONFLICT(name) DO UPDATE SET repo = excluded.repo, description = excluded.description, tags = excluded.tags, source = excluded.source, version = excluded.version, updated_ms = excluded.updated_ms, publisher_id = COALESCE(packages.publisher_id, excluded.publisher_id)")
     up.bind_str(0, row.get_str(0))
     up.bind_str(1, row.get_str(1))
     up.bind_str(2, row.get_str(2))
@@ -582,6 +592,8 @@ def approve_submission(id: str) -> bool:
     up.bind_int(4, nox.time.now_ms())
     up.bind_int(5, row.get_int(4))
     up.bind_str(6, row.get_str(5))
+    up.bind_str(7, row.get_str(6))
+    up.bind_int(8, nox.time.now_ms())
     up.execute()
     rm: Statement = db.prepare("DELETE FROM submissions WHERE id = ?")
     rm.bind_str(0, id)

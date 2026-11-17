@@ -53,6 +53,17 @@ On the LLVM backend reference counts are **atomic**, so a value can be shared by
 ([Concurrency](concurrency.md)). On the QBE backend the single-threaded scheduler needs no atomics. Either way, the cycle collector
 coordinates with the scheduler (all workers pause at a safe point while it runs).
 
+### Measuring reference-count traffic
+
+`nox.mem.stats()` counts allocations. To see how many **retain/release operations** a program actually executes, build and run it with `NOX_RC_STATS=1` (a diagnostic; nothing changes when the variable is not set):
+
+```bash
+NOX_RC_STATS=1 noxc build app.nox -o app
+NOX_RC_STATS=1 ./app          # prints NOXRC lines on stderr when the program exits
+```
+
+The output lists inline retain and release counts per heap kind (`str`, `list`, `class`, `dict`, ...) and the totals together with allocation and free counts. Counts are best effort (not atomic), cover the code the compiler emits inline (not retains done inside the runtime), and the build-time variable only affects the hosted backends (not WebAssembly or freestanding). Sampling profilers (`sample`, `perf`) show where the time goes; combining the two tells you whether reference counting or allocation dominates.
+
 ## `lowlevel` blocks
 
 `lowlevel:` gives a block **arena allocation** and, together with `ptr[T]`, raw memory access. It is Nox's analogue of `unsafe`, with one

@@ -624,7 +624,7 @@ fn cmdSearch(io: std.Io, a: std.mem.Allocator, args: []const []const u8, registr
     for (idx.packages) |pkg| {
         if (!pkg_index.matches(pkg, query)) continue;
         found += 1;
-        try w.print("{s} — {s}\n", .{ pkg.name, pkg.repo });
+        if (pkg.version.len > 0) try w.print("{s} {s} — {s}\n", .{ pkg.name, pkg.version, pkg.repo }) else try w.print("{s} — {s}\n", .{ pkg.name, pkg.repo });
         if (pkg.description.len > 0) try w.print("    {s}\n", .{pkg.description});
         if (pkg.source.len > 0) try w.print("    source: {s} (declared by the publisher)\n", .{pkg.source});
         if (pkg.tags.len > 0) {

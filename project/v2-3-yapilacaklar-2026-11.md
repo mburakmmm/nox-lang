@@ -6,6 +6,8 @@ Durum: `[ ]` açık · `[x]` bitti (sürümle) · `[-]` bayat/yapılmayacak (kan
 Boyut: **S** (birkaç saat) · **M** (1-2 gün, tek sürüm) · **L** (birden çok sürüm, kendi tasarımı).
 Kural (AGENTS §16): yeni dil özelliği / API biçimi / bellek modeli etkisi olan maddeler `[K]` ile başlar, önce sorulur. Tasarım gereği sınırlara dokunulmaz: kooperatif iptal, sabit 192 KiB fiber yığını, liste ataması kopyası, işçi başına modül durumu, QBE tek iş parçacığı. Her madde: önce güncel derleyicide yeniden üret (raporlar bayat olabilir), kök neden, iki backend'de golden, ölçümlerde C sütunu.
 
+**Kullanıcının 2026-11-17 akşam listesi (K1-K3, O1, B1, B3) ayrı takip edilir: `project/v2-3-kullanici-listesi-2026-11-17.md`.**
+
 ## Önerilen sıra
 
 1. **Aşama 1 — Güvenilirlik ve CI** (hepsi S/M, karar gerektirmez): 2.2'nin kararlı yayını sonrası ilk iş; kırmızı/flaky CI sonraki her aşamayı yavaşlatıyor.

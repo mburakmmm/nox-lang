@@ -37,6 +37,8 @@ pub const PackageEntry = struct {
     tags: []const []const u8 = &.{},
     /// 2.2 aşama 6: kaynak dili etiketi (yayıncı beyanı: nox/c/cpp/rust/go/zig/mixed); eski indekslerde yok.
     source: []const u8 = "",
+    /// 2.3: katalogdaki sürüm (yayıncının `noxc publish --ref` ile bildirdiği etiket/dal); eski indekslerde yok.
+    version: []const u8 = "",
 };
 
 pub const Index = struct {
@@ -152,6 +154,16 @@ test "parseIndexJson: gecerli bir dizini dogru ayristirir" {
     // Eksik alanlar (`description`/`tags`) varsayilanlarina duser.
     try std.testing.expectEqualStrings("", idx.packages[1].description);
     try std.testing.expectEqual(@as(usize, 0), idx.packages[1].tags.len);
+}
+
+test "parseIndexJson: version alani okunur, eski indekste bos kalir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const idx = try parseIndexJson(arena.allocator(),
+        \\{"packages": [{"name": "a", "repo": "github.com/x/a", "version": "v1.2.0"}, {"name": "b", "repo": "github.com/x/b"}]}
+    );
+    try std.testing.expectEqualStrings("v1.2.0", idx.packages[0].version);
+    try std.testing.expectEqualStrings("", idx.packages[1].version);
 }
 
 test "parseIndexJson: bozuk JSON error.InvalidIndex doner" {

@@ -1465,6 +1465,9 @@ pub const Codegen = struct {
     /// `genClassRelease` `nox_cycle_possible_root`u YALNIZCA bu kümedeki
     /// sınıflar İçin yayınlar.
     cyclic_classes: std.StringHashMapUnmanaged(void) = .empty,
+    /// B1/I2 (2.3): `genClassRelease` gövdesinde (alan release'leri) `true`: orada sınıf release'leri derinlik-korumalı `nox_rc_release_enqueue_fixed` üzerinden gider (uzun zincirlerde yığın taşmasını önler, GG.24).
+    /// Kullanıcı kodundaki kapsam çıkışı/alan üzerine yazma release'leri `false` iken `$Sınıf_release`i DOĞRUDAN çağırır (derinlik her zaman 0'dan başlar; ara çağrı ve derinlik muhasebesi atlanır).
+    in_class_release: bool = false,
     /// Faz 7: `genMethod` TARAFINDAN, o metodun AİT olduğu sınıfın adıyla
     /// set edilir — `super()`in (bkz. `calls.zig`nin `genSuperMethodCall`ı)
     /// taban sınıfı bulması İçin.

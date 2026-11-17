@@ -27,7 +27,7 @@ def account_bar(username: str, role: str) -> str:
     return who + admin + "<button class=\"btn btn-ghost\" id=\"logout\" type=\"button\">Sign out</button>"
 
 def _card_template() -> str:
-    return "<a class=\"card\" href=\"/p/{{ name }}\" data-name=\"{{ name }}\" data-repo=\"{{ repo }}\" data-description=\"{{ description }}\" data-tags=\"{{ tags }}\" data-source=\"{{ source }}\"><h2>{{ name }}</h2><p>{{ description }}</p><span class=\"tags\">{{ source_html }}{{ tag_html }}</span></a>"
+    return "<a class=\"card\" href=\"/p/{{ name }}\" data-name=\"{{ name }}\" data-repo=\"{{ repo }}\" data-description=\"{{ description }}\" data-tags=\"{{ tags }}\" data-source=\"{{ source }}\" data-version=\"{{ version }}\"><h2>{{ name }}<span class=\"ver\">{{ version_text }}</span></h2><p>{{ description }}</p><span class=\"tags\">{{ source_html }}{{ tag_html }}</span></a>"
 
 def source_badge(source: str) -> str:
     label: str = store.source_label(source)
@@ -39,7 +39,7 @@ def source_badge(source: str) -> str:
 def _tag_template() -> str:
     return "<span class=\"tag\">{{ tag }}</span>"
 
-def package_card(name: str, repo: str, description: str, tags: list[str], source: str = "") -> str:
+def package_card(name: str, repo: str, description: str, tags: list[str], source: str = "", version: str = "") -> str:
     tag_html: str = ""
     i: int = 0
     while i < len(tags):
@@ -53,7 +53,7 @@ def package_card(name: str, repo: str, description: str, tags: list[str], source
             joined = joined + " "
         joined = joined + tags[j]
         j = j + 1
-    ctx: dict[str, str] = {"name": nox.template.escape_html(name), "repo": nox.template.escape_html(repo), "description": nox.template.escape_html(description), "tags": nox.template.escape_html(joined), "tag_html": tag_html, "source": nox.template.escape_html(source), "source_html": source_badge(source)}
+    ctx: dict[str, str] = {"name": nox.template.escape_html(name), "repo": nox.template.escape_html(repo), "description": nox.template.escape_html(description), "tags": nox.template.escape_html(joined), "tag_html": tag_html, "source": nox.template.escape_html(source), "source_html": source_badge(source), "version": nox.template.escape_html(version), "version_text": nox.template.escape_html(version)}
     return nox.template.render_unescaped(_card_template(), ctx)
 
 def source_chips() -> str:
@@ -85,10 +85,39 @@ def publisher_line(login: str) -> str:
     ctx: dict[str, str] = {"login": login}
     return nox.template.render("<p class=\"publisher\">Published by <a href=\"https://github.com/{{ login }}\" rel=\"noopener noreferrer\">@{{ login }}</a></p>", ctx)
 
-def package_main(name: str, repo_href: str, repo_label: str, description: str, tags_html: str, install: str, comments_html: str, composer_html: str, publisher_html: str = "") -> str:
-    ctx: dict[str, str] = {"publisher": publisher_html, "name": nox.template.escape_html(name), "repo_href": nox.template.escape_html(repo_href), "repo_label": nox.template.escape_html(repo_label), "description": nox.template.escape_html(description), "tags": tags_html, "install": nox.template.escape_html(install), "comments": comments_html, "composer": composer_html}
-    tmpl: str = "<p class=\"kicker\"><a href=\"/\">Packages</a></p><div class=\"pkg-head\"><div><h1>{{ name }}</h1><p class=\"lead\">{{ description }}</p>{{ publisher }}<div class=\"tags\">{{ tags }}</div></div><div><p class=\"install\">noxc add {{ install }}</p><p><a href=\"{{ repo_href }}\" rel=\"noopener noreferrer\">{{ repo_label }}</a></p></div></div><section class=\"panel\"><h2>Comments</h2>{{ comments }}{{ composer }}</section>"
+def package_main(name: str, repo_href: str, repo_label: str, description: str, tags_html: str, install: str, comments_html: str, composer_html: str, publisher_html: str = "", version_html: str = "", releases_html: str = "") -> str:
+    ctx: dict[str, str] = {"publisher": publisher_html, "version_html": version_html, "releases": releases_html, "name": nox.template.escape_html(name), "repo_href": nox.template.escape_html(repo_href), "repo_label": nox.template.escape_html(repo_label), "description": nox.template.escape_html(description), "tags": tags_html, "install": nox.template.escape_html(install), "comments": comments_html, "composer": composer_html}
+    tmpl: str = "<p class=\"kicker\"><a href=\"/\">Packages</a></p><div class=\"pkg-head\"><div><h1>{{ name }}</h1>{{ version_html }}<p class=\"lead\">{{ description }}</p>{{ publisher }}<div class=\"tags\">{{ tags }}</div></div><div><p class=\"install\">noxc add {{ install }}</p><p><a href=\"{{ repo_href }}\" rel=\"noopener noreferrer\">{{ repo_label }}</a></p></div></div>{{ releases }}<section class=\"panel\"><h2>Comments</h2>{{ comments }}{{ composer }}</section>"
     return nox.template.render_unescaped(tmpl, ctx)
+
+# Sürüm: yayıncının bildirdiği ref (etiket ya da dal). Boşsa (eski kayıt) dürüstçe "bildirilmedi" denir.
+def version_line(version: str, updated: str) -> str:
+    if len(version) == 0:
+        return "<p class=\"version-line unset\">Version not declared yet. The publisher can set it with <code>noxc publish --ref v1.0.0</code>.</p>"
+    ctx: dict[str, str] = {"version": version, "updated": updated}
+    if len(updated) == 0:
+        return nox.template.render("<p class=\"version-line\"><span class=\"ver big\">{{ version }}</span></p>", ctx)
+    return nox.template.render("<p class=\"version-line\"><span class=\"ver big\">{{ version }}</span><span class=\"muted\">updated {{ updated }}</span></p>", ctx)
+
+def _release_row() -> str:
+    return "<tr><td><span class=\"ver\">{{ ref }}</span></td><td><code>{{ commit }}</code></td><td>{{ when }}</td><td><a href=\"https://github.com/{{ signer }}\" rel=\"noopener noreferrer\">@{{ signer }}</a></td><td>{{ state }}</td></tr>"
+
+def release_row(ref: str, commit: str, when: str, signer: str, revoked: bool) -> str:
+    state: str = "signed"
+    if revoked:
+        state = "key revoked"
+    short: str = commit
+    if len(short) > 12:
+        short = short[0:12]
+    ctx: dict[str, str] = {"ref": ref, "commit": short, "when": when, "signer": signer, "state": state}
+    return nox.template.render(_release_row(), ctx)
+
+# İmzalı yayın bildirimlerinden "Releases" tablosu; hiç bildirim yoksa panel hiç çizilmez.
+def releases_panel(rows_html: str) -> str:
+    if len(rows_html) == 0:
+        return ""
+    ctx: dict[str, str] = {"rows": rows_html}
+    return nox.template.render_unescaped("<section class=\"panel\"><h2>Releases</h2><p class=\"muted\">Signed release statements from the publisher (newest first).</p><div class=\"table-wrap\"><table><tr><th>Version</th><th>Commit</th><th>Date</th><th>Signed by</th><th>Status</th></tr>{{ rows }}</table></div></section>", ctx)
 
 def guest_composer() -> str:
     return "<p class=\"callout\"><a href=\"/login\">Sign in</a> to comment or report a problem.</p>"

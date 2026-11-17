@@ -12,7 +12,7 @@ from nox.json import JsonError
 from nox.router import Context
 from nox.http import HttpResponse
 import store
-from store import IndexEntry, Comment, Viewer, Publisher
+from store import IndexEntry, Comment, Viewer, Publisher, Attestation
 import templates
 import auth
 from auth import Session, RateLimiter
@@ -124,7 +124,7 @@ def home(ctx: Context) -> HttpResponse:
     i: int = 0
     while i < len(entries):
         e: IndexEntry = entries[i]
-        cards = cards + templates.package_card(e.name, e.repo, e.description, e.tags, e.source)
+        cards = cards + templates.package_card(e.name, e.repo, e.description, e.tags, e.source, e.version)
         i = i + 1
     return _html(ctx, "Packages — Nox", templates.home_main(cards))
 
@@ -164,7 +164,17 @@ def package_page(ctx: Context) -> HttpResponse:
     owner: Publisher | None = store.find_package_publisher(name)
     if owner != None:
         publisher_html = templates.publisher_line(owner.login)
-    main_html: str = templates.package_main(entry.name, _repo_href(entry.repo), entry.repo, entry.description, templates.source_badge(entry.source) + _tags_html(entry.tags), entry.name, blocks, composer, publisher_html)
+    updated_text: str = ""
+    if entry.updated_ms > 0:
+        updated_text = nox.time.from_epoch_ms(entry.updated_ms).to_str()
+    atts: list[Attestation] = store.load_attestations(name)
+    release_rows: str = ""
+    k: int = 0
+    while k < len(atts):
+        a: Attestation = atts[k]
+        release_rows = release_rows + templates.release_row(a.ref, a.commit, nox.time.from_epoch_ms(a.created_ms).to_str(), a.login, a.revoked)
+        k = k + 1
+    main_html: str = templates.package_main(entry.name, _repo_href(entry.repo), entry.repo, entry.description, templates.source_badge(entry.source) + _tags_html(entry.tags), entry.name, blocks, composer, publisher_html, templates.version_line(entry.version, updated_text), templates.releases_panel(release_rows))
     return _html(ctx, entry.name + " — Packages", main_html)
 
 def login_page(ctx: Context) -> HttpResponse:

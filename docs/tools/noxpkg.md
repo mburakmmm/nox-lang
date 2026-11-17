@@ -45,6 +45,10 @@ package again does not add rows to the queue; it updates the one that is waiting
 package page and the administration panel show who published each package (a warning appears when the repository owner differs from the publisher). Packages that were listed before accounts existed belong to the
 registry administrator's GitHub account.
 
+## Package versions
+
+The registry records one **version** per package: the `--ref` given to the last `noxc publish` (a tag such as `v1.2.0`, or a branch such as `main`). It shows on the package card and the package page, appears as `"version"` in `index.json` (older clients ignore the field) and in `noxc search` output. Signed release statements (see `noxc sign`) are listed on the package page under *Releases* with the ref, commit, date and signer. A package published before versions were recorded shows "Version not declared yet" until its publisher publishes again (`noxc publish <repo> --ref v1.0.0`).
+
 ## Submitting a package
 
 `noxc publish <repo> [--ref <ref>] [--description <text>] [--tags a,b,c]` (after `noxc login`) sends `POST /api/publish` with the token in an `Authorization: Bearer` header and this JSON:

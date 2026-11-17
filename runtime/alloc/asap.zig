@@ -433,6 +433,10 @@ pub const RuntimeState = struct {
     /// `RuntimeState`i paylaşır); yalnızca ölçüm sırasında ödenir. Sayılan: mantıksal ARC blokları (`str`/`list`/`dict`/sınıf), havuzdan
     /// yeniden kullanılanlar dahil; ASAP ile yığına/arenaya terfi eden nesneler heap'e hiç girmediğinden sayılmaz.
     mem_stats_on: bool = false,
+    /// B1-1 (2.3, `project/b1-arc-asap-analizi-2026-11-17.md`): `NOX_RC_STATS=1` ile ÇALIŞTIRILAN ve `NOX_RC_STATS=1` ile DERLENMİŞ program, satır içi retain/release sayısını heap türüne göre tutar (`nox_rcstat`)
+    /// ve çıkışta stderr'e döker. Tanılama aracıdır: kapalıyken (varsayılan) hiçbir maliyet/davranış farkı yoktur. Sayaçlar en-iyi-çaba (atomik değil).
+    rcstat_on: bool = false,
+    rcstat: [64]u64 = @splat(0),
     mem_allocs: std.atomic.Value(usize) = .init(0),
     mem_frees: std.atomic.Value(usize) = .init(0),
     mem_bytes: std.atomic.Value(usize) = .init(0),
@@ -875,6 +879,12 @@ pub fn createState(backing: std.mem.Allocator, init: RuntimeState) ?*RuntimeStat
     const state: *RuntimeState = @ptrCast(@alignCast(raw.ptr + STATE_PREFIX));
     state.hot().* = .{};
     state.* = init;
+    if (comptime !is_freestanding and !builtin.cpu.arch.isWasm()) {
+        if (std.c.getenv("NOX_RC_STATS") != null) {
+            state.rcstat_on = true;
+            state.mem_stats_on = true;
+        }
+    }
     return state;
 }
 
@@ -952,6 +962,22 @@ pub export fn nox_runtime_init() ?*anyopaque {
 /// gereksinimi doğrultusunda) bunu stderr'e açıkça bildirir — programın
 /// çıkış kodunu değiştirmez, ama golden testler bu çıktıyı gözlemleyebilir.
 /// Release modlarında (bkz. modül üstü not) sızıntı tespiti yapılmaz.
+/// `NOX_RC_STATS=1`: heap türüne göre satır içi retain/release sayıları + tahsis/serbest bırakma toplamları (stderr). Türler `HeapKind` sırasıdır (compiler/codegen_qbe/types.zig).
+fn dumpRcStats(state: *RuntimeState) void {
+    const kinds = [_][]const u8{ "none", "str", "list", "class", "task", "channel", "dict", "closure", "thread_handle", "thread_channel", "boxed_scalar", "task_local", "typed_ptr" };
+    var retain_total: u64 = 0;
+    var release_total: u64 = 0;
+    std.debug.print("NOXRC kind retain release\n", .{});
+    for (kinds, 0..) |k, i| {
+        const r = state.rcstat[i * 2];
+        const d = state.rcstat[i * 2 + 1];
+        retain_total += r;
+        release_total += d;
+        if (r != 0 or d != 0) std.debug.print("NOXRC {s} {d} {d}\n", .{ k, r, d });
+    }
+    std.debug.print("NOXRC total retain={d} release={d} alloc={d} free={d} bytes={d}\n", .{ retain_total, release_total, state.mem_allocs.load(.monotonic), state.mem_frees.load(.monotonic), state.mem_bytes.load(.monotonic) });
+}
+
 pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return));
     // Faz S.3: SON bir kez döngü topla (bkz. `nox_cycle_collect`in belge
@@ -962,6 +988,9 @@ pub export fn nox_runtime_deinit(rt: ?*anyopaque) void {
     // serbest-bırakma yazımı olurdu).
     nox_cycle_collect(rt);
     nox_cycle_deinit(rt);
+    if (comptime !is_freestanding and !builtin.cpu.arch.isWasm()) {
+        if (state.rcstat_on) dumpRcStats(state);
+    }
     if (state.cb_deinit_hook) |hook| hook(rt);
     if (comptime !is_freestanding) @import("../stdout_flush.zig").flushStdout();
     // Faz [YENİ] (bkz. plan dosyası "RuntimeState'in 80x büyümesini

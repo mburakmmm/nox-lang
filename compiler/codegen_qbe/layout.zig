@@ -308,6 +308,8 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
     if (tracks_cycles) {
         try self.qbeCall(null, "$nox_cycle_forget", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" } });
     }
+    self.in_class_release = true;
+    defer self.in_class_release = false;
     for (cinfo.fields.items) |f| {
         if (isHeapManaged(f.info.heap)) {
             const addr = try self.newTemp();

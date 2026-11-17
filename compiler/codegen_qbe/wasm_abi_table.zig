@@ -553,6 +553,7 @@ pub const table = std.StaticStringMap(Entry).initComptime(.{
     .{ "nox_regex_is_match_raw", Entry{ .params = "PP", .ret = 'W' } },
     .{ "nox_regex_slice_raw", Entry{ .params = "PPLL", .ret = 'P' } },
     .{ "nox_register_dispatch_table", Entry{ .params = "PPPPP", .ret = 'v' } },
+    .{ "nox_rcstat", Entry{ .params = "PL", .ret = 'v' } },
     .{ "nox_runtime_deinit", Entry{ .params = "P", .ret = 'v' } },
     .{ "nox_runtime_init", Entry{ .params = "", .ret = 'P' } },
     .{ "nox_server_handler_exception", Entry{ .params = "P", .ret = 'v' } },

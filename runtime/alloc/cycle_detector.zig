@@ -336,6 +336,23 @@ const ROOTS_KEEP_CAPACITY: usize = 4096;
 /// `genClassRelease`i, `nox_rc_predecrement` refcount'u SIFIRA
 /// DÜŞÜRMEDİĞİNDE (nesne hâlâ CANLI, ama BELKİ bir döngünün parçası) bunu
 /// çağırır.
+/// B1/I3 (2.3): havuz hiç etkinleşmediyse (`pool_ever_active == false`) bu `RuntimeState`i yalnızca TEK bir iş parçacığı kullanır (fiber'lar kooperatiftir, `nox.thread` çocuklarının KENDİ rt'si vardır),
+/// bu yüzden olası-kök kaydı/forget için kilit gereksizdir: kilit al/bırak (2 atomik işlem) AST/ağaç iş yüklerinde düğüm başına ödeniyordu. Havuz yaratılmadan ÖNCE hiçbir ikinci iş parçacığı bu rt'ye dokunamaz,
+/// bu yüzden "kilitsiz → kilitli" geçişi yarışsızdır. wasm'da (paylaşımlı bellekli iş parçacıkları) eski davranış korunur.
+inline fn gcLockIfShared(state: *asap.RuntimeState) bool {
+    if (comptime builtin.cpu.arch.isWasm()) {
+        state.cycle_gc_lock.lock();
+        return true;
+    }
+    if (!state.pool_ever_active.load(.monotonic)) return false;
+    state.cycle_gc_lock.lock();
+    return true;
+}
+
+inline fn gcUnlockIfShared(state: *asap.RuntimeState, locked: bool) void {
+    if (locked) state.cycle_gc_lock.unlock();
+}
+
 pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
     const ptr = p orelse return;
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
@@ -351,8 +368,8 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
         const w0 = hdrLoad(hdrWord(ptr));
         if (w0 & BUFFERED_BIT != 0 and (w0 & COLOR_MASK) == (@as(u64, @intFromEnum(Color.purple)) << COLOR_SHIFT)) return;
     }
-    state.cycle_gc_lock.lock();
-    defer state.cycle_gc_lock.unlock();
+    const locked = gcLockIfShared(state);
+    defer gcUnlockIfShared(state, locked);
     const gc = getGc(state);
 
     // Kilit altında yeniden kontrol (hızlı yol kilitsiz okur).
@@ -445,8 +462,8 @@ pub export fn nox_cycle_forget(rt: ?*anyopaque, p: ?*anyopaque) void {
     // Hızlı yol: tamponda değilse (çoğu nesne) yapılacak bir şey yok — kilit yok.
     if (!isBuffered(ptr)) return;
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt.?));
-    state.cycle_gc_lock.lock();
-    defer state.cycle_gc_lock.unlock();
+    const locked = gcLockIfShared(state);
+    defer gcUnlockIfShared(state, locked);
     const gc_ptr = state.cycle_gc orelse return; // hiç başlatılmadıysa unutacak bir şey yok
     const gc: *CycleGc = @ptrCast(@alignCast(gc_ptr));
     const idx: usize = @intCast((hdrWord(ptr).* & IDX_MASK) >> IDX_SHIFT);
