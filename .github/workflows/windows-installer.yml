@@ -23,7 +23,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Kaynak release arşivini indir
         shell: pwsh
         env:
@@ -47,7 +47,7 @@ jobs:
       - name: Kur / yeniden kur / kaldır testi
         shell: pwsh
         run: .\packaging\windows\test-installer.ps1 -Installer (Get-ChildItem installer-out\*-setup.exe | Select-Object -First 1).FullName -Stage $env:STAGE
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: nox-windows-installer
           path: installer-out/*

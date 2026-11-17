@@ -446,8 +446,18 @@ test "nox.http.request(ca_file, connect_ip): özel CA ile TLS, CA'sız reddedili
 
     const client_src = try std.fmt.allocPrint(a,
         \\import nox.http
+        \\import nox.tls
         \\from nox.http import HttpError
+        \\from nox.tls import TlsError
         \\
+        \\try:
+        \\    nox.tls.connect("pin-target.invalid", {d})
+        \\except TlsError as e:
+        \\    print("tls unpinned: name not resolved", "UnknownHostName" in e.message)
+        \\try:
+        \\    nox.tls.connect("pin-target.invalid", {d}, "127.0.0.1")
+        \\except TlsError as e:
+        \\    print("tls pinned: reached the server, verified against the host name", "CertificateHostMismatch" in e.message)
         \\try:
         \\    nox.http.request("GET", "https://localhost:{d}/", "", {{}}, 5000)
         \\    print("no ca: unexpectedly ok")
@@ -462,7 +472,7 @@ test "nox.http.request(ca_file, connect_ip): özel CA ile TLS, CA'sız reddedili
         \\r2: nox_http_HttpResponse = nox.http.request("GET", "https://localhost:{d}/", "", {{}}, 5000, "127.0.0.1", "{s}")
         \\print(r2.status, r2.body)
         \\
-    , .{ port, port, port, cert_path, port, cert_path });
+    , .{ port, port, port, port, port, cert_path, port, cert_path });
     var client_tmp = std.testing.tmpDir(.{});
     defer client_tmp.cleanup();
     const client_bin = try compileToBinary(a, &client_tmp, client_src);
@@ -476,7 +486,7 @@ test "nox.http.request(ca_file, connect_ip): özel CA ile TLS, CA'sız reddedili
     defer allocator.free(client.stdout);
     defer allocator.free(client.stderr);
     if (client.stderr.len != 0) std.debug.print("istemci stderr: {s}\n", .{client.stderr});
-    try std.testing.expectEqualStrings("no ca: rejected\nmissing ca file: rejected\n200 ok-ca\n200 ok-ca\n", client.stdout);
+    try std.testing.expectEqualStrings("tls unpinned: name not resolved True\ntls pinned: reached the server, verified against the host name True\nno ca: rejected\nmissing ca file: rejected\n200 ok-ca\n200 ok-ca\n", client.stdout);
 
     // Zarif kapanış: serve döner, süreç 0 ile çıkar.
     try std.posix.kill(server.id.?, .TERM);

@@ -117,16 +117,38 @@ export fn nox_http_request_raw(rt: ?*anyopaque, method: ?[*:0]const u8, url: ?[*
 
 /// Tarayıcı/WASI `fetch`i bağlanılacak IP'yi ve güvenilecek CA'yı seçtirmez: sabitlenmiş (`connect_ip`) / özel CA'lı (`ca_file`) istek sessizce sıradan istek olarak gitmek yerine KAPALI başarısız olur (geçersiz istek).
 export fn nox_http_request_ex_raw(rt: ?*anyopaque, method: ?[*:0]const u8, url: ?[*:0]const u8, body: ?[*:0]const u8, has_body: i32, headers: ?*anyopaque, connect_ip: ?[*:0]const u8, ca_file: ?[*:0]const u8, timeout_ms: i64) callconv(.c) ?*anyopaque {
-    _ = rt;
-    _ = method;
-    _ = url;
-    _ = body;
-    _ = has_body;
-    _ = headers;
-    _ = connect_ip;
-    _ = ca_file;
-    _ = timeout_ms;
-    return null;
+    if (connect_ip) |p| if (str_mod.nox_str_slice(p).len > 0) return null;
+    if (ca_file) |p| if (str_mod.nox_str_slice(p).len > 0) return null;
+    return nox_http_request_raw(rt, method, url, body, has_body, headers, timeout_ms);
+}
+
+/// `nox.http.Pool.request`: bağlantıları host (fetch) yönettiğinden havuz yok sayılır, istek sıradan gider.
+export fn nox_http_request_pool_raw(rt: ?*anyopaque, method: ?[*:0]const u8, url: ?[*:0]const u8, body: ?[*:0]const u8, has_body: i32, headers: ?*anyopaque, pool: ?*anyopaque, timeout_ms: i64) callconv(.c) ?*anyopaque {
+    _ = pool;
+    return nox_http_request_raw(rt, method, url, body, has_body, headers, timeout_ms);
+}
+
+/// `nox.http.Pool`: bağlantıları host (fetch) yönetir; tutamak yalnızca bir yer tutucudur.
+export fn nox_http_pool_new_raw(max_idle: i64, idle_timeout_ms: i64) callconv(.c) ?*anyopaque {
+    _ = max_idle;
+    _ = idle_timeout_ms;
+    const cell = std.heap.page_allocator.create(u8) catch return null;
+    cell.* = 0;
+    return cell;
+}
+
+export fn nox_http_pool_close_raw(h: ?*anyopaque) callconv(.c) void {
+    const cell: *u8 = @ptrCast(@alignCast(h orelse return));
+    std.heap.page_allocator.destroy(cell);
+}
+
+export fn nox_http_is_null_ptr(p: ?*anyopaque) callconv(.c) i64 {
+    return if (p == null) 1 else 0;
+}
+
+export fn nox_http_pool_idle_raw(h: ?*anyopaque) callconv(.c) i64 {
+    _ = h;
+    return 0;
 }
 
 export fn nox_http_response_error_kind(h: ?*anyopaque) callconv(.c) i64 {

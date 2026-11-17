@@ -2,6 +2,9 @@
 # `runtime/stdlib_shims/crypto.zig`ye sarar (Zig'in KENDİ `std.crypto.hash.
 # sha2.Sha256`si — sıfırdan bir hash algoritması YAZILMADI). `with_rt`
 # GEREKİR (sonuç ARC'lı bir `str`, 64 karakterlik küçük harf hex).
+import nox.buffer
+from nox.buffer import Buffer
+
 extern def nox_crypto_sha256_hex_raw(data: str) -> str from "zig-out/lib/noxrt.o" with_rt
 
 # v3 sertleştirme yol haritası, madde 10 (bkz. nox-teknik-spesifikasyon.md
@@ -219,3 +222,40 @@ def aead_open(key_hex: str, nonce_hex: str, sealed_hex: str, aad: str = "", algo
     out: str = nox_crypto_aead_raw(0, _aead_alg(algorithm), key_hex, nonce_hex, sealed_hex, aad)
     _aead_check(nox_crypto_aead_status_raw(), "aead_open")
     return out
+
+# İkili (bayt) varyantı (v2.2.1): anahtar, nonce, düz metin, AAD ve mühür `Buffer`dır (`nox.buffer`); `str`/hex dönüşümü gerekmez, düz metin NUL ve geçersiz UTF-8 dahil her bayt olabilir.
+# Mühür = şifreli metin || 16 baytlık etiket. Hatalar `aead_seal`/`aead_open` ile aynıdır (`CryptoError`).
+#
+#     from nox.buffer import Buffer
+#     sealed: Buffer = nox.crypto.aead_seal_bytes(key, nonce, data, aad)
+#     data2: Buffer = nox.crypto.aead_open_bytes(key, nonce, sealed, aad)
+def _buf_hex(b: Buffer) -> str:
+    digits: str = "0123456789abcdef"
+    parts: list[str] = []
+    i: int = 0
+    while i < b.len():
+        v: int = int(b.get(i))
+        parts.append(digits[v // 16] + digits[v % 16])
+        i = i + 1
+    return "".join(parts)
+
+def _hex_buf(h: str) -> Buffer:
+    out: Buffer = Buffer(len(h) // 2)
+    digits: str = "0123456789abcdef"
+    i: int = 0
+    while i < len(h) // 2:
+        hi: int = digits.find(h[2 * i])
+        lo: int = digits.find(h[2 * i + 1])
+        out.set(i, u8(hi * 16 + lo))
+        i = i + 1
+    return out
+
+def aead_seal_bytes(key: Buffer, nonce: Buffer, plaintext: Buffer, aad: Buffer, algorithm: str = "chacha20-poly1305") -> Buffer:
+    out: str = nox_crypto_aead_raw(3, _aead_alg(algorithm), _buf_hex(key), _buf_hex(nonce), _buf_hex(plaintext), _buf_hex(aad))
+    _aead_check(nox_crypto_aead_status_raw(), "aead_seal_bytes")
+    return _hex_buf(out)
+
+def aead_open_bytes(key: Buffer, nonce: Buffer, sealed: Buffer, aad: Buffer, algorithm: str = "chacha20-poly1305") -> Buffer:
+    out: str = nox_crypto_aead_raw(2, _aead_alg(algorithm), _buf_hex(key), _buf_hex(nonce), _buf_hex(sealed), _buf_hex(aad))
+    _aead_check(nox_crypto_aead_status_raw(), "aead_open_bytes")
+    return _hex_buf(out)

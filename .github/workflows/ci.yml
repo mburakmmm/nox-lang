@@ -69,7 +69,7 @@ jobs:
     name: build.zig referansları git'te izleniyor mu
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: build.zig'in b.path(...) referans verdiği HER yol git'te İZLENİYOR mu
         run: |
           set -euo pipefail
@@ -94,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: jq kur ve testi çalıştır
         run: |
           apt_retry() { for i in 1 2 3 4; do if sudo apt-get "$@"; then return 0; fi; echo "apt-get $* başarısız (deneme $i), 15 sn sonra yeniden"; sleep 15; done; return 1; }
@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Zig kur
         run: |
           set -euo pipefail
@@ -215,7 +215,7 @@ jobs:
     # koşuyu "cancelled" yapıyordu (v2.0.124/130/133: 2724 sn, test ortasında). 75 dk.
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Zig kur
         run: |
@@ -426,7 +426,7 @@ jobs:
 
       - name: Çekirdek dökümü + ikili artefaktları (varsa, Linux)
         if: always() && runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: nox-core-dumps-${{ matrix.name }}
           path: |
@@ -456,7 +456,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Zig kur
         shell: pwsh
@@ -839,7 +839,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Zig kur
         run: |
           set -euo pipefail
@@ -897,7 +897,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Zig kur
         run: |
           set -euo pipefail
@@ -922,7 +922,7 @@ jobs:
             done
           done
           ls -l winx
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows-cross-exes
           path: winx/*.exe
@@ -941,7 +941,7 @@ jobs:
             done
           done
           ls -l macx
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: macos-cross-bins
           # Yalnızca ikililer: derleyici `*.llvm.ll`, `*.qbe.s`, `*.qbe.ssa` ara dosyalarını da bırakır, bunlar çalıştırılmamalı.
@@ -956,8 +956,8 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
         with:
           name: macos-cross-bins
           path: macx
@@ -984,8 +984,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
         with:
           name: windows-cross-exes
           path: winx

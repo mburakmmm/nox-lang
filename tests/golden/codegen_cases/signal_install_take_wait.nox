@@ -13,11 +13,13 @@ async def killer(sig: int) -> None:
     nox.time.sleep_ms(40)
     nox.signal.send_self(sig)
 
-async def run() -> None:
-    k: Task[None] = spawn killer(s)
-    print(nox.signal.wait(s, 2000))
-    print(nox.signal.wait(s, 30))
+# Sinyal numarası `run`a PARAMETRE olarak verilir: çalınan bir fiber modül-global `s`yi okursa bu, başka bir işçinin modül-global kopyasını okur; ağır CPU yarışında o kopyanın henüz
+# ilklenmemiş (Debug'da 0xAA) olduğu bir koşu gözlendi (project/v2-3-yapilacaklar 1.7). Fixture bu belirsiz yoldan bağımsız kalır.
+async def run(sig: int) -> None:
+    k: Task[None] = spawn killer(sig)
+    print(nox.signal.wait(sig, 20000))
+    print(nox.signal.wait(sig, 30))
     await k
 
-m: Task[None] = spawn run()
+m: Task[None] = spawn run(s)
 await m

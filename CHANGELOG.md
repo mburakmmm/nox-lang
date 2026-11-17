@@ -14,6 +14,26 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.2.1]
+
+2.3 yol haritası Aşama 1 (güvenilirlik ve CI) ve Aşama 2 (güvenli ağ API'si). 2.2.0'dan sonra ilk sürüm; dil davranışı değişmedi, yalnızca yeni API'ler eklendi.
+
+### Yeni (Aşama 2)
+
+- **`nox.ip`:** IPv4/IPv6 ayrıştırma ve sınıflandırma (`is_global/private/loopback/link_local/cgnat/multicast/metadata/reserved/unspecified`, IPv4-eşlemeli + NAT64 `unmap`); belirsiz biçimler (`010.0.0.1`, `127.1`, `%bölge`) reddedilir. Python `ipaddress` ile 72 geçerli + 22 geçersiz adreste çapraz doğrulandı.
+- **`nox.safehttp`:** güvenilmeyen URL'ler için tam güvenli istemci: her adımda (ilk istek + her yönlendirme) şema/kimlik bilgisi denetimi, tek çözümleme, çözülen HER adres genel ağ adresi olmalı, doğrulanmış IP'ye `connect_ip` ile bağlanma (DNS rebinding penceresi yok), ana makine değişince `Authorization`/`Cookie` atma, `allow_hosts`/`allow_private`.
+- **`nox.tls.connect(host, port, connect_ip="")`:** ad çözümlenmeden IP'ye bağlanır, SNI/sertifika yine `host`a karşı doğrulanır.
+- **`nox.http.Pool` (`new_pool`):** istemciye özel bağlantı havuzu; süreç-geneli havuzla ve diğer `Pool`larla bağlantı paylaşmaz. `nox.http.clear_bind_address()`.
+- **`nox.crypto.aead_seal_bytes/aead_open_bytes`:** `Buffer` girdi/çıktı (NUL ve 0x80-0xff baytları dahil); `str` API'siyle birbirinin mührünü açar.
+
+### Güvenilirlik (Aşama 1)
+
+- **Mobil ağ matrisi (iOS simülatörü) flaky'liği:** `localhost` IPv6-önce sırasıyla `::1`'e bağlanma CI simülatöründe sessizce düşüp 4 sn bütçeyi tüketiyordu → loopback bağlanma denemesi 750 ms ile sınırlandı (`net_dial.attemptCapMs`; gerçek ağ adresleri etkilenmez). `scripts/mobile_network_probe.sh` ilk başarısızlıkta bir kez yeniden dener, duvar bekçisi 45 → 120 sn.
+- **Altyapı:** GitHub Actions Node 24 sürümleri; `scripts/release.sh` yerel ön kontrolü (`scripts/precheck.sh`: docs, global durum, belge sözleşmesi, ayrılmış semboller, **fixture kaydı**, wasm stub uyumu, SBOM, hizmetler, site) çağırır; çok çekirdekli dağılım testi Windows'ta da çalışır.
+- **Test kapsamı:** `fixture_corpus.zig`de kayıtsız kalmış 12 fixture daha kaydedildi (2.2 işleri) ve yeni `scripts/check_fixture_registration.py` yeni bir `codegen_cases` fixture'ının hiçbir testte çalışmadan kalmasını engeller; dört C kaynaklı (`clibs_*`) fixture hâlâ standart `zig build test` dışında (2.3 listesi 1.8).
+- **Bulunan, AÇIK çalışma zamanı hatası (2.3 listesi 1.7):** çalınan bir fiber modül-global değişkeni okurken ilklenmemiş bellek (`0xAAAA...`) görebiliyor (varsayılan havuz, ağır CPU yarışı, ~1/2000; `NOX_POOL_WORKERS` verilince yeniden üretilemedi). `signal_install_take_wait` fixture'ı bu yoldan bağımsızlaştırıldı; asıl hata açık.
+- `nox.signal.send_self` (`raise`) geçici hatada yeniden dener.
+
 ## [2.2.0]
 
 Nox 2.2 kararlı sürümü. İçerik `2.2.0-rc.2` ile aynıdır (yalnızca sürüm numarası ve belge metni değişti). Ayrıntılı özet: `docs/whatsnew/2.2.md`; sayılar ve C karşılaştırması: `benchmarks/RESULTS.md`; açık kalanlar: `project/v2-3-yapilacaklar-2026-11.md`. 2.1 ve 2.0 ile kaynak uyumludur; NNI v1, Plugin API ve NAPI değişmedi.

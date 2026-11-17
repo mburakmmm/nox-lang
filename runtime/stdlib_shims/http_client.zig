@@ -340,6 +340,8 @@ const RequestCtx = struct {
     connect_ip: []const u8 = "",
     /// Boş değilse (v2.1.195, Nova 22): HTTPS sunucu sertifikası sistem deposu YERİNE yalnızca bu PEM dosyasındaki CA'lara karşı doğrulanır (özel/kurumsal CA, yerel TLS testi). Doğrulama kapatılmaz.
     ca_file: []const u8 = "",
+    /// Boş değilse (v2.2.1) istek bu istemciye özel havuzdan geçer (`nox.http.Pool`); ctx bir başvuru tutar, işçi bitince bırakır.
+    pool: ?*PoolState = null,
 
     status: u16 = 0,
     response_body: []u8 = &.{},
@@ -349,6 +351,11 @@ const RequestCtx = struct {
     err_kind: u8 = 0,
 
     fn destroyOwned(self: *RequestCtx) void {
+        // İşçi hiç başlamadan düşen yollar özel havuz başvurusunu burada bırakır (işçi başladıysa `ctx.pool` zaten null).
+        if (self.pool) |pl| {
+            self.pool = null;
+            poolRelease(pl);
+        }
         self.allocator.free(self.url);
         if (self.connect_ip.len > 0) self.allocator.free(self.connect_ip);
         if (self.ca_file.len > 0) self.allocator.free(self.ca_file);
@@ -429,6 +436,14 @@ pub fn connectTcp(io: std.Io, host: []const u8, port: u16) !std.Io.net.Stream {
     return host_name.connect(io, port, .{ .mode = .stream });
 }
 
+/// `connectTcp` + sabit IP (v2.2.1): ad ÇÖZÜMLENMEZ, bağlantı `ip` literal'ine kurulur (`net_dial.Pin`); çağıran TLS sunucu adını/sertifikasını `host`a karşı doğrular (SSRF / DNS-rebinding savunması).
+pub fn connectTcpPinned(io: std.Io, host: []const u8, port: u16, ip: []const u8) !std.Io.net.Stream {
+    const pin: net_dial.Pin = .{ .ip = ip };
+    net_dial.setPin(&pin);
+    defer net_dial.setPin(null);
+    return connectTcp(io, host, port);
+}
+
 test "connectTcp fails on a closed local port" {
     const connected = connectTcp(std.testing.io, "127.0.0.1", 1);
     if (connected) |stream| {
@@ -474,6 +489,14 @@ const PoolState = struct {
     idle_since: std.AutoHashMapUnmanaged(usize, u64) = .empty,
     /// Vekil ortam değişkenleri havuz kurulurken bir kez okunur (`applyProxyEnv`); `NO_PROXY` listesi (c_allocator, süreç ömrü).
     no_proxy: []const u8 = "",
+    /// `nox.http.Pool` (v2.2.1): istemciye özel havuz. `custom == false` süreç-geneli `g_pool`dur (boyut/ömür `g_pool_size`/`g_pool_idle_timeout_ms`, temizleyici iş parçacığı vardır).
+    /// Özel havuzun kendi `std.http.Client`ı, boyutu ve boşta ömrü vardır; yaş taraması istek anında (temizleyici iş parçacığı yok) ve `close`ta yapılır.
+    custom: bool = false,
+    size: usize = 0,
+    idle_timeout_ms: u64 = 0,
+    /// Havuz + uçuştaki istekler: son bırakan (`close` dahil) yok eder.
+    refs: std.atomic.Value(u32) = .init(1),
+    closed: std.atomic.Value(bool) = .init(false),
 };
 var g_pool: PoolState = .{};
 var g_pool_size: std.atomic.Value(usize) = .init(32);
@@ -526,33 +549,33 @@ fn noProxyMatches(list: []const u8, host: []const u8) bool {
     return false;
 }
 
-fn poolClientFor(io: std.Io, https: bool) error{CaUnavailable}!*std.http.Client {
-    g_pool.lock.lock();
-    defer g_pool.lock.unlock();
-    if (!g_pool.ready) {
-        g_pool.client = .{ .allocator = std.heap.c_allocator, .io = io };
-        g_pool.client.connection_pool.free_size = g_pool_size.load(.monotonic);
+fn poolClientFor(ps: *PoolState, io: std.Io, https: bool) error{CaUnavailable}!*std.http.Client {
+    ps.lock.lock();
+    defer ps.lock.unlock();
+    if (!ps.ready) {
+        ps.client = .{ .allocator = std.heap.c_allocator, .io = io };
+        ps.client.connection_pool.free_size = if (ps.custom) ps.size else g_pool_size.load(.monotonic);
         // Vekil ayarları süreç ömrü boyunca tutulur (arena asla serbest bırakılmaz); ortam değişkenleri ilk havuzlu istekte okunur, sonraki değişiklikler yok sayılır.
         if (std.heap.c_allocator.create(std.heap.ArenaAllocator) catch null) |pa| {
             pa.* = std.heap.ArenaAllocator.init(std.heap.c_allocator);
-            applyProxyEnv(&g_pool.client, pa.allocator());
+            applyProxyEnv(&ps.client, pa.allocator());
         }
-        g_pool.no_proxy = if (noProxyEnv()) |v| (std.heap.c_allocator.dupe(u8, v) catch "") else "";
-        g_pool.ready = true;
+        ps.no_proxy = if (noProxyEnv()) |v| (std.heap.c_allocator.dupe(u8, v) catch "") else "";
+        ps.ready = true;
     }
-    const c = &g_pool.client;
+    const c = &ps.client;
     if (https) {
         const now_ms = monotonicMs();
-        if (!g_pool.ca_tried) {
+        if (!ps.ca_tried) {
             // Paylaşılan sistem CA paketini bir kez ödünç ver (asla `deinit` edilmez). Yüklenemezse iOS'ta istek başarısız olur, diğerlerinde std kendi paketini yükler.
             if (!adoptSharedCa(c) and builtin.os.tag == .ios) return error.CaUnavailable;
-            g_pool.ca_tried = true;
-            g_pool.now_refreshed_ms = now_ms;
-        } else if (c.now != null and now_ms -| g_pool.now_refreshed_ms >= POOL_NOW_REFRESH_MS) {
+            ps.ca_tried = true;
+            ps.now_refreshed_ms = now_ms;
+        } else if (c.now != null and now_ms -| ps.now_refreshed_ms >= POOL_NOW_REFRESH_MS) {
             c.ca_bundle_lock.lockUncancelable(io);
             c.now = std.Io.Clock.real.now(io);
             c.ca_bundle_lock.unlock(io);
-            g_pool.now_refreshed_ms = now_ms;
+            ps.now_refreshed_ms = now_ms;
         }
     }
     return c;
@@ -568,7 +591,7 @@ fn idleSocketDead(c: *std.http.Client.Connection) bool {
 
 /// `uri`nin sunucusuna ait boşta bağlantıları sondan başa (std `findConnection` en son bırakılanı seçer) yoklar: ölü olanları (ya da `force_all` ise hepsini) kapatır, ilk canlı eşleşmede durur — bu isteğin
 /// kullanacağı bağlantı odur; daha eskileri ona ihtiyaç olunca yoklanır (istek başına tek `poll`, havuz büyüklüğünden bağımsız). Dönüş: bu istek için canlı, yeniden kullanılabilir bir boşta bağlantı var mı.
-fn prunePool(client: *std.http.Client, uri: std.Uri, https: bool, force_all: bool) bool {
+fn prunePool(ps: *PoolState, client: *std.http.Client, uri: std.Uri, https: bool, force_all: bool) bool {
     var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
     const host = uri.getHost(&host_buf) catch return false;
     const protocol: std.http.Client.Protocol = if (https) .tls else .plain;
@@ -585,11 +608,11 @@ fn prunePool(client: *std.http.Client, uri: std.Uri, https: bool, force_all: boo
         if (force_all or idleSocketDead(c)) {
             pool.free.remove(n);
             pool.free_len -= 1;
-            _ = g_pool.idle_since.remove(@intFromPtr(c));
+            _ = ps.idle_since.remove(@intFromPtr(c));
             c.destroy(io);
         } else {
             // Bu bağlantı şimdi kullanılacak: yaş damgası silinir (yeniden bırakıldığında taze görülsün).
-            _ = g_pool.idle_since.remove(@intFromPtr(c));
+            _ = ps.idle_since.remove(@intFromPtr(c));
             return true;
         }
     }
@@ -598,7 +621,7 @@ fn prunePool(client: *std.http.Client, uri: std.Uri, https: bool, force_all: boo
 
 /// `pool.mutex` altında: (1) artık boşta olmayan bağlantıların damgalarını siler, (2) ilk kez görülen boşta bağlantılara damga vurur, (3) `timeout_ms`i aşan boşta bağlantıları kapatır.
 /// Damga "ilk görülme" anıdır: temizleyici ≤ aralık kadar geç görebilir, yani yaş en fazla bir aralık eksik tahmin edilir (fazla DEĞİL: bağlantı erken kapatılmaz).
-fn sweepIdleLocked(pool: *std.http.Client.ConnectionPool, io: std.Io, now_ms: u64, timeout_ms: u64) void {
+fn sweepIdleLocked(ps: *PoolState, pool: *std.http.Client.ConnectionPool, io: std.Io, now_ms: u64, timeout_ms: u64) void {
     // Boşta olmayanları ele: damga tablosunu bir "görüldü" kümesiyle karşılaştır.
     var seen: std.AutoHashMapUnmanaged(usize, void) = .empty;
     defer seen.deinit(std.heap.c_allocator);
@@ -607,24 +630,24 @@ fn sweepIdleLocked(pool: *std.http.Client.ConnectionPool, io: std.Io, now_ms: u6
         node = n.next;
         const c: *std.http.Client.Connection = @alignCast(@fieldParentPtr("pool_node", n));
         const key = @intFromPtr(c);
-        if (g_pool.idle_since.get(key)) |since| {
+        if (ps.idle_since.get(key)) |since| {
             if (timeout_ms != 0 and now_ms -| since >= timeout_ms) {
                 pool.free.remove(n);
                 pool.free_len -= 1;
-                _ = g_pool.idle_since.remove(key);
+                _ = ps.idle_since.remove(key);
                 c.destroy(io);
                 continue;
             }
         } else {
-            g_pool.idle_since.put(std.heap.c_allocator, key, now_ms) catch {};
+            ps.idle_since.put(std.heap.c_allocator, key, now_ms) catch {};
         }
         seen.put(std.heap.c_allocator, key, {}) catch {};
     }
-    var it = g_pool.idle_since.keyIterator();
+    var it = ps.idle_since.keyIterator();
     var stale: std.ArrayListUnmanaged(usize) = .empty;
     defer stale.deinit(std.heap.c_allocator);
     while (it.next()) |k| if (!seen.contains(k.*)) stale.append(std.heap.c_allocator, k.*) catch {};
-    for (stale.items) |k| _ = g_pool.idle_since.remove(k);
+    for (stale.items) |k| _ = ps.idle_since.remove(k);
 }
 
 /// Temizleyici iş parçacığı: havuzda boşta bağlantı oldukça yaşa göre eskileri kapatır; havuz 5 sn boş kalınca çıkar (sonraki istek gerekirse yeniden başlatır).
@@ -641,7 +664,7 @@ fn reaperLoop() void {
         const io = g_pool.client.io;
         const pool = &g_pool.client.connection_pool;
         pool.mutex.lockUncancelable(io);
-        sweepIdleLocked(pool, io, monotonicMs(), timeout);
+        sweepIdleLocked(&g_pool, pool, io, monotonicMs(), timeout);
         const idle = pool.free_len;
         pool.mutex.unlock(io);
         if (idle == 0) {
@@ -709,6 +732,71 @@ export fn nox_http_client_pool_idle_raw() callconv(.c) i64 {
     if (!g_pool.ready) return 0;
     const io = g_pool.client.io;
     const pool = &g_pool.client.connection_pool;
+    pool.mutex.lockUncancelable(io);
+    defer pool.mutex.unlock(io);
+    return @intCast(pool.free_len);
+}
+
+// ---- `nox.http.Pool`: istemciye özel bağlantı havuzu (v2.2.1) -------------------------------------------------------------------------------------------
+
+fn poolRelease(ps: *PoolState) void {
+    if (ps.refs.fetchSub(1, .acq_rel) != 1) return;
+    // Son başvuru: boşta bağlantıları kapat ve belleği geri ver.
+    ps.lock.lock();
+    const was_ready = ps.ready;
+    ps.lock.unlock();
+    if (was_ready) {
+        releaseSharedCa(&ps.client);
+        ps.client.deinit();
+        ps.idle_since.deinit(std.heap.c_allocator);
+        if (ps.no_proxy.len > 0) std.heap.c_allocator.free(ps.no_proxy);
+    }
+    std.heap.c_allocator.destroy(ps);
+}
+
+/// `nox.http.new_pool(max_idle, idle_timeout_ms)`: kendi bağlantı havuzu olan bir `Pool` (süreç-geneli havuzdan AYRI: bağlantılar paylaşılmaz). `max_idle` 0..1024; `idle_timeout_ms` 0 = sınırsız.
+export fn nox_http_pool_new_raw(max_idle: i64, idle_timeout_ms: i64) callconv(.c) ?*anyopaque {
+    const ps = std.heap.c_allocator.create(PoolState) catch return null;
+    ps.* = .{
+        .custom = true,
+        .size = if (max_idle < 0) 0 else @min(@as(usize, @intCast(max_idle)), POOL_MAX_SIZE),
+        .idle_timeout_ms = if (idle_timeout_ms < 0) 0 else @intCast(idle_timeout_ms),
+    };
+    return ps;
+}
+
+/// Havuzu kapatır: boştaki bağlantılar hemen, uçuştaki istekler bittiğinde kapanır; bundan sonra bu havuzla yapılan istekler başarısız olur. İkinci çağrı etkisizdir.
+export fn nox_http_pool_close_raw(h: ?*anyopaque) callconv(.c) void {
+    const ps: *PoolState = @ptrCast(@alignCast(h orelse return));
+    if (ps.closed.swap(true, .acq_rel)) return;
+    ps.lock.lock();
+    if (ps.ready) {
+        const io = ps.client.io;
+        const pool = &ps.client.connection_pool;
+        pool.mutex.lockUncancelable(io);
+        while (pool.free.popFirst()) |n| {
+            pool.free_len -= 1;
+            const c: *std.http.Client.Connection = @alignCast(@fieldParentPtr("pool_node", n));
+            c.destroy(io);
+        }
+        pool.mutex.unlock(io);
+    }
+    ps.lock.unlock();
+    poolRelease(ps);
+}
+
+export fn nox_http_is_null_ptr(p: ?*anyopaque) callconv(.c) i64 {
+    return if (p == null) 1 else 0;
+}
+
+/// Bu havuzda şu an bekleyen boşta bağlantı sayısı.
+export fn nox_http_pool_idle_raw(h: ?*anyopaque) callconv(.c) i64 {
+    const ps: *PoolState = @ptrCast(@alignCast(h orelse return 0));
+    ps.lock.lock();
+    defer ps.lock.unlock();
+    if (!ps.ready) return 0;
+    const io = ps.client.io;
+    const pool = &ps.client.connection_pool;
     pool.mutex.lockUncancelable(io);
     defer pool.mutex.unlock(io);
     return @intCast(pool.free_len);
@@ -888,6 +976,11 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         }
     }
 
+    // Özel havuz başvurusu işçi bitince (arayıcıya sinyal verilmeden ÖNCE) bırakılır; bkz. `doRequest`.
+    const pool_ref = ctx.pool;
+    ctx.pool = null; // sahiplik işçiye geçti (`destroyOwned` tekrar bırakmasın)
+    defer if (pool_ref) |pl| poolRelease(pl);
+
     if (networkDenied()) {
         ctx.failed = true;
         return;
@@ -920,13 +1013,15 @@ fn workerThreadFn(ctx: *RequestCtx) void {
     var request_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer request_arena.deinit();
     var local_client: std.http.Client = .{ .allocator = request_arena.allocator(), .io = io };
-    const pooled = g_pool_size.load(.monotonic) > 0 and ctx.connect_ip.len == 0 and ctx.ca_file.len == 0;
+    // `ctx.pool` doluysa istemciye özel havuz (`nox.http.Pool`) kullanılır; sabitlenmiş (`connect_ip`) / özel CA'lı (`ca_file`) istekler yine havuzu atlar.
+    const ps: *PoolState = if (pool_ref) |p| p else &g_pool;
+    const pooled = (pool_ref != null or g_pool_size.load(.monotonic) > 0) and ctx.connect_ip.len == 0 and ctx.ca_file.len == 0;
     defer if (!pooled) {
         releaseSharedCa(&local_client); // `deinit`ten ÖNCE
         local_client.deinit();
     };
     const client: *std.http.Client = if (pooled)
-        poolClientFor(io, https) catch {
+        poolClientFor(ps, io, https) catch {
             ctx.failed = true;
             return;
         }
@@ -948,12 +1043,19 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         break :blk &local_client;
     };
 
-    defer if (pooled) ensureReaper();
+    defer if (pooled and !ps.custom) ensureReaper();
 
     var attempt: u8 = 0;
     retry: while (true) {
         // Bayat boşta bağlantıları ayıkla; canlı eşleşen biri kaldıysa bu istek onu kullanacak ("yeniden kullanılmış"). Yeniden denemede boşta bağlantıların hepsi atılır: taze bağlantı garanti.
-        const reused = pooled and prunePool(client, uri, https, attempt > 0);
+        if (pooled and ps.custom and ps.idle_timeout_ms > 0) {
+            // Özel havuzda temizleyici iş parçacığı yok: boşta ömrü istek anında uygulanır.
+            const pl = &client.connection_pool;
+            pl.mutex.lockUncancelable(io);
+            sweepIdleLocked(ps, pl, io, monotonicMs(), ps.idle_timeout_ms);
+            pl.mutex.unlock(io);
+        }
+        const reused = pooled and prunePool(ps, client, uri, https, attempt > 0);
 
         // DNS + bağlanma `timeout_ms` ile sınırlı (bkz. `net_dial.zig`); bağlantı kurulunca (ya da başarısız olunca) son tarih kalkar.
         if (ctx.timeout_ms > 0) net_dial.begin(ctx.timeout_ms);
@@ -966,7 +1068,7 @@ fn workerThreadFn(ctx: *RequestCtx) void {
             var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
             const hn = uri.getHost(&host_buf) catch break :route;
             const port: u16 = uri.port orelse (if (https) @as(u16, 443) else @as(u16, 80));
-            const list = if (pooled) g_pool.no_proxy else (noProxyEnv() orelse "");
+            const list = if (pooled) ps.no_proxy else (noProxyEnv() orelse "");
             const bypass = list.len != 0 and noProxyMatches(list, hn.bytes);
             if (!bypass and !https) break :route;
             if (!bypass) {
@@ -1242,6 +1344,8 @@ fn doRequest(
     connect_ip: []const u8,
     /// Boş değilse HTTPS sertifikası yalnızca bu PEM dosyasındaki CA'lara karşı doğrulanır.
     ca_file: []const u8,
+    /// `nox.http.Pool` tutamacı (`nox_http_pool_new_raw`) ya da `null` (süreç-geneli havuz).
+    pool_handle: ?*anyopaque,
 ) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const gpa = state.allocator();
@@ -1273,6 +1377,26 @@ fn doRequest(
         return null;
     };
 
+    // Özel havuz başvurusu: kapalı ya da yok edilmekte olan havuzla istek reddedilir (geçersiz istek).
+    const pool_acquired: ?*PoolState = if (pool_handle) |h| blk: {
+        const ps: *PoolState = @ptrCast(@alignCast(h));
+        if (ps.closed.load(.acquire)) {
+            gpa.free(url_copy);
+            if (body_copy) |b| gpa.free(b);
+            for (headers_copy) |hd| {
+                gpa.free(hd.name);
+                gpa.free(hd.value);
+            }
+            if (headers_copy.len > 0) gpa.free(headers_copy);
+            closeFd(fds[0]);
+            closeFd(fds[1]);
+            gpa.destroy(ctx);
+            return null;
+        }
+        _ = ps.refs.fetchAdd(1, .acq_rel);
+        break :blk ps;
+    } else null;
+
     ctx.* = .{
         .allocator = gpa,
         .url = url_copy,
@@ -1283,6 +1407,7 @@ fn doRequest(
         .timeout_ms = if (timeout_ms > 0) @intCast(timeout_ms) else 0,
         .connect_ip = if (connect_ip.len > 0) (gpa.dupe(u8, connect_ip) catch "") else "",
         .ca_file = if (ca_file.len > 0) (gpa.dupe(u8, ca_file) catch "") else "",
+        .pool = pool_acquired,
     };
     // Sabitleme istendi ama IP kopyalanamadı: sabitlemeden SESSİZCE vazgeçme (güvenlik), isteği reddet.
     if ((connect_ip.len > 0 and ctx.connect_ip.len == 0) or (ca_file.len > 0 and ctx.ca_file.len == 0)) {
@@ -1401,11 +1526,11 @@ pub fn parseMethod(name: []const u8) ?std.http.Method {
 }
 
 export fn nox_http_get_raw(rt: ?*anyopaque, url: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
-    return doRequest(rt, .GET, url, null, headers, 0, false, "", "");
+    return doRequest(rt, .GET, url, null, headers, 0, false, "", "", null);
 }
 
 export fn nox_http_post_raw(rt: ?*anyopaque, url: ?[*:0]const u8, body: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
-    return doRequest(rt, .POST, url, body, headers, 0, false, "", "");
+    return doRequest(rt, .POST, url, body, headers, 0, false, "", "", null);
 }
 
 /// Genel istek: `method` GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS (büyük harf) olmalıdır; bilinmeyen ad sessizce GET'e
@@ -1424,7 +1549,7 @@ export fn nox_http_request_raw(
     const m = parseMethod(str_mod.nox_str_slice(method orelse return null)) orelse return null;
     // `std.http` yalnızca POST/PUT/PATCH'te gövde gönderebilir; diğer metodlarda gövde SESSİZCE düşürülmez, istek reddedilir.
     if (has_body != 0 and !m.requestHasBody()) return null;
-    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true, "", "");
+    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true, "", "", null);
 }
 
 /// `nox_http_request_raw` + isteğe bağlı `connect_ip` / `ca_file` (v2.1.195). `connect_ip` doluysa ad çözümlenmeden o IP literal'ine bağlanılır (SSRF/DNS-rebinding savunması: önce `nox.dns.resolve`, adresleri
@@ -1445,7 +1570,23 @@ export fn nox_http_request_ex_raw(
     if (has_body != 0 and !m.requestHasBody()) return null;
     const ip: []const u8 = if (connect_ip) |p| str_mod.nox_str_slice(p) else "";
     const ca: []const u8 = if (ca_file) |p| str_mod.nox_str_slice(p) else "";
-    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true, ip, ca);
+    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true, ip, ca, null);
+}
+
+/// `nox.http.Pool.request`: `pool` (`nox_http_pool_new_raw`) kendi bağlantı havuzuyla çalışan sıradan bir istek. Kapalı havuz ya da geçersiz istek `null` döner.
+export fn nox_http_request_pool_raw(
+    rt: ?*anyopaque,
+    method: ?[*:0]const u8,
+    url: ?[*:0]const u8,
+    body: ?[*:0]const u8,
+    has_body: i32,
+    headers: ?*anyopaque,
+    pool: ?*anyopaque,
+    timeout_ms: i64,
+) callconv(.c) ?*anyopaque {
+    const m = parseMethod(str_mod.nox_str_slice(method orelse return null)) orelse return null;
+    if (has_body != 0 and !m.requestHasBody()) return null;
+    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true, "", "", pool orelse return null);
 }
 
 /// 0 = başarılı, 1 = zaman aşımı, 2 = diğer hata, 3 = geçersiz istek (tutamaç `null`: bilinmeyen metod, gövdesiz metodda gövde,

@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Etiketi belirle
         env:
           GH_TOKEN: ${{ github.token }}
@@ -44,7 +44,7 @@ jobs:
         run: bash packaging/appimage/build-appimage.sh "$TAG" "${{ matrix.arch }}" out
       - name: Çalıştırarak doğrula
         run: bash packaging/appimage/test-appimage.sh out/noxc-*-${{ matrix.arch }}.AppImage "$TAG"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: noxc-appimage-${{ matrix.arch }}
           path: out/*

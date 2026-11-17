@@ -17,6 +17,7 @@
 # çalıştırma İSTENİYORSA `nox.thread` KULLANILABİLİR.
 
 extern def nox_tls_connect_raw(host: str, port: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_tls_connect_ip_raw(host: str, port: int, connect_ip: str) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_tls_ok_raw(handle: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_tls_errmsg_raw(handle: ptr) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_tls_write_raw(handle: ptr, data: str, len: int) -> int from "zig-out/lib/noxrt.o"
@@ -71,11 +72,18 @@ class TlsStream:
         self.closed = True
         nox_tls_close_raw(self.handle)
 
+def _open(host: str, port: int, connect_ip: str) -> ptr:
+    if len(connect_ip) > 0:
+        return nox_tls_connect_ip_raw(host, port, connect_ip)
+    return nox_tls_connect_raw(host, port)
+
 # `host`e (port üzerinden) TCP+TLS bağlantısı kurar — sistemin CA
 # sertifika deposuna karşı sunucu sertifikasını doğrular (`host`
 # hostname'iyle eşleşmesi DAHİL).
-def connect(host: str, port: int) -> TlsStream:
-    handle: ptr = nox_tls_connect_raw(host, port)
+# `connect_ip` (v2.2.1) boş değilse ad ÇÖZÜMLENMEZ: TCP bağlantısı bu IP literal'ine (IPv4/IPv6) kurulur; TLS sunucu adı (SNI) ve sertifika doğrulaması yine `host`a karşı yapılır
+# (SSRF / DNS-rebinding savunması: `nox.dns.resolve` → `nox.ip` ile doğrula → `connect(host, port, ip)`). Geçersiz bir IP literal'i bağlantıyı başarısız yapar, çözümlemeye düşmez.
+def connect(host: str, port: int, connect_ip: str = "") -> TlsStream:
+    handle: ptr = _open(host, port, connect_ip)
     if nox_tls_is_null_ptr(handle) != 0:
         raise TlsError("out of memory")
     if nox_tls_ok_raw(handle) == 0:

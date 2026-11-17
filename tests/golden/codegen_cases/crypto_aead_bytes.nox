@@ -1,0 +1,49 @@
+import nox.crypto
+import nox.bytes
+from nox.buffer import Buffer
+from nox.crypto import CryptoError
+
+# İkili veri: NUL ve 0x80-0xff baytları içeren düz metin/AAD; mühür geri açılınca bayt-bayt aynı olmalı.
+def make(values: list[int]) -> Buffer:
+    b: Buffer = Buffer(len(values))
+    i: int = 0
+    while i < len(values):
+        b.set(i, u8(values[i]))
+        i = i + 1
+    return b
+
+def same(a: Buffer, b: Buffer) -> bool:
+    if a.len() != b.len():
+        return False
+    i: int = 0
+    while i < a.len():
+        if a.get(i) != b.get(i):
+            return False
+        i = i + 1
+    return True
+
+key: Buffer = make([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32])
+nonce: Buffer = make([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+plain: Buffer = make([0, 255, 128, 0, 0, 1, 200, 254, 0])
+aad: Buffer = make([0, 9, 255])
+for alg in ["chacha20-poly1305", "aes-256-gcm"]:
+    sealed: Buffer = nox.crypto.aead_seal_bytes(key, nonce, plain, aad, alg)
+    print(alg, sealed.len(), same(nox.crypto.aead_open_bytes(key, nonce, sealed, aad, alg), plain))
+sealed2: Buffer = nox.crypto.aead_seal_bytes(key, nonce, plain, aad)
+# ASCII düz metinde `str` API'si ile `Buffer` API'si birbirinin mührünü açar (aynı biçim: şifreli metin || etiket).
+key_hex: str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+nonce_hex: str = "000000000000000000000001"
+by_str: str = nox.crypto.aead_seal(key_hex, nonce_hex, "hello", "ctx")
+opened: Buffer = nox.crypto.aead_open_bytes(key, nonce, nox.crypto._hex_buf(by_str), nox.bytes.from_str("ctx"))
+print(nox.bytes.to_str(opened))
+by_bytes: Buffer = nox.crypto.aead_seal_bytes(key, nonce, nox.bytes.from_str("hello"), nox.bytes.from_str("ctx"))
+print(nox.crypto.aead_open(key_hex, nonce_hex, nox.crypto._buf_hex(by_bytes), "ctx"))
+bad: Buffer = make([1, 2, 3])
+try:
+    nox.crypto.aead_open_bytes(key, nonce, sealed2, make([7]))
+except CryptoError as e:
+    print("aad mismatch rejected")
+try:
+    nox.crypto.aead_seal_bytes(bad, nonce, plain, aad)
+except CryptoError as e:
+    print("key length rejected")

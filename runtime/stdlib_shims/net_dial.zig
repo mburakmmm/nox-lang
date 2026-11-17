@@ -32,6 +32,26 @@ const win = @import("win_udp.zig");
 /// Tek bir deneme için üst sınır: son tarih uzaksa ilk adresin kara delik olması sonraki adresleri (IPv4 yedeği) aç bırakmasın.
 const ATTEMPT_CAP_MS: i64 = 4000;
 
+/// Loopback adresine bağlanma ya hemen tamamlanır (dinleyen var) ya da hemen RST alır; sessizce düşen bir loopback paketi bozuk bir yığın (CI iOS simülatöründe `::1` bunu yaptı: `localhost` IPv6-önce sırasıyla
+/// 4 sn takılıp bütçeyi tüketiyor, IPv4 yedeği hiç denenemiyordu — mobil ağ matrisi `dns_dual_stack` flaky'si). Bu yüzden loopback denemesi kısa tutulur.
+const LOOPBACK_ATTEMPT_CAP_MS: i64 = 750;
+
+fn attemptCapMs(address: *const IpAddress) i64 {
+    const loop = switch (address.*) {
+        .ip4 => |a| a.bytes[0] == 127,
+        .ip6 => |a| std.mem.eql(u8, a.bytes[0..15], &([_]u8{0} ** 15)) and a.bytes[15] == 1,
+    };
+    return if (loop) LOOPBACK_ATTEMPT_CAP_MS else ATTEMPT_CAP_MS;
+}
+
+test "attemptCapMs: loopback kısa, diğer adresler tam üst sınır" {
+    try std.testing.expectEqual(LOOPBACK_ATTEMPT_CAP_MS, attemptCapMs(&.{ .ip4 = .loopback(80) }));
+    try std.testing.expectEqual(LOOPBACK_ATTEMPT_CAP_MS, attemptCapMs(&.{ .ip4 = .{ .bytes = .{ 127, 1, 2, 3 }, .port = 80 } }));
+    try std.testing.expectEqual(LOOPBACK_ATTEMPT_CAP_MS, attemptCapMs(&.{ .ip6 = .{ .bytes = [_]u8{0} ** 15 ++ [_]u8{1}, .port = 80 } }));
+    try std.testing.expectEqual(ATTEMPT_CAP_MS, attemptCapMs(&.{ .ip4 = .{ .bytes = .{ 192, 0, 2, 1 }, .port = 80 } }));
+    try std.testing.expectEqual(ATTEMPT_CAP_MS, attemptCapMs(&.{ .ip6 = .{ .bytes = [_]u8{0x20, 0x01, 0x0d, 0xb8} ++ [_]u8{0} ** 11 ++ [_]u8{1}, .port = 80 } }));
+}
+
 /// Fiber içinde süresiz (`timeout_ms == 0`) DNS aramasının kooperatif bekleme üst sınırı.
 const LOOKUP_FIBER_CAP_MS: i64 = 120_000;
 
@@ -685,7 +705,7 @@ fn boundedConnectIpWin(address: *const IpAddress, options: IpAddress.ConnectOpti
         .done => {},
         .failed => return wsaToConnectError(win.lastError()),
         .in_progress => {
-            const budget = @min(rem, ATTEMPT_CAP_MS);
+            const budget = @min(rem, attemptCapMs(address));
             if (!waitReadyWin(s, true, budget)) {
                 if (budget >= rem) deadlineState().timed_out.* = true;
                 return error.Timeout;
@@ -750,7 +770,7 @@ fn boundedConnectIp(userdata: ?*anyopaque, address: *const IpAddress, options: I
     if (rc != 0) {
         const e = std.posix.errno(rc);
         if (e != .INPROGRESS) return errnoToConnectError(@intFromEnum(e));
-        const budget = @min(rem, ATTEMPT_CAP_MS);
+        const budget = @min(rem, attemptCapMs(address));
         var pr: c_int = undefined;
         if (fiber_net.inFiber()) {
             // Kooperatif bekleme: fiber reaktörde askıya alınır, iş parçacığı bloke olmaz.

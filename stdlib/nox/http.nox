@@ -138,6 +138,11 @@ class HttpRequest:
 
 extern def nox_http_get_raw(url: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_post_raw(url: str, body: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_is_null_ptr(p: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_pool_new_raw(max_idle: int, idle_timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_http_pool_close_raw(pool: ptr) -> None from "zig-out/lib/noxrt.o"
+extern def nox_http_pool_idle_raw(pool: ptr) -> int from "zig-out/lib/noxrt.o"
+extern def nox_http_request_pool_raw(method: str, url: str, body: str, has_body: int, headers: dict[str, str], pool: ptr, timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_request_ex_raw(method: str, url: str, body: str, has_body: int, headers: dict[str, str], connect_ip: str, ca_file: str, timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_request_raw(method: str, url: str, body: str, has_body: int, headers: dict[str, str], timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_response_error_kind(h: ptr) -> int from "zig-out/lib/noxrt.o"
@@ -214,6 +219,10 @@ def configure(max_body_bytes: int = 0, max_header_bytes: int = 0, read_timeout_m
     nox_http_config_set_raw(4, max_connections)
     nox_http_config_set_raw(5, drain_timeout_ms)
     nox_http_config_set_raw(7, ip_family)
+
+# `configure(bind_address=...)` ile seçilen dinleme adresini kaldırır: sonraki `serve*`/`listen*` yeniden tüm arayüzleri (0.0.0.0) dinler.
+def clear_bind_address() -> None:
+    nox_http_config_set_bind_raw("")
 
 def shutdown() -> None:
     nox_http_shutdown_raw()
@@ -325,21 +334,27 @@ def _dispatch_request(method: str, url: str, body: str, has_body: int, headers: 
 # vekilini KULLANMAZ; `ca_file` (PEM yolu, v2.1.195) doluysa HTTPS sertifikası sistem deposu YERİNE yalnızca o dosyadaki CA'lara karşı doğrulanır (özel/kurumsal CA, yerel TLS testi; doğrulama KAPATILMAZ,
 # havuz/HTTP3 kullanılmaz, dosya okunamazsa istek başarısız olur); yönlendirmeler (`3xx`) çağıranın işidir (yeni konum yeniden çözülüp doğrulanmalı). Geçersiz bir IP literal'i `HttpError` fırlatır (ad çözümlemesine düşmez).
 def request(method: str, url: str, body: str, headers: dict[str, str], timeout_ms: int = 0, connect_ip: str = "", ca_file: str = "") -> HttpResponse:
-    has_body: int = 0
+    has_body: int = _has_body(method, body)
+    h: ptr = _dispatch_request(method, url, body, has_body, headers, connect_ip, ca_file, timeout_ms)
+    return _finish_request(h, method, url)
+
+def _has_body(method: str, body: str) -> int:
     if method == "POST" or method == "PUT" or method == "PATCH":
-        has_body = 1
-    elif len(body) > 0:
+        return 1
+    if len(body) > 0:
         # Pulse HTTP-003: gövdesi OLAMAYAN bir yöntemde (GET/HEAD/DELETE/OPTIONS) boş olmayan gövde
         # ÖNCEDEN sessizce atılırdı. `has_body` = 1 geçilince çalışma zamanı isteği reddeder (kind 3).
-        has_body = 1
-    h: ptr = _dispatch_request(method, url, body, has_body, headers, connect_ip, ca_file, timeout_ms)
+        return 1
+    return 0
+
+def _finish_request(h: ptr, method: str, url: str) -> HttpResponse:
     if nox_http_response_ok(h) == 0:
         kind: int = nox_http_response_error_kind(h)
         nox_http_response_free(h)
         if kind == 4:
             raise HttpCapabilityError("the 'network' capability is not available on this host: " + method + " " + url)
         if kind == 3:
-            raise HttpError("invalid request (unsupported method, a body on a method that cannot carry one, or a bad header): " + method + " " + url)
+            raise HttpError("invalid request (unsupported method, a body on a method that cannot carry one, a bad header, or a closed Pool): " + method + " " + url)
         if kind == 1:
             raise HttpTimeoutError("request timed out: " + method + " " + url)
         raise HttpError("request failed: " + method + " " + url)
@@ -348,6 +363,51 @@ def request(method: str, url: str, body: str, headers: dict[str, str], timeout_m
     resp: HttpResponse = HttpResponse(status, resp_body, nox_http_response_headers(h))
     nox_http_response_free(h)
     return resp
+
+# ---- İstemciye özel bağlantı havuzu (v2.2.1, Nova 17) ----
+# `client_pool(...)` süreç geneli tek havuzu ayarlar. `Pool` kendi bağlantı havuzuna sahip BAĞIMSIZ bir istemcidir: bağlantılar süreç-geneli havuzla ve başka `Pool`larla PAYLAŞILMAZ (farklı kiracı/kimlik/vekil
+# gerektiren çağıranlar için yalıtım). `max_idle`: boşta tutulan en çok bağlantı (0..1024); `idle_timeout_ms`: boşta ömrü (0 = sınırsız; her istekte uygulanır, arka plan iş parçacığı yok).
+# `close()` boştaki bağlantıları hemen, uçuştaki isteklerin bağlantılarını bittiklerinde kapatır; kapalı `Pool` ile istek `HttpError` verir. `connect_ip`/`ca_file` verilen istekler havuzu zaten atladığından
+# `Pool.request`te yoktur (`nox.http.request` kullanın). HTTP/3 `Pool`da kullanılmaz.
+class Pool:
+    handle: ptr
+    closed: bool
+
+    def __init__(self, handle: ptr) -> None:
+        self.handle = handle
+        self.closed = False
+
+    def request(self, method: str, url: str, body: str, headers: dict[str, str], timeout_ms: int = 0) -> HttpResponse:
+        if self.closed:
+            raise HttpError("the Pool is closed: " + method + " " + url)
+        h: ptr = nox_http_request_pool_raw(method, url, body, _has_body(method, body), headers, self.handle, timeout_ms)
+        return _finish_request(h, method, url)
+
+    def get(self, url: str, headers: dict[str, str], timeout_ms: int = 0) -> HttpResponse:
+        return self.request("GET", url, "", headers, timeout_ms)
+
+    def post(self, url: str, body: str, headers: dict[str, str], timeout_ms: int = 0) -> HttpResponse:
+        return self.request("POST", url, body, headers, timeout_ms)
+
+    # Şu an bu havuzda bekleyen boşta bağlantı sayısı.
+    def idle_connections(self) -> int:
+        if self.closed:
+            return 0
+        return nox_http_pool_idle_raw(self.handle)
+
+    def close(self) -> None:
+        if not self.closed:
+            self.closed = True
+            nox_http_pool_close_raw(self.handle)
+
+    def __del__(self) -> None:
+        self.close()
+
+def new_pool(max_idle: int = 32, idle_timeout_ms: int = 90000) -> Pool:
+    h: ptr = nox_http_pool_new_raw(max_idle, idle_timeout_ms)
+    if nox_http_is_null_ptr(h) != 0:
+        raise HttpError("could not allocate a Pool")
+    return Pool(h)
 
 def put(url: str, body: str, headers: dict[str, str]) -> HttpResponse:
     return request("PUT", url, body, headers)

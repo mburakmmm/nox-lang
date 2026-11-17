@@ -1,0 +1,116 @@
+# nox.safehttp — SSRF/DNS-rebinding'e karşı korumalı HTTP istemcisi (v2.2.1, 2.3 yol haritası 2.5). `nox.dns` + `nox.ip` + `nox.http`in `connect_ip`si üzerine saf Nox.
+#
+# Her adımda (ilk istek VE her yönlendirme): URL şeması http/https mi, ana makine adı çözülür (`nox.dns.resolve`), çözülen HER adres `nox.ip` ile denetlenir (hepsi genel ağ adresi olmalı; biri özel/loopback/
+# link-local/metadata ise istek ENGELLENİR), sonra bağlantı doğrulanmış IP'ye kurulur (`connect_ip`: ad bir daha çözülmez, DNS rebinding penceresi yok; TLS adı/sertifikası yine orijinal ana makineye karşı doğrulanır).
+# Yönlendirmeler (`301/302/303/307/308`) elle izlenir ve her yeni konum aynı denetimden geçer; ana makine değişirse `Authorization`/`Cookie`/`Proxy-Authorization` başlıkları atılır.
+#
+#     import nox.safehttp
+#     r: nox_http_HttpResponse = nox.safehttp.request("GET", "https://api.example.com/x", "", {})
+#
+# `allow_hosts`: bilerek erişilecek iç ana makineler, virgülle ayrılmış (`"127.0.0.1,db.internal"`; tam ad ya da IP literal, büyük/küçük harf duyarsız); yalnızca BU adlar için IP sınıfı denetimi atlanır, yönlendirme hedefleri için DEĞİL.
+# `allow_private`: True ise özel/loopback dahil tüm adreslere izin verir (yerel geliştirme/test; üretimde kullanmayın).
+
+import nox.dns
+import nox.http
+import nox.ip
+import nox.url
+
+class SafeHttpError(Exception):
+    pass
+
+# İstek engellendi: ana makine ya da çözülen bir adres izinli değil.
+class SafeHttpBlockedError(SafeHttpError):
+    pass
+
+def _lower(s: str) -> str:
+    return s.lower()
+
+def _contains_host(hosts_csv: str, host: str) -> bool:
+    h: str = _lower(host)
+    if len(hosts_csv) == 0:
+        return False
+    for x in hosts_csv.split(","):
+        if _lower(x.strip()) == h:
+            return True
+    return False
+
+def _strip_sensitive(headers: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k in headers:
+        lk: str = _lower(k)
+        if lk != "authorization" and lk != "cookie" and lk != "proxy-authorization":
+            out[k] = headers[k]
+    return out
+
+# Bir ana makine için bağlanılabilir adresleri döndürür; izin yoksa `SafeHttpBlockedError`.
+def _resolve_checked(host: str, timeout_ms: int, allow_private: bool, allow_hosts: str) -> list[str]:
+    ips: list[str] = []
+    if nox.ip.is_valid(host):
+        ips = [nox.ip.parse(host).text()]
+    else:
+        try:
+            ips = nox.dns.resolve(host, timeout_ms)
+        except nox.dns.DnsError as e:
+            raise SafeHttpError("could not resolve host: " + host)
+    if len(ips) == 0:
+        raise SafeHttpError("no address for host: " + host)
+    if allow_private or _contains_host(allow_hosts, host):
+        return ips
+    for ip in ips:
+        if not nox.ip.is_global_text(ip):
+            raise SafeHttpBlockedError("blocked: host " + host + " resolves to a non-public address " + ip)
+    return ips
+
+def _is_redirect(status: int) -> bool:
+    return status == 301 or status == 302 or status == 303 or status == 307 or status == 308
+
+def request(method: str, url: str, body: str, headers: dict[str, str], timeout_ms: int = 10000, max_redirects: int = 5, allow_private: bool = False, allow_hosts: str = "") -> nox.http.HttpResponse:
+    cur_method: str = method
+    cur_url: str = url
+    cur_body: str = body
+    cur_headers: dict[str, str] = headers
+    hops: int = 0
+    while True:
+        u: nox.url.URL = nox.url.parse(cur_url)
+        scheme: str = _lower(u.scheme)
+        if scheme != "http" and scheme != "https":
+            raise SafeHttpError("only http and https URLs are allowed: " + cur_url)
+        if len(u.userinfo) > 0:
+            raise SafeHttpError("URLs with embedded credentials are not allowed: " + u.host)
+        if len(u.host) == 0:
+            raise SafeHttpError("URL has no host: " + cur_url)
+        hip: list[str] = _resolve_checked(u.host, timeout_ms, allow_private, allow_hosts)
+        resp: nox.http.HttpResponse = nox.http.HttpResponse(0, "", {})
+        done: bool = False
+        last_err: str = ""
+        for ip in hip:
+            if not done:
+                try:
+                    resp = nox.http.request(cur_method, cur_url, cur_body, cur_headers, timeout_ms, ip)
+                    done = True
+                except nox.http.HttpTimeoutError as e:
+                    raise e
+                except nox.http.HttpError as e:
+                    last_err = e.message
+        if not done:
+            raise SafeHttpError("could not connect to " + u.host + ": " + last_err)
+        if not _is_redirect(resp.status):
+            return resp
+        loc: str = ""
+        if "Location" in resp.headers:
+            loc = resp.headers["Location"]
+        if len(loc) == 0:
+            return resp
+        if hops >= max_redirects:
+            raise SafeHttpError("too many redirects (more than " + str(max_redirects) + ")")
+        hops = hops + 1
+        next_url: str = nox.url.join(cur_url, loc)
+        next_host: str = nox.url.parse(next_url).host
+        if _lower(next_host) != _lower(u.host):
+            cur_headers = _strip_sensitive(cur_headers)
+        if resp.status == 303 or ((resp.status == 301 or resp.status == 302) and cur_method == "POST"):
+            cur_method = "GET"
+            cur_body = ""
+        cur_url = next_url
+        # Her adım aynı denetimden geçer: `allow_hosts` ana makine ADINA göredir, yönlendirmeyle gelen başka bir ad (iç ya da dış) kendi başına izin ister.
+    return resp

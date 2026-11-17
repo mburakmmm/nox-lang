@@ -289,8 +289,43 @@ fn hexDecodeInto(out: []u8, hex: []const u8) bool {
     return true;
 }
 
-fn aeadRun(comptime A: type, rt: ?*anyopaque, seal: bool, key_hex: []const u8, nonce_hex: []const u8, data: []const u8, aad: []const u8) ?[*:0]u8 {
+/// `hexio` (v2.2.1): düz metin ve AAD onaltılık verilir/açılan düz metin onaltılık döner (ikili veri: NUL ve UTF-8 olmayan baytlar `str`e sığmaz). `seal` çıktısı ve `open` girdisi her iki kipte de onaltılıktır.
+fn aeadRun(comptime A: type, rt: ?*anyopaque, seal: bool, hexio: bool, key_hex: []const u8, nonce_hex: []const u8, data_in: []const u8, aad_in: []const u8) ?[*:0]u8 {
     const alloc = @import("shim_util.zig").scratchAllocator();
+    var data: []const u8 = data_in;
+    var aad: []const u8 = aad_in;
+    var data_owned: ?[]u8 = null;
+    var aad_owned: ?[]u8 = null;
+    defer if (data_owned) |d| alloc.free(d);
+    defer if (aad_owned) |d| alloc.free(d);
+    if (hexio) {
+        if (aad_in.len % 2 != 0 or (seal and data_in.len % 2 != 0)) {
+            tl_aead_status = 4;
+            return dupeToNoxStr(rt, "");
+        }
+        if (seal) {
+            const d = alloc.alloc(u8, data_in.len / 2) catch {
+                tl_aead_status = 5;
+                return dupeToNoxStr(rt, "");
+            };
+            data_owned = d;
+            if (!hexDecodeInto(d, data_in)) {
+                tl_aead_status = 4;
+                return dupeToNoxStr(rt, "");
+            }
+            data = d;
+        }
+        const a = alloc.alloc(u8, aad_in.len / 2) catch {
+            tl_aead_status = 5;
+            return dupeToNoxStr(rt, "");
+        };
+        aad_owned = a;
+        if (!hexDecodeInto(a, aad_in)) {
+            tl_aead_status = 4;
+            return dupeToNoxStr(rt, "");
+        }
+        aad = a;
+    }
     var key: [A.key_length]u8 = undefined;
     defer std.crypto.secureZero(u8, &key);
     var nonce: [A.nonce_length]u8 = undefined;
@@ -352,6 +387,18 @@ fn aeadRun(comptime A: type, rt: ?*anyopaque, seal: bool, key_hex: []const u8, n
         return dupeToNoxStr(rt, "");
     };
     tl_aead_status = 0;
+    if (hexio) {
+        const hex = alloc.alloc(u8, plain.len * 2) catch {
+            tl_aead_status = 5;
+            return dupeToNoxStr(rt, "");
+        };
+        defer alloc.free(hex);
+        for (plain, 0..) |byte, i| {
+            hex[i * 2] = hex_chars[byte >> 4];
+            hex[i * 2 + 1] = hex_chars[byte & 0xF];
+        }
+        return dupeToNoxStr(rt, hex);
+    }
     return dupeToNoxStr(rt, plain);
 }
 
@@ -360,12 +407,14 @@ export fn nox_crypto_aead_raw(rt: ?*anyopaque, seal: i64, alg: i64, key_hex: ?[*
     const n = str_mod.nox_str_slice(nonce_hex orelse return dupeToNoxStr(rt, ""));
     const d = str_mod.nox_str_slice(data orelse return dupeToNoxStr(rt, ""));
     const a = if (aad) |p| str_mod.nox_str_slice(p) else "";
-    const s = seal != 0;
+    // `seal`: bit 0 = mühürle (yoksa aç); bit 1 = düz metin/AAD onaltılık (`hexio`).
+    const s = (seal & 1) != 0;
+    const hx = (seal & 2) != 0;
     return switch (alg) {
-        0 => aeadRun(std.crypto.aead.chacha_poly.ChaCha20Poly1305, rt, s, k, n, d, a),
-        1 => aeadRun(std.crypto.aead.aes_gcm.Aes256Gcm, rt, s, k, n, d, a),
-        2 => aeadRun(std.crypto.aead.aes_gcm.Aes128Gcm, rt, s, k, n, d, a),
-        3 => aeadRun(std.crypto.aead.chacha_poly.XChaCha20Poly1305, rt, s, k, n, d, a),
+        0 => aeadRun(std.crypto.aead.chacha_poly.ChaCha20Poly1305, rt, s, hx, k, n, d, a),
+        1 => aeadRun(std.crypto.aead.aes_gcm.Aes256Gcm, rt, s, hx, k, n, d, a),
+        2 => aeadRun(std.crypto.aead.aes_gcm.Aes128Gcm, rt, s, hx, k, n, d, a),
+        3 => aeadRun(std.crypto.aead.chacha_poly.XChaCha20Poly1305, rt, s, hx, k, n, d, a),
         else => blk: {
             tl_aead_status = 1;
             break :blk dupeToNoxStr(rt, "");

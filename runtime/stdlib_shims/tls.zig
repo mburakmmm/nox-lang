@@ -110,13 +110,16 @@ const TlsConn = struct {
     errmsg: []const u8 = "",
 };
 
-fn connectInner(conn: *TlsConn, host: []const u8, port: i64) !void {
+fn connectInner(conn: *TlsConn, host: []const u8, port: i64, connect_ip: []const u8) !void {
     const io = conn.io;
     if (!ensureCaBundle(io)) return error.CaBundleLoadFailed;
     // Gerçek DNS `http_client.connectTcp` içindedir. Android Bionic
     // `/etc/resolv.conf` tutmadığı için orada `getaddrinfo` kullanılır.
     // TLS sunucu adı aşağıdaki `explicit` konak olarak kalır.
-    conn.stream = try http_client.connectTcp(io, host, @intCast(port));
+    conn.stream = if (connect_ip.len > 0)
+        try http_client.connectTcpPinned(io, host, @intCast(port), connect_ip)
+    else
+        try http_client.connectTcp(io, host, @intCast(port));
     conn.stream_reader = conn.stream.reader(io, &conn.sock_read_buf);
     conn.stream_writer = conn.stream.writer(io, &conn.sock_write_buf);
     var random_buffer: [TlsClient.Options.entropy_len]u8 = undefined;
@@ -145,6 +148,16 @@ fn connectInner(conn: *TlsConn, host: []const u8, port: i64) !void {
 /// tarafı `nox_tls_ok_raw`/`nox_tls_errmsg_raw` İLE kontrol eder) — yalnızca
 /// BELLEK YETERSİZLİĞİNDE `null` döner.
 pub export fn nox_tls_connect_raw(host: ?[*:0]const u8, port: i64) callconv(.c) ?*anyopaque {
+    return connectRawImpl(host, port, null);
+}
+
+/// `nox_tls_connect_raw` + `connect_ip` (v2.2.1): TCP bağlantısı çözümlenmeden bu IP literal'ine kurulur; TLS sunucu adı (SNI) ve sertifika doğrulaması `host`a karşı yapılır.
+/// Geçersiz bir IP literal'i bağlantıyı başarısız yapar (ad çözümlemesine DÜŞMEZ).
+pub export fn nox_tls_connect_ip_raw(host: ?[*:0]const u8, port: i64, connect_ip: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    return connectRawImpl(host, port, connect_ip orelse return connectRawImpl(host, port, null));
+}
+
+fn connectRawImpl(host: ?[*:0]const u8, port: i64, connect_ip: ?[*:0]const u8) ?*anyopaque {
     const gpa = std.heap.page_allocator;
     const conn = gpa.create(TlsConn) catch return null;
     conn.* = .{ .gpa = gpa, .io = http_client.sharedClientIo(), .stream = undefined };
@@ -152,7 +165,8 @@ pub export fn nox_tls_connect_raw(host: ?[*:0]const u8, port: i64) callconv(.c) 
         conn.errmsg = "host cannot be empty";
         return conn;
     };
-    connectInner(conn, str_mod.nox_str_slice(h), port) catch |err| {
+    const ip: []const u8 = if (connect_ip) |p| str_mod.nox_str_slice(p) else "";
+    connectInner(conn, str_mod.nox_str_slice(h), port, ip) catch |err| {
         conn.errmsg = @errorName(err);
         conn.connected = false;
         return conn;

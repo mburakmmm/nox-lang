@@ -12,7 +12,7 @@ from nox.tls import connect, TlsStream, TlsError
 
 | Function / method | Description |
 |---|---|
-| `connect(host, port)` | connects and completes the TLS handshake; returns a `TlsStream`; raises `TlsError` on connection or certificate failure |
+| `connect(host, port, connect_ip="")` | connects and completes the TLS handshake; returns a `TlsStream`; raises `TlsError` on connection or certificate failure. With `connect_ip` (an IPv4/IPv6 literal) the host name is **not resolved**: TCP goes to that address while the server name (SNI) and the certificate are still verified against `host` — the resolve → validate → connect flow of [`nox.dns`](dns.md) and [`nox.ip`](ip.md). An invalid literal fails the connection; it never falls back to name resolution |
 | `write(data)` | sends `data`; returns the number of bytes written; raises `TlsError` on failure |
 | `read(max_len)` | reads **at most** `max_len` bytes; returns the **empty string** when the peer closed cleanly (not an error — it means "no more data") |
 | `is_open()` | whether the stream is still usable |

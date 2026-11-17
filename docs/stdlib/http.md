@@ -126,6 +126,32 @@ print(nox.http.client_idle_connections())
 0
 ```
 
+#### A pool of your own: `nox.http.Pool`
+
+`client_pool` configures the one pool the whole process shares. When different callers must not share connections (separate tenants, credentials or proxies), give each its own pool:
+
+| Call | Meaning |
+|---|---|
+| `nox.http.new_pool(max_idle=32, idle_timeout_ms=90000) -> Pool` | an independent pool; its connections are never shared with the process-wide pool or with another `Pool` |
+| `pool.request(method, url, body, headers, timeout_ms=0)`, `pool.get(url, headers, timeout_ms=0)`, `pool.post(url, body, headers, timeout_ms=0)` | like `nox.http.request`, through this pool |
+| `pool.idle_connections()` | idle connections this pool holds right now |
+| `pool.close()` | closes the idle connections now and the in-flight ones when they finish; a request on a closed `Pool` raises `HttpError`. A `Pool` that is dropped closes itself |
+
+`max_idle` is at most `1024` (`0` keeps nothing). The idle lifetime is applied at each request and at `close` (there is no background thread for a custom pool). Requests with `connect_ip` or `ca_file` never use a pool, so
+`Pool.request` has neither parameter; HTTP/3 is not used with a `Pool`.
+
+```nox
+import nox.http
+
+p: nox.http.Pool = nox.http.new_pool(8, 30000)
+print(p.idle_connections())
+p.close()
+```
+
+```output
+0
+```
+
 How stale connections are handled — a server may close an idle connection at any time:
 
 - Before a request, the pool checks the idle connection it is about to reuse; one the server has already closed is discarded and a fresh connection is opened. You never see an error for this.
@@ -338,7 +364,7 @@ nox.http.shutdown()
 | `max_connections` | 4096 | connections open at once; further ones get a `503 Service Unavailable` (`Retry-After: 1`) and are closed until some close |
 | `drain_timeout_ms` | 10000 | how long a graceful shutdown waits for requests that are still being handled |
 | `ip_family` | 0 | listening family of `serve_multicore*`: `0` IPv4, `1` IPv6 dual-stack (`::`, IPv4 clients still connect), `2` IPv6 only; ignored on Windows |
-| `bind_address` | `""` | listen on **one** interface: an IPv4 or IPv6 literal (`"127.0.0.1"`, `"::1"`). Empty = all interfaces (`0.0.0.0`). An invalid value raises `HttpError` and never falls back to all interfaces; an IPv4 address combined with `ip_family` IPv6 (or any IPv6 address on Windows) makes the listener fail to start instead of widening it. The HTTP/3 UDP listener binds the same address. Call it before `serve*`/`listen*`; it cannot be reset to "all interfaces" afterwards in the same process |
+| `bind_address` | `""` | listen on **one** interface: an IPv4 or IPv6 literal (`"127.0.0.1"`, `"::1"`). Empty = all interfaces (`0.0.0.0`). An invalid value raises `HttpError` and never falls back to all interfaces; an IPv4 address combined with `ip_family` IPv6 (or any IPv6 address on Windows) makes the listener fail to start instead of widening it. The HTTP/3 UDP listener binds the same address. Call it before `serve*`/`listen*`; `nox.http.clear_bind_address()` goes back to all interfaces |
 
 **Graceful shutdown.** `SIGTERM` or `SIGINT` (and `nox.http.shutdown()`, which you may call from a handler) stops the server cleanly: new connections are no longer accepted, requests that are already being handled finish and are answered with `Connection: close`, idle keep-alive connections are closed, and **`serve*` returns** — so the code after it (closing a database, flushing logs) runs and the program exits normally. A second signal exits immediately. After `drain_timeout_ms` the server stops waiting and also returns. On Windows only `nox.http.shutdown()` is available (there is no signal handler). A WebSocket connection already upgraded is not closed by a shutdown: close it from its handler, or rely on `drain_timeout_ms`.
 

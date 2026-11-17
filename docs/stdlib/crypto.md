@@ -82,6 +82,7 @@ True False True
 Algorithms (Zig `std.crypto.aead`): `"chacha20-poly1305"` (32-byte key, 12-byte nonce), `"xchacha20-poly1305"` (32-byte key, **24-byte** nonce, safe to pick at random), `"aes-256-gcm"` (32, 12), `"aes-128-gcm"` (16, 12).
 Keys and nonces are hex strings (`secure_random_hex(32)` makes a key, `secure_random_hex(12)` a nonce). **Never reuse a nonce with the same key.** `aad` is authenticated but not encrypted (use it to bind a seal to its context:
 a user id, a record name). `plaintext`, `aad` and the opened result are `str` values, so they hold valid UTF-8; encode binary data (hex/base64) before sealing it.
+Binary data: `aead_seal_bytes(key, nonce, plaintext, aad, algorithm=...)` and `aead_open_bytes(key, nonce, sealed, aad, algorithm=...)` take and return `Buffer`s (`nox.buffer`), so keys, nonces and plaintext need no hex and the plaintext may hold any byte, NUL included. The seal is the same `ciphertext || tag` as the `str` functions produce, so the two families open each other's output.
 The known-answer tests are RFC 8439 §2.8.2 (ChaCha20-Poly1305) and McGrew–Viega test case 16 (AES-256-GCM).
 
 ## Notes

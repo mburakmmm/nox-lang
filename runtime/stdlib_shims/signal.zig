@@ -68,7 +68,15 @@ pub export fn nox_signal_take_raw(sig: i64) i32 {
 pub export fn nox_signal_raise_raw(sig: i64) i32 {
     if (comptime !supported) return 0;
     const n = validSig(sig) orelse return 0;
-    return if (std.c.raise(@enumFromInt(n)) == 0) 1 else 0;
+    // Yük altında (çok sayıda süreç, 1/1500) `raise` başarısız dönüp sinyali HİÇ göndermiyordu (`send_self` False, ardından `wait` zaman aşımı): geçici hatalar (EAGAIN/EINTR vb.) için
+    // kısa aralıklarla yeniden denenir; sonra süreç-yönlendirmeli `kill(getpid())` yedeği.
+    var attempt: usize = 0;
+    while (attempt < 50) : (attempt += 1) {
+        if (std.c.raise(@enumFromInt(n)) == 0) return 1;
+        var ts: std.c.timespec = .{ .sec = 0, .nsec = 200 * std.time.ns_per_us };
+        _ = std.c.nanosleep(&ts, null);
+    }
+    return if (std.c.kill(std.c.getpid(), @enumFromInt(n)) == 0) 1 else 0;
 }
 
 test "nox_signal: install + raise bayrağı kurar, take temizler" {

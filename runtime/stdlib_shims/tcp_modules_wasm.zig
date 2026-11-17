@@ -24,6 +24,16 @@ export fn nox_tls_connect_raw(host: ?[*:0]const u8, port: i64) callconv(.c) ?*an
     return tcp.connect(str_mod.nox_str_slice(h), port, true);
 }
 
+/// Host TLS'i bağlanılacak IP'yi seçtirmez: `connect_ip` verilmişse sessizce sıradan bağlantıya DÜŞMEK yerine KAPALI başarısız olur.
+export fn nox_tls_connect_ip_raw(host: ?[*:0]const u8, port: i64, connect_ip: ?[*:0]const u8) callconv(.c) ?*anyopaque {
+    _ = host;
+    _ = port;
+    _ = connect_ip;
+    const c = gpa.create(tcp.Conn) catch return null;
+    c.* = .{ .errmsg = "connecting to a pinned IP address is not supported on this target" };
+    return c;
+}
+
 export fn nox_tls_ok_raw(handle: ?*anyopaque) callconv(.c) i64 {
     const c: *tcp.Conn = @ptrCast(@alignCast(handle orelse return 0));
     return if (c.ok) 1 else 0;

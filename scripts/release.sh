@@ -33,11 +33,21 @@ if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then fail "tag v$
 [ -z "$(git status --porcelain)" ] || fail "the working tree is not clean (commit first)"
 echo "version: $version"
 
+step "1b/7 yerel ön kontrol (docs işindeki tüm denetimler; scripts/precheck.sh)"
+if [ -x zig-out/bin/noxc ]; then
+    PYTHON="${PYTHON:-python3}" scripts/precheck.sh || fail "scripts/precheck.sh (PYTHON=venv: pyyaml+markdown+pygments gerekebilir)"
+else
+    echo "zig-out/bin/noxc yok: ön kontrol 'zig build' sonrasına bırakıldı (3/7'den sonra çalışır)"
+fi
+
 step "2/7 zig fmt --check"
 zig fmt --check compiler runtime tests build.zig || fail "zig fmt"
 
 step "3/7 zig build"
 zig build || fail "zig build"
+
+step "3b/7 yerel ön kontrol (derleyici artık var)"
+PYTHON="${PYTHON:-python3}" scripts/precheck.sh || fail "scripts/precheck.sh"
 
 step "4/7 zig build test (IR anlık görüntüleri değişirse ilk koşu onları yeniden üretir, ikinci koşu doğrular)"
 zig build test --summary all || fail "zig build test"

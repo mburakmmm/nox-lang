@@ -319,6 +319,27 @@ test "nox.http.request: bağlantı havuzu — art arda istekler TEK bağlantıy�
     , "200\n200\n200\n200\n200\n1\n0\n200\n200\n0\n", 3, 7);
 }
 
+test "nox.http.Pool: istemciye özel havuz — iki Pool bağlantı paylaşmaz (her biri kendi TEK bağlantısını yeniden kullanır), süreç-geneli havuza dokunulmaz, close sonrası istek reddedilir (v2.2.1, Nova 17)" {
+    try runPoolScenario(.keep,
+        \\p1: nox_http_Pool = nox.http.new_pool(4, 90000)
+        \\p2: nox_http_Pool = nox.http.new_pool(4, 90000)
+        \\i: int = 0
+        \\while i < 3:
+        \\    p1.get(url, {{}})
+        \\    p2.get(url, {{}})
+        \\    i = i + 1
+        \\print(p1.idle_connections(), p2.idle_connections(), nox.http.client_idle_connections())
+        \\p1.close()
+        \\try:
+        \\    p1.get(url, {{}})
+        \\except nox_http_HttpError:
+        \\    print("closed pool rejected")
+        \\print(p1.idle_connections(), p2.get(url, {{}}).status)
+        \\p2.close()
+        \\
+    , "1 1 0\nclosed pool rejected\n0 200\n", 2, 7);
+}
+
 test "nox.http.request: sunucunun yanıttan sonra kapattığı (bayat) boşta bağlantı bir sonraki istekten önce ayıklanır, hata görünmez" {
     try runPoolScenario(.close_after_response,
         \\i: int = 0
@@ -1197,4 +1218,54 @@ test "nox.dns.resolve + nox.http.request(connect_ip): ad çözümlenmeden doğru
     defer allocator.free(source);
 
     try expectGolden(source, "['127.0.0.1']\n['2001:db8::1']\ndns error\nbad ip rejected\n200 pinned\n");
+}
+
+test "nox.safehttp.request: genel olmayan adres engellenir, allow_hosts ile açılan ana makineden metadata adresine yönlendirme engellenir, izinli yönlendirme izlenir ve Authorization ana makine değişince atılır (v2.2.1)" {
+    const allocator = std.testing.allocator;
+
+    var port_a: u16 = 0;
+    const fd_a = try testListenerOn127001(&port_a);
+    defer _ = sys.close(fd_a);
+    var port_b: u16 = 0;
+    const fd_b = try testListenerOn127001(&port_b);
+    defer _ = sys.close(fd_b);
+    var port_c: u16 = 0;
+    const fd_c = try testListenerOn127001(&port_c);
+    defer _ = sys.close(fd_c);
+
+    // A: metadata adresine yönlendirir (engellenmeli, bağlantı HİÇ kurulmaz). B: C'ye yönlendirir. C: son yanıt.
+    const resp_a = "HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/latest/meta-data\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    const server_a = try std.Thread.spawn(.{}, testServeOnceRaw, .{ fd_a, resp_a, "" });
+    defer server_a.join();
+    const resp_b = try std.fmt.allocPrint(allocator, "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:{d}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", .{port_c});
+    defer allocator.free(resp_b);
+    const server_b = try std.Thread.spawn(.{}, testServeOnceRaw, .{ fd_b, resp_b, "" });
+    defer server_b.join();
+    const resp_c = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfinal";
+    const server_c = try std.Thread.spawn(.{}, testServeOnceRaw, .{ fd_c, resp_c, "" });
+    defer server_c.join();
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\import nox.http
+        \\import nox.safehttp
+        \\
+        \\try:
+        \\    nox.safehttp.request("GET", "http://127.0.0.1:{d}/", "", {{}}, 3000)
+        \\except nox.safehttp.SafeHttpBlockedError as e:
+        \\    print("loopback blocked")
+        \\try:
+        \\    nox.safehttp.request("GET", "http://127.0.0.1:{d}/", "", {{}}, 3000, 5, False, "127.0.0.1")
+        \\except nox.safehttp.SafeHttpBlockedError as e:
+        \\    print("redirect to metadata blocked:", "169.254.169.254" in e.message)
+        \\r: nox_http_HttpResponse = nox.safehttp.request("GET", "http://127.0.0.1:{d}/", "", {{"Authorization": "secret"}}, 3000, 5, False, "127.0.0.1")
+        \\print(r.status, r.body)
+        \\try:
+        \\    nox.safehttp.request("GET", "ftp://example.com/", "", {{}})
+        \\except nox.safehttp.SafeHttpError as e:
+        \\    print("scheme rejected")
+        \\
+    , .{ port_a, port_a, port_b });
+    defer allocator.free(source);
+
+    try expectGolden(source, "loopback blocked\nredirect to metadata blocked: True\n200 final\nscheme rejected\n");
 }

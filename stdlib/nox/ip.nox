@@ -1,0 +1,292 @@
+# nox.ip — IPv4/IPv6 adres ayrıştırma ve sınıflandırma (v2.2.1, 2.3 yol haritası 2.1). Saf Nox, ağ kullanmaz, yetenek gerektirmez.
+#
+# SSRF / DNS-rebinding savunmasının "doğrula" adımı: `nox.dns.resolve(host)` adresleri verir, `nox.ip.parse(a).is_global()` her birini denetler, `nox.http.request(..., connect_ip=ip)` doğrulanmış adrese
+# bağlanır. Sınıflandırma IANA özel-amaçlı adres kayıtlarını izler (IPv4: RFC 6890; IPv6: RFC 6890 + RFC 4291) ve Python `ipaddress` ile çapraz doğrulanmıştır (golden `ip_classify`).
+#
+#     import nox.ip
+#     a: nox.ip.IpAddress = nox.ip.parse("::ffff:127.0.0.1")
+#     print(a.is_global())            # False: IPv4-eşlemeli loopback (SSRF'te sık kullanılan atlatma)
+#
+# Güvenlik notları: `parse` belirsiz/atlatmaya açık biçimleri REDDEDER (baştaki sıfırlı onluk sekizli `010.0.0.1`, `0x7f.1`, kısaltılmış `127.1`, bölge kimliği `fe80::1%eth0`, köşeli parantezsiz
+# port). IPv4-eşlemeli (`::ffff:a.b.c.d`) ve NAT64 (`64:ff9b::/96`) adresler gömülü IPv4'e göre sınıflanır. `is_global()` "genel ağda yönlendirilebilir tek-yayın" demektir: özel, loopback, link-local,
+# CGNAT, çok-yayın, belgeleme/kıyaslama, ayrılmış ve bulut-metadata adresleri `False` döner.
+
+class IpError(Exception):
+    pass
+
+def _is_hex_digit(c: str) -> bool:
+    return c in "0123456789abcdefABCDEF"
+
+def _hex_value(g: str) -> int:
+    v: int = 0
+    for ch in g:
+        d: int = "0123456789abcdef".find(ch.lower())
+        v = v * 16 + d
+    return v
+
+def _parse_octet(part: str) -> int:
+    if len(part) == 0 or len(part) > 3:
+        raise IpError("invalid IPv4 octet: '" + part + "'")
+    for ch in part:
+        if ch not in "0123456789":
+            raise IpError("invalid IPv4 octet: '" + part + "'")
+    if len(part) > 1 and part[0] == "0":
+        raise IpError("IPv4 octet with a leading zero is ambiguous (octal in some parsers): '" + part + "'")
+    v: int = int(part)
+    if v > 255:
+        raise IpError("IPv4 octet out of range: '" + part + "'")
+    return v
+
+def _parse4_octets(s: str) -> list[int]:
+    parts: list[str] = s.split(".")
+    if len(parts) != 4:
+        raise IpError("an IPv4 address needs exactly four dotted octets: '" + s + "'")
+    out: list[int] = []
+    for p in parts:
+        out.append(_parse_octet(p))
+    return out
+
+# Bir IPv6 grup listesi (hex gruplar; sonuncusu noktalı IPv4 olabilir) -> 16-bit değerler.
+def _groups(s: str, allow_v4_tail: bool) -> list[int]:
+    out: list[int] = []
+    if len(s) == 0:
+        return out
+    parts: list[str] = s.split(":")
+    i: int = 0
+    while i < len(parts):
+        g: str = parts[i]
+        if "." in g:
+            if not allow_v4_tail or i != len(parts) - 1:
+                raise IpError("an embedded IPv4 part must be the last element of an IPv6 address: '" + s + "'")
+            o: list[int] = _parse4_octets(g)
+            out.append(o[0] * 256 + o[1])
+            out.append(o[2] * 256 + o[3])
+        else:
+            if len(g) == 0 or len(g) > 4:
+                raise IpError("invalid IPv6 group: '" + g + "'")
+            for ch in g:
+                if not _is_hex_digit(ch):
+                    raise IpError("invalid IPv6 group: '" + g + "'")
+            out.append(_hex_value(g))
+        i = i + 1
+    return out
+
+def _parse6_octets(s: str) -> list[int]:
+    if "%" in s:
+        raise IpError("IPv6 zone identifiers are not accepted: '" + s + "'")
+    dbl: int = s.find("::")
+    groups: list[int] = []
+    if dbl < 0:
+        groups = _groups(s, True)
+        if len(groups) != 8:
+            raise IpError("an IPv6 address needs eight groups (or one '::'): '" + s + "'")
+    else:
+        rest: str = s[dbl + 2:len(s)]
+        if "::" in rest or rest.startswith(":"):
+            raise IpError("more than one '::' in an IPv6 address: '" + s + "'")
+        head: list[int] = _groups(s[0:dbl], False)
+        tail: list[int] = _groups(rest, True)
+        if len(head) + len(tail) > 7:
+            raise IpError("too many groups around '::': '" + s + "'")
+        groups = head
+        z: int = 8 - len(head) - len(tail)
+        k: int = 0
+        while k < z:
+            groups.append(0)
+            k = k + 1
+        for t in tail:
+            groups.append(t)
+    out: list[int] = []
+    for g2 in groups:
+        out.append(g2 // 256)
+        out.append(g2 % 256)
+    return out
+
+def _in4(o: list[int], a: int, b: int, c: int, d: int, bits: int) -> bool:
+    net: list[int] = [a, b, c, d]
+    full: int = bits // 8
+    i: int = 0
+    while i < full:
+        if o[i] != net[i]:
+            return False
+        i = i + 1
+    rem: int = bits % 8
+    if rem > 0:
+        mask: int = 256 - (1 << (8 - rem))
+        if (o[full] & mask) != (net[full] & mask):
+            return False
+    return True
+
+def _zero_prefix(o: list[int], n: int) -> bool:
+    i: int = 0
+    while i < n:
+        if o[i] != 0:
+            return False
+        i = i + 1
+    return True
+
+class IpAddress:
+    version: int
+    octets: list[int]
+
+    def __init__(self, version: int, octets: list[int]) -> None:
+        self.version = version
+        self.octets = octets
+
+    def is_ipv4_mapped(self) -> bool:
+        return self.version == 6 and _zero_prefix(self.octets, 10) and self.octets[10] == 255 and self.octets[11] == 255
+
+    # NAT64 iyi-bilinen önek 64:ff9b::/96 (RFC 6052): geçit, gömülü IPv4'e çevirir.
+    def is_nat64(self) -> bool:
+        o: list[int] = self.octets
+        return self.version == 6 and o[0] == 0 and o[1] == 100 and o[2] == 255 and o[3] == 155 and _zero_prefix(o[4:12], 8)
+
+    # IPv4-eşlemeli ya da NAT64 adresin gömülü IPv4 adresi; başka adreslerde kendisi.
+    def unmap(self) -> IpAddress:
+        if self.is_ipv4_mapped() or self.is_nat64():
+            return IpAddress(4, [self.octets[12], self.octets[13], self.octets[14], self.octets[15]])
+        return self
+
+    def is_unspecified(self) -> bool:
+        a: IpAddress = self.unmap()
+        if a.version == 4:
+            return _in4(a.octets, 0, 0, 0, 0, 32)
+        return _zero_prefix(a.octets, 16)
+
+    def is_loopback(self) -> bool:
+        a: IpAddress = self.unmap()
+        if a.version == 4:
+            return _in4(a.octets, 127, 0, 0, 0, 8)
+        return _zero_prefix(a.octets, 15) and a.octets[15] == 1
+
+    # RFC 1918 (10/8, 172.16/12, 192.168/16) ve IPv6 ULA fc00::/7.
+    def is_private(self) -> bool:
+        a: IpAddress = self.unmap()
+        if a.version == 4:
+            return _in4(a.octets, 10, 0, 0, 0, 8) or _in4(a.octets, 172, 16, 0, 0, 12) or _in4(a.octets, 192, 168, 0, 0, 16)
+        return (a.octets[0] & 254) == 252
+
+    # 169.254/16 ve fe80::/10.
+    def is_link_local(self) -> bool:
+        a: IpAddress = self.unmap()
+        if a.version == 4:
+            return _in4(a.octets, 169, 254, 0, 0, 16)
+        return a.octets[0] == 254 and (a.octets[1] & 192) == 128
+
+    # 100.64/10 (RFC 6598, operatör NAT'ı).
+    def is_cgnat(self) -> bool:
+        a: IpAddress = self.unmap()
+        return a.version == 4 and _in4(a.octets, 100, 64, 0, 0, 10)
+
+    def is_multicast(self) -> bool:
+        a: IpAddress = self.unmap()
+        if a.version == 4:
+            return _in4(a.octets, 224, 0, 0, 0, 4)
+        return a.octets[0] == 255
+
+    # Bilinen bulut/konteyner metadata uç noktaları: 169.254.169.254 (AWS/GCP/Azure/OpenStack...), 169.254.170.2 (ECS), 100.100.100.200 (Alibaba), 192.0.0.192 (Oracle), fd00:ec2::254 (AWS IPv6).
+    def is_metadata(self) -> bool:
+        a: IpAddress = self.unmap()
+        o: list[int] = a.octets
+        if a.version == 4:
+            return _in4(o, 169, 254, 169, 254, 32) or _in4(o, 169, 254, 170, 2, 32) or _in4(o, 100, 100, 100, 200, 32) or _in4(o, 192, 0, 0, 192, 32)
+        return o[0] == 253 and o[1] == 0 and o[2] == 14 and o[3] == 194 and _zero_prefix(o[4:15], 11) and o[15] == 254
+
+    # Belgeleme, kıyaslama, IETF protokol ataması, 240/4 (broadcast dahil), "bu ağ" 0/8 ve IPv6: 100::/64, 2001::/23, 2001:db8::/32, 2002::/16 (6to4), 3fff::/20 (RFC 9637), 64:ff9b:1::/48.
+    def is_reserved(self) -> bool:
+        a: IpAddress = self.unmap()
+        o: list[int] = a.octets
+        if a.version == 4:
+            return _in4(o, 0, 0, 0, 0, 8) or _in4(o, 192, 0, 0, 0, 24) or _in4(o, 192, 0, 2, 0, 24) or _in4(o, 198, 18, 0, 0, 15) or _in4(o, 198, 51, 100, 0, 24) or _in4(o, 203, 0, 113, 0, 24) or _in4(o, 240, 0, 0, 0, 4)
+        if o[0] == 1 and o[1] == 0 and _zero_prefix(o[2:8], 6):
+            return True
+        if o[0] == 32 and o[1] == 1 and (o[2] & 254) == 0:
+            return True
+        if o[0] == 32 and o[1] == 1 and o[2] == 13 and o[3] == 184:
+            return True
+        if o[0] == 32 and o[1] == 2:
+            return True
+        if o[0] == 63 and o[1] == 255 and (o[2] & 240) == 0:
+            return True
+        return o[0] == 0 and o[1] == 100 and o[2] == 255 and o[3] == 155 and o[4] == 0 and o[5] == 1
+
+    # Genel ağda yönlendirilebilir tek-yayın adres mi? Bir SSRF filtresinde "bu adrese bağlanmak güvenli mi" sorusunun cevabı.
+    def is_global(self) -> bool:
+        return not (self.is_unspecified() or self.is_loopback() or self.is_private() or self.is_link_local() or self.is_cgnat() or self.is_multicast() or self.is_metadata() or self.is_reserved())
+
+    # Kurallı metin: IPv4 `a.b.c.d`; IPv6 RFC 5952 (küçük harf, en uzun sıfır koşusu `::`), IPv4-eşlemeli `::ffff:a.b.c.d`.
+    def text(self) -> str:
+        o: list[int] = self.octets
+        if self.version == 4:
+            return str(o[0]) + "." + str(o[1]) + "." + str(o[2]) + "." + str(o[3])
+        if self.is_ipv4_mapped():
+            return "::ffff:" + str(o[12]) + "." + str(o[13]) + "." + str(o[14]) + "." + str(o[15])
+        g: list[int] = []
+        i: int = 0
+        while i < 16:
+            g.append(o[i] * 256 + o[i + 1])
+            i = i + 2
+        best_start: int = -1
+        best_len: int = 0
+        cur_start: int = -1
+        cur_len: int = 0
+        j: int = 0
+        while j < 8:
+            if g[j] == 0:
+                if cur_start < 0:
+                    cur_start = j
+                    cur_len = 0
+                cur_len = cur_len + 1
+                if cur_len > best_len:
+                    best_len = cur_len
+                    best_start = cur_start
+            else:
+                cur_start = -1
+                cur_len = 0
+            j = j + 1
+        if best_len < 2:
+            best_start = -1
+        hexes: list[str] = []
+        for gv in g:
+            hexes.append(_hex(gv))
+        if best_start < 0:
+            return ":".join(hexes)
+        before: list[str] = hexes[0:best_start]
+        after: list[str] = hexes[best_start + best_len:8]
+        return ":".join(before) + "::" + ":".join(after)
+
+def _hex(v: int) -> str:
+    if v == 0:
+        return "0"
+    digits: str = "0123456789abcdef"
+    out: str = ""
+    x: int = v
+    while x > 0:
+        out = digits[x % 16] + out
+        x = x // 16
+    return out
+
+# `text` bir IPv4 ya da IPv6 literal'i ise `IpAddress` döner; aksi halde `IpError`. Köşeli parantezli `[::1]` kabul edilir (URL biçimi).
+def parse(text: str) -> IpAddress:
+    s: str = text
+    if len(s) >= 2 and s[0] == "[" and s[len(s) - 1] == "]":
+        s = s[1:len(s) - 1]
+    if len(s) == 0:
+        raise IpError("empty address")
+    if ":" in s:
+        return IpAddress(6, _parse6_octets(s))
+    return IpAddress(4, _parse4_octets(s))
+
+def is_valid(text: str) -> bool:
+    try:
+        parse(text)
+        return True
+    except IpError as e:
+        return False
+
+# Kısayol: `text` geçerli bir literal ve `is_global()` ise True; geçersizse False (kapalı başarısız: bir filtre "çözümlenemeyen = izinli" yanlışına düşmesin).
+def is_global_text(text: str) -> bool:
+    try:
+        return parse(text).is_global()
+    except IpError as e:
+        return False

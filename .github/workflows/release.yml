@@ -58,7 +58,7 @@ jobs:
     timeout-minutes: 210
     steps:
       # v2.0 madde 8: etiket (vX.Y.Z[-rc.N]) ile build.zig.zon sürümü VE CHANGELOG girişi tutarlı olmalı; aksi halde release durur.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Sürüm tutarlılığı (etiket == build.zig.zon == CHANGELOG)
         run: |
           set -euo pipefail
@@ -140,7 +140,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # SBOM (SPDX 2.3): arşive giren bileşenler (Nox, SQLite, QBE, Zig) `scripts/gen_sbom.py` ile depodan okunur; okunamayan sürüm release'i durdurur. Taslağa eklenir ve imzalanır.
       - name: SBOM üret ve taslağa ekle
         env:
@@ -151,7 +151,7 @@ jobs:
           python3 scripts/gen_sbom.py "$GITHUB_REF_NAME" "$sbom"
           gh release upload "$GITHUB_REF_NAME" "$sbom" --clobber --repo "$GITHUB_REPOSITORY"
       - name: SBOM'u imzala (provenance)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: nox-lang-*-sbom.spdx.json
       - name: Taslağı yayımla
@@ -190,7 +190,7 @@ jobs:
     name: ${{ matrix.asset }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Zig kur
         run: |
@@ -270,14 +270,14 @@ jobs:
       # v2.0.180 (Faz 11.4): her arşiv için GitHub/Sigstore "build provenance" imzası (anahtarsız; hangi iş akışının, hangi commit'ten ürettiğini kanıtlar). Doğrulama:
       # `gh attestation verify <arşiv> --repo mburakmmm/nox-lang`. v2.0.184'ten beri ZORUNLU: release taslak olduğundan imza adımı düşerse yarım sürüm görünmez, düşen işi yeniden çalıştırmak yeterlidir.
       - name: Arşivleri imzala (provenance)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             nox-lang-*.tar.gz
             nox-web-compiler-*.tar.gz
 
       - name: Yükle
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             nox-lang-*.tar.gz
@@ -315,7 +315,7 @@ jobs:
     name: windows-x64
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Zig kur
         shell: pwsh
@@ -405,14 +405,14 @@ jobs:
           Move-Item installer-out\nox-lang-*-setup.exe, installer-out\nox-lang-*-setup.exe.sha256 .
 
       - name: Arşivleri imzala (provenance)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             nox-lang-*.zip
             nox-lang-*-setup.exe
 
       - name: Yükle
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             nox-lang-*.zip
@@ -432,7 +432,7 @@ jobs:
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Formülü üret ve tap'e it
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -472,7 +472,7 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/noxlang-site
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: İmajı derle
         run: |
           set -euo pipefail
@@ -501,7 +501,7 @@ jobs:
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Paketi Arch Linux'ta derle, kur, çalıştır, kaldır
         run: docker run --rm -e TAG="${GITHUB_REF_NAME}" -v "$PWD:/w:ro" archlinux:base-devel bash /w/packaging/aur/test-in-arch.sh
       - name: PKGBUILD üret ve AUR'a it
@@ -547,13 +547,13 @@ jobs:
             arch: aarch64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: AppImage derle
         run: bash packaging/appimage/build-appimage.sh "${GITHUB_REF_NAME}" "${{ matrix.arch }}" out
       - name: Çalıştırarak doğrula
         run: bash packaging/appimage/test-appimage.sh out/noxc-*-${{ matrix.arch }}.AppImage "${GITHUB_REF_NAME}"
       - name: Yükle
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             out/noxc-*.AppImage
@@ -578,7 +578,7 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Snapcraft kur
         run: sudo snap install snapcraft --classic
       - name: Tarifi üret ve derle
@@ -591,7 +591,7 @@ jobs:
       - name: Kur, çalıştır, kaldır
         run: bash packaging/snap/test-snap.sh noxc_*_${{ matrix.arch }}.snap "${GITHUB_REF_NAME}"
       - name: Yükle (release)
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: noxc_*_${{ matrix.arch }}.snap
       - name: Snap Store'a yükle

@@ -428,8 +428,9 @@ fn distinctWorkerClient(port: u16, ids: *[4][64]u8, lens: *[4]usize) void {
 // 2.2: `serve_multicore` bağlantıları worker'lara GERÇEKTEN dağıtmalı. macOS'ta `SO_REUSEPORT` yük dağıtmaz (tüm bağlantılar tek dinleyiciye giderdi, 1/2/4/8 worker'da istek hızı aynı kalıyordu);
 // artık tek paylaşılan dinleme soketi kullanılır. Yavaş (~1 ms), hiç `await` etmeyen bir işleyici ve 16 eşzamanlı istemciyle iki yürütmenin zaman olarak çakıştığı görülmelidir.
 test "nox.http.serve_multicore: bağlantılar birden fazla worker'a dağılır (N=4, yavaş işleyici, 16 eşzamanlı istemci, çakışan yürütme aralıkları)" {
-    // Sınırsız sunucu + SIGTERM ile kapanış: sabit bir bağlantı bütçesi, tek bir istemci hatasında sunucuyu sonsuza dek beklettiği için CI'da (macOS) askıya düşüyordu. Windows'ta sinyal yok.
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    // Sınırsız sunucu: sabit bir bağlantı bütçesi, tek bir istemci hatasında sunucuyu sonsuza dek beklettiği için CI'da (macOS) askıya düşüyordu. POSIX'te SIGTERM ile zarif kapanış (çıkış 0
+    // doğrulanır); Windows'ta sinyal yok, istemciler bitince süreç sonlandırılır (dağılım yanıtlardaki zaman aralıklarından ölçülür, çıkış kodundan değil).
+    const is_windows = @import("builtin").os.tag == .windows;
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -470,21 +471,27 @@ test "nox.http.serve_multicore: bağlantılar birden fazla worker'a dağılır (
     var threads: [16]std.Thread = undefined;
     for (&threads, 0..) |*t, k| t.* = try std.Thread.spawn(.{}, distinctWorkerClient, .{ port, &ids[k], &lens[k] });
     for (threads) |t| t.join();
-    try std.posix.kill(child.id.?, .TERM); // zarif kapanış: serve döner, süreç 0 ile çıkar
+    if (is_windows) {
+        child.kill(io);
+    } else {
+        try std.posix.kill(child.id.?, .TERM); // zarif kapanış: serve döner, süreç 0 ile çıkar
+    }
 
-    var stdout_buf: [4096]u8 = undefined;
-    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
-    const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
-    defer allocator.free(stdout_data);
-    var stderr_buf: [4096]u8 = undefined;
-    var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
-    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
-    defer allocator.free(stderr_data);
-    const term = try child.wait(io);
-    try std.testing.expect(term == .exited);
-    try std.testing.expectEqual(@as(u8, 0), term.exited);
-    if (stderr_data.len != 0) std.debug.print("program stderr'e yazdı:\n{s}\n", .{stderr_data});
-    try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+    if (!is_windows) {
+        var stdout_buf: [4096]u8 = undefined;
+        var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+        const stdout_data = try stdout_reader.interface.allocRemaining(allocator, .unlimited);
+        defer allocator.free(stdout_data);
+        var stderr_buf: [4096]u8 = undefined;
+        var stderr_reader = child.stderr.?.reader(io, &stderr_buf);
+        const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+        defer allocator.free(stderr_data);
+        const term = try child.wait(io);
+        try std.testing.expect(term == .exited);
+        try std.testing.expectEqual(@as(u8, 0), term.exited);
+        if (stderr_data.len != 0) std.debug.print("program stderr'e yazdı:\n{s}\n", .{stderr_data});
+        try std.testing.expectEqual(@as(usize, 0), stderr_data.len);
+    }
 
     // Her yanıt "<başlangıç_ns> <bitiş_ns>" (süreç genelinde ortak `monotonic_ns`). CPU-yoğun işleyici hiç `await` etmediğinden bir worker istekleri SIRAYLA işler: iki yanıtın aralığı
     // çakışıyorsa iki FARKLI worker aynı anda çalışmıştır (kimlik taşımaya gerek yok, modül durumu sızıntısı da yok).
