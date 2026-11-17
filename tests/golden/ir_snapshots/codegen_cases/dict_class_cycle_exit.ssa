@@ -3257,39 +3257,29 @@ export function $mutual_cycle(l %rt) {
     %t33 =l loadl %t32
     %t34 =l add $str5, 16
     %t35 =l loadl %t0
-    %t36 =w ceql %t35, 0
-    jnz %t36, @retain_skip16, @retain15
-@retain15
-    %t37 =l sub %t35, 8
-    %t38 =l loadl %t37
-    %t39 =l add %t38, 1
-    storel %t39, %t37
-    jmp @retain_done17
-@retain_skip16
-    jmp @retain_done17
-@retain_done17
+    storel 0, %t0
     call $nox_dict_set(l %rt, l %t33, w 1, w 0, w 1, l %t34, l %t35)
-    %t40 =l loadl %t0
-    %t41 =w ceql %t40, 0
-    jnz %t41, @release_skip19, @release18
+    %t36 =l loadl %t0
+    %t37 =w ceql %t36, 0
+    jnz %t37, @release_skip16, @release15
+@release15
+    call $Node_release(l %rt, l %t36)
+    jmp @release_done17
+@release_skip16
+    jmp @release_done17
+@release_done17
+    storel 0, %t0
+    %t38 =l loadl %t1
+    %t39 =w ceql %t38, 0
+    jnz %t39, @release_skip19, @release18
 @release18
-    call $Node_release(l %rt, l %t40)
+    call $Node_release(l %rt, l %t38)
     jmp @release_done20
 @release_skip19
     jmp @release_done20
 @release_done20
-    storel 0, %t0
-    %t42 =l loadl %t1
-    %t43 =w ceql %t42, 0
-    jnz %t43, @release_skip22, @release21
-@release21
-    call $Node_release(l %rt, l %t42)
-    jmp @release_done23
-@release_skip22
-    jmp @release_done23
-@release_done23
     storel 0, %t1
-@fn_end24
+@fn_end21
     ret
 }
 export function w $main(w %argc, l %argv) {

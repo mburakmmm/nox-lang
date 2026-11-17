@@ -70,14 +70,12 @@ const use_pool = builtin.mode != .Debug;
 /// (varsayılan sınırla 16*2^9 = 8192 bayt üstü) boyutlar İÇİN `null` döner
 /// (havuzlanmaz, doğrudan genel ayırıcıya gider — ör. çok büyük listeler).
 fn poolClassIndex(total_size: usize) ?usize {
+    // B1/I4: eski döngü (en çok POOL_NUM_CLASSES yineleme) yerine O(1): sınıf = ceil(log2(boyut)) - 4 (16 baytın altı sınıf 0). Eşdeğerlik birim testle doğrulanır.
     if (total_size == 0) return null;
-    var class_size: usize = 16;
-    var idx: usize = 0;
-    while (idx < asap.POOL_NUM_CLASSES) : (idx += 1) {
-        if (total_size <= class_size) return idx;
-        class_size *= 2;
-    }
-    return null;
+    if (total_size <= 16) return 0;
+    const idx: usize = @as(usize, @bitSizeOf(usize)) - @clz(total_size - 1) - 4;
+    if (idx >= asap.POOL_NUM_CLASSES) return null;
+    return idx;
 }
 
 fn poolClassSize(idx: usize) usize {
@@ -735,6 +733,25 @@ pub export fn nox_rc_release_enqueue_dynamic(rt: ?*anyopaque, ptr: ?*anyopaque) 
         return;
     }
     enqueueAndMaybePump(rt, tag, p, rs);
+}
+
+test "poolClassIndex: O(1) hesap eski döngüyle her boyutta aynı sonucu verir" {
+    var size: usize = 0;
+    while (size <= 20000) : (size += 1) {
+        var want: ?usize = null;
+        if (size != 0) {
+            var class_size: usize = 16;
+            var idx: usize = 0;
+            while (idx < asap.POOL_NUM_CLASSES) : (idx += 1) {
+                if (size <= class_size) {
+                    want = idx;
+                    break;
+                }
+                class_size *= 2;
+            }
+        }
+        try std.testing.expectEqual(want, poolClassIndex(size));
+    }
 }
 
 test "nox_rcstat: yalnızca rcstat_on iken sayar, kimlik 64'e sarılır" {

@@ -1,0 +1,139 @@
+# 2.3 B1/I6 (devam): son kullanımda sahiplik taşıma — `xs.append(x)`, `obj.f = x`, `xs[i] = x`, `d[k] = x`. Doğruluk + sızıntı yok + taşıma olmaması gereken durumlar.
+import nox.mem
+
+class Leaf:
+    v: int
+    def __init__(self: Leaf, v: int) -> None:
+        self.v = v
+
+class Box:
+    item: Leaf | None
+    items: list[Leaf]
+    names: list[str]
+    table: dict[str, Leaf]
+
+    def __init__(self: Box) -> None:
+        self.item = None
+        self.items = []
+        self.names = []
+        self.table = {}
+
+    def add(self: Box, leaf: Leaf) -> None:
+        self.items.append(leaf)
+
+    def put(self: Box, k: str, leaf: Leaf) -> None:
+        self.table[k] = leaf
+
+    def total(self: Box) -> int:
+        t: int = 0
+        for l in self.items:
+            t = t + l.v
+        for k in self.table:
+            t = t + self.table[k].v
+        it: Leaf | None = self.item
+        if it != None:
+            t = t + it.v
+        return t
+
+# 1) append: taze yerel, son kullanım
+def append_move(n: int) -> int:
+    b: Box = Box()
+    a: Leaf = Leaf(n)
+    b.items.append(a)
+    c: Leaf = Leaf(n + 1)
+    b.items.append(c)
+    return b.total()
+
+# 2) append sonrası ikinci kullanım: taşıma YOK
+def append_reuse(n: int) -> int:
+    b: Box = Box()
+    a: Leaf = Leaf(n)
+    b.items.append(a)
+    return b.total() + a.v
+
+# 3) alan ataması
+def field_move(n: int) -> int:
+    b: Box = Box()
+    a: Leaf = Leaf(n)
+    b.item = a
+    return b.total()
+
+# 4) eleman ataması ve dict ataması
+def store_move(n: int) -> int:
+    b: Box = Box()
+    b.items.append(Leaf(0))
+    a: Leaf = Leaf(n)
+    b.items[0] = a
+    d: Leaf = Leaf(n * 2)
+    b.table["k"] = d
+    return b.total()
+
+# 5) str listesine append (str de taşınır)
+def str_move(n: int) -> int:
+    b: Box = Box()
+    s: str = "item" + str(n)
+    b.names.append(s)
+    return len(b.names[0])
+
+# 6) döngü içinde bildirim + append
+def loop_append(n: int) -> int:
+    b: Box = Box()
+    i: int = 0
+    while i < n:
+        a: Leaf = Leaf(i)
+        b.items.append(a)
+        i = i + 1
+    return b.total()
+
+# 7) bildirim döngü DIŞINDA, append döngü İÇİNDE: taşıma YOK (aynı nesne tekrar eklenir)
+def loop_outer_append(n: int) -> int:
+    b: Box = Box()
+    a: Leaf = Leaf(5)
+    i: int = 0
+    while i < n:
+        b.items.append(a)
+        i = i + 1
+    return b.total()
+
+# 8) inline yardımcı, taze argüman
+def helper_fresh(n: int) -> int:
+    b: Box = Box()
+    b.add(Leaf(n))
+    b.put("x", Leaf(n + 1))
+    return b.total()
+
+# 9) inline yardımcı, adlandırılmış argüman: çağıran sahipliği korur
+def helper_named(n: int) -> int:
+    b: Box = Box()
+    a: Leaf = Leaf(n)
+    b.add(a)
+    return b.total() + a.v
+
+# 10) koşullu append (bir dalda), ikinci dalda başka kullanım
+def conditional(n: int, flag: bool) -> int:
+    b: Box = Box()
+    a: Leaf = Leaf(n)
+    if flag:
+        b.items.append(a)
+    else:
+        b.item = a
+    return b.total()
+
+def run() -> int:
+    t: int = 0
+    t = t + append_move(2) + append_reuse(3) + field_move(4) + store_move(5) + str_move(12)
+    t = t + loop_append(5) + loop_outer_append(3) + helper_fresh(2) + helper_named(2)
+    t = t + conditional(3, True) + conditional(3, False)
+    return t
+
+print(append_move(2), append_reuse(3), field_move(4), store_move(5), str_move(12))
+print(loop_append(5), loop_outer_append(3), helper_fresh(2), helper_named(2), conditional(3, True), conditional(3, False))
+print(run())
+nox.mem.stats()
+r0: int = run()
+m1: nox.mem.MemStats = nox.mem.stats()
+r1: int = run()
+r2: int = run()
+m2: nox.mem.MemStats = nox.mem.stats()
+print(r0 == r1 and r1 == r2)
+print(m2.live - m1.live)

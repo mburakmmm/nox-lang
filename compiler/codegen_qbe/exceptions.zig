@@ -502,6 +502,22 @@ pub fn collectRaiseInfoStmts(self: *Codegen, stmts: []const ast.Stmt, info: *Fun
     for (stmts) |stmt| try self.collectRaiseInfoStmt(stmt, info, class_ctx, var_types, poisoned, list_elem_types);
 }
 
+/// `recv.alan = ...` hedefindeki alan statik olarak biliniyor ve skaler (`heap == .none`: int/float/bool/sabit-genişlikli) mi? Alıcı çözülemezse (`false`) muhafazakâr kalınır.
+fn assignTargetIsScalarField(self: *Codegen, ta: ast.Attribute, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void)) bool {
+    if (ta.obj.* != .identifier) return false;
+    const recv = ta.obj.identifier;
+    if (poisoned.contains(recv)) return false;
+    const cn: []const u8 = var_types.get(recv) orelse blk: {
+        if (std.mem.eql(u8, recv, "self")) break :blk class_ctx orelse return false;
+        return false;
+    };
+    const cinfo = self.classes.get(cn) orelse return false;
+    for (cinfo.fields.items) |f| {
+        if (std.mem.eql(u8, f.name, ta.attr)) return f.info.heap == .none;
+    }
+    return false;
+}
+
 pub fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInfo, class_ctx: ?[]const u8, var_types: *std.StringHashMapUnmanaged([]const u8), poisoned: *std.StringHashMapUnmanaged(void), list_elem_types: *std.StringHashMapUnmanaged([]const u8)) CodegenError!void {
     switch (stmt.kind) {
         .expr_stmt => |e| try self.collectRaiseInfoExpr(e, info, class_ctx, var_types, poisoned),
@@ -529,7 +545,8 @@ pub fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInf
             switch (a.target) {
                 .attribute => |ta| {
                     const into_self_in_init = info.is_init and ta.obj.* == .identifier and std.mem.eql(u8, ta.obj.identifier, "self");
-                    if (!into_self_in_init) info.direct_mutates = true;
+                    // B1 (2.3): skaler (int/float/bool) bir alana yazmak hiçbir heap nesnesini serbest bırakamaz ve hiçbir alias'ı geçersiz kılamaz — `heap_readonly` (ödünç alias elemesi) için mutasyon sayılmaz.
+                    if (!into_self_in_init and !assignTargetIsScalarField(self, ta, class_ctx, var_types, poisoned)) info.direct_mutates = true;
                 },
                 .index => info.direct_mutates = true,
                 else => {},

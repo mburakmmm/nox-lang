@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.11]
+
+B1 (ARC/ASAP) devamı: taşıma kapsamı genişledi, ödünç alias analizi inceldi.
+
+- **Taşıma (B1/I6) genişledi:** son-kullanım sahiplik taşıması artık `xs.append(x)`, `obj.f = x`, `xs[i] = x` ve `d[k] = x` için de geçerli (kurucuya ek olarak; inline-edilen yardımcıların taze argümanları dahil). Golden: `move_into_store_last_use`.
+- **Ödünç alias analizi (B1):** skaler (int/float/bool) bir alana yazmak artık "yığını değiştirir" sayılmaz: `n.visits = n.visits + 1` gibi sayaç güncelleyen işlevlerde `l = n.left` alias'ları retain/release'siz ödünç alınır (heap alanına/str alanına yazan işlevlerde alias retain'li kalır). Golden: `borrowed_alias_scalar_store`.
+- **Tahsis:** havuz sınıf indeksi döngü yerine O(1) (`@clz`), eski hesapla 0..20000 boyutta eşdeğerlik birim testiyle doğrulandı.
+- 76 IR anlık görüntüsü yenilendi.
+- **Açık:** basit olmayan `__init__`li kurucular (hesaplanmış alanlar) ve genel işlevlerin "tüketen parametre" sözleşmesi (ABI), satır içi serbest-liste tahsisi.
+
 ## [2.2.10]
 
 B1 (ARC/ASAP) devamı: son kullanımda sahiplik taşıma (move).

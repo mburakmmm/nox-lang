@@ -3216,62 +3216,53 @@ export function w $main(w %argc, l %argv) {
     storel %t44, %t7
     %t49 =l loadl %t6
     %t50 =l loadl %t7
-    %t51 =w ceql %t50, 0
-    jnz %t51, @retain_skip6, @retain5
-@retain5
-    %t52 =l sub %t50, 8
-    %t53 =l loadl %t52
-    %t54 =l add %t53, 1
-    storel %t54, %t52
-    jmp @retain_done7
-@retain_skip6
-    jmp @retain_done7
-@retain_done7
-    %t55 =l add %t49, 8
-    %t56 =l loadl %t55
-    storel %t50, %t55
-    %t57 =w ceql %t56, 0
-    jnz %t57, @release_skip9, @release8
+    storel 0, %t7
+    %t51 =l add %t49, 8
+    %t52 =l loadl %t51
+    storel %t50, %t51
+    %t53 =w ceql %t52, 0
+    jnz %t53, @release_skip6, @release5
+@release5
+    call $Point_release(l %rt, l %t52)
+    jmp @release_done7
+@release_skip6
+    jmp @release_done7
+@release_done7
+    jmp @inline_done4
+@inline_done4
+    %t54 =l loadl %t7
+    %t55 =w ceql %t54, 0
+    jnz %t55, @release_skip9, @release8
 @release8
-    call $Point_release(l %rt, l %t56)
+    call $Point_release(l %rt, l %t54)
     jmp @release_done10
 @release_skip9
     jmp @release_done10
 @release_done10
-    jmp @inline_done4
-@inline_done4
-    %t58 =w ceql %t44, 0
-    jnz %t58, @release_skip12, @release11
+    %t56 =l loadl %t2
+    %t57 =l add %t56, 8
+    %t58 =l loadl %t57
+    %t59 =l add %t58, 8
+    %t60 =l loadl %t59
+    call $printf(l $fmt_int, ..., l %t60)
+    %t61 =l loadl %t2
+    %t62 =l add %t61, 8
+    %t63 =l loadl %t62
+    %t64 =l add %t63, 16
+    %t65 =l loadl %t64
+    call $printf(l $fmt_int, ..., l %t65)
+    %t66 =l loadl %t2
+    %t67 =w ceql %t66, 0
+    jnz %t67, @release_skip12, @release11
 @release11
-    call $Point_release(l %rt, l %t44)
+    call $Car_release(l %rt, l %t66)
     jmp @release_done13
 @release_skip12
     jmp @release_done13
 @release_done13
-    %t59 =l loadl %t2
-    %t60 =l add %t59, 8
-    %t61 =l loadl %t60
-    %t62 =l add %t61, 8
-    %t63 =l loadl %t62
-    call $printf(l $fmt_int, ..., l %t63)
-    %t64 =l loadl %t2
-    %t65 =l add %t64, 8
-    %t66 =l loadl %t65
-    %t67 =l add %t66, 16
-    %t68 =l loadl %t67
-    call $printf(l $fmt_int, ..., l %t68)
-    %t69 =l loadl %t2
-    %t70 =w ceql %t69, 0
-    jnz %t70, @release_skip15, @release14
-@release14
-    call $Car_release(l %rt, l %t69)
-    jmp @release_done16
-@release_skip15
-    jmp @release_done16
-@release_done16
     storel 0, %t2
     call $nox_runtime_deinit(l %rt)
-@fn_end17
+@fn_end14
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

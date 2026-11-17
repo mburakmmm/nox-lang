@@ -632,14 +632,40 @@ fn ctorMoveKey(self: *Codegen, expr: ast.Expr, name: []const u8) ?usize {
     return @intFromPtr(c.args[k].identifier.ptr);
 }
 
+/// Kurucu dışı tüketim noktaları: `xs.append(name)` (alıcıda `name` anılmıyor) ve `hedef = name` (hedef alan/eleman/dict anahtarı ataması; hedefte `name` anılmıyor). İkisi de değeri retain edip saklar;
+/// taşıma bu retain'i ve çağıranın sonraki release'ini ortadan kaldırır (kancası `retainIfAliasing`, kullanılmayan yollar için zararsızdır: anahtar hiç eşleşmezse taşıma olmaz).
+fn storeMoveKey(stmt: ast.Stmt, name: []const u8) ?usize {
+    switch (stmt.kind) {
+        .expr_stmt => |e| {
+            if (e != .call) return null;
+            const c = e.call;
+            if (c.callee.* != .attribute) return null;
+            const att = c.callee.attribute;
+            if (!std.mem.eql(u8, att.attr, "append") or c.args.len != 1) return null;
+            if (c.args[0] != .identifier or !std.mem.eql(u8, c.args[0].identifier, name)) return null;
+            if (exprMentionsName(att.obj.*, name)) return null;
+            return @intFromPtr(c.args[0].identifier.ptr);
+        },
+        .assign => |as| {
+            if (as.target != .attribute and as.target != .index) return null;
+            if (as.value != .identifier or !std.mem.eql(u8, as.value.identifier, name)) return null;
+            if (exprMentionsName(as.target, name)) return null;
+            return @intFromPtr(as.value.identifier.ptr);
+        },
+        else => return null,
+    }
+}
+
 fn stmtMoveKey(self: *Codegen, stmt: ast.Stmt, name: []const u8) ?usize {
-    return switch (stmt.kind) {
+    const ctor_key = switch (stmt.kind) {
         .return_stmt => |me| if (me) |e| ctorMoveKey(self, e, name) else null,
         .var_decl => |v| ctorMoveKey(self, v.value, name),
         .assign => |as| if (exprMentionsName(as.target, name)) null else ctorMoveKey(self, as.value, name),
         .expr_stmt => |e| ctorMoveKey(self, e, name),
         else => null,
     };
+    if (ctor_key) |k| return k;
+    return storeMoveKey(stmt, name);
 }
 
 /// `body` içinde `name`in tek taşıma noktasını arar (bkz. blok notu). `is_param`: ad bir parametredir (bildirimi yok; taşıma noktası fonksiyon üst bağlamında olmalı). Bulunamazsa `null`.
