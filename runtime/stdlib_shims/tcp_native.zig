@@ -180,7 +180,7 @@ pub fn startTlsMtls(c: *Conn, servername: []const u8, alpn_h2: bool, ca_file: []
         };
         own.* = .{};
         const now0 = std.Io.Timestamp.now(c.io, .real);
-        own.bundle.addCertsFromFilePathAbsolute(gpa, c.io, now0, ca_file) catch |err| {
+        own.bundle.addCertsFromFilePath(gpa, c.io, now0, std.Io.Dir.cwd(), ca_file) catch |err| {
             own.bundle.deinit(gpa);
             gpa.destroy(own);
             var buf: [200]u8 = undefined;

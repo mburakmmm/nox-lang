@@ -2190,6 +2190,8 @@ pub fn build(b: *std.Build) void {
     const http_serve_tls_test = b.addTest(.{ .root_module = http_serve_tls_test_mod });
     http_serve_tls_test.step.dependOn(&install_noxrt.step);
     test_step.dependOn(&addTimedTestRun(b, http_serve_tls_test, win_test_timeout_s).step);
+    const http_serve_tls_step = b.step("http-serve-tls-test", "Yalnızca nox.http.serve_tls (+ özel CA / IP sabitleme istemcisi) golden testlerini çalıştırır (hızlı yineleme için)");
+    http_serve_tls_step.dependOn(&addTimedTestRun(b, http_serve_tls_test, win_test_timeout_s).step);
 
     const http_serve_ws_test_mod = b.createModule(.{
         .root_source_file = b.path("tests/compat/http_serve_ws_golden_test.zig"),

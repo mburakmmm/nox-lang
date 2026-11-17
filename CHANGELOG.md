@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.1.196]
+
+### Limitasyon turu (devam)
+
+- **`nox.http.configure(bind_address=...)` (Pulse HTTP-004):** sunucu tek bir arayüzü dinleyebilir (`"127.0.0.1"`, `"::1"`, belirli IPv4/IPv6 literal'i). Geçersiz adres `HttpError` verir, çelişkili aile (IPv4 adresi + IPv6 `ip_family`, Windows'ta IPv6 adresi) tüm arayüzlere açılmak yerine dinleyiciyi başarısız yapar; HTTP/3 UDP dinleyicisi aynı adrese bağlanır. Birim test: soket gerçekten `127.0.0.1`e bağlı, boş adres `0.0.0.0`a döner; elle doğrulama: LAN adresi bağlantıyı reddeder.
+- **`nox.http.request(..., ca_file=...)` (Nova 22):** HTTPS sertifikası sistem deposu yerine yalnızca verilen PEM'deki CA'ya karşı doğrulanır (doğrulama kapatılmaz; yerel TLS+HTTP/3-öncesi testler için). `connect_ip` ile birlikte çalışır. Test: özel CA'lı `serve_tls` sunucusuna karşı kabul, CA'sız ret, eksik dosya ret, IP sabitleme + CA.
+- **Göreli CA yolu çökmesi düzeltildi:** `nox.redis.connect(..., ca_file="goreli/yol.pem")` ve yeni `ca_file`, mutlak olmayan yolda `openFileAbsolute` assert'ine düşüp süreci çökertiyordu; artık çalışma dizinine göre çözülür.
+- **Altyapı:** `tl_aead_status`/`tl_pin` global-durum izin listesine eklendi (v2.1.195 `check_global_state.py`i atlamıştı); `nox_http_request_pinned_raw` yerine `nox_http_request_ex_raw` (connect_ip + ca_file); wasm `nox_http_config_set_bind_raw` ve `nox_http_request_ex_raw` sabit-başarısız kuyruğu; `zig build http-serve-tls-test` adımı.
+
 ## [2.1.195]
 
 ### Limitasyon turu (VAULT, Pulse, Ember, Chronos, Nova, Aether, Nyx raporları + worker ölçek raporu)

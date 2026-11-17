@@ -59,6 +59,12 @@ export fn nox_http_config_set_raw(key: i64, value: i64) callconv(.c) void {
     _ = value;
 }
 
+/// `configure(bind_address=...)`: wasm'da dinleyici yoktur, ayar etkisizdir (geçerli sayılır).
+export fn nox_http_config_set_bind_raw(addr: ?[*:0]const u8) callconv(.c) i64 {
+    _ = addr;
+    return 1;
+}
+
 export fn nox_http_shutdown_raw() callconv(.c) void {}
 
 export fn nox_http_client_pool_set_raw(max_idle: i64) callconv(.c) void {
@@ -104,8 +110,8 @@ export fn nox_http_request_raw(rt: ?*anyopaque, method: ?[*:0]const u8, url: ?[*
     return failedHandle();
 }
 
-/// Tarayıcı/WASI `fetch`i bağlanılacak IP'yi seçtirmez: sabitlenmiş (`connect_ip`) istek sessizce sabitlemesiz gitmek yerine KAPALI başarısız olur (geçersiz istek).
-export fn nox_http_request_pinned_raw(rt: ?*anyopaque, method: ?[*:0]const u8, url: ?[*:0]const u8, body: ?[*:0]const u8, has_body: i32, headers: ?*anyopaque, connect_ip: ?[*:0]const u8, timeout_ms: i64) callconv(.c) ?*anyopaque {
+/// Tarayıcı/WASI `fetch`i bağlanılacak IP'yi ve güvenilecek CA'yı seçtirmez: sabitlenmiş (`connect_ip`) / özel CA'lı (`ca_file`) istek sessizce sıradan istek olarak gitmek yerine KAPALI başarısız olur (geçersiz istek).
+export fn nox_http_request_ex_raw(rt: ?*anyopaque, method: ?[*:0]const u8, url: ?[*:0]const u8, body: ?[*:0]const u8, has_body: i32, headers: ?*anyopaque, connect_ip: ?[*:0]const u8, ca_file: ?[*:0]const u8, timeout_ms: i64) callconv(.c) ?*anyopaque {
     _ = rt;
     _ = method;
     _ = url;
@@ -113,6 +119,7 @@ export fn nox_http_request_pinned_raw(rt: ?*anyopaque, method: ?[*:0]const u8, u
     _ = has_body;
     _ = headers;
     _ = connect_ip;
+    _ = ca_file;
     _ = timeout_ms;
     return null;
 }

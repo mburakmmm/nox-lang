@@ -49,7 +49,7 @@ What a handler returns and what the client functions return.
 | `post(url, body, headers)` | issues a POST with `body` |
 | `put(url, body, headers)`, `patch(url, body, headers)` | PUT / PATCH with `body` |
 | `delete(url, headers)`, `head(url, headers)`, `options(url, headers)` | bodyless requests |
-| `request(method, url, body, headers, timeout_ms=0, connect_ip="")` | any of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; optional timeout; optional pinned address (see below) |
+| `request(method, url, body, headers, timeout_ms=0, connect_ip="", ca_file="")` | any of GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS; optional timeout; optional pinned address and custom CA (see below) |
 
 **Concurrency.** Inside a task (`spawn`) or a `serve` handler, a request does not occupy an operating-system thread: the task is suspended while it waits for the network and the worker runs other tasks, so thousands of requests can be in flight at once on a few threads (about 110 KB of memory per request in flight). Outside a task (plain top-level code) and for `stream`/`stream_upload`, each request still uses a helper thread. Windows behaves like macOS and Linux (since v2.1.147).
 
@@ -88,6 +88,8 @@ can only be sent with `POST`, `PUT` and `PATCH`.
 system's own limit (30 s for DNS and 75 s for a TCP connect on macOS, similar on Android). With `timeout_ms = 0` the lookup and the connect are not bounded.
 
 **Pinned address (`connect_ip`, SSRF / DNS-rebinding defence).** When `connect_ip` is a non-empty IPv4/IPv6 literal, the host name in the URL is **not resolved**: the connection goes to that address. The TLS server name (SNI) and certificate/host-name verification still use the **original** host name, so the usual flow is `ips = nox.dns.resolve(host)` → check every address against your policy → `request(..., connect_ip=ips[0])`, with no window for the name to resolve differently a second time. A pinned request does not use the connection pool, HTTP/3 or `HTTP_PROXY`/`HTTPS_PROXY`, and it does not follow redirects (the caller re-resolves and re-validates the new location). A malformed `connect_ip` raises `HttpError`; it never falls back to name resolution.
+
+**Custom CA (`ca_file`).** A path to a PEM file: the HTTPS server certificate is then verified against **only** the CAs in that file instead of the system store (a private or corporate CA, a local TLS test server). Verification is never switched off, so a self-signed server whose certificate is not in the file is still rejected; a missing or unreadable file fails the request. Relative paths are resolved against the working directory. Like `connect_ip`, it bypasses the connection pool and HTTP/3. It also works together with `connect_ip`.
 
 Names resolve with the system resolver for both IPv4 and IPv6 (the system's address order is tried in turn, so a dead IPv6 route falls back to IPv4), and IPv6 literals such as
 `http://[::1]:8080/` work on every platform. `nox.tls.connect`, `nox.websocket.connect` and `nox.smtp.connect` bound DNS and connect at 30 seconds.
@@ -336,6 +338,7 @@ nox.http.shutdown()
 | `max_connections` | 4096 | connections open at once; further ones get a `503 Service Unavailable` (`Retry-After: 1`) and are closed until some close |
 | `drain_timeout_ms` | 10000 | how long a graceful shutdown waits for requests that are still being handled |
 | `ip_family` | 0 | listening family of `serve_multicore*`: `0` IPv4, `1` IPv6 dual-stack (`::`, IPv4 clients still connect), `2` IPv6 only; ignored on Windows |
+| `bind_address` | `""` | listen on **one** interface: an IPv4 or IPv6 literal (`"127.0.0.1"`, `"::1"`). Empty = all interfaces (`0.0.0.0`). An invalid value raises `HttpError` and never falls back to all interfaces; an IPv4 address combined with `ip_family` IPv6 (or any IPv6 address on Windows) makes the listener fail to start instead of widening it. The HTTP/3 UDP listener binds the same address. Call it before `serve*`/`listen*`; it cannot be reset to "all interfaces" afterwards in the same process |
 
 **Graceful shutdown.** `SIGTERM` or `SIGINT` (and `nox.http.shutdown()`, which you may call from a handler) stops the server cleanly: new connections are no longer accepted, requests that are already being handled finish and are answered with `Connection: close`, idle keep-alive connections are closed, and **`serve*` returns** — so the code after it (closing a database, flushing logs) runs and the program exits normally. A second signal exits immediately. After `drain_timeout_ms` the server stops waiting and also returns. On Windows only `nox.http.shutdown()` is available (there is no signal handler). A WebSocket connection already upgraded is not closed by a shutdown: close it from its handler, or rely on `drain_timeout_ms`.
 

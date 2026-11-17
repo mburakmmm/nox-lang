@@ -338,6 +338,8 @@ const RequestCtx = struct {
     timeout_ms: u64 = 0,
     /// Boş değilse (v2.1.195): ad ÇÖZÜMLENMEDEN bu IP'ye bağlanılır (TLS adı/sertifikası yine URL'deki ana makine adına karşı doğrulanır). Sabitlenmiş istek havuzu, HTTP/3'ü ve vekili kullanmaz.
     connect_ip: []const u8 = "",
+    /// Boş değilse (v2.1.195, Nova 22): HTTPS sunucu sertifikası sistem deposu YERİNE yalnızca bu PEM dosyasındaki CA'lara karşı doğrulanır (özel/kurumsal CA, yerel TLS testi). Doğrulama kapatılmaz.
+    ca_file: []const u8 = "",
 
     status: u16 = 0,
     response_body: []u8 = &.{},
@@ -349,6 +351,7 @@ const RequestCtx = struct {
     fn destroyOwned(self: *RequestCtx) void {
         self.allocator.free(self.url);
         if (self.connect_ip.len > 0) self.allocator.free(self.connect_ip);
+        if (self.ca_file.len > 0) self.allocator.free(self.ca_file);
         if (self.body) |b| self.allocator.free(b);
         for (self.request_headers) |h| {
             self.allocator.free(h.name);
@@ -902,7 +905,7 @@ fn workerThreadFn(ctx: *RequestCtx) void {
     var alt_host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
     var alt_host: []const u8 = "";
     var alt_port: u16 = 443;
-    if (https and ctx.connect_ip.len == 0 and g_client_h3.load(.monotonic) == 1) {
+    if (https and ctx.connect_ip.len == 0 and ctx.ca_file.len == 0 and g_client_h3.load(.monotonic) == 1) {
         if (uri.getHost(&alt_host_buf)) |hn| {
             alt_host = hn.bytes;
             alt_port = uri.port orelse 443;
@@ -917,7 +920,7 @@ fn workerThreadFn(ctx: *RequestCtx) void {
     var request_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer request_arena.deinit();
     var local_client: std.http.Client = .{ .allocator = request_arena.allocator(), .io = io };
-    const pooled = g_pool_size.load(.monotonic) > 0 and ctx.connect_ip.len == 0;
+    const pooled = g_pool_size.load(.monotonic) > 0 and ctx.connect_ip.len == 0 and ctx.ca_file.len == 0;
     defer if (!pooled) {
         releaseSharedCa(&local_client); // `deinit`ten ÖNCE
         local_client.deinit();
@@ -931,7 +934,14 @@ fn workerThreadFn(ctx: *RequestCtx) void {
         // Sabitlenmiş istek vekilsiz doğrudan gider (vekil adı çözer: sabitleme anlamını yitirirdi).
         if (ctx.connect_ip.len == 0) applyProxyEnv(&local_client, request_arena.allocator());
         // iOS'ta sistem kökleri yalnızca bu yolla alınabilir: yüklenemezse istek başarısız olur. Diğer platformlarda yükleme başarısızlığı istemcinin kendi yoluna düşer (aynı hata).
-        if (https and !adoptSharedCa(&local_client) and builtin.os.tag == .ios) {
+        if (https and ctx.ca_file.len > 0) {
+            // Özel CA: yalnızca bu dosyadaki kökler güvenilir (sistem deposu yüklenmez); bundle istek arenasına aittir, `local_client.deinit` serbest bırakır.
+            local_client.now = std.Io.Clock.real.now(io);
+            local_client.ca_bundle.addCertsFromFilePath(request_arena.allocator(), io, local_client.now.?, std.Io.Dir.cwd(), ctx.ca_file) catch {
+                ctx.failed = true;
+                return;
+            };
+        } else if (https and !adoptSharedCa(&local_client) and builtin.os.tag == .ios) {
             ctx.failed = true;
             return;
         }
@@ -1230,6 +1240,8 @@ fn doRequest(
     keep_failed: bool,
     /// Boş değilse bağlantı bu IP'ye (literal) kurulur; ad çözümlenmez.
     connect_ip: []const u8,
+    /// Boş değilse HTTPS sertifikası yalnızca bu PEM dosyasındaki CA'lara karşı doğrulanır.
+    ca_file: []const u8,
 ) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const gpa = state.allocator();
@@ -1270,9 +1282,14 @@ fn doRequest(
         .write_fd = fds[1],
         .timeout_ms = if (timeout_ms > 0) @intCast(timeout_ms) else 0,
         .connect_ip = if (connect_ip.len > 0) (gpa.dupe(u8, connect_ip) catch "") else "",
+        .ca_file = if (ca_file.len > 0) (gpa.dupe(u8, ca_file) catch "") else "",
     };
     // Sabitleme istendi ama IP kopyalanamadı: sabitlemeden SESSİZCE vazgeçme (güvenlik), isteği reddet.
-    if (connect_ip.len > 0 and ctx.connect_ip.len == 0) {
+    if ((connect_ip.len > 0 and ctx.connect_ip.len == 0) or (ca_file.len > 0 and ctx.ca_file.len == 0)) {
+        if (ctx.connect_ip.len > 0) gpa.free(ctx.connect_ip);
+        if (ctx.ca_file.len > 0) gpa.free(ctx.ca_file);
+        ctx.connect_ip = "";
+        ctx.ca_file = "";
         ctx.destroyOwned();
         gpa.destroy(ctx);
         closeFd(fds[0]);
@@ -1384,11 +1401,11 @@ pub fn parseMethod(name: []const u8) ?std.http.Method {
 }
 
 export fn nox_http_get_raw(rt: ?*anyopaque, url: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
-    return doRequest(rt, .GET, url, null, headers, 0, false, "");
+    return doRequest(rt, .GET, url, null, headers, 0, false, "", "");
 }
 
 export fn nox_http_post_raw(rt: ?*anyopaque, url: ?[*:0]const u8, body: ?[*:0]const u8, headers: ?*anyopaque) callconv(.c) ?*anyopaque {
-    return doRequest(rt, .POST, url, body, headers, 0, false, "");
+    return doRequest(rt, .POST, url, body, headers, 0, false, "", "");
 }
 
 /// Genel istek: `method` GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS (büyük harf) olmalıdır; bilinmeyen ad sessizce GET'e
@@ -1407,12 +1424,13 @@ export fn nox_http_request_raw(
     const m = parseMethod(str_mod.nox_str_slice(method orelse return null)) orelse return null;
     // `std.http` yalnızca POST/PUT/PATCH'te gövde gönderebilir; diğer metodlarda gövde SESSİZCE düşürülmez, istek reddedilir.
     if (has_body != 0 and !m.requestHasBody()) return null;
-    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true, "");
+    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true, "", "");
 }
 
-/// `nox_http_request_raw` + `connect_ip` (v2.1.195): ad çözümlenmeden `connect_ip` literal adresine bağlanır (SSRF/DNS-rebinding savunması: önce `nox.dns.resolve`, adresleri doğrula, sonra bu IP'ye bağlan).
-/// TLS sunucu adı ve sertifika doğrulaması URL'deki ORİJİNAL ana makine adına karşı yapılır. Geçersiz bir IP literal'i isteği başarısız yapar (ad çözümlemesine DÜŞMEZ).
-export fn nox_http_request_pinned_raw(
+/// `nox_http_request_raw` + isteğe bağlı `connect_ip` / `ca_file` (v2.1.195). `connect_ip` doluysa ad çözümlenmeden o IP literal'ine bağlanılır (SSRF/DNS-rebinding savunması: önce `nox.dns.resolve`, adresleri
+/// doğrula, sonra bu IP'ye bağlan); TLS sunucu adı ve sertifika doğrulaması URL'deki ORİJİNAL ana makine adına karşı yapılır. `ca_file` doluysa HTTPS sertifikası sistem deposu yerine yalnızca bu PEM
+/// dosyasındaki CA'lara karşı doğrulanır (doğrulama kapatılmaz). İkisi de boşsa `nox_http_request_raw` ile aynıdır. Her ikisi de havuzu, HTTP/3'ü (ve sabitlemede vekili) devre dışı bırakır.
+export fn nox_http_request_ex_raw(
     rt: ?*anyopaque,
     method: ?[*:0]const u8,
     url: ?[*:0]const u8,
@@ -1420,13 +1438,14 @@ export fn nox_http_request_pinned_raw(
     has_body: i32,
     headers: ?*anyopaque,
     connect_ip: ?[*:0]const u8,
+    ca_file: ?[*:0]const u8,
     timeout_ms: i64,
 ) callconv(.c) ?*anyopaque {
     const m = parseMethod(str_mod.nox_str_slice(method orelse return null)) orelse return null;
     if (has_body != 0 and !m.requestHasBody()) return null;
-    const ip = str_mod.nox_str_slice(connect_ip orelse return null);
-    if (ip.len == 0) return null;
-    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true, ip);
+    const ip: []const u8 = if (connect_ip) |p| str_mod.nox_str_slice(p) else "";
+    const ca: []const u8 = if (ca_file) |p| str_mod.nox_str_slice(p) else "";
+    return doRequest(rt, m, url, if (has_body != 0) body else null, headers, timeout_ms, true, ip, ca);
 }
 
 /// 0 = başarılı, 1 = zaman aşımı, 2 = diğer hata, 3 = geçersiz istek (tutamaç `null`: bilinmeyen metod, gövdesiz metodda gövde,

@@ -84,12 +84,51 @@ const ServeConfig = struct {
     ip_family: std.atomic.Value(u8) = .init(0),
     /// HTTP/3 (QUIC, OpenSSL >= 3.5): 0 = kapalı (varsayılan), 1 = açık. TLS sunucusuyla aynı port numarasında UDP dinler (`nox.http.set_http3`).
     http3: std.atomic.Value(u8) = .init(0),
+    /// `configure(bind_address=...)` (v2.1.195, Pulse HTTP-004): 0 = tüm arayüzler (varsayılan), 4/6 = belirli bir IPv4/IPv6 literal'ine bağlan. Adres baytları aşağıdaki alanlarda.
+    bind_family: std.atomic.Value(u8) = .init(0),
+    bind_v4: std.atomic.Value(u32) = .init(0),
+    bind_v6_lo: std.atomic.Value(u64) = .init(0),
+    bind_v6_hi: std.atomic.Value(u64) = .init(0),
 };
 const DEFAULT_MAX_HEADER_BYTES: usize = 16 * 1024;
 const MIN_HEADER_BYTES: usize = 4 * 1024;
 const MAX_HEADER_BYTES_LIMIT: usize = 1024 * 1024;
 const DEFAULT_DRAIN_TIMEOUT_MS: u32 = 10_000;
 var g_serve_config: ServeConfig = .{};
+
+/// `configure(bind_address=...)`: IPv4/IPv6 literal'i ayarlar (`""` = tüm arayüzler). Geçersiz bir adres 0 döner ve ayarı DEĞİŞTİRMEZ (çağıran hata verir: sessizce tüm arayüzlere açılmaz).
+export fn nox_http_config_set_bind_raw(addr: ?[*:0]const u8) callconv(.c) i64 {
+    const text = str_mod.nox_str_slice(addr orelse return 0);
+    if (text.len == 0) {
+        g_serve_config.bind_family.store(0, .monotonic);
+        return 1;
+    }
+    if (std.Io.net.IpAddress.parseIp4(text, 0)) |a| {
+        g_serve_config.bind_v4.store(@bitCast(a.ip4.bytes), .monotonic);
+        g_serve_config.bind_family.store(4, .monotonic);
+        return 1;
+    } else |_| {}
+    if (std.Io.net.IpAddress.parseIp6(text, 0)) |a| {
+        g_serve_config.bind_v6_lo.store(std.mem.readInt(u64, a.ip6.bytes[0..8], .little), .monotonic);
+        g_serve_config.bind_v6_hi.store(std.mem.readInt(u64, a.ip6.bytes[8..16], .little), .monotonic);
+        g_serve_config.bind_family.store(6, .monotonic);
+        return 1;
+    } else |_| {}
+    return 0;
+}
+
+fn configuredBind4() ?u32 {
+    if (g_serve_config.bind_family.load(.monotonic) != 4) return null;
+    return g_serve_config.bind_v4.load(.monotonic);
+}
+
+fn configuredBind6() ?[16]u8 {
+    if (g_serve_config.bind_family.load(.monotonic) != 6) return null;
+    var out: [16]u8 = undefined;
+    std.mem.writeInt(u64, out[0..8], g_serve_config.bind_v6_lo.load(.monotonic), .little);
+    std.mem.writeInt(u64, out[8..16], g_serve_config.bind_v6_hi.load(.monotonic), .little);
+    return out;
+}
 
 /// Anahtar kodları `stdlib/nox/http.nox`daki `configure` ile eşleşir. Geçersiz/negatif değer yok sayılır (0 = varsayılanı koru).
 export fn nox_http_config_set_raw(key: i64, value: i64) callconv(.c) void {
@@ -361,6 +400,9 @@ const ServerHandle = struct {
 /// bağlanır" davranışı GENEL kullanım İçin SÜRPRİZ BOZUCUYDU (bu HATANIN
 /// KENDİSİ bunun KANITI).
 fn bindAndListen(port: i64, reuse_port: bool) ?posix.fd_t {
+    // Belirli bir IPv6 adresi seçildiyse IPv6 yolu kullanılır (Windows'ta IPv6 desteklenmez: KAPALI başarısız olur, tüm arayüzlere açılmaz).
+    if (configuredBind6() != null) return bindAndListenV6(port, true, reuse_port);
+    const want_v4: u32 = configuredBind4() orelse 0;
     if (builtin.os.tag == .windows) {
         // Faz MN.11: Windows'ta `SO_REUSEPORT` YOK (Zig 0.16'nın `ws2_32.zig`
         // bağlamalarında doğrulandı, sadece `SO_REUSEADDR` VAR — VE onun
@@ -378,7 +420,7 @@ fn bindAndListen(port: i64, reuse_port: bool) ?posix.fd_t {
 
         var addr: std.os.windows.ws2_32.sockaddr.in = .{
             .port = std.mem.nativeToBig(u16, @intCast(port)),
-            .addr = 0,
+            .addr = want_v4,
         };
         if (ws.bind(fd, &addr, @sizeOf(std.os.windows.ws2_32.sockaddr.in)) != 0) {
             _ = ws.closesocket(fd);
@@ -410,7 +452,7 @@ fn bindAndListen(port: i64, reuse_port: bool) ?posix.fd_t {
 
     var addr: std.c.sockaddr.in = .{
         .port = std.mem.nativeToBig(u16, @intCast(port)),
-        .addr = 0,
+        .addr = want_v4,
     };
     if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0) {
         _ = closeSocket(fd);
@@ -515,6 +557,9 @@ export fn nox_http_listen_fd(rt: ?*anyopaque, port: i64) callconv(.c) i64 {
 /// almıyor ve CI'da doğrulanamıyor.
 fn bindAndListenV6(port: i64, v6_only: bool, reuse_port: bool) ?posix.fd_t {
     if (builtin.os.tag == .windows) return null;
+    // Bir IPv4 adresi seçilmişken IPv6 dinleyici istenirse çelişki: tüm arayüzlere sessizce açılmak yerine başarısız ol.
+    if (configuredBind4() != null) return null;
+    const want_v6: [16]u8 = configuredBind6() orelse [_]u8{0} ** 16;
     const fd = std.c.socket(std.c.AF.INET6, std.c.SOCK.STREAM, 0);
     if (fd < 0) return null;
     var reuse: c_int = 1;
@@ -533,7 +578,7 @@ fn bindAndListenV6(port: i64, v6_only: bool, reuse_port: bool) ?posix.fd_t {
     var addr: std.c.sockaddr.in6 = .{
         .port = std.mem.nativeToBig(u16, @intCast(port)),
         .flowinfo = 0,
-        .addr = [_]u8{0} ** 16,
+        .addr = want_v6,
         .scope_id = 0,
     };
     if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in6)) != 0) {
@@ -1860,7 +1905,13 @@ fn startH3(rt: ?*anyopaque, gpa: std.mem.Allocator, h: *ServerHandle, handler: H
         std.debug.print("nox.http: HTTP/3 disabled: QUIC context failed ({t})\n", .{e});
         return null;
     };
-    const listener = quic.Listener.openAnyAddr(&qctx, port) catch |e| {
+    const bound: quic.Error!quic.Listener = if (configuredBind4()) |a|
+        quic.Listener.open(&qctx, .{ .v4 = @bitCast(a) }, port)
+    else if (configuredBind6()) |a|
+        quic.Listener.open(&qctx, .{ .v6 = a }, port)
+    else
+        quic.Listener.openAnyAddr(&qctx, port);
+    const listener = bound catch |e| {
         std.debug.print("nox.http: HTTP/3 disabled: UDP port {d} could not be opened ({t})\n", .{ port, e });
         qctx.deinit();
         return null;
@@ -3986,4 +4037,42 @@ test "serve_multicore dinleyicisi: Darwin/Windows'ta tüm worker'lar TEK paylaş
     } else {
         try std.testing.expect(h1.listen_fd != h2.listen_fd);
     }
+}
+
+test "configure(bind_address): dinleyici yalnızca seçilen IPv4 adresine bağlanır; geçersiz adres ayarı değiştirmez; boş adres tüm arayüzlere döner" {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi or builtin.cpu.arch.isWasm()) return error.SkipZigTest;
+    const str = @import("../str.zig");
+    const asap_mod = @import("../alloc/asap.zig");
+    const rt = asap_mod.nox_runtime_init() orelse return error.InitFailed;
+    defer asap_mod.nox_runtime_deinit(rt);
+    defer g_serve_config.bind_family.store(0, .monotonic);
+
+    const loop = str.nox_str_from_bytes(rt, "127.0.0.1") orelse return error.Failed;
+    defer str.nox_str_release(rt, loop);
+    const junk = str.nox_str_from_bytes(rt, "not-an-ip") orelse return error.Failed;
+    defer str.nox_str_release(rt, junk);
+    const empty = str.nox_str_from_bytes(rt, "") orelse return error.Failed;
+    defer str.nox_str_release(rt, empty);
+
+    try std.testing.expectEqual(@as(i64, 1), nox_http_config_set_bind_raw(loop));
+    try std.testing.expectEqual(@as(i64, 0), nox_http_config_set_bind_raw(junk));
+    try std.testing.expectEqual(@as(u8, 4), g_serve_config.bind_family.load(.monotonic)); // geçersiz adres önceki ayarı bozmadı
+
+    const fd = bindAndListen(0, false) orelse return error.BindFailed;
+    defer _ = closeSocket(fd);
+    var sa: std.c.sockaddr.in = undefined;
+    var len: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+    try std.testing.expectEqual(@as(c_int, 0), std.c.getsockname(fd, @ptrCast(&sa), &len));
+    try std.testing.expectEqual(@as(u32, @bitCast([4]u8{ 127, 0, 0, 1 })), sa.addr);
+
+    // Bir IPv4 adresi seçiliyken IPv6 dinleyici istemek çelişkidir: tüm arayüzlere açılmak yerine başarısız olur.
+    try std.testing.expect(bindAndListenV6(0, false, false) == null);
+
+    try std.testing.expectEqual(@as(i64, 1), nox_http_config_set_bind_raw(empty));
+    const fd_any = bindAndListen(0, false) orelse return error.BindFailed;
+    defer _ = closeSocket(fd_any);
+    var sa2: std.c.sockaddr.in = undefined;
+    var len2: std.c.socklen_t = @sizeOf(std.c.sockaddr.in);
+    try std.testing.expectEqual(@as(c_int, 0), std.c.getsockname(fd_any, @ptrCast(&sa2), &len2));
+    try std.testing.expectEqual(@as(u32, 0), sa2.addr);
 }

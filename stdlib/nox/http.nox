@@ -138,7 +138,7 @@ class HttpRequest:
 
 extern def nox_http_get_raw(url: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_post_raw(url: str, body: str, headers: dict[str, str]) -> ptr from "zig-out/lib/noxrt.o" with_rt
-extern def nox_http_request_pinned_raw(method: str, url: str, body: str, has_body: int, headers: dict[str, str], connect_ip: str, timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_request_ex_raw(method: str, url: str, body: str, has_body: int, headers: dict[str, str], connect_ip: str, ca_file: str, timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_request_raw(method: str, url: str, body: str, has_body: int, headers: dict[str, str], timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_response_error_kind(h: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_response_ok(h: ptr) -> int from "zig-out/lib/noxrt.o"
@@ -195,12 +195,19 @@ extern def nox_http_respstream_start_raw(conn: int, status: int, headers: dict[s
 extern def nox_http_respstream_trailers_raw(conn: int, headers: dict[str, str]) -> int from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_request_trailer_raw(conn: int, name: str) -> str from "zig-out/lib/noxrt.o" with_rt
 extern def nox_http_request_read_raw(conn: int, max: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_http_config_set_bind_raw(addr: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_respstream_send_raw(conn: int, data: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_respstream_end_raw(conn: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_respstream_open_raw(conn: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_http_respstream_sleep_raw(ms: int) -> None from "zig-out/lib/noxrt.o"
 
-def configure(max_body_bytes: int = 0, max_header_bytes: int = 0, read_timeout_ms: int = 0, max_connections: int = 0, drain_timeout_ms: int = 0, ip_family: int = 0) -> None:
+# `bind_address` (v2.1.195): sunucunun dinleyeceği TEK arayüz — bir IPv4/IPv6 literal'i (`"127.0.0.1"`, `"::1"`, `"10.0.0.5"`). Verilmezse (`""`) tüm arayüzler (`0.0.0.0`) dinlenir (eski davranış). Yalnızca-loopback
+# bir metrik/yönetim uç noktası için `configure(bind_address="127.0.0.1")` yeterlidir. Geçersiz bir adres `HttpError` fırlatır (tüm arayüzlere sessizce AÇILMAZ); adres/aile çelişkisi (IPv4 adresi + `ip_family`
+# IPv6) ve Windows'ta IPv6 adresi `serve*`ta dinleyici kurulamaması olarak görünür. `serve*`/`listen*`ten ÖNCE çağrılmalıdır; HTTP/3 UDP dinleyicisi de aynı adrese bağlanır.
+def configure(max_body_bytes: int = 0, max_header_bytes: int = 0, read_timeout_ms: int = 0, max_connections: int = 0, drain_timeout_ms: int = 0, ip_family: int = 0, bind_address: str = "") -> None:
+    if len(bind_address) > 0:
+        if nox_http_config_set_bind_raw(bind_address) == 0:
+            raise HttpError("invalid bind_address (expected an IPv4 or IPv6 literal): " + bind_address)
     nox_http_config_set_raw(1, max_body_bytes)
     nox_http_config_set_raw(2, max_header_bytes)
     nox_http_config_set_raw(3, read_timeout_ms)
@@ -303,9 +310,9 @@ def post(url: str, body: str, headers: dict[str, str]) -> HttpResponse:
     nox_http_response_free(h)
     return resp
 
-def _dispatch_request(method: str, url: str, body: str, has_body: int, headers: dict[str, str], connect_ip: str, timeout_ms: int) -> ptr:
-    if len(connect_ip) > 0:
-        return nox_http_request_pinned_raw(method, url, body, has_body, headers, connect_ip, timeout_ms)
+def _dispatch_request(method: str, url: str, body: str, has_body: int, headers: dict[str, str], connect_ip: str, ca_file: str, timeout_ms: int) -> ptr:
+    if len(connect_ip) > 0 or len(ca_file) > 0:
+        return nox_http_request_ex_raw(method, url, body, has_body, headers, connect_ip, ca_file, timeout_ms)
     return nox_http_request_raw(method, url, body, has_body, headers, timeout_ms)
 
 # Genel HTTP isteği. `method`: GET, POST, PUT, PATCH, DELETE, HEAD veya OPTIONS (büyük harf); başka bir ad HttpError verir,
@@ -315,8 +322,9 @@ def _dispatch_request(method: str, url: str, body: str, has_body: int, headers: 
 # beklemez. `timeout_ms = 0`: sınırsız.
 # `connect_ip` (v2.1.195) boş değilse ad ÇÖZÜMLENMEZ: bağlantı bu IP literal'ine (IPv4/IPv6) kurulur; TLS sunucu adı (SNI) ve sertifika doğrulaması URL'deki ORİJİNAL ana makine adına
 # karşı yapılır. SSRF/DNS-rebinding savunması: `nox.dns.resolve(host)` → adresleri doğrula → `request(..., connect_ip=ip)`. Sabitlenmiş istek bağlantı havuzunu, HTTP/3'ü ve HTTP_PROXY/HTTPS_PROXY
-# vekilini KULLANMAZ; yönlendirmeler (`3xx`) çağıranın işidir (yeni konum yeniden çözülüp doğrulanmalı). Geçersiz bir IP literal'i `HttpError` fırlatır (ad çözümlemesine düşmez).
-def request(method: str, url: str, body: str, headers: dict[str, str], timeout_ms: int = 0, connect_ip: str = "") -> HttpResponse:
+# vekilini KULLANMAZ; `ca_file` (PEM yolu, v2.1.195) doluysa HTTPS sertifikası sistem deposu YERİNE yalnızca o dosyadaki CA'lara karşı doğrulanır (özel/kurumsal CA, yerel TLS testi; doğrulama KAPATILMAZ,
+# havuz/HTTP3 kullanılmaz, dosya okunamazsa istek başarısız olur); yönlendirmeler (`3xx`) çağıranın işidir (yeni konum yeniden çözülüp doğrulanmalı). Geçersiz bir IP literal'i `HttpError` fırlatır (ad çözümlemesine düşmez).
+def request(method: str, url: str, body: str, headers: dict[str, str], timeout_ms: int = 0, connect_ip: str = "", ca_file: str = "") -> HttpResponse:
     has_body: int = 0
     if method == "POST" or method == "PUT" or method == "PATCH":
         has_body = 1
@@ -324,7 +332,7 @@ def request(method: str, url: str, body: str, headers: dict[str, str], timeout_m
         # Pulse HTTP-003: gövdesi OLAMAYAN bir yöntemde (GET/HEAD/DELETE/OPTIONS) boş olmayan gövde
         # ÖNCEDEN sessizce atılırdı. `has_body` = 1 geçilince çalışma zamanı isteği reddeder (kind 3).
         has_body = 1
-    h: ptr = _dispatch_request(method, url, body, has_body, headers, connect_ip, timeout_ms)
+    h: ptr = _dispatch_request(method, url, body, has_body, headers, connect_ip, ca_file, timeout_ms)
     if nox_http_response_ok(h) == 0:
         kind: int = nox_http_response_error_kind(h)
         nox_http_response_free(h)

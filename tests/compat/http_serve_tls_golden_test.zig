@@ -416,3 +416,71 @@ test "nox.http.serve_tls: AYNI OS is parcaciginda ic ice gecen IKI TLS baglantis
     try std.testing.expect(std.mem.indexOf(u8, slow_resp, "resp:/fast") == null);
     try std.testing.expect(std.mem.indexOf(u8, fast_resp, "resp:/slow") == null);
 }
+
+// 2.2 limitasyon turu (Nova 22 + VAULT 1.1): `nox.http.request(..., ca_file=...)` HTTPS sertifikasını sistem deposu YERİNE yalnızca verilen PEM'deki CA'ya karşı doğrular (doğrulama kapatılmaz);
+// `connect_ip` ile birlikte kullanıldığında bağlantı IP'ye gider, TLS adı yine `localhost`a karşı doğrulanır.
+test "nox.http.request(ca_file, connect_ip): özel CA ile TLS, CA'sız reddedilir, eksik CA dosyası reddedilir, IP sabitleme + CA birlikte çalışır" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const port = try probeFreePort();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const server_src = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\
+        \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
+        \\    return nox_http_HttpResponse(200, "ok-ca", {{"x": "x"}})
+        \\
+        \\nox.http.serve_tls({d}, handle, "{s}", "{s}", 3)
+        \\
+    , .{ port, cert_path, key_path });
+    var server_tmp = std.testing.tmpDir(.{});
+    defer server_tmp.cleanup();
+    const server_bin = try compileToBinary(a, &server_tmp, server_src);
+
+    const client_src = try std.fmt.allocPrint(a,
+        \\import nox.http
+        \\from nox.http import HttpError
+        \\
+        \\try:
+        \\    nox.http.request("GET", "https://localhost:{d}/", "", {{}}, 5000)
+        \\    print("no ca: unexpectedly ok")
+        \\except HttpError as e:
+        \\    print("no ca: rejected")
+        \\try:
+        \\    nox.http.request("GET", "https://localhost:{d}/", "", {{}}, 5000, "", "/no/such/ca.pem")
+        \\except HttpError as e:
+        \\    print("missing ca file: rejected")
+        \\r1: nox_http_HttpResponse = nox.http.request("GET", "https://localhost:{d}/", "", {{}}, 5000, "", "{s}")
+        \\print(r1.status, r1.body)
+        \\r2: nox_http_HttpResponse = nox.http.request("GET", "https://localhost:{d}/", "", {{}}, 5000, "127.0.0.1", "{s}")
+        \\print(r2.status, r2.body)
+        \\
+    , .{ port, port, port, cert_path, port, cert_path });
+    var client_tmp = std.testing.tmpDir(.{});
+    defer client_tmp.cleanup();
+    const client_bin = try compileToBinary(a, &client_tmp, client_src);
+
+    var server = try std.process.spawn(io, .{ .argv = &.{server_bin}, .stdout = .pipe, .stderr = .pipe });
+    var watchdog: child_watchdog.ChildWatchdog = .{};
+    try watchdog.arm(&server, 60_000);
+    defer watchdog.disarm();
+
+    const client = try std.process.run(allocator, io, .{ .argv = &.{client_bin} });
+    defer allocator.free(client.stdout);
+    defer allocator.free(client.stderr);
+    if (client.stderr.len != 0) std.debug.print("istemci stderr: {s}\n", .{client.stderr});
+    try std.testing.expectEqualStrings("no ca: rejected\nmissing ca file: rejected\n200 ok-ca\n200 ok-ca\n", client.stdout);
+
+    // Sunucu 3 bağlantıyı (CA'sız reddedilen dahil) kabul edip çıkar.
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_reader = server.stderr.?.reader(io, &stderr_buf);
+    const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
+    defer allocator.free(stderr_data);
+    const term = try server.wait(io);
+    try std.testing.expect(term == .exited);
+}
