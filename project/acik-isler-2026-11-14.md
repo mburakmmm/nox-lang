@@ -1,5 +1,8 @@
 # Açık işler — tek temiz liste (2026-11-14, v2.1.147 sonrası)
 
+> **2026-11-17:** açık kalan işler `project/v2-3-yapilacaklar-2026-11.md` listesine aktarıldı; yeni açık iş oraya yazılır. Bu dosya geçmiş kaydıdır.
+
+
 `project/yapilacaklar-2026-11.md`, `project/nox-ana-todo.md`, `project/v2-hazirlik-yol-haritasi.md`, `project/limitasyon-kaydi-2026-11.md` ve `project/aura-mobil-eksiklikleri.md` taranarak çıkarıldı.
 Bu dosya yalnızca **açık** işleri tutar; biten işlerin kaydı eski listelerde kalır. Bir iş bitince buradaki kutu `[x]` yapılır ve sürümü yazılır.
 

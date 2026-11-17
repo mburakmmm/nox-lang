@@ -14,6 +14,15 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.2.0-rc.1]
+
+Nox 2.2 sürüm adayı (2.1.0 sonrası ~195 yama sürümü). Ayrıntılı özet: `docs/whatsnew/2.2.md`; sayılar ve C karşılaştırması: `benchmarks/RESULTS.md`. 2.1 ve 2.0 ile kaynak uyumludur; NNI v1, Plugin API ve NAPI değişmedi.
+
+- **Ne var:** variadik fonksiyonlar ve dönüş tipsiz `def` (= `None`), yeni builtin'ler, tembel JSON bandı, C kaynaklı isteğe bağlı modüller (`nox.zstd`/`lz4`/`xxhash`/`yyjson`/`pcre2`/`brotli`), küçük ikililer, stdlib/HTTP/FFI performans turları (regresyon kapısı `benchmarks/gate.py`), `nox.dns` + `connect_ip`/`ca_file`, `bind_address`, AEAD, Redis zaman aşımı/pipeline, macOS/Windows paylaşılan dinleyici ile çok çekirdekli ölçek düzeltmesi.
+- **Bu sürümdeki düzeltmeler:** dokümantasyon içindekiler tablosunda `stdlib/dns.md` eksikti (v2.1.195 Dokümanlar işi kırmızıydı); `serve_multicore` dağılım testi sabit bağlantı bütçesi yüzünden macOS CI'da askıya düşüyordu (sınırsız sunucu + SIGTERM'e çevrildi).
+- **Bilinen sınırlar (2.3 listesi):** iç içe `async def`, `list[Task[T]]`, Redis Cluster, istemci başına `nox.http` havuzu, Windows/WASM için taşınabilir kapanış olayı, PostgreSQL mobil zaman aşımı, Windows'a özgü iki madde. Hepsi `project/v2-3-yapilacaklar-2026-11.md`de.
+- Kararlı `2.2.0`, bu sürüm adayının CI'ı yeşil çıkınca aynı içerikle yayınlanır.
+
 ## [2.1.196]
 
 ### Limitasyon turu (devam)

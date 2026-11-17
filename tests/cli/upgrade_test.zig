@@ -206,6 +206,8 @@ test "noxc upgrade --check: zaten guncelse indirme/cikarma HIC tetiklenmeden 0 d
     const gpa = std.testing.allocator;
     const current = try currentVersion(gpa, io);
     defer gpa.free(current);
+    // Bir ön sürüm (`2.2.0-rc.1`) kararlı liste başı olamaz: "zaten güncel" senaryosu yalnızca kararlı sürümlerde anlamlıdır.
+    if (std.mem.indexOfScalar(u8, current, '-') != null) return error.SkipZigTest;
     const current_tag = try std.fmt.allocPrint(gpa, "v{s}", .{current});
     defer gpa.free(current_tag);
 

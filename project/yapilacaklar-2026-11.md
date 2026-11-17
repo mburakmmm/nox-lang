@@ -1,5 +1,8 @@
 # Yapılacaklar listesi (2026-11-11'den)
 
+> **2026-11-17:** açık kalan işler `project/v2-3-yapilacaklar-2026-11.md` listesine aktarıldı; yeni açık iş oraya yazılır. Bu dosya geçmiş kaydıdır.
+
+
 > **2026-11-14: açık işlerin tek temiz listesi `project/acik-isler-2026-11-14.md`dir** (bu dosya, `nox-ana-todo.md` ve Aura listesi taranarak çıkarıldı). Yeni iş buraya değil oraya yazılır; bu dosya biten işlerin kaydıdır.
 
 Tek takip noktası: 2026-11-11 oturumundaki analizlerden çıkan ve konuşulan **tüm işler**. Her iş bittikçe işaretlenir ve sürümü yazılır. Durum: `[ ]` açık, `[x]` bitti (sürümle), `[~]` karar/onay bekliyor, `[-]` yapılmayacak/bayat.

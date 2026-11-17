@@ -11,6 +11,7 @@ Bu dosya, Nox derleyicisi ve çalışma zamanı üzerinde çalışan tüm kodlam
 - Her PR/görev sonunda §14'teki checklist'i uygula.
 - **Çerçeve limitasyonları (bayat / tasarım gereği / yapılmamış) ajan rehberi: `project/limitasyon-ajan-rehberi.md`** (kayıt: `project/limitasyon-kaydi-2026-11.md`). Bir limitasyonu "düzeltmeden" önce oraya bak: tasarım gereği olanlara dokunulmaz, mimari kararlar sorulur.
 - **Güncel yapılacaklar listesi (analizlerden çıkan tüm işler, işaretli takip): `project/yapilacaklar-2026-11.md`.** Bir iş bitince oradaki kutuyu `[x]` yap ve sürümünü yaz.
+- **2.3 yapılacaklar listesi (2.2.0-rc.1 ile açıldı): `project/v2-3-yapilacaklar-2026-11.md`.** Açık iş seçmeden önce oraya bak; bitenler `[x]` + sürümle işaretlenir.
 - **2.0 öncesi yapılacaklar KALICI listesi: `project/v2-hazirlik-yol-haritasi.md`.** Yeni bir göreve başlamadan önce oraya bak; bir madde bitince ya da yeni eksik bulununca o dosyayı güncelle.
 
 ---

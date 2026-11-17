@@ -191,9 +191,24 @@ pub fn resolveTargetVersion(a: Allocator, io: Io, explicit: ?[]const u8, policy:
 pub fn isOlderThanCurrent(a: Allocator, target_tag: []const u8) bool {
     const current = currentVersionTag(a) catch return false;
     defer a.free(current);
-    const c = parseStableTag(current) orelse return false;
+    // Çalışan ikili bir ön sürümse (`2.2.0-rc.1`) karşılaştırma TABAN sürümle yapılır: 2.2.0-rc.1'deyken kararlı 2.1.196'ya "yükseltmek" bir DÜŞÜRMEdir; kararlı 2.2.0 ise (aynı taban) yükseltmedir.
+    const base_end = std.mem.indexOfScalar(u8, current, '-') orelse current.len;
+    const c = parseStableTag(current[0..base_end]) orelse return false;
     const t = parseStableTag(target_tag) orelse return false;
     return compareSemVer(t, c) == .lt;
+}
+
+test "isOlderThanCurrent: ön sürümdeyken eski kararlı sürüm düşürme sayılır, aynı tabanlı kararlı sürüm yükseltmedir" {
+    // `build_options.version` bu testte sabit değildir: yalnızca mevcut sürümün tabanına göre göreli sonuçlar denetlenir.
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expect(isOlderThanCurrent(a, "v0.0.1"));
+    try std.testing.expect(!isOlderThanCurrent(a, "v99999.0.0"));
+    const current = try currentVersionTag(a);
+    const base_end = std.mem.indexOfScalar(u8, current, '-') orelse current.len;
+    // Aynı taban: ne ön sürüm ne kararlı hali "daha eski" sayılmaz.
+    try std.testing.expect(!isOlderThanCurrent(a, current[0..base_end]));
 }
 
 /// `target_tag`, ŞU AN çalışan ikilinin sürümüYLE (`currentVersionTag`)
