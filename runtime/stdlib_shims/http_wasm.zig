@@ -11,6 +11,7 @@
 //!
 //! Küresel/gizli durum yoktur (AGENTS §2.6): "başarısız tutamaç" sabit bir işaretçidir, hiç yazılmaz.
 
+const std = @import("std");
 const diag_sink = @import("diag_sink");
 const wasm_options = @import("wasm_options");
 const str_mod = @import("../str.zig");
@@ -61,8 +62,12 @@ export fn nox_http_config_set_raw(key: i64, value: i64) callconv(.c) void {
 
 /// `configure(bind_address=...)`: wasm'da dinleyici yoktur, ayar etkisizdir (geçerli sayılır).
 export fn nox_http_config_set_bind_raw(addr: ?[*:0]const u8) callconv(.c) i64 {
-    _ = addr;
-    return 1;
+    // Dinleyici yoktur, ayar etkisizdir; ama yerel davranışla aynı doğrulama (geçersiz adres reddedilir).
+    const text = str_mod.nox_str_slice(addr orelse return 0);
+    if (text.len == 0) return 1;
+    if (std.Io.net.IpAddress.parseIp4(text, 0)) |_| return 1 else |_| {}
+    if (std.Io.net.IpAddress.parseIp6(text, 0)) |_| return 1 else |_| {}
+    return 0;
 }
 
 export fn nox_http_shutdown_raw() callconv(.c) void {}

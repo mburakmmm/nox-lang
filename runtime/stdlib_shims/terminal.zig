@@ -10,6 +10,7 @@ const builtin = @import("builtin");
 const posix = std.posix;
 const str_mod = @import("../str.zig");
 const stdout_flush = @import("../stdout_flush.zig");
+const wasm_host = @import("../wasm_host.zig");
 
 const supported = switch (builtin.os.tag) {
     .windows, .freestanding, .wasi, .other => false,
@@ -152,6 +153,33 @@ pub export fn nox_terminal_stdin_read_raw(rt: ?*anyopaque, max_bytes: i64) ?*any
 pub export fn nox_terminal_stdout_write_raw(s: ?[*:0]const u8) i32 {
     const p = s orelse return 0;
     var bytes: []const u8 = str_mod.nox_str_slice(p);
+    // TTY denetimi olmayan hedeflerde (Windows, wasm) de düz stdout yazımı çalışır (yönlendirilmiş dosya/boru dahil; Pulse NOX-IO-001: `write_raw` Windows'ta hep `TerminalError` veriyordu).
+    if (comptime builtin.os.tag == .windows) {
+        stdout_flush.flushStdout();
+        const crt = struct {
+            extern "c" fn _write(fd: c_int, buf: [*]const u8, n: c_uint) c_int;
+        };
+        while (bytes.len > 0) {
+            const chunk: c_uint = @intCast(@min(bytes.len, 1 << 30));
+            const w = crt._write(1, bytes.ptr, chunk);
+            if (w <= 0) return -1;
+            bytes = bytes[@intCast(w)..];
+        }
+        return 0;
+    }
+    if (comptime wasm_host.is_freestanding_wasm) {
+        _ = wasm_host.write(1, bytes.ptr, bytes.len);
+        return 0;
+    }
+    if (comptime builtin.os.tag == .wasi) {
+        stdout_flush.flushStdout();
+        while (bytes.len > 0) {
+            const w = std.c.write(1, bytes.ptr, bytes.len);
+            if (w < 0) return -1;
+            bytes = bytes[@intCast(w)..];
+        }
+        return 0;
+    }
     if (comptime !supported) return -1;
     // `print` tamponlu stdout'a yazar; sırayı korumak için önce o boşaltılır.
     stdout_flush.flushStdout();

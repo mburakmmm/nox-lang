@@ -1,0 +1,22 @@
+import nox.os
+import nox.process
+from nox.os import OsError
+from nox.process import Command, Output
+
+# Çocuk süreç ebeveynin ortamını (set_var dahil) miras alır: eskiden `PATH`/`HOME` boştu (Windows'ta iç içe `noxc run` FileNotFound, VAULT 1.5).
+nox.os.set_var("NOX_PROC_ENV_PROBE", "xyz")
+windows: bool = False
+try:
+    windows = nox.os.getenv("OS") == "Windows_NT"
+except OsError as e:
+    windows = False
+if windows:
+    o: Output = Command("cmd").arg("/c").arg("echo %NOX_PROC_ENV_PROBE%").run()
+    print(o.status, o.stdout.strip())
+    p: Output = Command("cmd").arg("/c").arg("if defined PATH (echo path-ok) else (echo path-missing)").run()
+    print(p.stdout.strip())
+else:
+    o2: Output = Command("sh").arg("-c").arg("echo $NOX_PROC_ENV_PROBE").run()
+    print(o2.status, o2.stdout.strip())
+    p2: Output = Command("sh").arg("-c").arg("test -n \"$PATH\" && echo path-ok || echo path-missing").run()
+    print(p2.stdout.strip())

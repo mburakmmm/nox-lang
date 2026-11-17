@@ -420,6 +420,8 @@ test "nox.http.serve_tls: AYNI OS is parcaciginda ic ice gecen IKI TLS baglantis
 // 2.2 limitasyon turu (Nova 22 + VAULT 1.1): `nox.http.request(..., ca_file=...)` HTTPS sertifikasını sistem deposu YERİNE yalnızca verilen PEM'deki CA'ya karşı doğrular (doğrulama kapatılmaz);
 // `connect_ip` ile birlikte kullanıldığında bağlantı IP'ye gider, TLS adı yine `localhost`a karşı doğrulanır.
 test "nox.http.request(ca_file, connect_ip): özel CA ile TLS, CA'sız reddedilir, eksik CA dosyası reddedilir, IP sabitleme + CA birlikte çalışır" {
+    // Sınırsız sunucu + SIGTERM ile kapanış (reddedilen el sıkışmanın bağlantı sayacına yazılıp yazılmaması zamanlamaya bağlıydı: sabit bütçe sunucuyu askıda bırakabiliyordu). Windows'ta sinyal yok.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -435,7 +437,7 @@ test "nox.http.request(ca_file, connect_ip): özel CA ile TLS, CA'sız reddedili
         \\def handle(req: nox_http_HttpRequest) -> nox_http_HttpResponse:
         \\    return nox_http_HttpResponse(200, "ok-ca", {{"x": "x"}})
         \\
-        \\nox.http.serve_tls({d}, handle, "{s}", "{s}", 3)
+        \\nox.http.serve_tls({d}, handle, "{s}", "{s}")
         \\
     , .{ port, cert_path, key_path });
     var server_tmp = std.testing.tmpDir(.{});
@@ -476,7 +478,8 @@ test "nox.http.request(ca_file, connect_ip): özel CA ile TLS, CA'sız reddedili
     if (client.stderr.len != 0) std.debug.print("istemci stderr: {s}\n", .{client.stderr});
     try std.testing.expectEqualStrings("no ca: rejected\nmissing ca file: rejected\n200 ok-ca\n200 ok-ca\n", client.stdout);
 
-    // Sunucu 3 bağlantıyı (CA'sız reddedilen dahil) kabul edip çıkar.
+    // Zarif kapanış: serve döner, süreç 0 ile çıkar.
+    try std.posix.kill(server.id.?, .TERM);
     var stderr_buf: [4096]u8 = undefined;
     var stderr_reader = server.stderr.?.reader(io, &stderr_buf);
     const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);

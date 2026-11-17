@@ -51,8 +51,9 @@ if "**LLVM**" not in platforms:
 
 # 3. sürüm
 zon = re.search(r'\.version = "([^"]+)"', read("build.zig.zon"))
-host = re.search(r'"(\d+\.\d+\.\d+)"', read("shared/hpy_host_contract.zig"))
-change = re.search(r"^## \[(\d+\.\d+\.\d+)\]", read("CHANGELOG.md"), re.M)
+# Ön sürüm sonekleri (`2.2.0-rc.1`) da geçerli sürümdür; ana makine sözleşmesinde yalnızca `noxc_version` alanı aranır (dosyadaki başka sürüm benzeri dizeler sayılmaz).
+host = re.search(r'noxc_version = "(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)"', read("shared/hpy_host_contract.zig"))
+change = re.search(r"^## \[(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\]", read("CHANGELOG.md"), re.M)
 vers = {"build.zig.zon": zon and zon.group(1), "hpy_host_contract.zig": host and host.group(1), "CHANGELOG.md": change and change.group(1)}
 if len(set(vers.values())) != 1:
     errors.append(f"sürümler uyuşmuyor: {vers}")

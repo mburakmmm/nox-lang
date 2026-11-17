@@ -17,8 +17,8 @@
 //! **v1 kapsamı (bilinçli)**: SADECE `Command.run()`in TEK, bloklayan
 //! (fiber-uyumlu) çağrısı — canlı bir `Process` tutamacı/`kill()`/stdin
 //! STREAMING YOK (zaman aşımı DIŞINDA). Ortam değişkenleri İçin AYRI bir
-//! `.env()` API'si de YOK — çocuk süreç zaten (`std.process.run`nin
-//! `environ_map = null` varsayılanıyla) ebeveynin ortamını MİRAS ALIR,
+//! `.env()` API'si de YOK — çocuk süreç ebeveynin ortamının ANLIK GÖRÜNTÜSÜNÜ alır
+//! (`snapshotEnv`; v2.2.0-rc.2'ye kadar paylaşılan `Io` boş ortamlı olduğundan çocuk `PATH`/`HOME` almıyordu),
 //! bu yüzden `nox.os.set_var(...)` `Command(...).run()`DAN ÖNCE
 //! çağrılması YETERLİDİR (AYRI bir mekanizma İCAT ETMEYE gerek YOK).
 //!
@@ -89,10 +89,24 @@ fn copyStrList(gpa: std.mem.Allocator, list_ptr: ?*anyopaque) ![][:0]u8 {
     return out;
 }
 
+/// Çağıran iş parçacığında, çocuk başlamadan HEMEN ÖNCE ebeveynin ortamının anlık görüntüsü (`nox.os.set_var` ile yapılan değişiklikler dahil). Eskiden `std.process.run`a `environ_map = null` verilip
+/// çocuğun ebeveyni miras alacağı varsayılıyordu; oysa paylaşılan `std.Io.Threaded` BOŞ bir ortamla kuruludur: çocuk `PATH`/`HOME`/`USERPROFILE` olmadan çalışıyordu (Windows'ta `noxc run` çocuğu
+/// `zig`/`cc`yi bulamayıp `FileNotFound` veriyordu, VAULT 1.5). `null`: görüntü alınamadı (wasm/freestanding ya da bellek) — eski davranışa düşülür.
+fn snapshotEnv(gpa: std.mem.Allocator) ?std.process.Environ.Map {
+    if (comptime builtin.cpu.arch.isWasm() or builtin.os.tag == .freestanding or builtin.os.tag == .wasi) return null;
+    const env: std.process.Environ = if (comptime builtin.os.tag == .windows)
+        .{ .block = .global }
+    else
+        .{ .block = .{ .slice = std.mem.span(std.c.environ) } };
+    return env.createMap(gpa) catch null;
+}
+
 const RunCtx = struct {
     allocator: std.mem.Allocator,
     argv: [][:0]u8,
     cwd: ?[]u8,
+    /// Ebeveyn ortamının anlık görüntüsü (`snapshotEnv`); `null` ise `std.process.run` varsayılanı.
+    env: ?std.process.Environ.Map = null,
     timeout_ms: i64,
     write_fd: posix.fd_t,
 
@@ -102,6 +116,7 @@ const RunCtx = struct {
     stderr: []u8 = &.{},
 
     fn destroyOwned(self: *RunCtx) void {
+        if (self.env) |*m| m.deinit();
         for (self.argv) |a| self.allocator.free(a);
         if (self.argv.len > 0) self.allocator.free(self.argv);
         if (self.cwd) |c| self.allocator.free(c);
@@ -136,6 +151,7 @@ fn workerThreadFn(ctx: *RunCtx) void {
         .argv = argv_view,
         .cwd = cwd,
         .timeout = timeout,
+        .environ_map = if (ctx.env) |*m| m else null,
     }) catch {
         ctx.ok = false;
         return;
@@ -214,6 +230,7 @@ export fn nox_process_run_raw(
         .cwd = cwd_copy,
         .timeout_ms = timeout_ms,
         .write_fd = fds[1],
+        .env = snapshotEnv(gpa),
     };
 
     const thread = std.Thread.spawn(.{}, workerThreadFn, .{ctx}) catch {

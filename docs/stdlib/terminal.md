@@ -43,6 +43,6 @@ finally:
 ## Notes
 
 - Windows, WebAssembly and freestanding targets have no terminal control: `is_tty` is `False`, `enable_raw_mode`/`set_echo` raise `TerminalError`, and
-  `get_size` uses the environment fallbacks.
+  `get_size` uses the environment fallbacks. `write_raw` and `flush` still work on Windows, including when stdout is redirected to a file or pipe.
 - The terminal belongs to the whole process, so raw-mode state is process-wide. Always restore it (`finally`) — a program that exits in raw mode leaves the
   user's shell without echo.

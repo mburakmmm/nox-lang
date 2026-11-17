@@ -14,6 +14,21 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.2.0-rc.2]
+
+2.2 sürüm adayı, ikinci. rc.1'in CI'ı kırmızıydı ve yayımlanmadı (aşağıdaki hatalar yüzünden); bu sürüm onları ve iki Windows kök nedenini kapatır.
+
+### Windows (gerçek Windows 10 makinesinde doğrulandı)
+
+- **`nox.process.Command` çocuğu boş ortamla çalışıyordu (VAULT 1.5, tüm platformlar).** Paylaşılan `std.Io.Threaded` boş bir `Environ` ile kuruluydu; `std.process.run(environ_map = null)` çocuğa onu verdi. Çocuk `PATH`/`USERPROFILE`/`LOCALAPPDATA` olmadan başlıyordu (POSIX'te `HOME` boş, `PATH` yalnızca varsayılan) — modül belgesi ise "ebeveynin ortamı miras alınır" diyordu. Derlenmiş bir programdan `noxc run` çağrısı bu yüzden Windows'ta `FileNotFound` veriyordu (`zig`/`cc` bulunamıyordu). Artık her çağrıda ebeveyn ortamının anlık görüntüsü (`nox.os.set_var` dahil) çocuğa verilir. Golden `process_child_inherits_env`; Windows'ta iç içe `noxc run` çalıştı.
+- **`nox.terminal.write_raw` Windows'ta hep `TerminalError` (Pulse NOX-IO-001).** Windows'u "terminal desteklenmiyor" sayan `supported` bayrağı düz stdout yazımını da kapatıyordu (yönlendirmeyle ilgisi yoktu). Windows'ta CRT `_write`, wasm'da host yazımı kullanılır; dosya ve boruya yönlendirilmiş çıktı byte-exact doğrulandı. Golden `terminal_write_raw_redirected`.
+
+### CI'ı kıran ve kapatılanlar
+
+- Belge sözleşmesi denetimi (`check_doc_contracts.py`) ön sürüm sürümlerini (`2.2.0-rc.1`) tanımıyordu; ayrılmış-sembol listesine yeni Windows API adları (`GetEnvironmentStringsA`, `FreeEnvironmentStringsA`) eklenmemişti. Bunların hepsini koşturan yerel `scripts/precheck.sh` eklendi.
+- v2.1.195-196'daki 11 yeni `codegen_cases` fixture'ı `fixture_corpus.zig`ye kaydedilmemişti (yani `zig build test`te hiç çalışmıyorlardı); kaydedildi, hepsi iki backend'de geçiyor.
+- `noxc upgrade` ön sürümdeyken kararlı eski sürüme "yükseltmeyi" düşürme saymıyordu (rc.1'de düzeltildi).
+
 ## [2.2.0-rc.1]
 
 Nox 2.2 sürüm adayı (2.1.0 sonrası ~195 yama sürümü). Ayrıntılı özet: `docs/whatsnew/2.2.md`; sayılar ve C karşılaştırması: `benchmarks/RESULTS.md`. 2.1 ve 2.0 ile kaynak uyumludur; NNI v1, Plugin API ve NAPI değişmedi.
