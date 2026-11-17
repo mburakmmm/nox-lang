@@ -122,9 +122,13 @@ message naming both variables instead of reading uninitialised memory.
 
 ### Module-level state and the multi-core runtime
 
-Under the multi-core runtime each worker keeps its own copy of module state; share data between tasks with channels, `nox.atomic` or
-`nox.sharedmem` ([Concurrency](concurrency.md#the-scheduler)). This includes plain `nox.http.serve` on the default LLVM backend: connections can be
-handled by any worker, so a handler may see another worker's copy.
+What happens to module variables when several workers run depends on the program (details in [Concurrency](concurrency.md#the-scheduler)):
+
+- In a program that uses `serve_multicore*` or `nox.thread.pool_run`, each worker keeps its **own copy** of module state; that is what makes the handlers independent. Share data
+  between those workers with channels, `nox.atomic` or `nox.sharedmem`.
+- In every other program, lists, dicts, class instances and the other heap values held in module variables are **shared between tasks** whichever worker runs them, and the program
+  uses the whole worker pool. Access is memory-safe, but compound updates such as `x = x + 1` or `obj.hits = obj.hits + 1` are not atomic: use a channel or `nox.atomic` for exact counters.
+- This includes plain `nox.http.serve` on the default LLVM backend: connections can be handled by any worker, so shared values stay consistent but plain-number read-modify-write updates can lose increments.
 
 Only the variables' own initialisers (and method calls on them up to the last declaration a function reads) run for every worker. The one exception is route
 registration: `r.get(...)`, `r.post(...)`, `r.use(...)` and the other calls on a [`nox.router.Router`](../stdlib/router.md) variable that directly follow its declaration

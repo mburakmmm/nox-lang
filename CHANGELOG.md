@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.7]
+
+2.3 yol haritası: Aşama 5 kalanı — `str` küçük kopyaları (5.3), WASM kota presetleri (5.6), paylaşılan modül durumu kapanışı (5.4).
+
+- **`str` hızlandırma (5.3):** `allocStr`/`concat`/`concat_n` küçük kopyaları satır içi (`copyShort`), `nox_int_to_str` tek tahsis + doğrudan yazım: `str(int)` ağırlıklı döngülerde ≈ −%20, `build_join` 4,7 → 3,9 ms. `nox_str_append` ölçülüp geri alındı (1 baytlık eklemede satır içi kopya ~%30 yavaş). Ölçümler `benchmarks/RESULTS.md`.
+- **WASM kotaları (5.6):** `nox.wasm.Limits` (fuel, max_pages, max_depth, max_table, max_stack, max_output), `default_limits()` / `strict_limits()` hazır ayarları, `open_limited`, `from_bytes_limited`, `Host.open_limited`, `Host.open_bytes_limited`; yakalanan WASI çıktı tavanı tutamaç başına ayarlanabilir (varsayılan 16 MiB). Golden: `wasm_limits_strict`. **Uyumluluk notu:** `nox_wasm_open_host_raw`/`nox_wasm_open_bytes_host_raw` dahili externleri `limits` parametresi kazandı (yalnızca `nox.wasm` kullanır).
+- **Paylaşılan modül durumu (5.4):** madde eskimişti (liste/sınıf dilimleri Faz 9.0 ile bitmişti); `mn_shared_stress` 522 koşu 0 hata ile doğrulandı, `docs/language/modules.md` modül durumu paragrafı gerçek davranışa göre düzeltildi.
+- **Açık:** 3.3 (yönetilen Redis hesabı), D.1/D.2, 6.x.
+
 ## [2.2.6]
 
 2.3 yol haritası: WASM çok iş parçacıklı aşama 4 (5.5), Linux sunucu ölçümü (5.1), çalınan fiber modül-global hatası (1.7), `clibs_*` fixture'ları (1.8) + yol üstünde bulunan gerçek hatalar.

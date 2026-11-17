@@ -21,6 +21,37 @@ The handle is opaque (Nox never receives the module's raw memory, only bounds-ch
 | `open_with_limits(path, fuel, max_pages)` | same with an instruction budget and a memory page ceiling (`<= 0` keeps the default) |
 | `from_bytes(data)` | instantiate from a `list[int]` of byte values (0..255) |
 | `from_bytes_with_limits(data, fuel, max_pages)` | `from_bytes` with the same limits |
+| `open_limited(path, limits)` / `from_bytes_limited(data, limits)` | same with a full `Limits` quota set (see below) |
+| `Host.open_limited(path, limits)` / `Host.open_bytes_limited(data, limits)` | `Host` (WASI / host functions) with a `Limits` quota set |
+
+### Quotas and the strict preset
+
+An instance runs inside the interpreter, so a hostile module can only waste the resources you allow it. `Limits` bundles every ceiling; `0` keeps the runtime default.
+
+| Field | Default | `strict_limits()` | Meaning |
+|---|---|---|---|
+| `fuel` | 2 000 000 000 | 100 000 000 | instruction/branch budget (stops infinite loops) |
+| `max_pages` | 4096 (256 MiB) | 256 (16 MiB) | linear memory ceiling, 64 KiB pages; `memory.grow` beyond it returns -1 |
+| `max_depth` | 16384 | 1024 | call depth (stops runaway recursion) |
+| `max_table` | 10 000 000 | 100 000 | table elements |
+| `max_stack` | 262144 | 32768 | value-stack slots |
+| `max_output` | 16 MiB | 1 MiB | captured WASI stdout/stderr bytes; further writes fail with `ENOSPC` |
+
+`default_limits()` returns the all-zero set (runtime defaults); `strict_limits()` returns the preset above. Fields are plain attributes, so a preset can be tightened or loosened one field at a time:
+
+```nox
+import nox.wasm
+
+# (module (memory 1) (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))
+code: list[int] = [0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1, 127, 3, 2, 1, 0, 5, 3, 1, 0, 1, 7, 13, 2, 3, 97, 100, 100, 0, 0, 3, 109, 101, 109, 2, 0, 10, 9, 1, 7, 0, 32, 0, 32, 1, 106, 11]
+lim: nox.wasm.Limits = nox.wasm.strict_limits()
+lim.max_pages = 64          # tighten one field
+m: nox.wasm.Instance = nox.wasm.from_bytes_limited(code, lim)
+print(m.call("add", [40, 2]))
+m.close()
+```
+
+Use `strict_limits()` for untrusted modules (plugins, user uploads); the defaults favour compatibility with large trusted modules.
 
 ## Calling
 

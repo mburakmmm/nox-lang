@@ -206,6 +206,28 @@ fn ensureAsciiResolved(str_ptr: [*:0]const u8) bool {
     return is_ascii;
 }
 
+/// Kısa dilimler için satır içi kopya (`str` üretimi küçük dizelerle doludur: `str(i)`, `a + "x"`, f-string parçaları): her biri için libc `memmove` çağrısı yerine örtüşen 8/4/1 baytlık yükleme+saklama.
+/// 16 baytı aşan kopya `@memcpy`ye gider. `dst`/`src` örtüşmez.
+inline fn copyShort(dst: [*]u8, src: [*]const u8, n: usize) void {
+    if (n > 16) {
+        @memcpy(dst[0..n], src[0..n]);
+    } else if (n >= 8) {
+        const a = @as(*align(1) const u64, @ptrCast(src)).*;
+        const b = @as(*align(1) const u64, @ptrCast(src + n - 8)).*;
+        @as(*align(1) u64, @ptrCast(dst)).* = a;
+        @as(*align(1) u64, @ptrCast(dst + n - 8)).* = b;
+    } else if (n >= 4) {
+        const a = @as(*align(1) const u32, @ptrCast(src)).*;
+        const b = @as(*align(1) const u32, @ptrCast(src + n - 4)).*;
+        @as(*align(1) u32, @ptrCast(dst)).* = a;
+        @as(*align(1) u32, @ptrCast(dst + n - 4)).* = b;
+    } else if (n > 0) {
+        dst[0] = src[0];
+        dst[n / 2] = src[n / 2];
+        dst[n - 1] = src[n - 1];
+    }
+}
+
 /// `str`-üreten HER fonksiyonun kullandığı TEK tahsis sarmalayıcısı —
 /// `nox_rc_alloc(rt, STR_HEADER_SIZE + bytes.len + 1)` çağırır, paketlenmiş
 /// başlığı (`ascii_state` — çağıran ÇOĞU ZAMAN bunu SIFIR maliyetle
@@ -218,7 +240,7 @@ pub fn allocStr(rt: ?*anyopaque, bytes: []const u8, ascii_state: u64) ?[*:0]u8 {
     const header: *align(1) i64 = @ptrCast(base);
     header.* = abi_layout.packStrHeader(bytes.len, ascii_state);
     const data = base + STR_HEADER_SIZE;
-    @memcpy(data[0..bytes.len], bytes);
+    copyShort(data, bytes.ptr, bytes.len);
     data[bytes.len] = 0;
     return @ptrCast(data);
 }
@@ -258,8 +280,8 @@ pub export fn nox_str_concat(rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const 
     const header: *align(1) i64 = @ptrCast(base);
     header.* = abi_layout.packStrHeader(total_len, ascii_state);
     const data = base + STR_HEADER_SIZE;
-    @memcpy(data[0..@intCast(len_a)], pa[0..@intCast(len_a)]);
-    @memcpy(data[@intCast(len_a)..][0..@intCast(len_b)], pb[0..@intCast(len_b)]);
+    copyShort(data, pa, @intCast(len_a));
+    copyShort(data + @as(usize, @intCast(len_a)), pb, @intCast(len_b));
     data[@intCast(total_len)] = 0;
     return @ptrCast(data);
 }
@@ -300,7 +322,7 @@ pub export fn nox_str_concat_n(rt: ?*anyopaque, parts: ?[*]const i64, n: i64) ?[
         if (ps[2 * i] == 0) {
             const p: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(val)));
             const l: usize = @intCast(strByteLen(p));
-            @memcpy(data[off..][0..l], p[0..l]);
+            copyShort(data + off, p, l);
             off += l;
         } else {
             off += writeIntDecimal(data + off, val);
@@ -515,7 +537,7 @@ pub export fn nox_str_append(rt: ?*anyopaque, a: ?[*:0]u8, b: ?[*:0]const u8) ?[
             arc.poolSlotPayloadSize(STR_HEADER_SIZE + len_a + 1);
         if (need_payload <= cap_payload) {
             const data: [*]u8 = @ptrCast(pa);
-            @memcpy(data[len_a..][0..len_b], pb[0..len_b]);
+            @memcpy(data[len_a..][0..len_b], pb[0..len_b]); // tek baytlık eklemede libc `memcpy` satır içi kopyadan ~%30 hızlı ölçüldü (str_concat_1M)
             data[total] = 0;
             hdr_ptr.* = abi_layout.packStrHeaderCap(total, ascii_state, cap_exp);
             return pa;
@@ -640,9 +662,16 @@ test "nox_str_concat iki dizeyi doğru birleştirir, sıfırla sonlanır" {
 /// gerekip gerekmediğine karar vermek için), YALNIZCA geçerliyse gerçek
 /// dönüşüm fonksiyonunu çağırır.
 pub export fn nox_int_to_str(rt: ?*anyopaque, n: i64) ?[*:0]u8 {
-    var buf: [24]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, "{d}", .{n}) catch return null;
-    return allocStr(rt, s, ASCII_TRUE);
+    // Tek tahsis, rakamlar (iki rakamlık tablo) doğrudan dizenin içine yazılır; `std.fmt` yok, ara tampon kopyası yok.
+    const len: usize = @intCast(intDecimalLen(n));
+    const raw = arc.nox_rc_alloc(rt, STR_HEADER_SIZE + len + 1) orelse return null;
+    const base: [*]u8 = @ptrCast(raw);
+    const header: *align(1) i64 = @ptrCast(base);
+    header.* = abi_layout.packStrHeader(len, ASCII_TRUE);
+    const data = base + STR_HEADER_SIZE;
+    _ = writeIntDecimal(data, n);
+    data[len] = 0;
+    return @ptrCast(data);
 }
 
 /// v2.0 madde 4: `u64`/`usize` (VE zaten sıfır-genişletilmiş küçük
@@ -1726,5 +1755,36 @@ test "formatFloatRepr: hızlı yol genel yolla birebir aynı (rastgele ondalıkl
     // sınırlar
     for ([_]f64{ 0.0001, 0.00011, 0.5, 0.1, 0.2, 0.3, 1.1, 99999999999999.9, -0.0001, -123.456, 0.000099999 }) |f| {
         if (formatFloatReprFast(&a, f)) |fast| try std.testing.expectEqualStrings(formatFloatReprSlow(&b, f), fast);
+    }
+}
+
+test "nox_int_to_str: uç değerler std.fmt ile aynı ve kısa kopya sınırları (0, 1, 3, 4, 7, 8, 15, 16, 17 bayt) doğru" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const cases = [_]i64{ 0, 1, -1, 9, 10, 99, 100, 999, 1000, 12345, -12345, 2147483647, -2147483648, 4294967296, 999999999999999, 1000000000000000, std.math.maxInt(i64), std.math.minInt(i64) };
+    for (cases) |n| {
+        const s = nox_int_to_str(rt, n) orelse return error.AllocFailed;
+        defer nox_str_release(rt, s);
+        var buf: [24]u8 = undefined;
+        const want = try std.fmt.bufPrint(&buf, "{d}", .{n});
+        try std.testing.expectEqualStrings(want, std.mem.sliceTo(s, 0));
+        try std.testing.expectEqual(@as(u64, want.len), strByteLen(s));
+    }
+    // allocStr/concat: her kısa-kopya uzunluk sınıfı
+    var src: [40]u8 = undefined;
+    for (&src, 0..) |*c, i| c.* = @intCast('a' + (i % 26));
+    var n: usize = 0;
+    while (n <= 40) : (n += 1) {
+        const s = allocStr(rt, src[0..n], ASCII_TRUE) orelse return error.AllocFailed;
+        defer nox_str_release(rt, s);
+        try std.testing.expectEqualStrings(src[0..n], std.mem.sliceTo(s, 0));
+        const a = allocStr(rt, src[0..n], ASCII_TRUE) orelse return error.AllocFailed;
+        defer nox_str_release(rt, a);
+        const b = allocStr(rt, src[n..], ASCII_TRUE) orelse return error.AllocFailed;
+        defer nox_str_release(rt, b);
+        const c = nox_str_concat(rt, a, b) orelse return error.AllocFailed;
+        defer nox_str_release(rt, c);
+        try std.testing.expectEqualStrings(src[0..40], std.mem.sliceTo(c, 0));
     }
 }

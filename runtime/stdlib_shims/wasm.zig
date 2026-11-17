@@ -70,6 +70,8 @@ const Handle = struct {
     out: std.ArrayListUnmanaged(u8) = .empty,
     errout: std.ArrayListUnmanaged(u8) = .empty,
     exit_code: i64 = -1,
+    /// 5.6: yakalanan stdout/stderr için tutam başına üst sınır (varsayılan `WASI_OUT_LIMIT`; `Limits.max_output` ile düşürülür).
+    out_limit: usize = WASI_OUT_LIMIT,
     rng_state: u64 = 0x9E3779B97F4A7C15,
 };
 
@@ -184,7 +186,7 @@ fn wasiFdWrite(ctx: ?*anyopaque, inst: *interp.Instance, args: []const u64, resu
             return;
         };
         const dst = if (fd == 1) &h.out else &h.errout;
-        if (dst.items.len + data.len > WASI_OUT_LIMIT) {
+        if (dst.items.len + data.len > h.out_limit) {
             results[0] = 28; // ENOSPC
             return;
         }
@@ -348,10 +350,45 @@ fn findWasi(name: []const u8) ?*const WasiFn {
 const WasiOpts = struct { enabled: bool = false, clock: bool = false, random: bool = false, inherit: bool = false, args: []const []const u8 = &.{}, max_threads: u32 = 0 };
 
 fn openBytes(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64) ?*anyopaque {
-    return openBytesHost(rt, bytes, fuel, max_pages, &.{}, null, null, .{});
+    return openBytesHost(rt, bytes, fuel, max_pages, &.{}, null, null, .{}, &.{});
 }
 
-fn openBytesHost(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64, names: []const []const u8, cb: ?HostCallback, ud: ?*anyopaque, wopts: WasiOpts) ?*anyopaque {
+/// 5.6: `Limits` listesi sırası = [fuel, max_pages, max_depth, max_table, max_stack_slots, max_output]; 0/eksik = varsayılan. Üst sınırlar yalnızca DÜŞÜRMEK için değil, sağlam üst tavanlarla kenetlenir.
+const LIMIT_FUEL = 0;
+const LIMIT_PAGES = 1;
+const LIMIT_DEPTH = 2;
+const LIMIT_TABLE = 3;
+const LIMIT_STACK = 4;
+const LIMIT_OUTPUT = 5;
+
+fn limitAt(lim: []const i64, i: usize) i64 {
+    return if (i < lim.len) lim[i] else 0;
+}
+
+fn applyLimits(cfg: *interp.Config, h: *Handle, lim: []const i64) void {
+    const fuel = limitAt(lim, LIMIT_FUEL);
+    if (fuel > 0) cfg.fuel = @intCast(fuel);
+    const pages = limitAt(lim, LIMIT_PAGES);
+    if (pages > 0) cfg.max_memory_pages = @intCast(@min(pages, 65536));
+    const depth = limitAt(lim, LIMIT_DEPTH);
+    if (depth > 0) cfg.max_call_depth = @intCast(@min(depth, 1 << 20));
+    const table = limitAt(lim, LIMIT_TABLE);
+    if (table > 0) cfg.max_table_elems = @intCast(@min(table, 100_000_000));
+    const stack = limitAt(lim, LIMIT_STACK);
+    if (stack > 0) cfg.max_stack_slots = @intCast(@min(stack, 1 << 26));
+    const output = limitAt(lim, LIMIT_OUTPUT);
+    if (output > 0) h.out_limit = @intCast(@min(output, 1 << 30));
+}
+
+fn readIntList(a: std.mem.Allocator, data: ?*anyopaque) ?[]i64 {
+    const lp: [*]const u8 = @ptrCast(data orelse return a.alloc(i64, 0) catch null);
+    const n: usize = @intCast(@as(*align(1) const i64, @ptrCast(lp)).*);
+    const out = a.alloc(i64, n) catch return null;
+    for (0..n) |i| out[i] = @as(*align(1) const i64, @ptrCast(lp + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*;
+    return out;
+}
+
+fn openBytesHost(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64, names: []const []const u8, cb: ?HostCallback, ud: ?*anyopaque, wopts: WasiOpts, lim: []const i64) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const a = state.allocator();
     const h = a.create(Handle) catch return null;
@@ -364,6 +401,7 @@ fn openBytesHost(rt: ?*anyopaque, bytes: []u8, fuel: i64, max_pages: i64, names:
     var cfg: interp.Config = .{};
     if (fuel > 0) cfg.fuel = @intCast(fuel);
     if (max_pages > 0) cfg.max_memory_pages = @intCast(@min(max_pages, 65536));
+    applyLimits(&cfg, h, lim);
     if (wopts.max_threads > 0) {
         // wasi-threads (opt-in): iOS/Android'de kapalı (kullanıcı kararı 2026-11-14).
         if (!interp.threads_supported) {
@@ -468,7 +506,7 @@ fn readStrList(a: std.mem.Allocator, list: ?*anyopaque) ?[][]const u8 {
 
 /// Host işlevli (ve isteğe bağlı WASI) açılış: `names[i]` = "modül.ad"; Nox tarafındaki `hosts[i]` bu içe aktarmanın gövdesidir. `flags`: bit0 saat, bit1 rastgelelik, bit2 çıktıyı süreç
 /// stdout/stderr'ine de yaz, bit3 WASI etkin. `cb`/`ud` (userdata = rt) yalnızca açılış (start işlevi) süresince geçerlidir.
-pub export fn nox_wasm_open_host_raw(rt: ?*anyopaque, path: ?[*:0]const u8, names: ?*anyopaque, wasi_args: ?*anyopaque, flags: i64, fuel: i64, max_pages: i64, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) ?*anyopaque {
+pub export fn nox_wasm_open_host_raw(rt: ?*anyopaque, path: ?[*:0]const u8, names: ?*anyopaque, wasi_args: ?*anyopaque, flags: i64, fuel: i64, max_pages: i64, limits: ?*anyopaque, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const a = state.allocator();
     const p = str_mod.nox_str_slice(path orelse return failedHandle(rt, "path is null", .{}));
@@ -479,10 +517,12 @@ pub export fn nox_wasm_open_host_raw(rt: ?*anyopaque, path: ?[*:0]const u8, name
     defer a.free(nm);
     const wa = readStrList(a, wasi_args) orelse return null;
     defer a.free(wa);
-    return openBytesHost(rt, bytes, fuel, max_pages, nm, cb, ud, .{ .enabled = flags & 8 != 0, .clock = flags & 1 != 0, .random = flags & 2 != 0, .inherit = flags & 4 != 0, .args = wa, .max_threads = @intCast(@max(0, flags >> 16) & 0xffff) });
+    const lim = readIntList(a, limits) orelse return null;
+    defer a.free(lim);
+    return openBytesHost(rt, bytes, fuel, max_pages, nm, cb, ud, .{ .enabled = flags & 8 != 0, .clock = flags & 1 != 0, .random = flags & 2 != 0, .inherit = flags & 4 != 0, .args = wa, .max_threads = @intCast(@max(0, flags >> 16) & 0xffff) }, lim);
 }
 
-pub export fn nox_wasm_open_bytes_host_raw(rt: ?*anyopaque, data: ?*anyopaque, names: ?*anyopaque, wasi_args: ?*anyopaque, flags: i64, fuel: i64, max_pages: i64, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) ?*anyopaque {
+pub export fn nox_wasm_open_bytes_host_raw(rt: ?*anyopaque, data: ?*anyopaque, names: ?*anyopaque, wasi_args: ?*anyopaque, flags: i64, fuel: i64, max_pages: i64, limits: ?*anyopaque, cb: ?HostCallback, ud: ?*anyopaque) callconv(.c) ?*anyopaque {
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return null));
     const a = state.allocator();
     const lp: [*]const u8 = @ptrCast(data orelse return failedHandle(rt, "no data", .{}));
@@ -496,7 +536,9 @@ pub export fn nox_wasm_open_bytes_host_raw(rt: ?*anyopaque, data: ?*anyopaque, n
     defer a.free(nm);
     const wa = readStrList(a, wasi_args) orelse return null;
     defer a.free(wa);
-    return openBytesHost(rt, buf, fuel, max_pages, nm, cb, ud, .{ .enabled = flags & 8 != 0, .clock = flags & 1 != 0, .random = flags & 2 != 0, .inherit = flags & 4 != 0, .args = wa, .max_threads = @intCast(@max(0, flags >> 16) & 0xffff) });
+    const lim = readIntList(a, limits) orelse return null;
+    defer a.free(lim);
+    return openBytesHost(rt, buf, fuel, max_pages, nm, cb, ud, .{ .enabled = flags & 8 != 0, .clock = flags & 1 != 0, .random = flags & 2 != 0, .inherit = flags & 4 != 0, .args = wa, .max_threads = @intCast(@max(0, flags >> 16) & 0xffff) }, lim);
 }
 
 /// WASI: biriken stdout/stderr'i döner ve boşaltır.

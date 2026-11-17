@@ -1804,6 +1804,19 @@ Her `pos_*` işlevi konumu doğrular (keyfi `int`, bellek güvenliği çağıran
 
 Yapılanlar: doğrudan alan eklemesi (Stack/Queue/Deque/Set/Counter/OrderedDict/LRUCache/Heap), `Queue`/`Deque` boşalan uca taşıma tek `reverse()` ile, `Heap` sift-up/down "delik" tekniği (yer değiştirme yok, `items` yerel takma adı). Kalan: `LRUCache` maliyeti dağınık (karma + yuva yerleştirme + liste ekleme); `Deque` 1M elemanda 8 MB liste büyütme/sayfa hatası bellek maliyeti.
 
+## `str` küçük kopya turu (2.3 Aşama 5.3, v2.2.7)
+
+Apple M4, ReleaseFast, `benchmarks/stdlib_perf/run.py`. Değişiklik (`runtime/str.zig`): `allocStr`, `nox_str_concat`, `nox_str_concat_n` küçük kopyaları (≤16 bayt) `copyShort` ile satır içi örtüşen yük/depolamaya çevrildi (çağrı + dallanma kalktı); `nox_int_to_str` önce hane sayısını bulup `nox_rc_alloc` ile tek tahsis + doğrudan yazım yapar (ara tampon + ikinci kopya kalktı). `nox_str_append` ÖLÇÜLÜP geri alındı: 1 baytlık eklemelerde satır içi kopya ~%30 yavaştı, `@memcpy` kalır.
+
+| iş | önce | sonra |
+|---|---|---|
+| `str(int)` ağırlıklı döngü | 1,00 | **~0,80** (≈ −%20) |
+| `build_join` | 4,7 ms | **3,9 ms** |
+| süit 1 geometrik ortalama nox/C | — | 1,95 |
+| süit 2 geometrik ortalama nox/C | 1,71 | 1,71 |
+
+`str_concat_1M` ölçümü gürültülüdür (tahsis/bellek büyümesi sınırlı). Dürüst kalan açıklar: `LRUCache` 9,9×, `Deque` 10,6×, `Counter` 6× (karma + yuva yerleşimi, sınıf-alanı ARC'si); `set_add` C referansı doğrudan adreslemeli bir tablo olduğundan adil bir karşılaştırma DEĞİL.
+
 ## Stdlib modül taraması, 2. küme (2.2 aşama 2, v2.1.183)
 
 `benchmarks/stdlib_perf/run.py --suite 2` (Nox / C / CPython, aynı iş, sağlama toplamları birebir eşit; **ölçüt C**: `stdlib_perf2.c`, clang -O2, özetler macOS'ta CommonCrypto). Apple M4, ReleaseFast, ortanca. `toml` ve `unicode` için C standart kütüphanesinde karşılık yok (C sütunu boş).

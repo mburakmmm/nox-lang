@@ -42,9 +42,9 @@ class WasmExit(Exception):
 # wasm `i32` işaret genişletilmiş, `i64` olduğu gibi, `f32`/`f64` ham bit deseni olarak gelir (`f64_from_bits` ile çevrilir). Gönderici (`@ffi.callback`)
 # her çağrı süresince geçerlidir; saklanan bir geri çağrı yoktur. Host işlevinde fırlayan istisna yürütmeyi keser ve çağrıda `WasmError` olur.
 @ffi.callback("cb", "userdata")
-extern def nox_wasm_open_host_raw(path: str, names: list[str], wasi_args: list[str], flags: int, fuel: int, max_pages: int, cb: (int, int, int, int, int, ptr) -> int, userdata: ptr) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_open_host_raw(path: str, names: list[str], wasi_args: list[str], flags: int, fuel: int, max_pages: int, limits: list[int], cb: (int, int, int, int, int, ptr) -> int, userdata: ptr) -> ptr from "zig-out/lib/noxrt.o" with_rt
 @ffi.callback("cb", "userdata")
-extern def nox_wasm_open_bytes_host_raw(data: list[int], names: list[str], wasi_args: list[str], flags: int, fuel: int, max_pages: int, cb: (int, int, int, int, int, ptr) -> int, userdata: ptr) -> ptr from "zig-out/lib/noxrt.o" with_rt
+extern def nox_wasm_open_bytes_host_raw(data: list[int], names: list[str], wasi_args: list[str], flags: int, fuel: int, max_pages: int, limits: list[int], cb: (int, int, int, int, int, ptr) -> int, userdata: ptr) -> ptr from "zig-out/lib/noxrt.o" with_rt
 @ffi.callback("cb", "userdata")
 extern def nox_wasm_call_host_raw(h: ptr, name: str, args: list[int], cb: (int, int, int, int, int, ptr) -> int, userdata: ptr) -> int from "zig-out/lib/noxrt.o"
 @ffi.callback("cb", "userdata")
@@ -258,6 +258,13 @@ def from_bytes(data: list[int]) -> Instance:
 def from_bytes_with_limits(data: list[int], fuel: int, max_pages: int) -> Instance:
     return _wrap(nox_wasm_open_bytes_raw(data, fuel, max_pages), "<bytes>", _no_hosts())
 
+# 5.6: `open`/`from_bytes` için `Limits` kotalı sürümler (WASI/host işlevi gerekmiyorsa).
+def open_limited(path: str, lim: Limits) -> Instance:
+    return host().open_limited(path, lim)
+
+def from_bytes_limited(data: list[int], lim: Limits) -> Instance:
+    return host().open_bytes_limited(data, lim)
+
 def f64_bits(x: float) -> int:
     return nox_wasm_f64_to_bits_raw(x)
 
@@ -292,6 +299,31 @@ def _drop3(f: (int, int, int) -> int) -> (int, int, int, int) -> int:
     return lambda a, b, c, d: f(a, b, c)
 
 # Modülün içe aktarmalarını karşılayacak Nox işlevleri: `func0..func4` ile (modül adı, içe aktarma adı, işlev) kaydedilir, sonra `open`/`open_bytes`.
+# 5.6: örnek başına kaynak kotaları. 0 = çalışma zamanı varsayılanı. Güvenilmeyen modüller için `Limits.strict()` kullanın; kendi ayarınız için alanları değiştirin.
+#   fuel          talimat/dallanma yakıtı (varsayılan 2 milyar)       max_pages    bellek sayfası, 64 KiB (varsayılan 4096 = 256 MiB)
+#   max_depth     çağrı derinliği (varsayılan 16384)                  max_table    tablo eleman sayısı (varsayılan 10 milyon)
+#   max_stack     değer yığını yuvası (varsayılan 262144)             max_output   yakalanan stdout/stderr bayt tavanı (varsayılan 16 MiB)
+class Limits:
+    def __init__(self: Limits, fuel: int, max_pages: int, max_depth: int, max_table: int, max_stack: int, max_output: int) -> None:
+        self.fuel = fuel
+        self.max_pages = max_pages
+        self.max_depth = max_depth
+        self.max_table = max_table
+        self.max_stack = max_stack
+        self.max_output = max_output
+
+    def pack(self: Limits) -> list[int]:
+        out: list[int] = [self.fuel, self.max_pages, self.max_depth, self.max_table, self.max_stack, self.max_output]
+        return out
+
+# Çalışma zamanı varsayılanları (tüm alanlar 0).
+def default_limits() -> Limits:
+    return Limits(0, 0, 0, 0, 0, 0)
+
+# Sıkı hazır ayar: 100 milyon yakıt, 16 MiB bellek (256 sayfa), 1024 çağrı derinliği, 100 bin tablo elemanı, 32768 yığın yuvası, 1 MiB yakalanan çıktı.
+def strict_limits() -> Limits:
+    return Limits(100000000, 256, 1024, 100000, 32768, 1048576)
+
 class Host:
     def __init__(self: Host, names: list[str], fns: list[(int, int, int, int) -> int], wasi_args: list[str]) -> None:
         self.names = names
@@ -349,21 +381,46 @@ class Host:
         return self.open_with_limits(path, 0, 0)
 
     def open_with_limits(self: Host, path: str, fuel: int, max_pages: int) -> Instance:
+        no_limits: list[int] = []
         tmp: Instance = Instance(nox_wasm_null_raw(), self.fns)
         tmpcb: Callback[(int, int, int, int, int) -> int] = tmp.cb
         h: ptr = nox_wasm_null_raw()
         try:
-            h = nox_wasm_open_host_raw(path, self.names, self.wasi_args, self.flags, fuel, max_pages, tmpcb)
+            h = nox_wasm_open_host_raw(path, self.names, self.wasi_args, self.flags, fuel, max_pages, no_limits, tmpcb)
         finally:
             tmpcb.close()
         return _wrap(h, path, self.fns)
 
     def open_bytes(self: Host, data: list[int]) -> Instance:
+        no_limits: list[int] = []
         tmp: Instance = Instance(nox_wasm_null_raw(), self.fns)
         tmpcb: Callback[(int, int, int, int, int) -> int] = tmp.cb
         h: ptr = nox_wasm_null_raw()
         try:
-            h = nox_wasm_open_bytes_host_raw(data, self.names, self.wasi_args, self.flags, 0, 0, tmpcb)
+            h = nox_wasm_open_bytes_host_raw(data, self.names, self.wasi_args, self.flags, 0, 0, no_limits, tmpcb)
+        finally:
+            tmpcb.close()
+        return _wrap(h, "<bytes>", self.fns)
+
+    # 5.6: tüm kotaları (`Limits`) uygulayarak açar. `Limits.strict()` güvenilmeyen modüller için hazır sıkı ayardır.
+    def open_limited(self: Host, path: str, lim: Limits) -> Instance:
+        packed: list[int] = lim.pack()
+        tmp: Instance = Instance(nox_wasm_null_raw(), self.fns)
+        tmpcb: Callback[(int, int, int, int, int) -> int] = tmp.cb
+        h: ptr = nox_wasm_null_raw()
+        try:
+            h = nox_wasm_open_host_raw(path, self.names, self.wasi_args, self.flags, 0, 0, packed, tmpcb)
+        finally:
+            tmpcb.close()
+        return _wrap(h, path, self.fns)
+
+    def open_bytes_limited(self: Host, data: list[int], lim: Limits) -> Instance:
+        packed: list[int] = lim.pack()
+        tmp: Instance = Instance(nox_wasm_null_raw(), self.fns)
+        tmpcb: Callback[(int, int, int, int, int) -> int] = tmp.cb
+        h: ptr = nox_wasm_null_raw()
+        try:
+            h = nox_wasm_open_bytes_host_raw(data, self.names, self.wasi_args, self.flags, 0, 0, packed, tmpcb)
         finally:
             tmpcb.close()
         return _wrap(h, "<bytes>", self.fns)
