@@ -14,6 +14,16 @@ KENDİ sürüm başlığı altında (aşağıya SIRAYLA eklenir, EN YENİ EN
 ÜSTTE) gerçek bir git tag'i + GitHub Release olarak yayımlanır; artık
 BİRİKEN, henüz etiketlenmemiş bir `[Yayımlanmamış]` bölümü YOKTUR.
 
+## [2.2.0]
+
+Nox 2.2 kararlı sürümü. İçerik `2.2.0-rc.2` ile aynıdır (yalnızca sürüm numarası ve belge metni değişti). Ayrıntılı özet: `docs/whatsnew/2.2.md`; sayılar ve C karşılaştırması: `benchmarks/RESULTS.md`; açık kalanlar: `project/v2-3-yapilacaklar-2026-11.md`. 2.1 ve 2.0 ile kaynak uyumludur; NNI v1, Plugin API ve NAPI değişmedi.
+
+- **Dil:** variadik fonksiyonlar, dönüş tipsiz `def` (= `None`), yeni builtin'ler, `and`/`or` ile Optional daraltma, parantezli `from m import (...)`, nitelikli `except`.
+- **Performans:** bant tabanlı tembel JSON, stdlib/HTTP/FFI sıcak yol turları (C ile kıyaslı, regresyon kapısı `benchmarks/gate.py`), küçük ikililer, C kaynaklı isteğe bağlı modüller (`nox.zstd`/`lz4`/`xxhash`/`yyjson`/`pcre2`/`brotli`).
+- **Ağ ve güvenlik:** `nox.dns`, `request(..., connect_ip=, ca_file=)`, `configure(bind_address=)`, `nox.crypto` AEAD, Redis okuma zaman aşımı + pipeline, macOS/Windows'ta paylaşılan dinleyiciyle çok çekirdekli ölçek düzeltmesi.
+- **Windows:** `nox.process` çocuğu artık ebeveyn ortamını miras alır (derlenmiş programdan `noxc run` çalışır), `nox.terminal.write_raw` Windows ve wasm'da çalışır.
+- **Bilinen sınırlar (2.3):** iç içe `async def`, `list[Task[T]]`, Redis Cluster, istemci başına `nox.http` havuzu, Windows/WASM için taşınabilir kapanış olayı, PostgreSQL mobil zaman aşımı.
+
 ## [2.2.0-rc.2]
 
 2.2 sürüm adayı, ikinci. rc.1'in CI'ı kırmızıydı ve yayımlanmadı (aşağıdaki hatalar yüzünden); bu sürüm onları ve iki Windows kök nedenini kapatır.
