@@ -19,6 +19,7 @@ extern def nox_signal_install_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_signal_pending_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_signal_take_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_signal_raise_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_signal_host_sleep_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
 
 import nox.time
 
@@ -62,7 +63,9 @@ def wait(sig: int, timeout_ms: int) -> bool:
         step: int = poll
         if step > remaining:
             step = remaining
-        nox.time.sleep_ms(step)
+        # WASM'da (host zamanlayıcısı varsa) uyku host'a askıya alınır ki host sinyal iletebilsin; yerel hedeflerde 0 döner.
+        if nox_signal_host_sleep_raw(step) == 0:
+            nox.time.sleep_ms(step)
         if poll < 10:
             poll = poll * 2
     return False

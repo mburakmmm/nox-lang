@@ -32,6 +32,17 @@ const fakeFetch = async (url, init) => {
       });
       return new Response(stream, { status: 200, headers: { 'x-reply': 'streamed' } });
     }
+    if (u.pathname === '/dns-query') {
+      // DoH (`application/dns-json`) sahte çözümleyici: a.example -> A, v6.example -> AAAA, both.example -> ikisi, bozuk.example -> JSON olmayan gövde, diğerleri NXDOMAIN (Status 3).
+      const name = u.searchParams.get('name');
+      const type = u.searchParams.get('type');
+      const table = { 'a.example': { A: '192.0.2.7' }, 'v6.example': { AAAA: '2001:db8::7' }, 'both.example': { A: '192.0.2.9', AAAA: '2001:db8::9' } };
+      if (name === 'bozuk.example') return new Response('<html>', { status: 200 });
+      if (name === 'slow.example') await new Promise((_, rej) => init.signal && init.signal.addEventListener('abort', () => rej(init.signal.reason)));
+      const hit = table[name] && table[name][type];
+      const answer = hit ? [{ name, type: type === 'A' ? 1 : 28, TTL: 60, data: hit }] : [];
+      return new Response(JSON.stringify({ Status: hit || table[name] ? 0 : 3, Answer: answer }), { status: 200, headers: { 'content-type': 'application/dns-json' } });
+    }
     if (u.pathname === '/slow') await new Promise((r) => setTimeout(r, 100));
     if (u.pathname === '/refuse') throw new TypeError('fetch failed');
     if (u.pathname === '/timeout') await new Promise((_, rej) => init.signal.addEventListener('abort', () => rej(init.signal.reason)));

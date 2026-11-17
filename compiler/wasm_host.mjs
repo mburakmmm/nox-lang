@@ -332,11 +332,33 @@ async function doTcp(req, streams, tcp) {
   if (req.kind === 10) {
     const st = streams.get(req.stream);
     if (!st) return { id: req.id, status: 1, errorKind: -1, headers: emptyBytes, body: emptyBytes };
+    // Okuma zaman aşımı (`headers` alanında `timeout=<ms>`): süre dolarsa durum 2 döner; okuma vaadi `st.pendingRead`de saklanır ve sonraki okuma AYNI vaadi bekler (veri kaybolmaz).
+    const tm = /(?:^|\n)timeout=(\d+)/.exec(String(req.headers));
+    const timeoutMs = tm ? Number(tm[1]) : 0;
     try {
-      const chunk = await st.read(req.arg);
+      if (!st.pendingRead) {
+        st.pendingRead = st.read(req.arg);
+        st.pendingRead.catch(() => {});
+      }
+      const pending = st.pendingRead;
+      let chunk;
+      if (timeoutMs > 0) {
+        let timer;
+        const expired = Symbol('timeout');
+        const timeout = new Promise((r) => {
+          timer = setTimeout(() => r(expired), timeoutMs);
+        });
+        chunk = await Promise.race([pending, timeout]);
+        clearTimeout(timer);
+        if (chunk === expired) return { id: req.id, status: 2, errorKind: -1, headers: emptyBytes, body: emptyBytes };
+      } else {
+        chunk = await pending;
+      }
+      st.pendingRead = null;
       if (chunk === null) return { id: req.id, status: 1, errorKind: -1, headers: emptyBytes, body: emptyBytes };
       return { id: req.id, status: 0, errorKind: -1, headers: emptyBytes, body: chunk };
     } catch (e) {
+      st.pendingRead = null;
       return err(req.id, e);
     }
   }
@@ -821,6 +843,9 @@ async function pumpFetches(instance, fetchFn, inflight, streams, wsCtor, tcpImpl
       const l = server.listeners.get(req.stream);
       server.listeners.delete(req.stream);
       if (l) l.close();
+    } else if (req.kind === 16) {
+      // Zamanlayıcı (`CAP_TIMER`): `req.arg` ms sonra boş yanıt; bu sırada JS olay döngüsü çalışır (sinyal/fetch/TCP olayları işlenir).
+      inflight.set(req.id, new Promise((r) => setTimeout(() => r({ id: req.id, status: 0, errorKind: -1, headers: emptyBytes, body: emptyBytes }), req.arg)));
     } else if (req.kind === 13) {
       inflight.set(req.id, doProc(req, procImpl));
     } else if (req.kind >= 8) {
@@ -1001,11 +1026,15 @@ export async function runNox(wasmBytes, io, opts = {}) {
   if (vfs && vfs.files) vfsPreload(instance, vfs.files);
   const asyncHost = typeof x.nox_host_resume === 'function' && typeof x.nox_host_caps_set === 'function';
   const fetchFn = opts.fetch || null;
-  if (asyncHost && (fetchFn || opts.tcp || opts.process || opts.serve)) x.nox_host_caps_set((fetchFn ? 1 : 0) | (opts.tcp ? 2 : 0) | (opts.process ? 4 : 0) | (opts.serve ? 8 : 0));
+  // Bit 4 (16): host zamanlayıcısı (`kind` 16). Bu host her zaman sağlar; modül yalnızca `nox.signal.wait` uykusunda kullanır.
+  if (asyncHost) x.nox_host_caps_set((fetchFn ? 1 : 0) | (opts.tcp ? 2 : 0) | (opts.process ? 4 : 0) | (opts.serve ? 8 : 0) | 16);
+  // Sinyal iletimi: modül `nox.signal` kullanıyorsa (`nox_host_signal` dışa aktarımı) `opts.signalSource(deliver)` çağrılır; `deliver(sig)` 1 döner (modül `install` etmişti) ya da 0 (kurulu değil).
+  // `signalSource` bir iptal işlevi döner. Gömücü bunu istediği olaya bağlar (ör. Node'da `process.on('SIGTERM')`, tarayıcıda bir düğme / `AbortSignal`).
   let code = 0;
   const streams = new Map();
   const server = { provider: opts.serve || null, queue: [], pending: new Map(), listeners: new Map(), nextId: 1, waiter: null, stopRequested: false };
   if (opts.serveSignal) opts.serveSignal.addEventListener('abort', () => { server.stopRequested = true; if (server.waiter) server.waiter(); });
+  const stopSignals = opts.signalSource && typeof x.nox_host_signal === 'function' ? opts.signalSource((sig) => x.nox_host_signal(sig)) : null;
   try {
     let step = () => x._start();
     const inflight = new Map();
@@ -1034,6 +1063,7 @@ export async function runNox(wasmBytes, io, opts = {}) {
     }
     for (const l of server.listeners.values()) l.close();
     streams.clear();
+    if (typeof stopSignals === 'function') stopSignals();
     if (vfs && vfs.onSave) await vfs.onSave(vfsSnapshot(instance));
   }
   return code;
@@ -1202,6 +1232,27 @@ function takeHostFlags(args) {
   return { dir, allowNet, allowProcess, allowServe, netAllow, processAllow, tcpBridge, rest };
 }
 
+/** Node: SIGINT/SIGTERM/SIGHUP'yi modülün `nox.signal` kurulumlarına iletir (`signalSource`). Modül o sinyali `install` etmemişse (deliver 0 döner) varsayılan davranış uygulanır (süreç sonlanır);
+ * `--allow-serve` ile `serve` zarif kapanışı (`shutdownSignal`) aynı sinyalleri kendisi tüketir, bu yüzden orada yalnızca iletilir. */
+function nodeSignalSource(allowServe) {
+  return (deliver) => {
+    const hs = [];
+    for (const [name, num] of [['SIGINT', 2], ['SIGTERM', 15], ['SIGHUP', 1]]) {
+      const h = () => {
+        if (deliver(num) === 0 && !allowServe) {
+          process.off(name, h);
+          process.kill(process.pid, name);
+        }
+      };
+      process.on(name, h);
+      hs.push([name, h]);
+    }
+    return () => {
+      for (const [n, h] of hs) process.off(n, h);
+    };
+  };
+}
+
 /** SIGINT/SIGTERM'de zarif kapanış için AbortSignal (sunucu modülü `serve` döngüsünden çıkar, program normal biter). */
 function shutdownSignal() {
   const ctrl = new AbortController();
@@ -1249,7 +1300,7 @@ async function nodeMain() {
       wsImpl = restrictWebSocket(wsImpl, np);
     }
     if (processAllow && procImpl) procImpl = restrictProcess(procImpl, processAllow);
-    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs, fetch: fetchImpl, WebSocket: wsImpl, tcp: tcpImpl, process: procImpl, serve: allowServe ? await nodeHttpServer() : null, serveSignal: allowServe ? shutdownSignal() : undefined });
+    process.exitCode = await runNox(bytes, await makeNodeIo(), { vfs, fetch: fetchImpl, WebSocket: wsImpl, tcp: tcpImpl, process: procImpl, serve: allowServe ? await nodeHttpServer() : null, serveSignal: allowServe ? shutdownSignal() : undefined, signalSource: nodeSignalSource(allowServe) });
     return;
   }
 

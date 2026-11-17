@@ -363,7 +363,12 @@ fn parseDataRow(r: *Result, body: []const u8) void {
 const CANCEL_GRACE_MS: u64 = 10_000;
 
 fn nowMs() u64 {
-    if (comptime builtin.cpu.arch.isWasm()) return 0; // wasm host soketlerinde zaman aşımı yok (`tcp_host.waitReadable` hep hazır)
+    if (comptime builtin.cpu.arch.isWasm()) {
+        // wasm32-freestanding: monoton saat host'un `clock_ms(1)` import'udur (host TCP okuma zaman aşımı `tcp_host.waitReadable` ile sağlanır).
+        const wh = @import("../wasm_host.zig");
+        if (comptime wh.is_freestanding_wasm) return @intCast(wh.clock_ms(1));
+        return 0;
+    }
     var ts: std.c.timespec = undefined;
     _ = std.c.clock_gettime(.MONOTONIC, &ts);
     return @as(u64, @intCast(ts.sec)) * 1000 + @as(u64, @intCast(@divTrunc(ts.nsec, std.time.ns_per_ms)));

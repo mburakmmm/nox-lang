@@ -54,6 +54,7 @@ pub const zip_shim = @import("stdlib_shims/zip.zig");
 pub const time_shim = @import("stdlib_shims/time.zig");
 pub const os_shim = @import("stdlib_shims/os.zig");
 pub const dns_shim = @import("stdlib_shims/dns.zig");
+pub const signal_shim = @import("stdlib_shims/signal.zig");
 pub const io_shim = @import("stdlib_shims/io.zig");
 pub const random_shim = @import("stdlib_shims/random.zig");
 pub const crypto_shim = @import("stdlib_shims/crypto.zig");
@@ -108,6 +109,7 @@ comptime {
     _ = time_shim;
     _ = os_shim;
     _ = dns_shim;
+    _ = signal_shim;
     _ = io_shim;
     _ = random_shim;
     _ = crypto_shim;

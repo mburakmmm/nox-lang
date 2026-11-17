@@ -2591,6 +2591,7 @@ pub fn build(b: *std.Build) void {
     wasm_options.addOption([]const u8, "noxc_path", "zig-out/bin/noxc");
     wasm_options.addOption([]const u8, "runner_path", "compiler/wasm_host.mjs");
     wasm_options.addOption([]const u8, "fetch_driver_path", "tests/golden/wasm_fetch_driver.mjs");
+    wasm_options.addOption([]const u8, "signal_driver_path", "tests/golden/wasm_signal_driver.mjs");
     wasm_options.addOption([]const u8, "threads_net_driver_path", "tests/golden/wasm_threads_net_driver.mjs");
     wasm_options.addOption([]const u8, "threads_net_program_path", "tests/golden/wasm_threads_net_program.nox.in");
     wasm_options.addOption([]const u8, "wasm_host_path", "compiler/wasm_host.mjs");

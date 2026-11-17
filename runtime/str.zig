@@ -661,6 +661,68 @@ pub export fn nox_uint_to_str(rt: ?*anyopaque, n: u64) ?[*:0]u8 {
 /// `1.5e-07`); `inf`/`-inf`/`nan`. (Eskiden `print` `%g` (6 anlamlı hane: `0.1+0.2` → `0.3`) ve `str()` `{d}`
 /// (`2.0` → `2`) kullanıyordu — iki yol da Python'dan sapıyor ve birbirinden farklıydı.)
 pub fn formatFloatRepr(out: *[64]u8, f: f64) []const u8 {
+    if (formatFloatReprFast(out, f)) |r| return r;
+    return formatFloatReprSlow(out, f);
+}
+
+const fast_pow10 = [_]f64{ 1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17 };
+
+/// Hızlı yol: `1e-4 <= |f| < 1e15` ve tamsayı olmayan, en çok 15 anlamlı basamakla gidiş-dönüşlü yazılabilen değerler (`0.25`, `12.5`, `0.0125`).
+/// `r = round(|f| * 10^k)` (`r < 2^50`) için `r / 10^k == |f|` (Clinger: `r < 2^53`, `10^k` tam → bölme TAM yuvarlanır); ilk eşleşen en küçük `k` en kısa
+/// rakam dizisidir (`r < 2^50` iken komşu `r`ler aynı çifte yuvarlanamaz, yani eşleşme tektir). Eşleşme yoksa `null` → genel (Zig `{e}`) yol.
+fn formatFloatReprFast(out: *[64]u8, f: f64) ?[]const u8 {
+    const ax = @abs(f);
+    if (!(ax >= 1e-4 and ax < 1e15)) return null;
+    if (ax == @trunc(ax)) return null;
+    var k: usize = 1;
+    var r: u64 = 0;
+    while (k < fast_pow10.len) : (k += 1) {
+        const prod = ax * fast_pow10[k];
+        if (prod >= 1125899906842624.0) return null; // 2^50
+        const rf = @round(prod);
+        if (rf / fast_pow10[k] == ax) {
+            r = @intFromFloat(rf);
+            break;
+        }
+    } else return null;
+    var tmp: [20]u8 = undefined;
+    var i: usize = tmp.len;
+    var v = r;
+    while (v != 0) {
+        i -= 1;
+        tmp[i] = @intCast('0' + v % 10);
+        v /= 10;
+    }
+    const nd = tmp.len - i;
+    var w: usize = 0;
+    if (f < 0) {
+        out[w] = '-';
+        w += 1;
+    }
+    if (nd > k) {
+        const int_len = nd - k;
+        @memcpy(out[w .. w + int_len], tmp[i .. i + int_len]);
+        w += int_len;
+        out[w] = '.';
+        w += 1;
+        @memcpy(out[w .. w + k], tmp[i + int_len ..]);
+        w += k;
+    } else {
+        out[w] = '0';
+        out[w + 1] = '.';
+        w += 2;
+        var z: usize = k - nd;
+        while (z > 0) : (z -= 1) {
+            out[w] = '0';
+            w += 1;
+        }
+        @memcpy(out[w .. w + nd], tmp[i..]);
+        w += nd;
+    }
+    return out[0..w];
+}
+
+fn formatFloatReprSlow(out: *[64]u8, f: f64) []const u8 {
     if (std.math.isNan(f)) return std.fmt.bufPrint(out, "nan", .{}) catch unreachable;
     if (std.math.isInf(f)) return std.fmt.bufPrint(out, "{s}", .{if (f < 0) "-inf" else "inf"}) catch unreachable;
     var sci: [64]u8 = undefined;
@@ -1639,4 +1701,30 @@ test "isAsciiBytes: SIMD blok sınırlarında ve kuyrukta ASCII-dışı baytı y
         b[pos] = 'a';
     }
     try std.testing.expect(isAsciiBytes(""));
+}
+
+test "formatFloatRepr: hızlı yol genel yolla birebir aynı (rastgele ondalıklar + rastgele çiftler)" {
+    var prng = std.Random.DefaultPrng.init(0xF10A7);
+    const rnd = prng.random();
+    var a: [64]u8 = undefined;
+    var b: [64]u8 = undefined;
+    var fast_hits: usize = 0;
+    var n: usize = 0;
+    while (n < 400000) : (n += 1) {
+        var f: f64 = undefined;
+        switch (n % 3) {
+            0 => f = @as(f64, @floatFromInt(rnd.intRangeAtMost(i64, -(1 << 40), 1 << 40))) / fast_pow10[rnd.intRangeAtMost(usize, 0, 9)],
+            1 => f = @as(f64, @floatFromInt(rnd.intRangeAtMost(i64, 1, 100000))) * 0.5 + 0.25,
+            else => f = @bitCast(rnd.int(u64)),
+        }
+        if (formatFloatReprFast(&a, f)) |fast| {
+            fast_hits += 1;
+            try std.testing.expectEqualStrings(formatFloatReprSlow(&b, f), fast);
+        }
+    }
+    try std.testing.expect(fast_hits > 100000);
+    // sınırlar
+    for ([_]f64{ 0.0001, 0.00011, 0.5, 0.1, 0.2, 0.3, 1.1, 99999999999999.9, -0.0001, -123.456, 0.000099999 }) |f| {
+        if (formatFloatReprFast(&a, f)) |fast| try std.testing.expectEqualStrings(formatFloatReprSlow(&b, f), fast);
+    }
 }

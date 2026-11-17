@@ -18,6 +18,14 @@ from nox.redis import Client, Reply, RedisError
 - A non-empty `password` sends `AUTH` (`AUTH username password` when `username` is given); `db > 0` sends `SELECT`.
 - Failure raises `RedisError` with `kind == "connection"`.
 
+`connect_url(url, ca_file="", cert_file="", key_file="") -> Client` connects from a connection URL, the form managed services (Upstash, Redis Cloud, ElastiCache, Azure Cache) hand out:
+
+```text
+c: Client = nox.redis.connect_url("rediss://default:s3cret@db.example.com:6380/2")
+```
+
+`redis://` is plain TCP, `rediss://` starts TLS (system CA store unless `ca_file`). `[user]:password@` becomes `AUTH` (a password alone: `redis://:password@host`; user and password may be percent-encoded, e.g. `%40` for `@`); the path is the database number (`/2`); the port defaults to 6379. Another scheme, an empty host or a non-numeric database raises `RedisError` with `kind == "connection"`; the error message never contains the password.
+
 ## Commands
 
 | Member | Description |
@@ -57,7 +65,7 @@ if not r.is_nil():
 
 ## Notes
 
-- **Read timeout:** off by default (blocking commands such as `XREADGROUP ... BLOCK` legitimately wait; inside a task only that task waits). `set_read_timeout(ms)` bounds every reply; `xreadgroup` adds its own `block_ms` to the bound, so `BLOCK 0` is bounded by the timeout alone. Inside a fiber only that fiber is suspended. Not available on wasm hosts (their socket bridge blocks).
+- **Read timeout:** off by default (blocking commands such as `XREADGROUP ... BLOCK` legitimately wait; inside a task only that task waits). `set_read_timeout(ms)` bounds every reply; `xreadgroup` adds its own `block_ms` to the bound, so `BLOCK 0` is bounded by the timeout alone. Inside a fiber only that fiber is suspended. On `wasm32-freestanding --asyncify` the host bounds the TCP read (the request carries `timeout=<ms>`); a host that ignores that field blocks as before. If the deadline passes, the late bytes stay with the host and are not lost, but the client is closed anyway.
 - RESP2 only; no pub/sub push messages. A single `Client` talks to one node: `MOVED`/`ASK` surface as `RedisError` there; use [`nox.redis_cluster`](redis_cluster.md) for a Redis Cluster.
 - Verified against real `redis-server` for commands, binary payloads, Streams, scripts, `AUTH`/ACL and reconnecting. TLS reuses the client of [`nox.tls`](tls.md) (an untrusted
   certificate is rejected); a successful handshake with a publicly trusted server certificate has not been exercised against a Redis in this repository's tests.

@@ -47,3 +47,14 @@ try:
     print("unreachable")
 except PostgresError as e:
     print("auth failed:", "password authentication failed" in e.message)
+
+# 2.3 madde 3.2: istemci tarafı sorgu zaman aşımı (WASM'da host TCP okuması `timeout=<ms>` ile sınırlanır): süre dolunca CancelRequest, 57014, bağlantı kullanılabilir kalır.
+tc: Connection = nox.postgres.open("host=127.0.0.1 port=__PORT__ user=postgres password=secret dbname=postgres")
+tc.set_query_timeout(300)
+try:
+    tc.query("SELECT pg_sleep(5)")
+    print("unreachable")
+except PostgresError as e:
+    print("timeout:", e.kind, e.is_query_canceled())
+print(tc.query("SELECT 1")[0].get_int(0))
+tc.close()

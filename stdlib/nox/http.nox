@@ -178,7 +178,7 @@ extern def nox_http_response_free(h: ptr) -> None from "zig-out/lib/noxrt.o"
 #   read_timeout_ms   bir istek beklerken/okurken en uzun sessizlik (varsayılan 30000)
 #   max_connections   aynı anda en çok açık bağlantı (varsayılan 4096; aşan bağlantı reddedilir)
 #   drain_timeout_ms  shutdown'da uçuştaki isteklerin bitmesi için en uzun bekleme (varsayılan 10000)
-#   ip_family         `serve_multicore*` dinleyici ailesi (v2.1.32): 0 = IPv4 (varsayılan), 1 = IPv6 dual-stack (`::`, IPv4 istemciler de bağlanır), 2 = yalnızca IPv6; Windows'ta yok sayılır
+#   ip_family         `serve_multicore*` dinleyici ailesi (v2.1.32): 0 = IPv4 (varsayılan), 1 = IPv6 dual-stack (`::`, IPv4 istemciler de bağlanır), 2 = yalnızca IPv6
 # `shutdown()` graceful kapanış başlatır (SIGTERM/SIGINT de aynısını yapar): yeni bağlantı alınmaz, uçuştaki istekler biter, boştaki keep-alive bağlantılar kapanır ve `serve*` DÖNER;
 # çağıran sonrasında temizlik kodunu çalıştırabilir. İkinci sinyal hemen çıkar.
 # v2.0.120 — AYNI adlı birden çok yanıt başlığı (Set-Cookie, Link, Vary ...): `HttpResponse.headers` bir `dict[str, str]` olduğundan değerler `\n` ile birleştirilir ve sunucu HER parçayı
@@ -208,7 +208,7 @@ extern def nox_http_respstream_sleep_raw(ms: int) -> None from "zig-out/lib/noxr
 
 # `bind_address` (v2.1.195): sunucunun dinleyeceği TEK arayüz — bir IPv4/IPv6 literal'i (`"127.0.0.1"`, `"::1"`, `"10.0.0.5"`). Verilmezse (`""`) tüm arayüzler (`0.0.0.0`) dinlenir (eski davranış). Yalnızca-loopback
 # bir metrik/yönetim uç noktası için `configure(bind_address="127.0.0.1")` yeterlidir. Geçersiz bir adres `HttpError` fırlatır (tüm arayüzlere sessizce AÇILMAZ); adres/aile çelişkisi (IPv4 adresi + `ip_family`
-# IPv6) ve Windows'ta IPv6 adresi `serve*`ta dinleyici kurulamaması olarak görünür. `serve*`/`listen*`ten ÖNCE çağrılmalıdır; HTTP/3 UDP dinleyicisi de aynı adrese bağlanır.
+# IPv6) `serve*`ta dinleyici kurulamaması olarak görünür. `serve*`/`listen*`ten ÖNCE çağrılmalıdır; HTTP/3 UDP dinleyicisi de aynı adrese bağlanır.
 def configure(max_body_bytes: int = 0, max_header_bytes: int = 0, read_timeout_ms: int = 0, max_connections: int = 0, drain_timeout_ms: int = 0, ip_family: int = 0, bind_address: str = "") -> None:
     if len(bind_address) > 0:
         if nox_http_config_set_bind_raw(bind_address) == 0:

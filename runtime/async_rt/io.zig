@@ -222,6 +222,26 @@ pub fn formatPeerAddrStorage(storage: *const std.c.sockaddr.storage) PeerAddr {
     return formatPeerAddr(a4.addr, a4.port);
 }
 
+/// Windows `accept()` için 128 baytlık adres tamponu (`SOCKADDR_STORAGE`): IPv4 (`SOCKADDR_IN`, 16 bayt) ve IPv6 (`SOCKADDR_IN6`, 28 bayt) peer'leri aynı tamponla alınır
+/// (2.3 madde 2.8: IPv6 dinleyici). Eskiden 16 baytlık `sockaddr.in` verilirdi; bir IPv6 peer `WSAEFAULT` ile `accept`i düşürürdü.
+pub const WinPeerStorage = extern struct {
+    family: u16 = 0,
+    data: [126]u8 = @splat(0),
+};
+
+/// `WinPeerStorage`ı `a.b.c.d:port` / `[addr]:port` olarak biçimlendirir (IPv4-eşlemeli IPv6 adresleri IPv4 biçimine normalleştirilir; `formatPeerAddrStorage` ile aynı kurallar).
+pub fn formatPeerAddrWin(st: *const WinPeerStorage) PeerAddr {
+    const af_inet6: u16 = 23;
+    const port_be: u16 = @bitCast([2]u8{ st.data[0], st.data[1] });
+    if (st.family == af_inet6) {
+        var a6: [16]u8 = undefined;
+        @memcpy(&a6, st.data[6..22]);
+        return formatPeerAddr6(a6, port_be);
+    }
+    const ip_be: u32 = @bitCast([4]u8{ st.data[2], st.data[3], st.data[4], st.data[5] });
+    return formatPeerAddr(ip_be, port_be);
+}
+
 pub fn formatPeerAddr6(addr: [16]u8, port_be: u16) PeerAddr {
     const port = std.mem.bigToNative(u16, port_be);
     var is_mapped = true;
@@ -310,14 +330,14 @@ pub fn nonBlockingAccept(scheduler: *Scheduler, listen_fd: posix.fd_t) !AcceptRe
     setNonBlocking(listen_fd);
     while (true) {
         if (builtin.os.tag == .windows) {
-            var waddr: std.os.windows.ws2_32.sockaddr.in = undefined;
-            var wlen: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+            var waddr: WinPeerStorage = .{};
+            var wlen: i32 = @sizeOf(WinPeerStorage);
             const rc = WinSock.accept(@intFromPtr(listen_fd), &waddr, &wlen);
             if (rc != WinSock.INVALID_SOCKET) {
                 const conn_fd: posix.fd_t = @ptrFromInt(rc);
                 setTcpNodelay(conn_fd);
                 setNonBlocking(conn_fd);
-                return .{ .fd = conn_fd, .peer_addr = formatPeerAddr(waddr.addr, waddr.port) };
+                return .{ .fd = conn_fd, .peer_addr = formatPeerAddrWin(&waddr) };
             }
             if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
                 scheduler.suspendForIo(listen_fd, .read);
@@ -367,14 +387,14 @@ pub fn nonBlockingAcceptWithTimeout(scheduler: *Scheduler, listen_fd: posix.fd_t
     setNonBlocking(listen_fd);
     while (true) {
         if (builtin.os.tag == .windows) {
-            var waddr: std.os.windows.ws2_32.sockaddr.in = undefined;
-            var wlen: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+            var waddr: WinPeerStorage = .{};
+            var wlen: i32 = @sizeOf(WinPeerStorage);
             const rc = WinSock.accept(@intFromPtr(listen_fd), &waddr, &wlen);
             if (rc != WinSock.INVALID_SOCKET) {
                 const conn_fd: posix.fd_t = @ptrFromInt(rc);
                 setTcpNodelay(conn_fd);
                 setNonBlocking(conn_fd);
-                return .{ .fd = conn_fd, .peer_addr = formatPeerAddr(waddr.addr, waddr.port) };
+                return .{ .fd = conn_fd, .peer_addr = formatPeerAddrWin(&waddr) };
             }
             if (WinSock.WSAGetLastError() == WinSock.WSAEWOULDBLOCK) {
                 if (scheduler.suspendForIoOrTimeout(listen_fd, .read, timeout_ms) == .timed_out) return error.Timeout;

@@ -44,6 +44,18 @@ extern def nox_json_tape_object_key(doc: str, idx: int, i: int) -> str from "zig
 extern def nox_json_tape_object_value(doc: str, idx: int, i: int, e_list: list[str], e_str: str) -> JsonValue from "zig-out/lib/noxrt.o" with_rt
 extern def nox_json_tape_find(doc: str, idx: int, key: str) -> int from "zig-out/lib/noxrt.o"
 extern def nox_json_tape_dump(doc: str, idx: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_json_tape_pos_kind(doc: str, pos: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_pos_len(doc: str, pos: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_pos_at(doc: str, pos: int, i: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_pos_int_fast(doc: str, pos: int) -> float from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_pos_key_is(doc: str, pos: int, i: int, key: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_pos_find(doc: str, pos: int, key: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_pos_num(doc: str, pos: int) -> float from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_pos_bool(doc: str, pos: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_pos_has_text(doc: str, pos: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_json_tape_pos_str(doc: str, pos: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_json_tape_pos_node(doc: str, pos: int, e_list: list[str], e_str: str) -> JsonValue from "zig-out/lib/noxrt.o" with_rt
+extern def nox_json_tape_pos_dump(doc: str, pos: int) -> str from "zig-out/lib/noxrt.o" with_rt
 
 def parse(s: str) -> JsonValue:
     v: JsonValue = nox_json_decode_raw(s)
@@ -199,6 +211,137 @@ def object_value(v: JsonValue, i: int) -> JsonValue:
             return v.vals[i]
         return nox_json_tape_object_value(v.doc, v.tpos - 1, j, v.keys, v.s)
     return v.vals[i]
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------------
+# Konum tabanlı gezinme (2.3 Aşama 5.2): `parse`ın ürettiği belge bandındaki girdi konumları (`int`) üzerinden, her adımda `JsonValue` NESNESİ ve anahtar `str`si
+# üretmeden gezinir. Büyük belgelerde `array_get`/`object_key`/`object_value`dan birkaç kat hızlıdır (düğüm başına ARC tahsisi yok); mevcut düğüm API'sinin yerine geçmez.
+#
+#     p: int = nox.json.pos_root(v)
+#     for i in range(nox.json.pos_len(v, p)):
+#         item: int = nox.json.pos_at(v, p, i)
+#         id: int = nox.json.pos_int(v, nox.json.pos_get(v, item, "id"))
+#
+# `v`: konumların ait olduğu belgenin herhangi bir bant-destekli düğümü (genellikle `parse` sonucu); konumlar yalnızca o belgede geçerlidir. Geçersiz/yabancı bir konum bellek
+# hatası vermez: `JsonError("invalid position")`. Kök bir skalerse (`parse("5")`) ya da düğüm bant-destekli değilse konum yoktur; `as_*` kullanın.
+def pos_root(v: JsonValue) -> int:
+    if v.tpos > 0:
+        return v.tpos - 1
+    raise JsonError("this value has no document positions (a scalar or hand-built node): use as_*/array_get/get")
+
+def _pos_check(v: JsonValue, p: int) -> int:
+    k: int = nox_json_tape_pos_kind(v.doc, p)
+    if k < 0:
+        raise JsonError("invalid position")
+    return k
+
+# Konumdaki değerin türü: 0 null, 1 bool, 2 sayı, 3 dize, 4 dizi, 5 nesne (`JsonValue.kind` ile aynı).
+def pos_kind(v: JsonValue, p: int) -> int:
+    return _pos_check(v, p)
+
+# Dizi/nesne konumunun eleman/çift sayısı.
+def pos_len(v: JsonValue, p: int) -> int:
+    n: int = nox_json_tape_pos_len(v.doc, p)
+    if n < 0:
+        _pos_check(v, p)
+        raise JsonError("not an array or object")
+    return n
+
+# Dizinin `i`. elemanının ya da nesnenin `i`. çiftinin DEĞERİNİN konumu (`i` negatif olabilir: sondan, `array_get` gibi).
+def pos_at(v: JsonValue, p: int, i: int) -> int:
+    r: int = nox_json_tape_pos_at(v.doc, p, i)
+    if r >= 0:
+        return r
+    if r == -2:
+        raise IndexError("JSON position index out of range")
+    _pos_check(v, p)
+    raise JsonError("not an array or object")
+
+# Nesnenin `i`. çiftinin anahtarı (yeni `str` üretir; yalnızca eşitlik için `pos_key_is` kullanın).
+def pos_key(v: JsonValue, p: int, i: int) -> str:
+    n: int = pos_len(v, p)
+    if _pos_check(v, p) != 5:
+        raise JsonError("not an object")
+    j: int = i
+    if j < 0:
+        j = j + n
+    if j < 0 or j >= n:
+        raise IndexError("JSON position index out of range")
+    return nox_json_tape_object_key(v.doc, p, j)
+
+# Nesnenin `i`. çiftinin anahtarı `key`e eşit mi (ayırma yok).
+def pos_key_is(v: JsonValue, p: int, i: int, key: str) -> bool:
+    r: int = nox_json_tape_pos_key_is(v.doc, p, i, key)
+    if r < 0:
+        _pos_check(v, p)
+        raise JsonError("not an object or index out of range")
+    return r == 1
+
+# Nesnede `key` anahtarının DEĞERİNİN konumu; yoksa `JsonError("missing field ...")`.
+def pos_get(v: JsonValue, p: int, key: str) -> int:
+    r: int = nox_json_tape_pos_find(v.doc, p, key)
+    if r < 0:
+        if _pos_check(v, p) != 5:
+            raise JsonError("not an object")
+        raise JsonError("missing field '" + key + "'")
+    return r
+
+# `pos_get`, ama anahtar yoksa -1 (nesne değilse yine JsonError).
+def pos_find(v: JsonValue, p: int, key: str) -> int:
+    r: int = nox_json_tape_pos_find(v.doc, p, key)
+    if r < 0 and _pos_check(v, p) != 5:
+        raise JsonError("not an object")
+    return r
+
+def pos_bool(v: JsonValue, p: int) -> bool:
+    r: int = nox_json_tape_pos_bool(v.doc, p)
+    if r < 0:
+        _pos_check(v, p)
+        raise JsonError("not a boolean")
+    return r == 1
+
+def pos_number(v: JsonValue, p: int) -> float:
+    n: float = nox_json_tape_pos_num(v.doc, p)
+    if n != n:
+        _pos_check(v, p)
+        raise JsonError("not a number")
+    return n
+
+# `as_int` ile aynı kurallar (tam büyük tamsayılar dahil). Hızlı yol: metinsiz tamsayı değerli sayı tek çağrıyla.
+def pos_int(v: JsonValue, p: int) -> int:
+    f: float = nox_json_tape_pos_int_fast(v.doc, p)
+    if f == f:
+        fi: int = int(f)
+        if float(fi) == f:
+            return fi
+    if _pos_check(v, p) != 2:
+        raise JsonError("not a number")
+    if nox_json_tape_pos_has_text(v.doc, p) == 1:
+        t: str = nox_json_tape_pos_str(v.doc, p)
+        if not ("." in t or "e" in t or "E" in t):
+            try:
+                return int(t)
+            except ValueError as e:
+                raise JsonError("integer out of range: " + t)
+    n: float = nox_json_tape_pos_num(v.doc, p)
+    i: int = int(n)
+    if float(i) != n:
+        raise JsonError("not an integer")
+    return i
+
+def pos_str(v: JsonValue, p: int) -> str:
+    if _pos_check(v, p) != 3:
+        raise JsonError("not a string")
+    return nox_json_tape_pos_str(v.doc, p)
+
+# Konumdaki değeri `JsonValue` düğümüne dönüştürür (konum API'sinden düğüm API'sine geçiş).
+def pos_value(v: JsonValue, p: int) -> JsonValue:
+    _pos_check(v, p)
+    return nox_json_tape_pos_node(v.doc, p, v.keys, v.s)
+
+# Konumdaki alt ağacın kompakt JSON metni.
+def pos_dump(v: JsonValue, p: int) -> str:
+    _pos_check(v, p)
+    return nox_json_tape_pos_dump(v.doc, p)
 
 # Faz II devamı (bkz. nox-teknik-spesifikasyon.md §3.67, test kapsamı
 # genişletmesi sırasında BULUNAN, GERÇEK bir düzeltme) — ÖNCEKİ sürüm

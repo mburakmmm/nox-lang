@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # `build.zig.zon`'un `version` alanını semver kuralına göre artırır (bkz.
-# VERSIONING.md §4 "toplu (batch) sürümleme": yalnızca bir iş paketi/aşama
-# bitince çalıştırılır, ara commit'lerde DEĞİL). `-dev` son eki KULLANILMIYOR.
+# VERSIONING.md §4: commit'ler TOPLU atılır; bu betik yalnızca bir iş paketi/aşama
+# bitip sürüm commit'i atılacağında çalıştırılır). `-dev` son eki KULLANILMIYOR.
 #
 # Kullanım: scripts/bump_version.sh {patch|minor|major}
 #   patch — hata düzeltmesi/performans/dokümantasyon (VERSIONING.md §1)

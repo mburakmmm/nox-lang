@@ -481,6 +481,123 @@ test "wasm32-freestanding --asyncify: nox.http host fetch'ine dayanır (sıralı
     try std.testing.expectEqualStrings(fetch_expected, out);
 }
 
+// 2.3 madde 2.7: WASM'da `nox.dns.resolve(host, timeout, doh_url)` host `fetch`i üzerinden DoH (`application/dns-json`) ile çözer. `doh_url` verilmezse "desteklenmiyor" döner;
+// IP literal ve `localhost` ağ kullanmaz; geçersiz karakterli ad istek atılmadan reddedilir.
+const dns_doh_program =
+    \\import nox.dns
+    \\from nox.dns import DnsError, DnsTimeoutError
+    \\
+    \\doh: str = "https://doh.example/dns-query"
+    \\print(nox.dns.resolve("a.example", 0, doh))
+    \\print(nox.dns.resolve("v6.example", 0, doh))
+    \\print(nox.dns.resolve("both.example", 0, doh))
+    \\print(nox.dns.resolve("203.0.113.7", 0, doh))
+    \\print(nox.dns.resolve("localhost", 0, doh))
+    \\try:
+    \\    nox.dns.resolve("missing.example", 0, doh)
+    \\except DnsError as e:
+    \\    print("missing:", e.message)
+    \\try:
+    \\    nox.dns.resolve("bozuk.example", 0, doh)
+    \\except DnsError as e:
+    \\    print("garbled:", e.message)
+    \\try:
+    \\    nox.dns.resolve("a&type=TXT", 0, doh)
+    \\except DnsError as e:
+    \\    print("bad name:", e.message)
+    \\try:
+    \\    nox.dns.resolve("slow.example", 30, doh)
+    \\except DnsTimeoutError as e:
+    \\    print("timeout:", e.message)
+    \\try:
+    \\    nox.dns.resolve("a.example")
+    \\except DnsError as e:
+    \\    print("no doh:", e.message)
+    \\
+;
+
+const dns_doh_expected =
+    \\['192.0.2.7']
+    \\['2001:db8::7']
+    \\['192.0.2.9', '2001:db8::9']
+    \\['203.0.113.7']
+    \\['127.0.0.1', '::1']
+    \\missing: could not resolve host: missing.example
+    \\garbled: could not resolve host: bozuk.example
+    \\bad name: could not resolve host: a&type=TXT
+    \\timeout: dns lookup timed out: slow.example
+    \\no doh: dns resolution is not supported on this target: a.example
+    \\exit 0
+    \\max concurrent 1
+    \\fetch GET /dns-query x-test=- body=-
+    \\fetch GET /dns-query x-test=- body=-
+    \\fetch GET /dns-query x-test=- body=-
+    \\fetch GET /dns-query x-test=- body=-
+    \\fetch GET /dns-query x-test=- body=-
+    \\fetch GET /dns-query x-test=- body=-
+    \\fetch GET /dns-query x-test=- body=-
+    \\fetch GET /dns-query x-test=- body=-
+    \\fetch GET /dns-query x-test=- body=-
+    \\fetch GET /dns-query x-test=- body=-
+    \\fetch GET /dns-query x-test=- body=-
+    \\fetch GET /dns-query x-test=- body=-
+    \\
+;
+
+test "wasm32-freestanding --asyncify: nox.dns DoH ile host fetch'i üzerinden çözümler" {
+    const out = (try runFetchDriver(dns_doh_program, "allow")) orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings(dns_doh_expected, out);
+}
+
+// 2.3 madde 3.9: WASM host iptali. Host `nox_host_signal(sig)` ile SIGTERM/SIGINT iletir (yeni bir import yok); `nox.signal.wait` uykusu host zamanlayıcısında askıya alınır, böylece JS olay döngüsü
+// çalışır. `install` edilmemiş sinyal (burada SIGINT) iletildiğinde host 0 alır (varsayılan davranışı kendisi uygular); SIGUSR1/2 WASM'da yoktur.
+const signal_program =
+    \\import nox.signal
+    \\
+    \\term: int = nox.signal.sigterm()
+    \\print(nox.signal.install(term), nox.signal.install(nox.signal.sigusr1()))
+    \\print(nox.signal.pending(term), nox.signal.wait(term, 30))
+    \\print(nox.signal.send_self(term), nox.signal.wait(term, 1000))
+    \\print("waiting for the host")
+    \\print(nox.signal.wait(term, 5000), nox.signal.pending(term))
+    \\
+;
+
+const signal_expected =
+    \\True False
+    \\False False
+    \\True True
+    \\waiting for the host
+    \\True False
+    \\exit 0
+    \\deliver SIGINT -> 0
+    \\deliver SIGTERM -> 1
+    \\
+;
+
+test "wasm32-freestanding --asyncify: nox.signal host sinyalini nox_host_signal ile alır (wait host zamanlayıcısında askıya alınır)" {
+    const allocator = std.testing.allocator;
+    const outcome = try wasm_helpers.buildAndRunRepeated(allocator, build_options.noxc_path, build_options.signal_driver_path, .freestanding_asyncify, signal_program, &.{}, 1);
+    switch (outcome) {
+        .tool_missing => return error.SkipZigTest,
+        .rejected, .build_failed => |msg| {
+            defer allocator.free(msg);
+            std.debug.print("signal: derleme basarisiz: {s}\n", .{msg});
+            return error.BuildFailed;
+        },
+        .ran => |r| {
+            defer allocator.free(r.stderr);
+            defer allocator.free(r.stdout);
+            if (r.term != .exited or r.term.exited != 0) {
+                std.debug.print("signal: surucu basarisiz: {s}\n{s}\n", .{ r.stderr, r.stdout });
+                return error.ProgramFailed;
+            }
+            try std.testing.expectEqualStrings(signal_expected, r.stdout);
+        },
+    }
+}
+
 test "wasm32-freestanding --asyncify: host ağ yeteneğini vermezse HttpCapabilityError" {
     const src =
         \\import nox.http
@@ -1027,7 +1144,7 @@ test "wasm32-freestanding --asyncify: nox.redis gercek redis-server'a karsi (kom
         return error.ProgramFailed;
     }
     // Beklenen çıktılar yerel testlerle ortaktır (`scripts/redis_probe.py`); sürücü her programın sonuna "exit N" ekler.
-    try std.testing.expectEqualStrings(@embedFile("redis_program.expected") ++ "exit 0\n" ++ @embedFile("redis_tls_program.expected") ++ "exit 0\n", res.stdout);
+    try std.testing.expectEqualStrings(@embedFile("redis_program.expected") ++ "exit 0\n" ++ @embedFile("redis_timeout_program.expected") ++ "exit 0\n" ++ @embedFile("redis_tls_program.expected") ++ "exit 0\n", res.stdout);
 }
 
 // v2.1.46: tarayıcı yolu — ham TCP `compiler/wasm_tcp_bridge.mjs` WebSocket→TCP köprüsünden geçer (`--tcp-bridge`, `browserTcp`): aynı redis programları aynı çıktıyı verir (TLS köprüde sonlanır);
@@ -1049,6 +1166,6 @@ test "wasm32-freestanding --asyncify: nox.redis WebSocket-TCP koprusu uzerinden 
         std.debug.print("redis kopru surucu basarisiz: {s}\n{s}\n", .{ res.stderr, res.stdout });
         return error.ProgramFailed;
     }
-    try std.testing.expectEqualStrings(@embedFile("redis_program.expected") ++ "exit 0\n" ++ @embedFile("redis_tls_program.expected") ++ "exit 0\n" ++
+    try std.testing.expectEqualStrings(@embedFile("redis_program.expected") ++ "exit 0\n" ++ @embedFile("redis_timeout_program.expected") ++ "exit 0\n" ++ @embedFile("redis_tls_program.expected") ++ "exit 0\n" ++
         "bridge disallowed host: 403\nbridge wrong token: 403\nbridge missing port: 400\nbridge allowed: 101\n", res.stdout);
 }

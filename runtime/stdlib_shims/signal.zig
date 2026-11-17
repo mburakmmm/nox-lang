@@ -15,6 +15,31 @@ const supported = switch (builtin.os.tag) {
 
 const is_win = builtin.os.tag == .windows;
 
+// WASM host iptali (2.3 madde 3.9): `wasm32-freestanding --asyncify`da host, modülün `nox_host_signal(sig)` dışa aktarımını çağırarak SIGINT (2) / SIGTERM (15) / SIGHUP (1) iletir; yeni bir
+// `nox_host` import'u yoktur. Sinyal yalnızca `install` edilmişse bayrağı kurar (kurulu değilse 0 döner: host varsayılan davranışı uygular). `wait`in uykusu host zamanlayıcısıyla askıya alınır
+// (`CAP_TIMER`), böylece JS olay döngüsü çalışır ve sinyal gelebilir.
+const wasm_options = if (builtin.cpu.arch.isWasm()) @import("wasm_options") else struct {
+    pub const asyncify = false;
+};
+const wasm_sig = builtin.cpu.arch.isWasm() and builtin.os.tag == .freestanding and wasm_options.asyncify;
+const sig_fetch = if (wasm_sig) @import("http_fetch.zig") else struct {};
+var g_wasm_installed: [MAX_SIG]bool = [_]bool{false} ** MAX_SIG;
+
+const WasmHostExports = if (wasm_sig) struct {
+    /// Host sinyal iletir. Dönüş: 1 = modül `install` etmişti ve bayrak kuruldu; 0 = kurulu değil (host varsayılan davranışı uygular, ör. süreci sonlandırır).
+    export fn nox_host_signal(sig: i32) callconv(.c) i32 {
+        if (sig <= 0 or sig >= MAX_SIG) return 0;
+        const n: usize = @intCast(sig);
+        if (!g_wasm_installed[n]) return 0;
+        g_flags[n].store(true, .release);
+        return 1;
+    }
+} else struct {};
+
+comptime {
+    _ = WasmHostExports;
+}
+
 // Windows (v2.2.2, Ember NX-004): POSIX sinyali yoktur ama KONSOL OLAYLARI vardır; `SIGINT`/`SIGTERM`/`SIGHUP` (C `signal.h` numaraları 2/15/1) bunlara eşlenir:
 // Ctrl+C → SIGINT, Ctrl+Break ve konsol kapatma/oturum kapatma/kapanış olayları → SIGTERM. `SIGUSR1`/`SIGUSR2` Windows'ta yoktur (0). `raise`, işleyici kurulu sinyal için bayrağı doğrudan kurar
 // (`send_self` testleri ve "kendi kendini durdur" kalıbı çalışır). Konsol yoksa (hizmet/arka plan) olay gelmez; Windows HİZMET durdurma (SCM) bu soyutlamanın dışındadır.
@@ -54,6 +79,12 @@ fn validSig(sig: i64) ?usize {
 
 /// `which`: 0 = SIGINT, 1 = SIGTERM, 2 = SIGHUP, 3 = SIGUSR1, 4 = SIGUSR2 → platformun sinyal numarası; desteklenmiyorsa 0.
 pub export fn nox_signal_number_raw(which: i64) i64 {
+    if (comptime wasm_sig) return switch (which) {
+        0 => 2,
+        1 => 15,
+        2 => 1,
+        else => 0,
+    };
     if (comptime is_win) return switch (which) {
         0 => WIN_SIGINT,
         1 => WIN_SIGTERM,
@@ -73,6 +104,12 @@ pub export fn nox_signal_number_raw(which: i64) i64 {
 
 /// Sinyali bayrak-kuran işleyiciye bağlar. Başarılıysa 1.
 pub export fn nox_signal_install_raw(sig: i64) i32 {
+    if (comptime wasm_sig) {
+        const n = validSig(sig) orelse return 0;
+        if (n != 1 and n != 2 and n != 15) return 0;
+        g_wasm_installed[n] = true;
+        return 1;
+    }
     if (comptime is_win) {
         const n = validSig(sig) orelse return 0;
         if (n != WIN_SIGINT and n != WIN_SIGTERM and n != WIN_SIGHUP) return 0;
@@ -97,6 +134,17 @@ pub export fn nox_signal_install_raw(sig: i64) i32 {
     return 1;
 }
 
+/// `wait`in uykusu: wasm32-freestanding --asyncify ve host zamanlayıcısı (`CAP_TIMER`) varsa program `ms` boyunca host'a askıya alınır (JS olay döngüsü sinyal iletebilir) ve 1 döner;
+/// aksi halde (yerel hedefler, eski host) 0 döner ve çağıran normal uykuya düşer.
+pub export fn nox_signal_host_sleep_raw(ms: i64) i64 {
+    if (comptime !wasm_sig) return 0;
+    if (!sig_fetch.timerAvailable()) return 0;
+    const req = sig_fetch.submit(.{ .kind = .sleep, .timeout_ms = if (ms < 1) 1 else ms }, false) orelse return 0;
+    const resp = sig_fetch.waitFor(req) orelse return 0;
+    sig_fetch.responseFree(resp);
+    return 1;
+}
+
 /// Bayrak kurulu mu? (Tüketmez.)
 pub export fn nox_signal_pending_raw(sig: i64) i32 {
     const n = validSig(sig) orelse return 0;
@@ -111,6 +159,12 @@ pub export fn nox_signal_take_raw(sig: i64) i32 {
 
 /// Bu sürece `sig` sinyalini gönderir (testler ve kendi kendini durdurma için). Başarılıysa 1.
 pub export fn nox_signal_raise_raw(sig: i64) i32 {
+    if (comptime wasm_sig) {
+        const n = validSig(sig) orelse return 0;
+        if (!g_wasm_installed[n]) return 0;
+        g_flags[n].store(true, .release);
+        return 1;
+    }
     if (comptime is_win) {
         const n = validSig(sig) orelse return 0;
         if (!g_win_installed[n].load(.acquire)) return 0;

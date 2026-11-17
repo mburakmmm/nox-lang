@@ -3921,45 +3921,52 @@ export function w $nox_signal_wait(l %rt, l %p_sig, l %p_timeout_ms) {
     jmp @if_end20
 @if_end20
     %t33 =l loadl %t5
-    storel %t33, %t7
-    %t34 =l loadl %t7
-    call $nox_time_sleep_ms_raw(l %t34)
-    jmp @inline_done22
-@inline_done22
-    %t35 =l loadl %t3
-    %t36 =w csltl %t35, 10
-    jnz %t36, @if_then24, @if_end23
-@if_then24
-    %t37 =l loadl %t3
-    %t38 =l mul %t37, 2
-    storel %t38, %t3
-    jmp @if_end23
-@if_end23
+    %t34 =l call $nox_signal_host_sleep_raw(l %t33)
+    %t35 =w ceql %t34, 0
+    jnz %t35, @if_then23, @if_end22
+@if_then23
+    %t36 =l loadl %t5
+    storel %t36, %t7
+    %t37 =l loadl %t7
+    call $nox_time_sleep_ms_raw(l %t37)
+    jmp @inline_done24
+@inline_done24
+    jmp @if_end22
+@if_end22
+    %t38 =l loadl %t3
+    %t39 =w csltl %t38, 10
+    jnz %t39, @if_then26, @if_end25
+@if_then26
+    %t40 =l loadl %t3
+    %t41 =l mul %t40, 2
+    storel %t41, %t3
+    jmp @if_end25
+@if_end25
     jmp @while_cond5
 @while_end7
-    %t39 =l loadl %t2
-    %t40 =w ceql %t39, 0
-    jnz %t40, @release_skip26, @release25
-@release25
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t39, l $nox_time_Instant_release)
-    jmp @release_done27
-@release_skip26
-    jmp @release_done27
-@release_done27
+    %t42 =l loadl %t2
+    %t43 =w ceql %t42, 0
+    jnz %t43, @release_skip28, @release27
+@release27
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t42, l $nox_time_Instant_release)
+    jmp @release_done29
+@release_skip28
+    jmp @release_done29
+@release_done29
     storel 0, %t2
     ret 0
-@after_return28
-    %t41 =l loadl %t2
-    %t42 =w ceql %t41, 0
-    jnz %t42, @release_skip30, @release29
-@release29
-    call $nox_rc_release_enqueue_fixed(l %rt, l %t41, l $nox_time_Instant_release)
-    jmp @release_done31
-@release_skip30
-    jmp @release_done31
-@release_done31
+@after_return30
+    %t44 =l loadl %t2
+    %t45 =w ceql %t44, 0
+    jnz %t45, @release_skip32, @release31
+@release31
+    call $nox_rc_release_enqueue_fixed(l %rt, l %t44, l $nox_time_Instant_release)
+    jmp @release_done33
+@release_skip32
+    jmp @release_done33
+@release_done33
     storel 0, %t2
-@fn_end32
+@fn_end34
     ret 0
 }
 export function $killer(l %rt, l %p_sig) {

@@ -123,9 +123,7 @@ class Stack[T]:
         self.items = []
 
     def push(self: Stack, v: T) -> None:
-        items: list[T] = self.items
-        items.append(v)
-        self.items = items
+        self.items.append(v)
 
     def pop(self: Stack) -> T:
         return self.items.pop()
@@ -152,15 +150,14 @@ class Queue[T]:
         self.outbox = []
 
     def push(self: Queue, v: T) -> None:
-        inbox: list[T] = self.inbox
-        inbox.append(v)
-        self.inbox = inbox
+        self.inbox.append(v)
 
+    # `inbox`ın TAMAMI tek `reverse()` ile `outbox`a taşınır (yalnızca `outbox` boşken çağrılır).
     def _shift(self: Queue) -> None:
-        outbox: list[T] = self.outbox
-        while len(self.inbox) > 0:
-            outbox.append(self.inbox.pop())
-        self.outbox = outbox
+        moved: list[T] = self.inbox
+        moved.reverse()
+        self.outbox = moved
+        self.inbox = []
 
     def pop(self: Queue) -> T:
         if len(self.outbox) == 0:
@@ -191,26 +188,24 @@ class Deque[T]:
         self.back = []
 
     def push_front(self: Deque, v: T) -> None:
-        front: list[T] = self.front
-        front.append(v)
-        self.front = front
+        self.front.append(v)
 
     def push_back(self: Deque, v: T) -> None:
-        back: list[T] = self.back
-        back.append(v)
-        self.back = back
+        self.back.append(v)
 
+    # Boşalan uç için öbür uçtaki TÜM elemanlar tek `reverse()` ile (eleman eleman pop/append değil) taşınır: sıra korunur, maliyet tek bellek taraması.
+    # Yalnızca ilgili uç BOŞKEN çağrılır (`pop_*`/`peek_*`), bu yüzden hedef liste doğrudan değiştirilir.
     def _drain_back_to_front(self: Deque) -> None:
-        front: list[T] = self.front
-        while len(self.back) > 0:
-            front.append(self.back.pop())
-        self.front = front
+        moved: list[T] = self.back
+        moved.reverse()
+        self.front = moved
+        self.back = []
 
     def _drain_front_to_back(self: Deque) -> None:
-        back: list[T] = self.back
-        while len(self.front) > 0:
-            back.append(self.front.pop())
-        self.back = back
+        moved: list[T] = self.front
+        moved.reverse()
+        self.back = moved
+        self.front = []
 
     def pop_front(self: Deque) -> T:
         if len(self.front) == 0:
@@ -276,16 +271,15 @@ class Set[T]:
         h: int = __nox_hash(v)
         if _hx_find_h(self._items, self._slots, v, h) >= 0:
             return
-        items: list[T] = self._items
-        items.append(v)
-        self._items = items
-        if len(items) * 2 > len(self._slots):
+        self._items.append(v)
+        n: int = len(self._items)
+        if n * 2 > len(self._slots):
             if self._ndead > 0:
                 self._compact()
             else:
-                self._slots = _hx_rebuild(items, _hx_cap_for(len(items), len(self._slots)))
+                self._slots = _hx_rebuild(self._items, _hx_cap_for(n, len(self._slots)))
         else:
-            _hx_place(self._slots, h, len(items) - 1)
+            _hx_place(self._slots, h, n - 1)
 
     def remove(self: Set, v: T) -> bool:
         pos: int = _hx_find_slot(self._items, self._slots, v)
@@ -369,16 +363,13 @@ class Counter[T]:
         h: int = __nox_hash(v)
         idx: int = _hx_find_h(self._keys, self._slots, v, h)
         if idx < 0:
-            keys: list[T] = self._keys
-            counts: list[int] = self._counts
-            keys.append(v)
-            counts.append(1)
-            self._keys = keys
-            self._counts = counts
-            if len(keys) * 2 > len(self._slots):
-                self._slots = _hx_rebuild(keys, _hx_cap_for(len(keys), len(self._slots)))
+            self._keys.append(v)
+            self._counts.append(1)
+            n: int = len(self._keys)
+            if n * 2 > len(self._slots):
+                self._slots = _hx_rebuild(self._keys, _hx_cap_for(n, len(self._slots)))
             else:
-                _hx_place(self._slots, h, len(keys) - 1)
+                _hx_place(self._slots, h, n - 1)
         else:
             self._counts[idx] = self._counts[idx] + 1
 
@@ -452,22 +443,17 @@ class OrderedDict[K, V]:
         if idx >= 0:
             self._values[idx] = v
         else:
-            keys: list[K] = self._keys
-            values: list[V] = self._values
-            dead: list[bool] = self._dead
-            keys.append(k)
-            values.append(v)
-            dead.append(False)
-            self._keys = keys
-            self._values = values
-            self._dead = dead
-            if len(keys) * 2 > len(self._slots):
+            self._keys.append(k)
+            self._values.append(v)
+            self._dead.append(False)
+            n: int = len(self._keys)
+            if n * 2 > len(self._slots):
                 if self._ndead > 0:
                     self._compact()
                 else:
-                    self._slots = _hx_rebuild(keys, _hx_cap_for(len(keys), len(self._slots)))
+                    self._slots = _hx_rebuild(self._keys, _hx_cap_for(n, len(self._slots)))
             else:
-                _hx_place(self._slots, h, len(keys) - 1)
+                _hx_place(self._slots, h, n - 1)
 
     def get(self: OrderedDict, k: K) -> V:
         idx: int = self._index_of(k)
@@ -556,22 +542,17 @@ class LRUCache[K, V]:
 
     # Girdiyi (anahtar+değer) listelerin sonuna ekler ve karma dizinine yerleştirir (`h`: `k`nin karma değeri, çağıran bir kez hesaplar).
     def _append(self: LRUCache, k: K, v: V, h: int) -> None:
-        keys: list[K] = self._keys
-        values: list[V] = self._values
-        dead: list[bool] = self._dead
-        keys.append(k)
-        values.append(v)
-        dead.append(False)
-        self._keys = keys
-        self._values = values
-        self._dead = dead
-        if len(keys) * 2 > len(self._slots):
+        self._keys.append(k)
+        self._values.append(v)
+        self._dead.append(False)
+        n: int = len(self._keys)
+        if n * 2 > len(self._slots):
             if self._ndead > 0:
                 self._compact()
             else:
-                self._slots = _hx_rebuild(keys, _hx_cap_for(len(keys), len(self._slots)))
+                self._slots = _hx_rebuild(self._keys, _hx_cap_for(n, len(self._slots)))
         else:
-            _hx_place(self._slots, h, len(keys) - 1)
+            _hx_place(self._slots, h, n - 1)
 
     # Karma yuvası `pos`taki canlı girdiyi ölü işaretler (yuva mezar taşı olur).
     def _kill_at(self: LRUCache, pos: int) -> None:
@@ -639,53 +620,53 @@ class Heap[T]:
     def peek_min(self: Heap) -> T:
         return self._items[0]
 
-    def _swap(self: Heap, i: int, j: int) -> None:
-        tmp: T = self._items[i]
-        self._items[i] = self._items[j]
-        self._items[j] = tmp
-
+    # "Delik" tekniği: yer değiştirmeler yerine eleman bir kez yerleştirilir; `items` yerel takma adı alan yüklemelerini ve ARC işlemlerini döngü dışına alır.
     def _sift_up(self: Heap, idx: int) -> None:
+        items: list[T] = self._items
+        x: T = items[idx]
         i: int = idx
         active: bool = True
         while i > 0 and active:
             parent: int = (i - 1) // 2
-            if self._items[i] < self._items[parent]:
-                self._swap(i, parent)
+            p: T = items[parent]
+            if x < p:
+                items[i] = p
                 i = parent
             else:
                 active = False
+        items[i] = x
 
     # Bulundu (bkz. nox-teknik-spesifikasyon.md §"and/or kısa devre
-    # yapmaz"): `left < n and self._items[left] < ...` YAZILAMAZ —
+    # yapmaz"): `left < n and items[left] < ...` YAZILAMAZ —
     # Nox'ta `and` HER İKİ operandı da HER ZAMAN değerlendirir, bu yüzden
-    # `left >= n` OLSA BİLE `self._items[left]` DEĞERLENDİRİLİR (sınır
+    # `left >= n` OLSA BİLE `items[left]` DEĞERLENDİRİLİR (sınır
     # dışı bir okuma — GERÇEK bir `IndexError`la tekrar-üretilip
     # DOĞRULANDI). Bunun yerine İÇ İÇE `if`ler kullanılır (dıştaki sınır
     # kontrolü, İÇTEKİ karşılaştırma yalnızca sınır GEÇERLİYSE çalışır).
     def _sift_down(self: Heap, idx: int) -> None:
+        items: list[T] = self._items
+        n: int = len(items)
+        x: T = items[idx]
         i: int = idx
-        n: int = len(self._items)
         active: bool = True
         while active:
-            left: int = i * 2 + 1
-            right: int = i * 2 + 2
-            smallest: int = i
-            if left < n:
-                if self._items[left] < self._items[smallest]:
-                    smallest = left
-            if right < n:
-                if self._items[right] < self._items[smallest]:
-                    smallest = right
-            if smallest != i:
-                self._swap(i, smallest)
-                i = smallest
+            smallest: int = i * 2 + 1
+            if smallest < n:
+                right: int = smallest + 1
+                if right < n:
+                    if items[right] < items[smallest]:
+                        smallest = right
+                if items[smallest] < x:
+                    items[i] = items[smallest]
+                    i = smallest
+                else:
+                    active = False
             else:
                 active = False
+        items[i] = x
 
     def push(self: Heap, v: T) -> None:
-        items: list[T] = self._items
-        items.append(v)
-        self._items = items
+        self._items.append(v)
         self._sift_up(len(self._items) - 1)
 
     def pop_min(self: Heap) -> T:
@@ -693,9 +674,7 @@ class Heap[T]:
         result: T = self._items[0]
         last: T = self._items[n - 1]
         self._items[0] = last
-        items: list[T] = self._items
-        items.pop()
-        self._items = items
+        self._items.pop()
         if len(self._items) > 0:
             self._sift_down(0)
         return result

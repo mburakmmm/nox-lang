@@ -144,7 +144,7 @@ export fn nox_http_config_set_raw(key: i64, value: i64) callconv(.c) void {
         return;
     }
     if (key == 7) {
-        if (builtin.os.tag != .windows) g_serve_config.ip_family.store(if (value == 2) 2 else 1, .monotonic);
+        g_serve_config.ip_family.store(if (value == 2) 2 else 1, .monotonic);
         return;
     }
     const v: usize = @intCast(value);
@@ -419,7 +419,7 @@ const ServerHandle = struct {
 /// bağlanır" davranışı GENEL kullanım İçin SÜRPRİZ BOZUCUYDU (bu HATANIN
 /// KENDİSİ bunun KANITI).
 fn bindAndListen(port: i64, reuse_port: bool) ?posix.fd_t {
-    // Belirli bir IPv6 adresi seçildiyse IPv6 yolu kullanılır (Windows'ta IPv6 desteklenmez: KAPALI başarısız olur, tüm arayüzlere açılmaz).
+    // Belirli bir IPv6 adresi seçildiyse IPv6 yolu kullanılır.
     if (configuredBind6() != null) return bindAndListenV6(port, true, reuse_port);
     const want_v4: u32 = configuredBind4() orelse 0;
     if (builtin.os.tag == .windows) {
@@ -572,13 +572,37 @@ export fn nox_http_listen_fd(rt: ?*anyopaque, port: i64) callconv(.c) i64 {
 /// bağlanır, peer'leri `a.b.c.d:port` biçimine normalleştirilir); `v6_only=
 /// true` İKEN yalnızca IPv6. Dönen fd `nox.http.serve_fd`/`serve_multicore`ın
 /// kabul döngüleriyle (`sockaddr_storage` tabanlı accept) doğrudan çalışır.
-/// Windows'ta DESTEKLENMEZ (`-1`): Winsock yolu henüz `sockaddr_in6`yı ele
-/// almıyor ve CI'da doğrulanamıyor.
+/// Windows'ta da çalışır (2.3 madde 2.8: Winsock `AF_INET6`, `IPV6_V6ONLY`; gerçek Windows'ta doğrulandı).
 fn bindAndListenV6(port: i64, v6_only: bool, reuse_port: bool) ?posix.fd_t {
-    if (builtin.os.tag == .windows) return null;
     // Bir IPv4 adresi seçilmişken IPv6 dinleyici istenirse çelişki: tüm arayüzlere sessizce açılmak yerine başarısız ol.
     if (configuredBind4() != null) return null;
     const want_v6: [16]u8 = configuredBind6() orelse [_]u8{0} ** 16;
+    if (builtin.os.tag == .windows) {
+        // 2.3 madde 2.8: Winsock yolu. `SO_REUSEPORT` yok (`reuse_port` yoksayılır: Windows'ta paylaşımlı tek dinleme soketi kullanılır); Windows'ta `IPV6_V6ONLY` varsayılanı 1'dir,
+        // dual-stack için açıkça 0'a çekilir (`IPPROTO_IPV6` = 41, `IPV6_V6ONLY` = 27).
+        io_mod.ensureWinsock();
+        const ws = io_mod.WinSock;
+        const wfd = ws.socket(23, ws.SOCK_STREAM, 0); // AF_INET6
+        if (wfd == ws.INVALID_SOCKET) return null;
+        var wreuse: c_int = 1;
+        _ = ws.setsockopt(wfd, ws.SOL_SOCKET, ws.SO_REUSEADDR, &wreuse, @sizeOf(c_int));
+        var wonly: c_int = if (v6_only) 1 else 0;
+        if (ws.setsockopt(wfd, 41, 27, &wonly, @sizeOf(c_int)) != 0) {
+            _ = ws.closesocket(wfd);
+            return null;
+        }
+        const WinIn6 = extern struct { family: u16, port: u16, flowinfo: u32, addr: [16]u8, scope_id: u32 };
+        var waddr: WinIn6 = .{ .family = 23, .port = std.mem.nativeToBig(u16, @intCast(port)), .flowinfo = 0, .addr = want_v6, .scope_id = 0 };
+        if (ws.bind(wfd, @ptrCast(&waddr), @sizeOf(WinIn6)) != 0) {
+            _ = ws.closesocket(wfd);
+            return null;
+        }
+        if (ws.listen(wfd, 1024) != 0) {
+            _ = ws.closesocket(wfd);
+            return null;
+        }
+        return @ptrFromInt(wfd);
+    }
     const fd = std.c.socket(std.c.AF.INET6, std.c.SOCK.STREAM, 0);
     if (fd < 0) return null;
     var reuse: c_int = 1;
@@ -611,10 +635,10 @@ fn bindAndListenV6(port: i64, v6_only: bool, reuse_port: bool) ?posix.fd_t {
     return fd;
 }
 
-/// Çok çekirdekli worker dinleyicisi: `configure(ip_family=...)` ile IPv6 seçilmişse (Windows hariç) her worker kendi `SO_REUSEPORT` IPv6 soketini açar, yoksa eski IPv4 yolu.
+/// Çok çekirdekli worker dinleyicisi: `configure(ip_family=...)` ile IPv6 seçilmişse her worker (Windows'ta paylaşımlı tek soket) IPv6 soketini açar, yoksa eski IPv4 yolu.
 fn bindAndListenMulticore(port: i64) ?posix.fd_t {
     const fam = g_serve_config.ip_family.load(.monotonic);
-    if (fam != 0 and builtin.os.tag != .windows) return bindAndListenV6(port, fam == 2, true);
+    if (fam != 0) return bindAndListenV6(port, fam == 2, true);
     return bindAndListen(port, true);
 }
 
@@ -673,10 +697,10 @@ export fn nox_http_listen_fd_tls(rt: ?*anyopaque, port: i64, cert_path: ?[*:0]co
 /// o fd'yi dinler (kernel bağlantıyı yalnızca bir `accept`e verir). Linux'ta `SO_REUSEPORT` çekirdek-düzeyi dağıtım yapar ve korunur.
 const shared_listen_platform = builtin.os.tag == .windows or builtin.os.tag.isDarwin();
 
-/// Paylaşılan dinleme soketi: `configure(ip_family)` IPv6 seçtiyse (Windows hariç) çift/yalnız-IPv6, değilse IPv4; `SO_REUSEPORT` YOK (tek soket).
+/// Paylaşılan dinleme soketi: `configure(ip_family)` IPv6 seçtiyse çift/yalnız-IPv6, değilse IPv4; `SO_REUSEPORT` YOK (tek soket).
 fn bindAndListenShared(port: i64) ?posix.fd_t {
     const fam = g_serve_config.ip_family.load(.monotonic);
-    if (fam != 0 and builtin.os.tag != .windows) return bindAndListenV6(port, fam == 2, false);
+    if (fam != 0) return bindAndListenV6(port, fam == 2, false);
     return bindAndListen(port, false);
 }
 
@@ -1008,13 +1032,13 @@ export fn nox_http_server_close(rt: ?*anyopaque, server: ?*anyopaque) callconv(.
 fn blockingAccept(listen_fd: posix.fd_t) !io_mod.AcceptResult {
     if (builtin.os.tag == .windows) {
         while (true) {
-            var waddr: std.os.windows.ws2_32.sockaddr.in = undefined;
-            var wlen: i32 = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+            var waddr: io_mod.WinPeerStorage = .{};
+            var wlen: i32 = @sizeOf(io_mod.WinPeerStorage);
             const rc = io_mod.WinSock.accept(@intFromPtr(listen_fd), &waddr, &wlen);
             if (rc != io_mod.WinSock.INVALID_SOCKET) {
                 const conn_fd: posix.fd_t = @ptrFromInt(rc);
                 io_mod.setTcpNodelay(conn_fd);
-                return .{ .fd = conn_fd, .peer_addr = io_mod.formatPeerAddr(waddr.addr, waddr.port) };
+                return .{ .fd = conn_fd, .peer_addr = io_mod.formatPeerAddrWin(&waddr) };
             }
             return error.Unexpected;
         }

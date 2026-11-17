@@ -1,0 +1,195 @@
+import nox.json
+
+def sum_positions(v: JsonValue) -> int:
+    root: int = nox.json.pos_root(v)
+    total: int = 0
+    i: int = 0
+    while i < nox.json.pos_len(v, root):
+        item: int = nox.json.pos_at(v, root, i)
+        total = total + nox.json.pos_int(v, nox.json.pos_get(v, item, "id"))
+        i = i + 1
+    return total
+
+def sum_nodes(v: JsonValue) -> int:
+    total: int = 0
+    i: int = 0
+    while i < nox.json.array_len(v):
+        total = total + nox.json.as_int(nox.json.get(nox.json.array_get(v, i), "id"))
+        i = i + 1
+    return total
+
+text: str = "[{\"id\":1,\"name\":\"a\\\"b\",\"ok\":true,\"x\":0.5,\"tags\":[\"p\",\"q\"]},{\"id\":20,\"name\":\"c\",\"ok\":false,\"x\":2.0,\"tags\":[]},{\"id\":300,\"name\":\"\",\"ok\":true,\"x\":-1e2,\"tags\":[1]}]"
+v: JsonValue = nox.json.parse(text)
+print(sum_positions(v))
+print(sum_nodes(v))
+
+root: int = nox.json.pos_root(v)
+print(nox.json.pos_kind(v, root))
+print(nox.json.pos_len(v, root))
+first: int = nox.json.pos_at(v, root, 0)
+last: int = nox.json.pos_at(v, root, -1)
+print(nox.json.pos_kind(v, first))
+print(nox.json.pos_len(v, first))
+print(nox.json.pos_int(v, nox.json.pos_get(v, last, "id")))
+
+# anahtarlar: eşitlik ayırmadan, anahtar metni gerekirse
+print(nox.json.pos_key_is(v, first, 0, "id"))
+print(nox.json.pos_key_is(v, first, 1, "id"))
+print(nox.json.pos_key(v, first, 1))
+print(nox.json.pos_key(v, first, -1))
+
+# değer türleri
+name: int = nox.json.pos_get(v, first, "name")
+print(nox.json.pos_str(v, name))
+print(nox.json.pos_bool(v, nox.json.pos_get(v, first, "ok")))
+print(nox.json.pos_bool(v, nox.json.pos_get(v, nox.json.pos_at(v, root, 1), "ok")))
+print(nox.json.pos_number(v, nox.json.pos_get(v, first, "x")))
+print(nox.json.pos_number(v, nox.json.pos_get(v, last, "x")))
+print(nox.json.pos_int(v, nox.json.pos_get(v, nox.json.pos_at(v, root, 1), "x")))
+
+# bulunmayan anahtar
+print(nox.json.pos_find(v, first, "zzz"))
+print(nox.json.pos_find(v, first, "id") > 0)
+
+# düğüm API'sine geçiş ve alt ağaç yazımı
+tags: int = nox.json.pos_get(v, first, "tags")
+print(nox.json.pos_dump(v, tags))
+node: JsonValue = nox.json.pos_value(v, first)
+print(nox.json.as_int(nox.json.get(node, "id")))
+print(nox.json.dump(nox.json.pos_value(v, name)))
+print(nox.json.pos_dump(v, first))
+
+# iç içe dizi içindeki eleman, boş dizi
+empty: int = nox.json.pos_get(v, nox.json.pos_at(v, root, 1), "tags")
+print(nox.json.pos_len(v, empty))
+print(nox.json.pos_kind(v, nox.json.pos_at(v, nox.json.pos_get(v, last, "tags"), 0)))
+
+# büyük tamsayı tam değeriyle
+big: JsonValue = nox.json.parse("{\"n\":9007199254740993,\"f\":1.5,\"s\":\"t\"}")
+bp: int = nox.json.pos_root(big)
+print(nox.json.pos_int(big, nox.json.pos_get(big, bp, "n")))
+
+# hatalar
+def attempt(label: str, v: JsonValue, p: int, what: int) -> None:
+    try:
+        if what == 0:
+            print(label + " " + str(nox.json.pos_int(v, p)))
+        elif what == 1:
+            print(label + " " + nox.json.pos_str(v, p))
+        elif what == 2:
+            print(label + " " + str(nox.json.pos_len(v, p)))
+        elif what == 3:
+            print(label + " " + str(nox.json.pos_get(v, p, "id")))
+        elif what == 4:
+            print(label + " " + str(nox.json.pos_at(v, p, 99)))
+        else:
+            print(label + " " + str(nox.json.pos_bool(v, p)))
+    except nox.json.JsonError as e:
+        print(label + " JsonError: " + e.message)
+    except IndexError as e:
+        print(label + " IndexError")
+
+attempt("bad-pos", v, 999999, 0)
+attempt("neg-pos", v, -5, 2)
+attempt("not-number", big, nox.json.pos_get(big, bp, "s"), 0)
+attempt("not-integer", big, nox.json.pos_get(big, bp, "f"), 0)
+attempt("not-string", v, first, 1)
+attempt("not-container", v, name, 2)
+attempt("not-object", v, root, 3)
+attempt("missing", big, bp, 3)
+attempt("index", v, root, 4)
+attempt("not-bool", v, name, 5)
+
+# skaler kök / elle kurulmuş düğüm: konum yok
+scalar: JsonValue = nox.json.parse("5")
+try:
+    print(nox.json.pos_root(scalar))
+except nox.json.JsonError as e:
+    print("scalar JsonError")
+
+# eager yola hâlâ erişilir
+print(nox.json.as_int(scalar))
+
+# Her konumda (geçersizler dahil) tüm işlevler: çökme yok, yalnızca JsonError/IndexError ya da sonuç.
+def probe(v: JsonValue, p: int) -> int:
+    ok: int = 0
+    try:
+        nox.json.pos_kind(v, p)
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    try:
+        nox.json.pos_len(v, p)
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    try:
+        nox.json.pos_at(v, p, 0)
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    except IndexError as e:
+        ok = ok + 0
+    try:
+        nox.json.pos_key(v, p, 0)
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    except IndexError as e:
+        ok = ok + 0
+    try:
+        nox.json.pos_key_is(v, p, 0, "id")
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    try:
+        nox.json.pos_find(v, p, "id")
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    try:
+        nox.json.pos_int(v, p)
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    try:
+        nox.json.pos_number(v, p)
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    try:
+        nox.json.pos_bool(v, p)
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    try:
+        nox.json.pos_str(v, p)
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    try:
+        nox.json.pos_value(v, p)
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    try:
+        nox.json.pos_dump(v, p)
+        ok = ok + 1
+    except nox.json.JsonError as e:
+        ok = ok + 0
+    return ok
+
+valid_positions: int = 0
+successes: int = 0
+q: int = -5
+while q < 120:
+    r: int = probe(v, q)
+    successes = successes + r
+    try:
+        nox.json.pos_kind(v, q)
+        valid_positions = valid_positions + 1
+    except nox.json.JsonError as e:
+        valid_positions = valid_positions + 0
+    q = q + 1
+print(valid_positions)
+print(successes > 0)

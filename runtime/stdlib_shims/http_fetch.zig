@@ -37,13 +37,15 @@ pub const CAP_TCP: u32 = 2;
 pub const CAP_PROCESS: u32 = 4;
 /// Bit 3: HTTP sunucusu (host dinler, istekleri modüle iletir; `nox.http.serve`, spec §3.360).
 pub const CAP_SERVE: u32 = 8;
+/// Bit 4: host zamanlayıcısı (`kind` 16, `sleep`): host `ms` sonra yanıt verir; program o sırada host'a askıya alınır ve JS olay döngüsü çalışır (`nox.signal.wait` sinyalleri böyle alınır). Eski host'lar bu biti vermez, uyku eskisi gibi bloklar.
+pub const CAP_TIMER: u32 = 16;
 var g_caps: u32 = 0;
 var g_next_id: u32 = 1;
 var g_reqs: std.ArrayListUnmanaged(*Request) = .empty;
 
 /// İstek türü (host'a giden kaydın `kind` alanı): 0 tam yanıt `fetch`i, 1 akış açma (başlıklar gelince döner, gövde host'ta okuyucuda kalır), 2 akıştan bir parça okuma,
 /// 3 akışı kapatma (yanıtsız, "detached"), 4-7 WebSocket (`websocket_wasm.zig`): açma, gönderme (yanıtsız), alma, kapatma (yanıtsız).
-pub const Kind = enum(u32) { fetch = 0, stream_open = 1, stream_read = 2, stream_close = 3, ws_open = 4, ws_send = 5, ws_recv = 6, ws_close = 7, tcp_open = 8, tcp_write = 9, tcp_read = 10, tcp_starttls = 11, tcp_close = 12, proc_run = 13, http_listen = 14, http_unlisten = 15 };
+pub const Kind = enum(u32) { fetch = 0, stream_open = 1, stream_read = 2, stream_close = 3, ws_open = 4, ws_send = 5, ws_recv = 6, ws_close = 7, tcp_open = 8, tcp_write = 9, tcp_read = 10, tcp_starttls = 11, tcp_close = 12, proc_run = 13, http_listen = 14, http_unlisten = 15, sleep = 16 };
 
 pub const Request = struct {
     id: u32,
@@ -75,6 +77,10 @@ pub const Response = struct {
     body: []u8,
     headers: []u8,
 };
+
+pub fn timerAvailable() bool {
+    return g_caps & CAP_TIMER != 0;
+}
 
 pub fn serveAvailable() bool {
     return g_caps & CAP_SERVE != 0;

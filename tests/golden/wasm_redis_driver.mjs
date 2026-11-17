@@ -64,6 +64,8 @@ try {
     console.log(`exit ${code}`);
   }
   await runProgram(template, { '@PORT@': String(port), '@AUTHPORT@': String(authPort) }, 'plain');
+  // 2.3 madde 3.2: okuma zaman aşımı + pipeline (`redis_timeout_program.nox.in`); host TCP okuması `timeout=<ms>` ile süreyle sınırlanır.
+  await runProgram(path.join(path.dirname(template), 'redis_timeout_program.nox.in'), { '@PORT@': String(port) }, 'timeout');
 
   const key = path.join(dir, 'tls.key');
   const crt = path.join(dir, 'tls.crt');

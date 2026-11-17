@@ -13,9 +13,13 @@ const str_mod = @import("../str.zig");
 const shim_util = @import("shim_util.zig");
 const tcp = if (builtin.cpu.arch.isWasm()) @import("tcp_host.zig") else @import("tcp_native.zig");
 const abi_layout = @import("abi_layout");
-/// wasm'da ana makine soketlerinin okuma zaman aşımı yoktur (`tcp_host.waitReadable` hep "hazır"): saat de gerekmez.
+/// wasm32-freestanding'de monoton saat host'un `clock_ms(1)` import'udur (host TCP okuma zaman aşımı `tcp_host.waitReadable` ile sağlanır); diğer wasm hedeflerinde ağ yok.
 fn monotonicMs() u64 {
-    if (comptime builtin.cpu.arch.isWasm()) return 0;
+    if (comptime builtin.cpu.arch.isWasm()) {
+        const wh = @import("../wasm_host.zig");
+        if (comptime wh.is_freestanding_wasm) return @intCast(wh.clock_ms(1));
+        return 0;
+    }
     return @import("http_client.zig").monotonicMs();
 }
 

@@ -8,9 +8,27 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `[1.0.0]` girişi altında toplanmıştır; öncesi için
 `nox-teknik-spesifikasyon.md`nin tam geliştirme geçmişine bakın.
 
-`v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) "her commit bir sürümdür" politikası uygulandı; 2026-11-17'den itibaren
-`VERSIONING.md` §4'ün **toplu (batch) sürümleme** politikası geçerlidir: sürüm numarası/tag/Release yalnızca bir iş paketi
-(yol haritası aşaması) bitince verilir, ara commit'ler tag'siz birikir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
+`v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
+commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
+
+## [2.2.4]
+
+2.3 yol haritası: Aşama 5 performans paketi (5.2 JSON, 5.3 koleksiyonlar) + Aşama 2/3'te açık kalan işlerin kapatılması. Dil sözdizimi değişmedi.
+
+### Performans (Aşama 5)
+
+- **`nox.json`:** `parse+write` C'ye oran 4,5× → 2,9× (SWAR dize taraması, satır içi bant yazımı, Clinger hızlı yolu, `dump` için `F_CLEAN` bayrağı + satır içi kapasite denetimi). Yeni **konum tabanlı gezinme API'si** `nox.json.pos_*` (`pos_root/pos_len/pos_at/pos_get/pos_find/pos_key_is/pos_int/pos_number/pos_bool/pos_str/pos_value/pos_dump`): düğüm ve `str` üretmeden gezinir, gezinme ≈2,7 → 0,45–1,1 ms; her konum doğrulanır (bellek güvenliği çağırana bağlı değil). Düğüm API'si değişmedi.
+- **`str(float)`/`print`:** `1e-4 <= |f| < 1e15` kısa ondalıklar için doğrulanmış hızlı yol (genel yolla 400 bin rastgele değerde birebir aynı).
+- **`nox.collections`:** ekleme yolları doğrudan alan eklemesine çevrildi (ekleme başına 4 atomik ARC işlemi kalktı), `Queue`/`Deque` taşıma `reverse()` ile, `Heap` "delik" tekniği: `Deque` C'ye 22,8× → 10,6×, `Heap` 3,3× → 1,7×.
+
+### Aşama 2/3'ten kapananlar
+
+- **Windows'ta IPv6 dinleyici (2.8):** `listen_v6`, `configure(ip_family=...)`, `bind_address="::1"` ve `serve_multicore` artık Windows'ta çalışır (Winsock `AF_INET6`; `accept` 128 baytlık adres tamponu). Gerçek Windows'ta doğrulandı.
+- **`nox.dns` WASM (2.7):** `resolve(host, timeout_ms, doh_url)` — WASM'da açıkça verilen DoH sunucusuna host `fetch`i üzerinden çözümleme; varsayılan üçüncü taraf çözümleyici yok.
+- **WASM okuma zaman aşımı (3.2):** `nox.redis` `set_read_timeout` ve `nox.postgres` `set_query_timeout`/iptal WASM'da çalışır; yeni `nox_host` import'u yok (host TCP okuma isteği `timeout=<ms>` taşır).
+- **`nox.redis.connect_url` (3.3):** `redis://` / `rediss://` bağlantı URL'si (yönetilen servis biçimi).
+- **WASM host iptali (3.9):** host `nox_host_signal(sig)` dışa aktarımıyla SIGINT/SIGTERM/SIGHUP iletir; `nox.signal.wait` host zamanlayıcısında (`CAP_TIMER`) askıya alınır; `runNox(..., {signalSource})`. **Düzeltme:** `nox.signal` WASM freestanding'de daha önce hiç bağlanmıyordu.
+- **Açık:** 3.3 gerçek yönetilen Redis hesabıyla doğrulama, 3.8b modül görünürlüğü (tasarım notu listede), 3.9 Windows hizmeti (SCM; NSSM/WinSW önerilir).
 
 ## [2.2.3]
 
@@ -19,7 +37,7 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 - **İç içe `async def` (kısıtlı):** iç `async def` derleyicide modül düzeyine kaldırılır; dıştaki fonksiyonun `int/float/bool/str/None` değişkenleri `spawn` anındaki değer olarak yakalanır, yalnızca `spawn inner(...)` ile başlatılır (iki arka uç). Doğrudan çağrı, `list/dict/class` yakalama ve `await` edilmemiş `Channel.send/recv` için açık hata mesajları. `docs/language/concurrency.md` "Nested `async def`".
 - **Task/Channel yakalayan kapanışlarda ARC testi:** golden `closure_captures_task_channel_arc`.
 - **Ertelenen:** `list[Task[T]]` (TaskGroup kalıbı yeterli, 4.3); `while` içinde döngü değişkenini yakalayan iç `def` codegen boşluğu (4.5) açık.
-- **Politika:** `VERSIONING.md` §4 toplu sürümlemeye çevrildi; `scripts/bump_version.sh` açıklaması güncellendi.
+- **Politika:** `VERSIONING.md` §4: küçük işler için ayrı commit atılmaz, aşama/iş paketi başına tek commit = tek sürüm; `scripts/bump_version.sh` açıklaması güncellendi.
 
 ## [2.2.2]
 

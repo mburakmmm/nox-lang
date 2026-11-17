@@ -1741,6 +1741,41 @@ sarmalayıcı + kabuk katmanından geçmesidir. Not: `yyjson_arr_get(i)` değiş
 **Eşit-iş uyarısı (Faz 9.13, v2.1.127):** gezinme sütunundaki iki taraf AYNI arama stratejisini kullanmaz: `nox.json` yolu (`walk_nox`) bir nesnenin alanlarını sırayla gezip anahtar karşılaştırırken, yyjson yolu (`walk_yyjson`) `yyjson_obj_get` ile anahtarı doğrudan arar (C tarafında hash/doğrusal arama). Yani 4,8x/8,4x oranı "aynı işin" iki gerçekleştirimi değil, iki farklı erişim biçiminin toplam maliyetidir; yalnız yönü (bağlama katmanı pahalı değil) gösterir, kesin bir kütüphane-hız oranı olarak alıntılanmamalıdır. Eşit-iş için iki taraf da aynı sırayla `n` alanı okuyan bir varyant gerekir.
 QBE ve LLVM backend'leri aynı sıralamayı verir (QBE gezinme 2,15 ms).
 
+## `nox.json` ayrıştırma/yazma sıcak yol turu (2.3 Aşama 5.2, v2.2.4 öncesi)
+
+`benchmarks/yyjson/run.py --repeat 5`, Apple M4, ReleaseFast, LLVM; 20 000 nesneli belge. Makine yükü ölçümü etkiler: oranlar aynı koşudaki C sütununa göre okunmalı.
+
+| iş | önce (nox ms / C ms / oran) | şimdi (nox ms / C ms / oran) |
+|---|---|---|
+| `parse+write nox.json` | 7,07 / 1,57 / **4,5×** | 3,51 / 1,20 / **2,9×** |
+| `parse+walk nox.json` | 6,82 / 1,21 / 5,6× | 4,91 / 0,93 / 5,3× |
+| `parse+walk python json` (başvuru) | 12,78 | 9,69 |
+
+Yapılanlar (`runtime/stdlib_shims/json_tape.zig`, `json.zig`, `str.zig`): (1) ayrıştırıcıda `entries`/`kids` için kapasite varken satır içi yazım (`append`in işlev çağrısı yok) ve dize taramasında 8 baytlık SWAR (ayrıştırma 2,66 → 2,22 ms); (2) Clinger hızlı yolu: ≤15 anlamlı basamaklı ondalık sayılar `m / 10^k` ile (std `parseFloat` ile 200 bin rastgele sayıda bit-bit aynı); (3) bant girdisine `F_CLEAN` bayrağı: kaçışsız ayrıştırılan dize/anahtarlar `dump`ta yeniden taranmaz; `putSlice/putByte/putEscaped` kapasite denetimi satır içi (`dump` 2,7 → 1,2 ms); (4) `str.formatFloatRepr` hızlı yolu: `1e-4 <= |f| < 1e15`, tamsayı olmayan, ≤15 basamakla gidiş-dönüşlü değerler `round(|f|·10^k) / 10^k == |f|` ile yazılır (genel `{e}` yolu ile 400 bin rastgele değerde birebir aynı); `str(float)`/`print` de yararlanır. Gezinme maliyeti düğüm başına ARC tahsisi/serbest bırakmadır (≈220 bin düğüm × ~12 ns); bu düğüm API'sinin sonucudur. (5) **Konum tabanlı gezinme API'si** (`nox.json.pos_*`, bant girdi indeksi üzerinden, düğüm/`str` üretmeden; belge: `docs/stdlib/json.md`): aynı belgede parse+gezinme, sağlama toplamı aynı (313323000):
+
+| gezinme | parse+walk ms | yalnızca gezinme (≈) |
+|---|---:|---:|
+| düğüm API'si (`array_get`/`object_key`/`object_value`) | 5,0 | 2,7 |
+| `pos_*`, çiftleri sırayla gez (`pos_key_is`) | 3,45 | 1,1 |
+| `pos_*`, anahtarla ara (`pos_get`) | 2,75 | 0,45 |
+| `nox.yyjson` `get_*` (başvuru) | 1,5 | - |
+
+Her `pos_*` işlevi konumu doğrular (keyfi `int`, bellek güvenliği çağırana bağlı değil); doğrulama tek Zig çağrısına birleştirildi (`pos_at`, `pos_int_fast`, `pos_bool`).
+
+## `nox.collections` sıcak yol turu (2.3 Aşama 5.3)
+
+`benchmarks/stdlib_perf/run.py --suite 2`, Apple M4, ReleaseFast. Kök neden: `Stack/Queue/Deque/Set/Counter/OrderedDict/LRUCache/Heap` ekleme yolları `items: list[T] = self.items; items.append(v); self.items = items` desenini kullanıyordu (v1.11.0'dan kalma); her ekleme 4 atomik ARC işlemi (yerel takma ad retain, alana yeniden atama, eski değerin release'i). `self.items.append(v)` doğrudan alan eklemesi aynı sonucu ARC işlemi olmadan verir.
+
+| iş | önce nox ms (nox/C) | şimdi nox ms (nox/C) |
+|---|---|---|
+| `Deque` 1M ekle + çıkar | 12,4 (22,8×) | **5,8 (10,6×)** |
+| `Heap` 200k ekle + çıkar | 22,6 (3,3×) | **11,7 (1,7×)** |
+| `LRUCache` 300k işlem | 11,0 (10,6×) | 10,0 (9,9×) |
+| `Counter` 500k ekleme | 2,3 (5,8×) | 2,4 (6,0×) |
+| geometrik ortalama nox/C | 1,80 | **1,71** |
+
+Yapılanlar: doğrudan alan eklemesi (Stack/Queue/Deque/Set/Counter/OrderedDict/LRUCache/Heap), `Queue`/`Deque` boşalan uca taşıma tek `reverse()` ile, `Heap` sift-up/down "delik" tekniği (yer değiştirme yok, `items` yerel takma adı). Kalan: `LRUCache` maliyeti dağınık (karma + yuva yerleştirme + liste ekleme); `Deque` 1M elemanda 8 MB liste büyütme/sayfa hatası bellek maliyeti.
+
 ## Stdlib modül taraması, 2. küme (2.2 aşama 2, v2.1.183)
 
 `benchmarks/stdlib_perf/run.py --suite 2` (Nox / C / CPython, aynı iş, sağlama toplamları birebir eşit; **ölçüt C**: `stdlib_perf2.c`, clang -O2, özetler macOS'ta CommonCrypto). Apple M4, ReleaseFast, ortanca. `toml` ve `unicode` için C standart kütüphanesinde karşılık yok (C sütunu boş).

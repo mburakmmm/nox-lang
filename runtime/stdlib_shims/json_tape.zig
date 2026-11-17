@@ -35,6 +35,8 @@ pub const K_KEY: u8 = 6;
 pub const K_TEXT: u8 = 7;
 
 pub const F_TEXT: u8 = 1;
+/// `K_STRING`/`K_KEY` için: çözülmüş baytlar `"`, `\\` ve denetim karakteri İÇERMEZ (ayrıştırıcı kaçışsız yolu izledi) → `dump` taramadan doğrudan kopyalar.
+pub const F_CLEAN: u8 = 2;
 
 pub const MAX_DEPTH: usize = 32;
 
@@ -142,8 +144,31 @@ const Parser = struct {
     b: *Built,
     /// Açık konteynerlerin çocuk girdi indeksleri (yığın); konteyner kapanınca `table`a kopyalanır.
     kids: std.ArrayListUnmanaged(u32) = .empty,
+    /// Son `string()` çağrısı kaçışsız (F_CLEAN) yolu izledi mi.
+    clean: bool = false,
 
     const Err = error{ Invalid, OutOfMemory };
+
+    /// `entries`/`kids` ön ayrılmış kapasiteyle çalışır; kapasite varken `append`in işlev çağrısı + büyütme denetimi yerine doğrudan yazım.
+    inline fn pushEntry(self: *Parser, e: Entry) Err!void {
+        const l = &self.b.entries;
+        if (l.items.len < l.capacity) {
+            l.items.ptr[l.items.len] = e;
+            l.items.len += 1;
+            return;
+        }
+        try l.append(self.a, e);
+    }
+
+    inline fn pushKid(self: *Parser, k: u32) Err!void {
+        const l = &self.kids;
+        if (l.items.len < l.capacity) {
+            l.items.ptr[l.items.len] = k;
+            l.items.len += 1;
+            return;
+        }
+        try l.append(self.a, k);
+    }
 
     fn ws(self: *Parser) void {
         while (self.i < self.s.len) : (self.i += 1) {
@@ -178,10 +203,21 @@ const Parser = struct {
     /// `self.i` açılış tırnağında. Dizeyi doğrular ve ÇÖZÜLMÜŞ baytları `strs`e ekler; `out_off`/`out_len` strs içindeki aralık. Başarıda `self.i` kapanıştan sonra.
     fn string(self: *Parser, out_off: *u64, out_len: *u32) Err!void {
         self.i += 1;
+        self.clean = false;
         const start_len = self.b.strs.items.len;
         const s = self.s;
         // hızlı tarama: kaçışsız ve ASCII bölüm
         var j = self.i;
+        // SWAR: 8 bayt birden; `"`, `\\`, <0x20 ya da >=0x80 içeren ilk sözcükte durup bayt bayt bitirir.
+        while (j + 8 <= s.len) {
+            const w = std.mem.readInt(u64, s[j..][0..8], .little);
+            const quote = w ^ 0x2222222222222222;
+            const bslash = w ^ 0x5C5C5C5C5C5C5C5C;
+            const has_zero = ((quote -% 0x0101010101010101) & ~quote) | ((bslash -% 0x0101010101010101) & ~bslash);
+            const has_ctl = (w -% 0x2020202020202020) & ~w;
+            if (((has_zero | has_ctl | w) & 0x8080808080808080) != 0) break;
+            j += 8;
+        }
         while (j < s.len) : (j += 1) {
             const c = s[j];
             if (c == '"' or c == '\\' or c < 0x20 or c >= 0x80) break;
@@ -200,6 +236,7 @@ const Parser = struct {
                 @memcpy(dst[0..n], s[self.i..j]);
             }
             self.b.strs.items.len += n;
+            self.clean = true;
             self.i = j + 1;
             out_off.* = start_len;
             out_len.* = @intCast(self.b.strs.items.len - start_len);
@@ -319,6 +356,33 @@ const Parser = struct {
         return if (neg) -v else v;
     }
 
+    /// Clinger hızlı yolu: üstsüz `[-]d+.d+` ve toplam <= 15 anlamlı basamak (mantis < 2^53) iken sonuç `m / 10^k` ile TAM yuvarlanır (`k <= 15 <= 22`); aksi halde `null` (genel yol).
+    inline fn clingerFast(tok: []const u8) ?f64 {
+        const pow10 = [_]f64{ 1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15 };
+        var i: usize = 0;
+        const neg = tok.len > 0 and tok[0] == '-';
+        if (neg) i = 1;
+        var m: u64 = 0;
+        var digits: usize = 0;
+        while (i < tok.len and tok[i] >= '0' and tok[i] <= '9') : (i += 1) {
+            m = m * 10 + (tok[i] - '0');
+            digits += 1;
+            if (digits > 15) return null;
+        }
+        if (i >= tok.len or tok[i] != '.') return null;
+        i += 1;
+        var frac: usize = 0;
+        while (i < tok.len and tok[i] >= '0' and tok[i] <= '9') : (i += 1) {
+            m = m * 10 + (tok[i] - '0');
+            digits += 1;
+            frac += 1;
+            if (digits > 15) return null;
+        }
+        if (i != tok.len or frac == 0) return null;
+        const f = @as(f64, @floatFromInt(m)) / pow10[frac];
+        return if (neg) -f else f;
+    }
+
     /// `json.zig`nin `numberLeaf`i ile aynı sınıflandırma; metin gerekiyorsa sayı girdisinin ardına `K_TEXT` kaydı yazar.
     fn number(self: *Parser) Err!void {
         const tok = try self.numberToken();
@@ -328,7 +392,7 @@ const Parser = struct {
         var ibuf: [24]u8 = undefined;
         const integer_like = !std.mem.eql(u8, tok, "-0") and std.mem.indexOfAny(u8, tok, ".eE") == null;
         if (!integer_like) {
-            const f = std.fmt.parseFloat(f64, tok) catch 0.0;
+            const f = clingerFast(tok) orelse (std.fmt.parseFloat(f64, tok) catch 0.0);
             n = f;
             if (std.math.isFinite(f)) {
                 if (!std.mem.eql(u8, tok, "-0") and f < 1000000000000000.0 and f > -1000000000000000.0) {
@@ -346,11 +410,11 @@ const Parser = struct {
             if (isPlainBigInteger(tok)) text = tok;
         }
         const has_text = text != null and text.?.len > 0;
-        try self.b.entries.append(self.a, .{ .kind = K_NUMBER, .flags = if (has_text) F_TEXT else 0, .val = @bitCast(n) });
+        try self.pushEntry(.{ .kind = K_NUMBER, .flags = if (has_text) F_TEXT else 0, .val = @bitCast(n) });
         if (has_text) {
             const off = self.b.strs.items.len;
             try self.b.strs.appendSlice(self.a, text.?);
-            try self.b.entries.append(self.a, .{ .kind = K_TEXT, .len = @intCast(text.?.len), .val = off });
+            try self.pushEntry(.{ .kind = K_TEXT, .len = @intCast(text.?.len), .val = off });
         }
     }
 
@@ -397,19 +461,19 @@ const Parser = struct {
                 var off: u64 = 0;
                 var len: u32 = 0;
                 try self.string(&off, &len);
-                try self.b.entries.append(self.a, .{ .kind = K_STRING, .len = len, .val = off });
+                try self.pushEntry(.{ .kind = K_STRING, .flags = if (self.clean) F_CLEAN else 0, .len = len, .val = off });
             },
             't' => {
                 if (!self.lit("true")) return error.Invalid;
-                try self.b.entries.append(self.a, .{ .kind = K_BOOL, .val = 1 });
+                try self.pushEntry(.{ .kind = K_BOOL, .val = 1 });
             },
             'f' => {
                 if (!self.lit("false")) return error.Invalid;
-                try self.b.entries.append(self.a, .{ .kind = K_BOOL, .val = 0 });
+                try self.pushEntry(.{ .kind = K_BOOL, .val = 0 });
             },
             'n' => {
                 if (!self.lit("null")) return error.Invalid;
-                try self.b.entries.append(self.a, .{ .kind = K_NULL });
+                try self.pushEntry(.{ .kind = K_NULL });
             },
             '-', '0'...'9' => try self.number(),
             else => return error.Invalid,
@@ -420,7 +484,7 @@ const Parser = struct {
         if (depth > MAX_DEPTH) return error.Invalid;
         self.i += 1;
         const my = self.b.entries.items.len;
-        try self.b.entries.append(self.a, .{ .kind = K_ARRAY });
+        try self.pushEntry(.{ .kind = K_ARRAY });
         const base = self.kids.items.len;
         self.ws();
         if (self.i < self.s.len and self.s[self.i] == ']') {
@@ -428,7 +492,7 @@ const Parser = struct {
         } else {
             while (true) {
                 self.ws();
-                try self.kids.append(self.a, @intCast(self.b.entries.items.len));
+                try self.pushKid(@intCast(self.b.entries.items.len));
                 try self.value(depth);
                 self.ws();
                 if (self.i >= self.s.len) return error.Invalid;
@@ -449,7 +513,7 @@ const Parser = struct {
         if (depth > MAX_DEPTH) return error.Invalid;
         self.i += 1;
         const my = self.b.entries.items.len;
-        try self.b.entries.append(self.a, .{ .kind = K_OBJECT });
+        try self.pushEntry(.{ .kind = K_OBJECT });
         const base = self.kids.items.len;
         self.ws();
         if (self.i < self.s.len and self.s[self.i] == '}') {
@@ -461,8 +525,8 @@ const Parser = struct {
                 var off: u64 = 0;
                 var len: u32 = 0;
                 try self.string(&off, &len);
-                try self.kids.append(self.a, @intCast(self.b.entries.items.len));
-                try self.b.entries.append(self.a, .{ .kind = K_KEY, .len = len, .val = off });
+                try self.pushKid(@intCast(self.b.entries.items.len));
+                try self.pushEntry(.{ .kind = K_KEY, .flags = if (self.clean) F_CLEAN else 0, .len = len, .val = off });
                 self.ws();
                 if (self.i >= self.s.len or self.s[self.i] != ':') return error.Invalid;
                 self.i += 1;
@@ -708,4 +772,40 @@ test "json_tape: ölçüm (NOX_JSON_BENCH_FILE ayarlıysa)" {
     }
     std.debug.print("json_tape build best: {d:.2} ms ({d} entries, {d} strs bytes)\n", .{ @as(f64, @floatFromInt(best)) / 1e6, built.entries.items.len, built.strs.items.len });
     built.deinit(gpa);
+}
+
+test "json_tape: Clinger hızlı yolu std.parseFloat ile bit-bit aynı sonucu verir" {
+    var prng = std.Random.DefaultPrng.init(0x5EED);
+    const rnd = prng.random();
+    var buf: [40]u8 = undefined;
+    var n: usize = 0;
+    while (n < 200000) : (n += 1) {
+        const int_digits = rnd.intRangeAtMost(usize, 1, 14);
+        const frac_digits = rnd.intRangeAtMost(usize, 1, 15 - int_digits);
+        var len: usize = 0;
+        if (rnd.boolean()) {
+            buf[len] = '-';
+            len += 1;
+        }
+        var d: usize = 0;
+        while (d < int_digits) : (d += 1) {
+            buf[len] = '0' + @as(u8, @intCast(rnd.intRangeAtMost(u8, 0, 9)));
+            len += 1;
+        }
+        buf[len] = '.';
+        len += 1;
+        d = 0;
+        while (d < frac_digits) : (d += 1) {
+            buf[len] = '0' + @as(u8, @intCast(rnd.intRangeAtMost(u8, 0, 9)));
+            len += 1;
+        }
+        const tok = buf[0..len];
+        const fast = Parser.clingerFast(tok) orelse return error.TestUnexpectedResult;
+        const slow = try std.fmt.parseFloat(f64, tok);
+        try std.testing.expectEqual(@as(u64, @bitCast(slow)), @as(u64, @bitCast(fast)));
+    }
+    // 16+ basamak ve üstlü biçimler genel yola bırakılır
+    try std.testing.expect(Parser.clingerFast("1234567890123456.5") == null);
+    try std.testing.expect(Parser.clingerFast("1.5e3") == null);
+    try std.testing.expect(Parser.clingerFast("12") == null);
 }

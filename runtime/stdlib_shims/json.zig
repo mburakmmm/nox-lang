@@ -482,7 +482,7 @@ fn dumpTapeInto(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), v: tape.
             if (text.len > 0) return putSlice(a, out, text);
             try dumpNumberInto(a, out, @bitCast(e.val));
         },
-        tape.K_STRING, tape.K_KEY => try putEscaped(a, out, v.str(e)),
+        tape.K_STRING, tape.K_KEY => if (e.flags & tape.F_CLEAN != 0) try putCleanString(a, out, v.str(e)) else try putEscaped(a, out, v.str(e)),
         tape.K_ARRAY => {
             try putByte(a, out, '[');
             var i: usize = 0;
@@ -498,7 +498,8 @@ fn dumpTapeInto(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), v: tape.
             while (i < e.len) : (i += 1) {
                 if (i > 0) try putByte(a, out, ',');
                 const k = v.child(idx, i);
-                try putEscaped(a, out, v.str(v.entries[k]));
+                const ke = v.entries[k];
+                if (ke.flags & tape.F_CLEAN != 0) try putCleanString(a, out, v.str(ke)) else try putEscaped(a, out, v.str(ke));
                 try putByte(a, out, ':');
                 try dumpTapeInto(a, out, v, k + 1);
             }
@@ -516,6 +517,131 @@ export fn nox_json_tape_dump(rt: ?*anyopaque, doc: ?[*:0]const u8, idx: i64) cal
     defer out.deinit(a);
     dumpTapeInto(a, &out, v, @intCast(idx)) catch return null;
     return dupeToNoxStr(rt, out.items);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------
+// Konum tabanlı gezinme (2.3 Aşama 5.2): bant girdi indeksleri (`pos`) düğüm NESNESİ üretmeden gezinmeyi sağlar. `pos` kullanıcıdan gelen keyfi bir `int` olabilir:
+// her işlev blok sınırlarını ve girdi türünü DOĞRULAR (geçersizse -1 / 0), bellek güvenliği çağıranın doğruluğuna bağlı DEĞİLDİR.
+
+/// `pos` geçerli bir DEĞER girdisiyse (null/bool/sayı/dize/dizi/nesne) girdiyi, aksi halde `null` döndürür (anahtar ve sayı-metni girdileri konum olamaz).
+fn posEntry(v: tape.View, pos: i64) ?tape.Entry {
+    if (pos < 0 or pos >= v.entries.len) return null;
+    const e = v.entries[@intCast(pos)];
+    if (e.kind > tape.K_OBJECT) return null;
+    return e;
+}
+
+/// `pos`taki değerin `JsonValue` türü (0 null, 1 bool, 2 sayı, 3 dize, 4 dizi, 5 nesne); geçersizse -1.
+export fn nox_json_tape_pos_kind(doc: ?[*:0]const u8, pos: i64) callconv(.c) i64 {
+    const blob = docBytes(doc) orelse return -1;
+    const e = posEntry(tape.View.fromBlob(blob), pos) orelse return -1;
+    return e.kind;
+}
+
+/// Dizi/nesne konumunun eleman/çift sayısı; konteyner değilse ya da geçersizse -1.
+export fn nox_json_tape_pos_len(doc: ?[*:0]const u8, pos: i64) callconv(.c) i64 {
+    const blob = docBytes(doc) orelse return -1;
+    const e = posEntry(tape.View.fromBlob(blob), pos) orelse return -1;
+    if (e.kind != tape.K_ARRAY and e.kind != tape.K_OBJECT) return -1;
+    return e.len;
+}
+
+/// Konteyner konumunun `i`. çocuğunun konumu (dizide elemanın, nesnede `i`. çiftin DEĞERİNİN konumu); `i < 0` sondan sayar. Geçersiz konum / konteyner değil: -1; `i` aralık dışı: -2.
+export fn nox_json_tape_pos_at(doc: ?[*:0]const u8, pos: i64, i: i64) callconv(.c) i64 {
+    const blob = docBytes(doc) orelse return -1;
+    const v = tape.View.fromBlob(blob);
+    const e = posEntry(v, pos) orelse return -1;
+    if (e.kind != tape.K_ARRAY and e.kind != tape.K_OBJECT) return -1;
+    const n: i64 = e.len;
+    const j: i64 = if (i < 0) i + n else i;
+    if (j < 0 or j >= n) return -2;
+    const c: i64 = v.child(@intCast(pos), @intCast(j));
+    return if (e.kind == tape.K_OBJECT) c + 1 else c;
+}
+
+/// Nesne konumunun `i`. çiftinin anahtarı `key`e eşit mi (ayırma yok): 1 / 0; nesne değilse ya da geçersizse -1.
+export fn nox_json_tape_pos_key_is(doc: ?[*:0]const u8, pos: i64, i: i64, key: ?[*:0]const u8) callconv(.c) i64 {
+    const blob = docBytes(doc) orelse return -1;
+    const v = tape.View.fromBlob(blob);
+    const e = posEntry(v, pos) orelse return -1;
+    if (e.kind != tape.K_OBJECT or i < 0 or i >= e.len) return -1;
+    const ks: []const u8 = if (key) |k| str_mod.nox_str_slice(k) else "";
+    return if (std.mem.eql(u8, v.str(v.entries[v.child(@intCast(pos), @intCast(i))]), ks)) 1 else 0;
+}
+
+/// Nesne konumunda `key` anahtarının DEĞERİNİN konumu (belge sırasındaki ilk eşleşme); yoksa, nesne değilse ya da geçersizse -1.
+export fn nox_json_tape_pos_find(doc: ?[*:0]const u8, pos: i64, key: ?[*:0]const u8) callconv(.c) i64 {
+    const blob = docBytes(doc) orelse return -1;
+    const v = tape.View.fromBlob(blob);
+    const e = posEntry(v, pos) orelse return -1;
+    if (e.kind != tape.K_OBJECT) return -1;
+    const ks: []const u8 = if (key) |k| str_mod.nox_str_slice(k) else "";
+    var i: usize = 0;
+    while (i < e.len) : (i += 1) {
+        const k = v.child(@intCast(pos), i);
+        if (std.mem.eql(u8, v.str(v.entries[k]), ks)) return @as(i64, k) + 1;
+    }
+    return -1;
+}
+
+/// Sayı konumunun `f64` değeri; sayı değilse (ya da konum geçersizse) NaN (JSON sayısı hiçbir zaman NaN olamaz).
+export fn nox_json_tape_pos_num(doc: ?[*:0]const u8, pos: i64) callconv(.c) f64 {
+    const blob = docBytes(doc) orelse return std.math.nan(f64);
+    const e = posEntry(tape.View.fromBlob(blob), pos) orelse return std.math.nan(f64);
+    if (e.kind != tape.K_NUMBER) return std.math.nan(f64);
+    return @bitCast(e.val);
+}
+
+/// `pos_num`, ama tam metin taşıyan sayılarda (büyük tamsayı, `1.0`/`1e2` biçimleri) de NaN: çağıran yavaş (metinli) yola geçer.
+export fn nox_json_tape_pos_int_fast(doc: ?[*:0]const u8, pos: i64) callconv(.c) f64 {
+    const blob = docBytes(doc) orelse return std.math.nan(f64);
+    const e = posEntry(tape.View.fromBlob(blob), pos) orelse return std.math.nan(f64);
+    if (e.kind != tape.K_NUMBER or e.flags & tape.F_TEXT != 0) return std.math.nan(f64);
+    return @bitCast(e.val);
+}
+
+/// Bool konumunun değeri (1 / 0); bool değilse ya da konum geçersizse -1.
+export fn nox_json_tape_pos_bool(doc: ?[*:0]const u8, pos: i64) callconv(.c) i64 {
+    const blob = docBytes(doc) orelse return -1;
+    const e = posEntry(tape.View.fromBlob(blob), pos) orelse return -1;
+    if (e.kind != tape.K_BOOL) return -1;
+    return if (e.val != 0) 1 else 0;
+}
+
+/// Sayı konumu tam metin taşıyor mu (büyük tamsayı / `1.0` gibi biçimler): 1 / 0.
+export fn nox_json_tape_pos_has_text(doc: ?[*:0]const u8, pos: i64) callconv(.c) i64 {
+    const blob = docBytes(doc) orelse return 0;
+    const v = tape.View.fromBlob(blob);
+    const e = posEntry(v, pos) orelse return 0;
+    return if (e.kind == tape.K_NUMBER and e.flags & tape.F_TEXT != 0) 1 else 0;
+}
+
+/// Dize konumunun metni, ya da sayı konumunun tam metni (`pos_has_text`); başka konumlarda boş dize.
+export fn nox_json_tape_pos_str(rt: ?*anyopaque, doc: ?[*:0]const u8, pos: i64) callconv(.c) ?[*:0]u8 {
+    const blob = docBytes(doc) orelse return dupeToNoxStr(rt, "");
+    const v = tape.View.fromBlob(blob);
+    const e = posEntry(v, pos) orelse return dupeToNoxStr(rt, "");
+    return switch (e.kind) {
+        tape.K_STRING => dupeToNoxStr(rt, v.str(e)),
+        tape.K_NUMBER => dupeToNoxStr(rt, v.numberText(@intCast(pos))),
+        else => dupeToNoxStr(rt, ""),
+    };
+}
+
+/// Konumdaki değeri `JsonValue` düğümüne dönüştürür (kaçış kapısı: konum API'sinden düğüm API'sine geçiş); geçersizse `null`.
+export fn nox_json_tape_pos_node(rt: ?*anyopaque, doc: ?[*:0]u8, pos: i64, e_list: ?*anyopaque, e_str: ?[*:0]u8) callconv(.c) ?*anyopaque {
+    const blob = docBytes(doc) orelse return null;
+    const v = tape.View.fromBlob(blob);
+    _ = posEntry(v, pos) orelse return null;
+    return tapeNode(rt, v, doc, .{ .list = e_list, .str = e_str }, @intCast(pos));
+}
+
+/// Konumdaki alt ağacı kompakt JSON olarak yazar; geçersizse `null`.
+export fn nox_json_tape_pos_dump(rt: ?*anyopaque, doc: ?[*:0]const u8, pos: i64) callconv(.c) ?[*:0]u8 {
+    const blob = docBytes(doc) orelse return null;
+    const v = tape.View.fromBlob(blob);
+    _ = posEntry(v, pos) orelse return null;
+    return nox_json_tape_dump(rt, doc, pos);
 }
 
 fn makeLeafFast(rt: ?*anyopaque, shared: SharedEmpties, class_id: i64, kind: i64, b: bool, n: f64, s: ?[*:0]const u8) ?*anyopaque {
@@ -1226,15 +1352,25 @@ inline fn copySmall(dst: [*]u8, src: [*]const u8, n: usize) void {
 }
 
 fn putSlice(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), sl: []const u8) std.mem.Allocator.Error!void {
-    try out.ensureUnusedCapacity(a, sl.len);
+    if (out.capacity - out.items.len < sl.len) try out.ensureUnusedCapacity(a, sl.len);
     copySmall(out.items.ptr + out.items.len, sl.ptr, sl.len);
     out.items.len += sl.len;
 }
 
-fn putByte(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), b: u8) std.mem.Allocator.Error!void {
-    try out.ensureUnusedCapacity(a, 1);
+inline fn putByte(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), b: u8) std.mem.Allocator.Error!void {
+    if (out.capacity == out.items.len) try out.ensureUnusedCapacity(a, 1);
     out.items.ptr[out.items.len] = b;
     out.items.len += 1;
+}
+
+/// Kaçış gerektirmediği ayrıştırıcıca bilinen dize (`F_CLEAN`): tarama yapmadan `"..."` yazar.
+inline fn putCleanString(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), bytes: []const u8) std.mem.Allocator.Error!void {
+    if (out.capacity - out.items.len < bytes.len + 2) try out.ensureUnusedCapacity(a, bytes.len + 2);
+    const d = out.items.ptr + out.items.len;
+    d[0] = '"';
+    copySmall(d + 1, bytes.ptr, bytes.len);
+    d[bytes.len + 1] = '"';
+    out.items.len += bytes.len + 2;
 }
 
 /// `"..."` biçiminde kaçışlı dizeyi doğrudan `out`a yazar (`escapeJsonString` ile aynı çıktı).
@@ -1247,7 +1383,7 @@ fn putEscaped(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), bytes: []c
         }
     }
     if (clean) {
-        try out.ensureUnusedCapacity(a, bytes.len + 2);
+        if (out.capacity - out.items.len < bytes.len + 2) try out.ensureUnusedCapacity(a, bytes.len + 2);
         const d = out.items.ptr + out.items.len;
         d[0] = '"';
         copySmall(d + 1, bytes.ptr, bytes.len);

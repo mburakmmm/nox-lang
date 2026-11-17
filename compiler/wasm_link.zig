@@ -35,9 +35,11 @@ pub fn plan(a: std.mem.Allocator, info: qbe_target.HostedTargetInfo, ir: []const
     if (info.wasm_freestanding) try flags.appendSlice(a, &.{ "-Wl,--no-entry", "-Wl,--export=_start", "-Wl,--export=nox_host_abi_version" });
     if (info.wasm_freestanding and info.wasm_threads) try flags.append(a, "-Wl,--export=nox_host_thread_start");
     // `--asyncify` freestanding'de `nox.http` istemcisi host `fetch`ini kullanabilir (spec §3.351); host'un çağıracağı dışa aktarımlar.
-    if (info.wasm_freestanding and info.wasm_asyncify and !info.wasm_threads and (has(ir, "nox_http_") or has(ir, "nox_ws_") or has(ir, "nox_tls_") or has(ir, "nox_smtp_") or has(ir, "nox_pg_") or has(ir, "nox_mysql_") or has(ir, "nox_process_") or has(ir, "nox_grpc_") or has(ir, "nox_redis_"))) {
+    if (info.wasm_freestanding and info.wasm_asyncify and !info.wasm_threads and (has(ir, "nox_http_") or has(ir, "nox_ws_") or has(ir, "nox_tls_") or has(ir, "nox_smtp_") or has(ir, "nox_pg_") or has(ir, "nox_mysql_") or has(ir, "nox_process_") or has(ir, "nox_grpc_") or has(ir, "nox_redis_") or has(ir, "nox_dns_") or has(ir, "nox_signal_"))) {
         try flags.appendSlice(a, &.{ "-Wl,--export=nox_host_caps_set", "-Wl,--export=nox_host_alloc", "-Wl,--export=nox_host_free", "-Wl,--export=nox_host_fetch_pending", "-Wl,--export=nox_host_fetch_complete", "-Wl,--export=nox_host_status", "-Wl,--export=nox_host_resume" });
     }
+    // `nox.signal` (2.3 madde 3.9): host `nox_host_signal(sig)` ile SIGINT/SIGTERM/SIGHUP iletir.
+    if (info.wasm_freestanding and info.wasm_asyncify and !info.wasm_threads and has(ir, "nox_signal_")) try flags.append(a, "-Wl,--export=nox_host_signal");
     // `nox.http.serve` (spec §3.360): host dinler, istekleri modüle iletir ve yanıtları alır.
     if (info.wasm_freestanding and info.wasm_asyncify and !info.wasm_threads and has(ir, "nox_http_serve_raw")) {
         try flags.appendSlice(a, &.{ "-Wl,--export=nox_host_http_dispatch", "-Wl,--export=nox_host_http_take_responses", "-Wl,--export=nox_host_http_stop" });

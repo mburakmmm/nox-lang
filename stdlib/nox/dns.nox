@@ -15,7 +15,7 @@ class DnsTimeoutError(DnsError):
 class DnsCapabilityError(DnsError):
     pass
 
-extern def nox_dns_resolve_raw(host: str, timeout_ms: int) -> ptr from "zig-out/lib/noxrt.o"
+extern def nox_dns_resolve_raw(host: str, timeout_ms: int, doh_url: str) -> ptr from "zig-out/lib/noxrt.o"
 extern def nox_dns_status_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_dns_count_raw(h: ptr) -> int from "zig-out/lib/noxrt.o"
 extern def nox_dns_at_raw(h: ptr, i: int) -> str from "zig-out/lib/noxrt.o" with_rt
@@ -23,8 +23,12 @@ extern def nox_dns_free_raw(h: ptr) -> None from "zig-out/lib/noxrt.o"
 
 # `host` için A/AAAA adreslerini metin olarak döner. `timeout_ms > 0`: çözümleme bu sürede bitmezse `DnsTimeoutError` (0: üst sınırlı süresiz).
 # Çözülemeyen ad `DnsError` fırlatır (boş liste dönmez: çağıran "hata = izin ver" yanlışına düşmesin).
-def resolve(host: str, timeout_ms: int = 0) -> list[str]:
-    h: ptr = nox_dns_resolve_raw(host, timeout_ms)
+#
+# WASM (tarayıcı/WASI) hedeflerinde sistem çözümleyicisi yoktur. `doh_url` (ör. `"https://dns.example/dns-query"`) verilirse ve host `fetch` yeteneği varsa çözümleme o DoH (DNS-over-HTTPS,
+# `application/dns-json`) sunucusuna `?name=<ad>&type=A|AAAA` ile sorulur; verilmezse `DnsError` ("not supported") döner. Varsayılan bir sunucu YOKTUR: ana makine adları yalnızca seçtiğiniz
+# sunucuya gider. Yerel hedeflerde `doh_url` yok sayılır (işletim sistemi çözümleyicisi kullanılır).
+def resolve(host: str, timeout_ms: int = 0, doh_url: str = "") -> list[str]:
+    h: ptr = nox_dns_resolve_raw(host, timeout_ms, doh_url)
     status: int = nox_dns_status_raw(h)
     if status != 0:
         nox_dns_free_raw(h)

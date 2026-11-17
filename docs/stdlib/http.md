@@ -229,7 +229,7 @@ The `serve` family are language-level entry points: the handler must be a plain 
 | `serve_fd_tls`, `serve_fd_ws`, `serve_fd_ws_tls` | the `_fd` forms of the above |
 | `serve_multicore_tls`, `serve_multicore_ws`, `serve_multicore_ws_tls` | the multi-worker forms (`num_threads` follows `handle`) |
 | `listen(port)` | opens a listening socket and returns its descriptor; raises `HttpError` on failure |
-| `listen_v6(port, v6_only)` | an IPv6 (dual-stack unless `v6_only`) listening socket; not available on Windows |
+| `listen_v6(port, v6_only)` | an IPv6 (dual-stack unless `v6_only`) listening socket |
 
 ```nox
 import nox.http
@@ -363,8 +363,8 @@ nox.http.shutdown()
 | `read_timeout_ms` | 30000 | longest silence while waiting for a request or its body; the connection is then closed |
 | `max_connections` | 4096 | connections open at once; further ones get a `503 Service Unavailable` (`Retry-After: 1`) and are closed until some close |
 | `drain_timeout_ms` | 10000 | how long a graceful shutdown waits for requests that are still being handled |
-| `ip_family` | 0 | listening family of `serve_multicore*`: `0` IPv4, `1` IPv6 dual-stack (`::`, IPv4 clients still connect), `2` IPv6 only; ignored on Windows |
-| `bind_address` | `""` | listen on **one** interface: an IPv4 or IPv6 literal (`"127.0.0.1"`, `"::1"`). Empty = all interfaces (`0.0.0.0`). An invalid value raises `HttpError` and never falls back to all interfaces; an IPv4 address combined with `ip_family` IPv6 (or any IPv6 address on Windows) makes the listener fail to start instead of widening it. The HTTP/3 UDP listener binds the same address. Call it before `serve*`/`listen*`; `nox.http.clear_bind_address()` goes back to all interfaces |
+| `ip_family` | 0 | listening family of `serve_multicore*`: `0` IPv4, `1` IPv6 dual-stack (`::`, IPv4 clients still connect), `2` IPv6 only (on Windows the workers share one listening socket) |
+| `bind_address` | `""` | listen on **one** interface: an IPv4 or IPv6 literal (`"127.0.0.1"`, `"::1"`). Empty = all interfaces (`0.0.0.0`). An invalid value raises `HttpError` and never falls back to all interfaces; an IPv4 address combined with `ip_family` IPv6 makes the listener fail to start instead of widening it. The HTTP/3 UDP listener binds the same address. Call it before `serve*`/`listen*`; `nox.http.clear_bind_address()` goes back to all interfaces |
 
 **Graceful shutdown.** `SIGTERM` or `SIGINT` — on Windows Ctrl+C, Ctrl+Break and console close/logoff/shutdown events — (and `nox.http.shutdown()`, which you may call from a handler) stops the server cleanly: new connections are no longer accepted, requests that are already being handled finish and are answered with `Connection: close`, idle keep-alive connections are closed, and **`serve*` returns** — so the code after it (closing a database, flushing logs) runs and the program exits normally. A second signal exits immediately. After `drain_timeout_ms` the server stops waiting and also returns. On Windows only `nox.http.shutdown()` is available (there is no signal handler). A WebSocket connection already upgraded is not closed by a shutdown: close it from its handler, or rely on `drain_timeout_ms`.
 

@@ -69,24 +69,24 @@ açıkça belgelenir) — GERÇEK kaldırma yalnızca bir SONRAKİ MAJOR sürüm
 gerçekleşir. Örnek: `v1.3.0`da kullanımdan kaldırılan bir özellik EN
 ERKEN `v2.0.0`da kaldırılabilir, `v1.x`in HİÇBİR sürümünde KALDIRILMAZ.
 
-## 4. Sürüm Artış Politikası — toplu (batch) sürümleme (2026-11-17'den itibaren)
+## 4. Sürüm Artış Politikası — toplu commit, her commit bir sürüm (2026-11-17'den itibaren)
 
-`v1.0.0` ile `v2.2.2` arasında "her commit bir sürümdür" politikası uygulandı; bu, `2.1.196` gibi anlamsız ince numaralar üretti ve KALDIRILDI.
-Artık `main`e giden her commit sürüm DEĞİLDİR: ara commit'ler tag'siz birikir, **sürüm yalnızca bir iş paketi/aşama (ör. 2.3 yol haritasının bir aşaması) bittiğinde** verilir.
+`v1.0.0` ile `v2.2.2` arasında HER küçük iş ayrı commit, ayrı sürüm ve ayrı tag oldu; bu, `2.1.196` gibi anlamsız ince numaralar üretti.
+Kural şudur: **commit sıklığı düşürülür, commit ile sürüm eşleşmesi korunur.** Küçük işler için ayrı commit atılmaz; çalışma ağacında birikir ve bir iş paketi/aşama
+(ör. 2.3 yol haritasının bir aşaması) bitince TEK commit olarak atılır. O commit gerçek, tag'lenmiş, yayımlanmış bir sürümdür.
 
-**Ne zaman sürüm verilir:**
-- Bir yol haritası aşaması ya da tutarlı bir iş paketi tamamlandığında; tam `zig build test` (VERDICT/çıkış kodu okunur) ve `scripts/precheck.sh` yeşil olmalıdır.
-- Kullanıcıya yetişmesi gereken ivedi bir düzeltme (güvenlik, veri kaybı, kırık yayın) için ayrıca bir PATCH verilebilir.
+**Ne zaman commit/sürüm:**
+- Bir yol haritası aşaması ya da tutarlı bir iş paketi tamamlandığında; tam `zig build test` (çıkış kodu 0, VERDICT okunur) ve `scripts/precheck.sh` yeşil olmalıdır.
+- Kullanıcıya yetişmesi gereken ivedi bir düzeltme (güvenlik, veri kaybı, kırık yayın) için ayrıca bir PATCH commit/sürümü verilebilir.
+- Ara/WIP commit atılmaz.
 
 **Sürüm numarası** (§1 tanımları aynen geçerli): salt hata düzeltmeleri/iç iyileştirmeler PATCH; yeni stdlib API/CLI alt komutu/sözdizimi paketi MINOR.
 Bir pakette birden fazla kategori varsa en yükseği alınır; paket başına TEK numara artar.
 
-**Mekanik** — yalnızca sürüm commit'inde:
-1. `scripts/bump_version.sh {patch|minor|major}` (`build.zig.zon` `.version`; `shared/hpy_host_contract.zig` sürüm sabiti ve `nox_commit` özeti birlikte güncellenir) + CHANGELOG girişi.
+**Mekanik** — sürüm commit'inde:
+1. `scripts/bump_version.sh {patch|minor|major}` (`build.zig.zon` `.version`; `shared/hpy_host_contract.zig` sürüm sabiti) + CHANGELOG girişi.
 2. Tek `&&` zincirinde: commit + `git tag vX.Y.Z` + `git push origin main` + `git push origin vX.Y.Z`. (Ayrı "bump" commit'i yoktur.)
 3. Tag push'u `.github/workflows/release.yml`i tetikler (3 platform derlemesi + GitHub Release). Önceki sürümün Release'i bitmeden yenisi etiketlenmez.
-
-**Ara commit'ler:** tag'siz `main`e gidebilir (CI yine koşar); `build.zig.zon` sürümü değişmez. Yarım/WIP durum yine commit edilmez.
 
 **Sınır:** yayımlanmış bir sürümün etiketi/release'i silinmez; düzeltme yeni bir sürümle gelir. `install.sh`/`noxc upgrade` "en son Release"i çekmeye devam eder (artık daha seyrek ama anlamlı sürümler).
 

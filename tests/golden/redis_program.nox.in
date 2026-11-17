@@ -85,3 +85,22 @@ r1.reconnect()
 print(r1.is_ok(), r1.ping())
 r1.close()
 killer.close()
+
+# 2.3 madde 3.3: bağlantı URL'sinden bağlanma (`redis://[kullanıcı:parola@]host[:port][/db]`; `rediss://` TLS; yönetilen servislerin verdiği biçim).
+u1: Client = nox.redis.connect_url("redis://127.0.0.1:@PORT@/4")
+print(u1.command(["CLIENT", "INFO"]).as_str().find("db=4") >= 0)
+u1.close()
+u2: Client = nox.redis.connect_url("redis://:secret@127.0.0.1:@AUTHPORT@")
+print(u2.ping())
+u2.close()
+try:
+    nox.redis.connect_url("redis://:wrong@127.0.0.1:@AUTHPORT@")
+    print("no error")
+except RedisError as e:
+    print("bad password:", e.kind != "")
+for bad in ["http://127.0.0.1:@PORT@", "redis:///0", "redis://127.0.0.1:@PORT@/abc"]:
+    try:
+        nox.redis.connect_url(bad)
+        print("no error")
+    except RedisError as e:
+        print(e.kind, e.message)

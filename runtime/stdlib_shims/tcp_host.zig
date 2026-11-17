@@ -84,45 +84,59 @@ pub fn write(c: *Conn, data: []const u8) bool {
     return true;
 }
 
-/// Host'tan bir parça daha çeker (en az 1 bayt, ya da EOF/hata). `true`: tamponda veri var.
-fn fill(c: *Conn) bool {
-    if (comptime !enabled) return false;
-    if (c.eof or !c.ok) return false;
+const FillResult = enum { data, closed, timeout };
+
+/// Host'tan bir parça daha çeker (en az 1 bayt, ya da EOF/hata). `timeout_ms > 0` ise host o kadar bekler; süre dolarsa `.timeout` (veri kaybolmaz: host okuma vaadini saklar,
+/// sonraki okuma aynı vaadi alır). Zaman aşımı `headers` alanında `timeout=<ms>` olarak taşınır: yeni bir `nox_host` import'u yoktur; bu alanı bilmeyen eski host'lar
+/// yok sayıp eskisi gibi bloklar.
+fn fillTimed(c: *Conn, timeout_ms: u32) FillResult {
+    if (comptime !enabled) return .closed;
+    if (c.eof or !c.ok) return .closed;
     c.buf.clearRetainingCapacity();
     c.off = 0;
-    const req = fetch.submit(.{ .kind = .tcp_read, .stream = c.id, .arg = 64 * 1024 }, false) orelse {
+    var hbuf: [32]u8 = undefined;
+    const htext: []const u8 = if (timeout_ms > 0) (std.fmt.bufPrint(&hbuf, "timeout={d}\n", .{timeout_ms}) catch "") else "";
+    const req = fetch.submit(.{ .kind = .tcp_read, .stream = c.id, .arg = 64 * 1024, .headers_text = htext }, false) orelse {
         c.setErr("out of memory");
         c.ok = false;
-        return false;
+        return .closed;
     };
     const resp = fetch.waitFor(req) orelse {
         c.setErr("out of memory");
         c.ok = false;
-        return false;
+        return .closed;
     };
     defer fetch.responseFree(resp);
     if (!resp.ok) {
         c.setErr(if (resp.body.len > 0) resp.body else "read failed");
         c.ok = false;
-        return false;
+        return .closed;
     }
+    // Durum 2: host zaman aşımı (bağlantı sağlam, veri henüz gelmedi).
+    if (resp.status == 2) return .timeout;
     if (resp.status == 1 or resp.body.len == 0) {
         c.eof = true;
-        return false;
+        return .closed;
     }
     c.buf.appendSlice(gpa, resp.body) catch {
         c.setErr("out of memory");
         c.ok = false;
-        return false;
+        return .closed;
     };
-    return true;
+    return .data;
 }
 
-/// Ana makine soketlerinde okuma zaman aşımı yoktur (köprü bloklar): her zaman "hazır".
+fn fill(c: *Conn) bool {
+    return fillTimed(c, 0) == .data;
+}
+
+/// En çok `timeout_ms` (0 = sınırsız) bekler: okunacak veri ya da EOF/hata hazırsa `true`, süre dolarsa `false`. Veri gelmişse tamponda durur (`readSome` onu verir).
 pub fn waitReadable(c: *Conn, timeout_ms: u32) bool {
-    _ = c;
-    _ = timeout_ms;
-    return true;
+    if (comptime !enabled) return true;
+    if (timeout_ms == 0) return true;
+    if (c.off < c.buf.items.len) return true;
+    if (c.eof or !c.ok) return true;
+    return fillTimed(c, timeout_ms) != .timeout;
 }
 
 /// En çok `max` bayt döner (en az bir bayt gelene kadar bekler); EOF'ta boş dilim. Dilim bir sonraki okumaya kadar geçerlidir.

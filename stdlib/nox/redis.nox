@@ -17,6 +17,8 @@
 # **Yanıt (`Reply`)**: `kind()` 0 nil, 1 basit dize, 2 hata, 3 tamsayı, 4 toplu dize, 5 dizi; `as_str()`, `as_int()`, `len()`, `at(i)`. `at(i)` ebeveynin belleğini ÖDÜNÇ alır; çocuk ebeveynini
 # canlı tutar. Ham bayt yükler `as_str()` ile aynen gelir.
 
+import nox.url
+
 class RedisError(Exception):
     code: str
     kind: str
@@ -339,6 +341,38 @@ def _open(host: str, port: int, tls: bool, username: str, password: str, db: int
     if tls:
         use_tls = 1
     return _checked(nox_redis_open_raw(host, port, use_tls, username, password, db), host, port)
+
+# Bağlantı URL'sinden bağlanır: `redis://[kullanıcı:parola@]ana_makine[:port][/db]` (düz) ya da `rediss://...` (TLS; sertifika ve sunucu adı sistem CA deposuna karşı doğrulanır, yönetilen servislerin
+# (Upstash, Redis Cloud, ElastiCache, Azure Cache) verdiği biçim). Yalnızca parola: `redis://:parola@ana_makine`. Kullanıcı/parola yüzde-kodlu olabilir (`%40` = `@`). Port verilmezse 6379.
+# `ca_file`/`cert_file`/`key_file` `connect` ile aynıdır. Başka bir şema ya da boş ana makine `RedisError(kind="connection")` fırlatır; hata iletisi parolayı İÇERMEZ.
+def connect_url(url: str, ca_file: str = "", cert_file: str = "", key_file: str = "") -> Client:
+    u: nox.url.URL = nox.url.parse(url)
+    scheme: str = u.scheme.lower()
+    if scheme != "redis" and scheme != "rediss":
+        raise RedisError("unsupported URL scheme '" + u.scheme + "': use redis:// or rediss://", "", "connection")
+    if len(u.host) == 0:
+        raise RedisError("the redis URL has no host", "", "connection")
+    port: int = u.port
+    if port <= 0:
+        port = 6379
+    username: str = ""
+    password: str = ""
+    if len(u.userinfo) > 0:
+        colon: int = u.userinfo.find(":")
+        if colon < 0:
+            # `redis://parola@host` (kullanıcısız, yalnızca parola) yaygın bir yazım hatasıdır; tek parça parola sayılır.
+            password = nox.url.percent_decode(u.userinfo)
+        else:
+            username = nox.url.percent_decode(u.userinfo[0:colon])
+            password = nox.url.percent_decode(u.userinfo[colon + 1:len(u.userinfo)])
+    db: int = 0
+    if len(u.path) > 1:
+        digits: str = u.path[1:len(u.path)]
+        try:
+            db = int(digits)
+        except ValueError as e:
+            raise RedisError("the redis URL path must be a database number: " + u.path, "", "connection")
+    return connect(u.host, port, scheme == "rediss", username, password, db, ca_file, cert_file, key_file)
 
 # Bağlanır. `tls=True` bağlanır bağlanmaz TLS (sertifika ve sunucu adı sistem CA deposuna karşı doğrulanır). `password` doluysa AUTH
 # (`username` doluysa `AUTH kullanıcı parola`), `db > 0` ise SELECT yapılır. Başarısızlıkta `RedisError(kind="connection")`.
