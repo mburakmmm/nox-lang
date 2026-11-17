@@ -72,6 +72,137 @@ fn onSignal(sig: std.posix.SIG) callconv(.c) void {
     if (n < MAX_SIG) g_flags[n].store(true, .release);
 }
 
+// Windows hizmeti (SCM) kapanışı (2.3 madde 3.9): `service_run(name)` ayrı bir Zig iş parçacığında `StartServiceCtrlDispatcherW` çağırır; Nox kodu SCM'in iş parçacıklarında HİÇ çalışmaz.
+// SCM `STOP`/`SHUTDOWN` komutu SIGTERM bayrağını kurar (`wait(sigterm)`/`take(sigterm)` ile alınır); program işini bitirince `service_stopped(kod)` ile `SERVICE_STOPPED` bildirir. Konsoldan/hizmet olmadan
+// çalıştırılırsa dağıtıcı başarısız olur (hata 1063) ve `service_run` `0` döner: program normal devam eder. Yalnızca Windows; diğer hedeflerde `0`.
+const win_svc = if (is_win) struct {
+    const SERVICE_WIN32_OWN_PROCESS: u32 = 0x10;
+    const SERVICE_START_PENDING: u32 = 2;
+    const SERVICE_STOP_PENDING: u32 = 3;
+    const SERVICE_RUNNING: u32 = 4;
+    const SERVICE_STOPPED: u32 = 1;
+    const SERVICE_ACCEPT_STOP: u32 = 1;
+    const SERVICE_ACCEPT_SHUTDOWN: u32 = 4;
+    const SERVICE_CONTROL_STOP: u32 = 1;
+    const SERVICE_CONTROL_INTERROGATE: u32 = 4;
+    const SERVICE_CONTROL_SHUTDOWN: u32 = 5;
+    const ERROR_CALL_NOT_IMPLEMENTED: u32 = 120;
+    const ERROR_SERVICE_SPECIFIC_ERROR: u32 = 1066;
+
+    const Status = extern struct {
+        service_type: u32 = SERVICE_WIN32_OWN_PROCESS,
+        current_state: u32 = SERVICE_START_PENDING,
+        controls_accepted: u32 = 0,
+        win32_exit_code: u32 = 0,
+        service_specific_exit_code: u32 = 0,
+        check_point: u32 = 0,
+        wait_hint: u32 = 0,
+    };
+    const TableEntry = extern struct { name: ?[*:0]u16, proc: ?*const fn (u32, ?[*]?[*:0]u16) callconv(.winapi) void };
+
+    extern "advapi32" fn StartServiceCtrlDispatcherW(table: [*]const TableEntry) callconv(.winapi) i32;
+    extern "advapi32" fn RegisterServiceCtrlHandlerExW(name: [*:0]const u16, handler: *const fn (u32, u32, ?*anyopaque, ?*anyopaque) callconv(.winapi) u32, ctx: ?*anyopaque) callconv(.winapi) usize;
+    extern "advapi32" fn SetServiceStatus(handle: usize, status: *const Status) callconv(.winapi) i32;
+    extern "kernel32" fn Sleep(ms: u32) callconv(.winapi) void;
+
+    /// 0 yok, 1 bağlanıyor, 2 çalışıyor (SCM bağlandı), 3 bağlanamadı (hizmet olarak başlatılmamış), 4 durduruldu bildirildi.
+    var state: std.atomic.Value(u32) = .init(0);
+    var handle: usize = 0;
+    var name_w: [256:0]u16 = [_:0]u16{0} ** 256;
+    var status: Status = .{};
+    var status_lock: std.atomic.Value(bool) = .init(false);
+
+    fn setStatus(st: *Status) void {
+        while (status_lock.swap(true, .acquire)) std.Thread.yield() catch {};
+        defer status_lock.store(false, .release);
+        if (handle != 0) _ = SetServiceStatus(handle, st);
+    }
+
+    fn handlerEx(control: u32, _: u32, _: ?*anyopaque, _: ?*anyopaque) callconv(.winapi) u32 {
+        switch (control) {
+            SERVICE_CONTROL_STOP, SERVICE_CONTROL_SHUTDOWN => {
+                // `g_win_installed[15]` `service_run`da kurulu: bayrak `take`/`wait` ile alınır.
+                g_flags[WIN_SIGTERM].store(true, .release);
+                status.current_state = SERVICE_STOP_PENDING;
+                status.controls_accepted = 0;
+                status.check_point += 1;
+                status.wait_hint = 30000;
+                setStatus(&status);
+                return 0;
+            },
+            SERVICE_CONTROL_INTERROGATE => {
+                setStatus(&status);
+                return 0;
+            },
+            else => return ERROR_CALL_NOT_IMPLEMENTED,
+        }
+    }
+
+    fn serviceMain(_: u32, _: ?[*]?[*:0]u16) callconv(.winapi) void {
+        handle = RegisterServiceCtrlHandlerExW(&name_w, handlerEx, null);
+        if (handle == 0) {
+            state.store(3, .release);
+            return;
+        }
+        status.current_state = SERVICE_RUNNING;
+        status.controls_accepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
+        setStatus(&status);
+        state.store(2, .release);
+        // Hizmet durdurulduğu bildirilene kadar bu iş parçacığı bekler (ServiceMain dönünce SCM hizmeti sonlandırılmış sayar).
+        while (state.load(.acquire) != 4) Sleep(50);
+    }
+
+    fn dispatcher() void {
+        const table = [_]TableEntry{ .{ .name = &name_w, .proc = &serviceMain }, .{ .name = null, .proc = null } };
+        if (StartServiceCtrlDispatcherW(&table) == 0) state.store(3, .release);
+    }
+
+    fn run(name: []const u8) i64 {
+        if (state.load(.acquire) != 0) return if (state.load(.acquire) == 2) 1 else 0;
+        const n = std.unicode.utf8ToUtf16Le(name_w[0..255], name) catch return 0;
+        name_w[n] = 0;
+        // Bir hizmet SIGTERM ile durdurulur; kurulu işaretlenir ki `STOP` bayrağı kurabilsin.
+        g_win_installed[WIN_SIGTERM].store(true, .release);
+        state.store(1, .release);
+        const t = std.Thread.spawn(.{}, dispatcher, .{}) catch {
+            state.store(3, .release);
+            return 0;
+        };
+        t.detach();
+        var waited: u32 = 0;
+        while (state.load(.acquire) == 1 and waited < 10000) : (waited += 10) Sleep(10);
+        return if (state.load(.acquire) == 2) 1 else 0;
+    }
+
+    fn stopped(code: i64) void {
+        if (state.load(.acquire) != 2) return;
+        status.current_state = SERVICE_STOPPED;
+        status.controls_accepted = 0;
+        status.wait_hint = 0;
+        if (code != 0) {
+            status.win32_exit_code = ERROR_SERVICE_SPECIFIC_ERROR;
+            status.service_specific_exit_code = @intCast(@as(u64, @bitCast(code)) & 0xffffffff);
+        }
+        setStatus(&status);
+        state.store(4, .release);
+        // ServiceMain'in dönmesine ve dağıtıcının çıkmasına kısa süre tanı (süreç hemen çıkarsa SCM yine de durumu görmüştür).
+        Sleep(100);
+    }
+} else struct {};
+
+/// Windows hizmeti olarak başlatıldıysa SCM'e bağlanır (1), aksi halde 0 (konsol, diğer hedefler).
+pub export fn nox_signal_service_run_raw(name: ?[*:0]const u8) i64 {
+    if (comptime !is_win) return 0;
+    const n = name orelse return 0;
+    return win_svc.run(std.mem.span(n));
+}
+
+/// Hizmet durumunu `SERVICE_STOPPED` bildirir (`code != 0` ise hizmete özgü çıkış kodu). Hizmet değilse etkisizdir.
+pub export fn nox_signal_service_stopped_raw(code: i64) void {
+    if (comptime !is_win) return;
+    win_svc.stopped(code);
+}
+
 fn validSig(sig: i64) ?usize {
     if (sig <= 0 or sig >= MAX_SIG) return null;
     return @intCast(sig);

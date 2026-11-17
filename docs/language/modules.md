@@ -166,5 +166,30 @@ A package that declares `extern def` bindings runs native code with full authori
 
 ## Visibility
 
-All top-level names of a module are importable; Nox has no `public`/`private` keywords. By convention a leading underscore marks a name as
+By default all top-level names of a module are importable; Nox has no `public`/`private` keywords. By convention a leading underscore marks a name as
 internal, and names beginning with `__nox_` belong to the compiler's prelude. A leading-underscore name is not hidden from importers.
+
+### `__all__`: an explicit public API
+
+A module that wants the compiler to enforce its public API declares a top-level list of string literals:
+
+```text
+# mylib/util.nox
+__all__: list[str] = ["public_add", "Box"]
+
+def public_add(a: int, b: int) -> int:
+    return _helper(a) + b          # the module itself can use everything
+
+def _helper(a: int) -> int: ...
+def internal_only(a: int) -> int: ...
+class Box: ...
+class Hidden: ...
+```
+
+From **another module**, `util.internal_only(...)`, `util.Hidden(...)`, an annotation `util.Hidden`, and `from util import internal_only` are then compile errors:
+`'internal_only' is not part of the public API of module 'util' (it is not listed in that module's __all__)`. The listed names work exactly as before.
+
+- The list applies to top-level **functions and classes** (the names the compiler qualifies by module). It is opt-in: a module without `__all__` keeps exporting everything, so existing code is unaffected.
+- Every listed name must be a function or class defined in that module; a typo is an error (`__all__ of module 'util' lists 'nope', which is not a function or class defined there`), not a silently hidden name.
+- `__all__` must be a plain list of string literals; it is read at compile time and is not a runtime variable.
+- This is compile-time API hygiene, not a security boundary: it does not change what is linked into the program.

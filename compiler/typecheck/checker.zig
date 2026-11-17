@@ -708,6 +708,8 @@ pub const Checker = struct {
     /// düzleştirip bu kümeyle eşleştirir — bkz. `tryResolveQualifiedCall`in
     /// belge notu.
     imported_modules: std.StringHashMapUnmanaged(void) = .{},
+    /// 2.3 madde 3.8b: noktalı modül yolu → modülün `__all__` listesi (yalnızca listesi olan modüller bulunur; listesi olmayan modülde her şey açıktır).
+    module_exports: std.StringHashMapUnmanaged(std.StringHashMapUnmanaged(void)) = .{},
     /// Faz U.3: `import X.Y as Z` — takma ad (`"Z"`) → TAM modül yolunun
     /// segmentleri (`["X","Y"]`). `substituteAlias` bir çağrı sitesindeki
     /// düzleştirilmiş noktalı zincirin İLK segmentini bu haritada ararsa,
@@ -1097,6 +1099,7 @@ pub const Checker = struct {
                 if (!self.imported_modules.contains(module_path)) {
                     return self.fail(error.UnknownType, "unknown module: {s}", .{module_path});
                 }
+                try self.requirePublic(module_path, segments[segments.len - 1]);
                 const mangled = try self.joinSegments(segments, '_');
                 if (self.classes.contains(mangled)) return .{ .class = mangled };
                 return self.fail(error.UnknownType, "module '{s}' has no class named '{s}'", .{ module_path, segments[segments.len - 1] });
@@ -1697,6 +1700,28 @@ pub const Checker = struct {
         }
     }
 
+    /// `module_path.member` başka bir modülden bir ad kullanıyor. Modülün `__all__` listesi varsa ve `member` listede değilse hata (liste yoksa her şey açık).
+    fn requirePublic(self: *Checker, module_path: []const u8, member: []const u8) TypeError!void {
+        const set = self.module_exports.get(module_path) orelse return;
+        if (set.contains(member)) return;
+        return self.fail(error.UndefinedFunction, "'{s}' is not part of the public API of module '{s}' (it is not listed in that module's __all__)", .{ member, module_path });
+    }
+
+    /// `__all__` listesindeki her ad modülün üst-düzey bir fonksiyonu ya da sınıfı olmalı (yazım hatası sessizce bir şeyi dışarıda bırakmasın). Kayıt aşamalarından sonra çağrılır.
+    fn validateModuleExports(self: *Checker, module: ast.Module) TypeError!void {
+        for (module.exports) |ex| {
+            for (ex.names) |n| {
+                const dotted_to_us = try self.allocator.dupe(u8, ex.module);
+                for (dotted_to_us) |*ch| {
+                    if (ch.* == '.') ch.* = '_';
+                }
+                const mangled = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ dotted_to_us, n });
+                if (self.functions.contains(mangled) or self.classes.contains(mangled) or self.generic_classes.contains(mangled) or self.generic_functions.contains(mangled)) continue;
+                return self.fail(error.UndefinedFunction, "__all__ of module '{s}' lists '{s}', which is not a function or class defined there", .{ ex.module, n });
+            }
+        }
+    }
+
     fn collectImports(self: *Checker, module: ast.Module) TypeError!void {
         for (module.body) |stmt| {
             self.current_line = stmt.line;
@@ -1714,6 +1739,7 @@ pub const Checker = struct {
                     const joined = try self.joinSegments(fi.segments, '.');
                     try self.imported_modules.put(self.allocator, joined, {});
                     for (fi.names) |nm| {
+                        try self.requirePublic(joined, nm.name);
                         var mangled_segments: std.ArrayListUnmanaged([]const u8) = .empty;
                         try mangled_segments.appendSlice(self.allocator, fi.segments);
                         try mangled_segments.append(self.allocator, nm.name);
@@ -3191,6 +3217,7 @@ pub const Checker = struct {
         if (!self.imported_modules.contains(module_path)) {
             return self.fail(error.UnknownType, "unknown module: {s}", .{module_path});
         }
+        try self.requirePublic(module_path, resolved[resolved.len - 1]);
         return try self.joinSegments(resolved, '_');
     }
 
@@ -3312,6 +3339,7 @@ pub const Checker = struct {
 
         const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
         if (!self.imported_modules.contains(module_path)) return null;
+        try self.requirePublic(module_path, segments[segments.len - 1]);
 
         const mangled = try self.joinSegments(segments, '_');
         const not_found_msg = try std.fmt.allocPrint(self.allocator, "module '{s}' has no member named '{s}'", .{ module_path, segments[segments.len - 1] });
@@ -3327,6 +3355,7 @@ pub const Checker = struct {
             const segments = try self.substituteAlias(raw_segments.items);
             const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
             if (self.imported_modules.contains(module_path)) {
+                try self.requirePublic(module_path, segments[segments.len - 1]);
                 real.callee.* = .{ .identifier = try self.joinSegments(segments, '_') };
                 return;
             }
@@ -4177,6 +4206,11 @@ pub const Checker = struct {
 
     pub fn checkModule(self: *Checker, module: ast.Module) TypeError!void {
         self.module_expr_spans = module.expr_spans;
+        for (module.exports) |ex| {
+            var set: std.StringHashMapUnmanaged(void) = .{};
+            for (ex.names) |n| try set.put(self.allocator, n, {});
+            try self.module_exports.put(self.allocator, ex.module, set);
+        }
         // TODO 8.6: `yield` → liste biriktirme (eager jeneratör).
         if (try generator_desugar.run(self.allocator, module.body, &self.cleanup_generators)) |d| {
             self.current_line = d.line;
@@ -4238,6 +4272,7 @@ pub const Checker = struct {
         try self.collectProtocols(module);
         try self.resolveGenericBases(module);
         try self.registerSignatures(module);
+        try self.validateModuleExports(module);
         try self.checkPendingInstBodies();
         try self.resolveReExportChains(module);
         try self.collectModuleGlobals(module);
@@ -8777,6 +8812,7 @@ pub const Checker = struct {
         const segments = try self.substituteAlias(raw.items);
         const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
         if (!self.imported_modules.contains(module_path)) return null;
+        try self.requirePublic(module_path, segments[segments.len - 1]);
         const mangled = try self.joinSegments(segments, '_');
         if (self.generic_classes.get(mangled)) |g| if (g.enum_variants.len > 0) return mangled;
         return null;
@@ -12107,6 +12143,7 @@ pub const Checker = struct {
             const segments = try self.substituteAlias(raw.items);
             const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
             if (!self.imported_modules.contains(module_path)) return null;
+            try self.requirePublic(module_path, segments[segments.len - 1]);
             const mangled = try self.joinSegments(segments, '_');
             return if (self.classes.contains(mangled)) mangled else null;
         }
@@ -12263,6 +12300,7 @@ pub const Checker = struct {
         const segments = try self.substituteAlias(raw.items);
         const module_path = try self.joinSegments(segments[0 .. segments.len - 1], '.');
         if (!self.imported_modules.contains(module_path)) return null;
+        try self.requirePublic(module_path, segments[segments.len - 1]);
         const mangled = try self.joinSegments(segments, '_');
         if (!self.generic_classes.contains(mangled) and !self.generic_functions.contains(mangled)) return null;
         const targ = (try self.indexExprToTypeExpr(ix.index.*)) orelse return null;

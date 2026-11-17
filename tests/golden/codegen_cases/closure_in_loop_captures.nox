@@ -1,0 +1,57 @@
+# 2.3 madde 4.5: döngü içinde bildirilen iç içe `def`ler döngü/yerel değişkenlerini yakalar (iki backend). Yakalama, kapanışın OLUŞTURULDUĞU andaki değerdir.
+
+def sum_while() -> int:
+    total: int = 0
+    i: int = 0
+    while i < 3:
+        def add(x: int) -> int:
+            return x + i
+        total = total + add(10)
+        i = i + 1
+    return total
+
+def sum_for() -> int:
+    total: int = 0
+    for k in range(3):
+        def twice() -> int:
+            return k * 2
+        total = total + twice()
+    return total
+
+def collect() -> int:
+    fs: list[() -> int] = []
+    i: int = 0
+    while i < 3:
+        j: int = i * 10
+        def get() -> int:
+            return j
+        fs.append(get)
+        i = i + 1
+    s: int = 0
+    for f in fs:
+        s = s + f()
+    return s
+
+async def worker(ch: Channel[int], n: int) -> int:
+    await ch.send(n)
+    return n
+
+async def driver() -> int:
+    ch: Channel[int] = Channel[int](4)
+    total: int = 0
+    i: int = 0
+    while i < 3:
+        def push(v: int) -> int:
+            return v + i
+        t: Task[int] = spawn worker(ch, push(1))
+        total = total + await t
+        got: int = await ch.recv()
+        total = total + got
+        i = i + 1
+    return total
+
+print(sum_while())
+print(sum_for())
+print(collect())
+r: Task[int] = spawn driver()
+print(await r)

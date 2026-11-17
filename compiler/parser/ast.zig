@@ -621,7 +621,15 @@ pub const Stmt = struct {
 /// doldurulur (bkz. `parser.zig`nin `parsePostfix`i) — argümanın KENDİ
 /// KALICI adresi (`@intFromPtr(&args[i])`, `args` `toOwnedSlice()`
 /// DÖNDÜKTEN SONRA) anahtar olarak kullanılır.
+/// Bir modülün açık dışa aktarım listesi (`__all__: list[str] = ["a", "b"]`, 2.3 madde 3.8b): `module` noktalı modül yolu (`mylib.util`), `names` listedeki üst-düzey fonksiyon/sınıf adları.
+/// Listesi OLMAYAN modüllerde her şey açıktır (geriye dönük uyumlu). Modül yükleyici `__all__` bildirimini gövdeden ayıklar (modül değişkeni olarak birleştirilmez).
+pub const ModuleExports = struct {
+    module: []const u8,
+    names: []const []const u8,
+};
+
 pub const Module = struct {
     body: []Stmt,
     expr_spans: std.AutoHashMapUnmanaged(usize, Span) = .empty,
+    exports: []const ModuleExports = &.{},
 };

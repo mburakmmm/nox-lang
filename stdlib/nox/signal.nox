@@ -20,6 +20,8 @@ extern def nox_signal_pending_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_signal_take_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_signal_raise_raw(sig: int) -> int from "zig-out/lib/noxrt.o"
 extern def nox_signal_host_sleep_raw(ms: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_signal_service_run_raw(name: str) -> int from "zig-out/lib/noxrt.o"
+extern def nox_signal_service_stopped_raw(code: int) -> None from "zig-out/lib/noxrt.o"
 
 import nox.time
 
@@ -69,3 +71,13 @@ def wait(sig: int, timeout_ms: int) -> bool:
         if poll < 10:
             poll = poll * 2
     return False
+
+# Windows hizmeti (SCM) olarak başlatıldıysa Service Control Manager'a bağlanır ve `True` döner: hizmetin `Durdur`u / sistem kapanışı SIGTERM gibi görünür (`wait(sigterm(), ...)`,
+# `take(sigterm())`). Konsoldan çalıştırılırsa (ya da Windows dışında) `False` döner ve program normal devam eder; bu yüzden aynı ikili hem konsolda hem hizmet olarak çalışır.
+# Programın başında bir kez çağırın; Nox kodu SCM'in iş parçacıklarında çalışmaz. İş bitince `service_stopped(kod)` çağrılmalıdır (aksi halde SCM süreci beklenmedik sonlanmış sayar).
+def service_run(name: str) -> bool:
+    return nox_signal_service_run_raw(name) == 1
+
+# `SERVICE_STOPPED` bildirir (`code != 0`: hizmete özgü çıkış kodu olarak raporlanır). Hizmet olarak çalışmıyorsa etkisizdir.
+def service_stopped(code: int) -> None:
+    nox_signal_service_stopped_raw(code)

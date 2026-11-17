@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.5]
+
+2.3 yol haritası: 2.3 listesinde kalan dil/çalışma zamanı maddelerinin kapatılması (3.8b, 3.9, 4.5) ve 6.2 incelemesi.
+
+- **Modül görünürlüğü: opt-in `__all__` (3.8b):** bir modül `__all__: list[str] = ["a", "b"]` bildirirse, listede olmayan fonksiyon/sınıfına başka modülden erişim (nitelikli çağrı, kurucu, tip açıklaması, `from m import x`) derleme hatasıdır; modülün kendi içi serbest, listesiz modülde her şey açık (geriye dönük uyumlu), listedeki bilinmeyen ad hata. `docs/language/modules.md`, spesifikasyon §3.466.
+- **Windows hizmeti (SCM) (3.9):** `nox.signal.service_run(name)` / `service_stopped(code)`: `STOP`/`SHUTDOWN` SIGTERM gibi görünür, konsolda `False` döner (aynı ikili iki modda çalışır). Gerçek Windows'ta `sc create/start/stop/delete` ile doğrulandı (`scripts/windows_service_probe.{nox,bat}`).
+- **4.5:** döngüde bildirilen iç içe `def` + yakalama biçimleri iki backend'de çalışıyor (eski not yeniden üretilemedi); regresyon golden `closure_in_loop_captures`.
+- **6.2 Preemption / fiber göçü:** incelendi, uygulanmadı: başlamış fiber göçü modül-düzeyi değişkenlerin işçi başına kopyası, thread-local durum ve açık hata 1.7 yüzünden bugün güvenli değil; önkoşul 5.4. Karar belgesi `project/preemption-fiber-gocu-tasarimi-2026-11.md`.
+- **Açık:** 3.3 yönetilen Redis hesabı doğrulaması, 5.1/5.4/5.5/5.6 (evdeki Windows oturumunda), 6.1/6.3/6.4.
+
 ## [2.2.4]
 
 2.3 yol haritası: Aşama 5 performans paketi (5.2 JSON, 5.3 koleksiyonlar) + Aşama 2/3'te açık kalan işlerin kapatılması. Dil sözdizimi değişmedi.

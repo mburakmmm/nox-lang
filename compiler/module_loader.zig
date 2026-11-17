@@ -142,6 +142,7 @@ fn resolveImportsImpl(
 ) LoadError!ast.Module {
     var loaded: std.StringHashMapUnmanaged(void) = .empty;
     var extra: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+    var module_exports: std.ArrayListUnmanaged(ast.ModuleExports) = .empty;
 
     const core_path = try std.fmt.allocPrint(a, "{s}/nox/core.nox", .{stdlib_root});
     const core_source = try env.read(a, core_path);
@@ -157,7 +158,7 @@ fn resolveImportsImpl(
             if (m.name.len > 0) own_name = m.name;
         } else |_| {}
     }
-    try loadImportsRecursive(a, env, user_module.body, &loaded, &extra, alias_roots, stdlib_root, project_root, own_name, own_name, if (own_name != null) project_root else null);
+    try loadImportsRecursive(a, env, user_module.body, &loaded, &extra, &module_exports, alias_roots, stdlib_root, project_root, own_name, own_name, if (own_name != null) project_root else null);
 
     const combined = try a.alloc(ast.Stmt, extra.items.len + user_module.body.len);
     @memcpy(combined[0..extra.items.len], extra.items);
@@ -174,7 +175,7 @@ fn resolveImportsImpl(
     // OLARAK (pointer/len) kopyalanır — bu YÜZDEN `expr_spans`teki anahtarlar
     // (`@intFromPtr(&arg)`) BU birleştirmeden SONRA da GEÇERLİ kalır,
     // yeter ki haritanın KENDİSİ de birlikte TAŞINSIN.
-    return .{ .body = combined, .expr_spans = user_module.expr_spans };
+    return .{ .body = combined, .expr_spans = user_module.expr_spans, .exports = try module_exports.toOwnedSlice(a) };
 }
 
 /// Windows NT nesne adı `/` kabul etmez (`OBJECT_NAME_INVALID` paniği).
@@ -235,12 +236,32 @@ pub fn resolveImportFilePath(
 /// OLMADIĞINI kontrol etmek İçin kullanılır — eşleşirse KENDİ kökü
 /// KULLANILIR (tüketicinin alias'ı NE OLURSA olsun). `null`/`null` üst-düzey
 /// kullanıcı modülü İçin (VE `nox.json`ı olmayan/geçersiz olan paketler İçin).
+/// Üst-düzey `__all__: list[str] = [<dize literalleri>]` bildirimini `ModuleExports`a çevirir; başka her deyim (ve literal olmayan `__all__`) için `null`.
+fn extractExportList(a: std.mem.Allocator, s: ast.Stmt, segments: []const []const u8) std.mem.Allocator.Error!?ast.ModuleExports {
+    const vd = switch (s.kind) {
+        .var_decl => |v| v,
+        else => return null,
+    };
+    if (!std.mem.eql(u8, vd.name, "__all__")) return null;
+    const items = switch (vd.value) {
+        .list_lit => |l| l,
+        else => return null,
+    };
+    var names: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (items) |it| switch (it) {
+        .string_lit => |str| try names.append(a, str),
+        else => return null,
+    };
+    return .{ .module = try joinWith(a, segments, '.'), .names = try names.toOwnedSlice(a) };
+}
+
 fn loadImportsRecursive(
     a: std.mem.Allocator,
     env: LoadEnv,
     stmts: []const ast.Stmt,
     loaded: *std.StringHashMapUnmanaged(void),
     out: *std.ArrayListUnmanaged(ast.Stmt),
+    exports: *std.ArrayListUnmanaged(ast.ModuleExports),
     alias_roots: ?*const std.StringHashMapUnmanaged([]const u8),
     stdlib_root: []const u8,
     project_root: ?[]const u8,
@@ -348,7 +369,7 @@ fn loadImportsRecursive(
         // ÖNCE bu stdlib modülünün KENDİ import'larını özyinelemeli çöz
         // (transitif — bir stdlib modülü başka bir stdlib modülünü import
         // edebilir).
-        try loadImportsRecursive(a, env, stdlib_module.body, loaded, out, alias_roots, stdlib_root, project_root, project_name, next_own_name, next_own_root);
+        try loadImportsRecursive(a, env, stdlib_module.body, loaded, out, exports, alias_roots, stdlib_root, project_root, project_name, next_own_name, next_own_root);
 
         // Bu modülün KENDİ üst-düzey `func_def`/`class_def` adlarını topla.
         var rename_map: std.StringHashMapUnmanaged([]const u8) = .empty;
@@ -364,7 +385,13 @@ fn loadImportsRecursive(
         // deyimlerin `checker.zig`nin `imported_modules` kümesine girmesi
         // GEREKİR ki bu modülün İÇİNDEKİ nitelikli çağrılar da çözülebilsin)
         // yeniden adlandırarak `out`a ekle.
+        // `__all__: list[str] = ["a", "b"]` (açık dışa aktarım listesi, 2.3 madde 3.8b): gövdeden ayıklanır (modül değişkeni olarak birleştirilmez, aksi halde modüller arası ad çakışırdı)
+        // ve `exports`a yazılır. Yalnızca düz bir dize-literal listesi tanınır; başka bir biçim sıradan bir modül değişkeni olarak kalır.
         for (stdlib_module.body) |s| {
+            if (try extractExportList(a, s, segments)) |ex| {
+                try exports.append(a, ex);
+                continue;
+            }
             try out.append(a, try renameStmt(a, s, &rename_map));
         }
     }

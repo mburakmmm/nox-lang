@@ -939,3 +939,72 @@ test "NXL-007 geriye uyum: proje adiyla ayni adli alt dizin varsa (<kok>/<ad>/mo
         .{ "main.nox", "import kit.core\n\nprint(kit.core.label())\n" },
     }, "from-dir\n");
 }
+
+// 2.3 madde 3.8b: `__all__: list[str] = [...]` açık dışa aktarım listesi. Listesi olan bir modülün listede OLMAYAN ad(lar)ına başka bir modülden erişim (nitelikli çağrı, sınıf kurucusu,
+// tip açıklaması, `from m import x`) derleme hatasıdır; listedeki adlar ve modülün kendi iç çağrıları çalışır; listesi olmayan modülde her şey açıktır.
+const visibility_util =
+    "__all__: list[str] = [\"public_add\", \"Box\"]\n\n" ++
+    "def public_add(a: int, b: int) -> int:\n    return _helper(a) + b\n\n" ++
+    "def _helper(a: int) -> int:\n    return a * 10\n\n" ++
+    "def internal_only(a: int) -> int:\n    return a\n\n" ++
+    "class Box:\n    value: int\n\n    def __init__(self: Box, value: int) -> None:\n        self.value = value\n\n" ++
+    "class Hidden:\n    n: int\n\n    def __init__(self: Hidden, n: int) -> None:\n        self.n = n\n";
+
+fn buildProject(io: std.Io, a: std.mem.Allocator, main_src: []const u8, util_src: []const u8) !struct { ok: bool, stderr: []const u8, stdout: []const u8 } {
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"vis\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{ .sub_path = "util.nox", .data = util_src });
+    try proj.dir.writeFile(io, .{ .sub_path = "main.nox", .data = main_src });
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const res = try std.process.run(a, io, .{ .argv = &.{ noxcPath(), "run", main_path }, .environ_map = &env_map });
+    return .{ .ok = res.term == .exited and res.term.exited == 0, .stderr = res.stderr, .stdout = res.stdout };
+}
+
+test "3.8b: __all__ listedeki adlar kullanılabilir, listede olmayanlar başka modülden erişilemez" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const good = try buildProject(io, a, "import util\nfrom util import public_add, Box\n\nprint(util.public_add(1, 2))\nprint(public_add(3, 4))\nb: util.Box = util.Box(5)\nprint(b.value, Box(6).value)\n", visibility_util);
+    if (!good.ok) std.debug.print("beklenmedik hata: {s}\n", .{good.stderr});
+    try std.testing.expect(good.ok);
+    try std.testing.expectEqualStrings("12\n34\n5 6\n", good.stdout);
+
+    const bad_cases = [_]struct { src: []const u8, name: []const u8 }{
+        .{ .src = "import util\nprint(util.internal_only(1))\n", .name = "internal_only" },
+        .{ .src = "import util\nprint(util.Hidden(1).n)\n", .name = "Hidden" },
+        .{ .src = "from util import internal_only\nprint(internal_only(1))\n", .name = "internal_only" },
+        .{ .src = "import util\nh: util.Hidden = None\n", .name = "Hidden" },
+    };
+    for (bad_cases) |c| {
+        const r = try buildProject(io, a, c.src, visibility_util);
+        try std.testing.expect(!r.ok);
+        const want = try std.fmt.allocPrint(a, "'{s}' is not part of the public API of module 'util'", .{c.name});
+        if (std.mem.indexOf(u8, r.stderr, want) == null) std.debug.print("beklenen mesaj yok ({s}): {s}\n", .{ c.name, r.stderr });
+        try std.testing.expect(std.mem.indexOf(u8, r.stderr, want) != null);
+    }
+}
+
+test "3.8b: __all__ bilinmeyen bir adı listelerse hata; liste olmayan modülde her şey açık kalır" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const typo = try buildProject(io, a, "import util\nprint(util.public_add(1, 2))\n", "__all__: list[str] = [\"public_add\", \"nope\"]\n\ndef public_add(a: int, b: int) -> int:\n    return a + b\n");
+    try std.testing.expect(!typo.ok);
+    try std.testing.expect(std.mem.indexOf(u8, typo.stderr, "lists 'nope', which is not a function or class defined there") != null);
+
+    const open = try buildProject(io, a, "import util\nprint(util.anything(2))\n", "def anything(a: int) -> int:\n    return a + 1\n");
+    try std.testing.expect(open.ok);
+    try std.testing.expectEqualStrings("3\n", open.stdout);
+}

@@ -1,0 +1,23 @@
+# Windows hizmeti (SCM) sondası (2.3 madde 3.9): `scripts/windows_service_probe.bat` ile çalıştırılır. Konsolda `service mode: False` basıp çıkar; hizmet olarak başlatılınca
+# `C:\\nox-win-probe\\svc.log` dosyasına "service started" yazar, `sc stop` ile SIGTERM alınca "stop requested..." ve "reported stopped" yazıp `SERVICE_STOPPED` bildirir.
+import nox.signal
+import nox.fs
+import nox.time
+
+LOG: str = "C:\\nox-win-probe\\svc.log"
+
+def log(line: str) -> None:
+    nox.fs.append_string(LOG, line + "\n")
+
+is_service: bool = nox.signal.service_run("NoxProbeSvc")
+print("service mode:", is_service)
+if is_service:
+    log("service started")
+    term: int = nox.signal.sigterm()
+    n: int = 0
+    while not nox.signal.take(term) and n < 600:
+        nox.time.sleep_ms(100)
+        n = n + 1
+    log("stop requested after ticks: " + str(n > 0))
+    nox.signal.service_stopped(0)
+    log("reported stopped")

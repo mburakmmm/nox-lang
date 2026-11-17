@@ -4099,6 +4099,27 @@ export function w $nox_signal_wait(l %rt, l %p_sig, l %p_timeout_ms) {
 @fn_end34
     ret 0
 }
+export function w $nox_signal_service_run(l %rt, l %p_name) {
+@start
+    %t0 =l alloc8 8
+    storel %p_name, %t0
+    %t1 =l loadl %t0
+    %t2 =l call $nox_signal_service_run_raw(l %t1)
+    %t3 =w ceql %t2, 1
+    ret %t3
+@after_return0
+@fn_end1
+    ret 0
+}
+export function $nox_signal_service_stopped(l %rt, l %p_code) {
+@start
+    %t0 =l alloc8 8
+    storel %p_code, %t0
+    %t1 =l loadl %t0
+    call $nox_signal_service_stopped_raw(l %t1)
+@fn_end0
+    ret
+}
 export function w $main(w %argc, l %argv) {
 @start
     %t0 =l alloc8 8
