@@ -27,7 +27,7 @@ export fn printf(fmt: ?[*:0]const u8, ...) callconv(.c) c_int {
     const f = fmt orelse return 0;
     var ap = @cVaStart();
     defer @cVaEnd(&ap);
-    return @intCast(wasm_printf.printfImpl(hostEmit, f, &ap));
+    return @intCast(wasm_printf.printfImpl(hostEmit, f, @ptrCast(&ap)));
 }
 
 /// libm: `nox.math`in `extern def ... from "m"` sembolleri. Zig'in compiler-rt'si `sin/cos/exp/log/pow/floor/ceil/sqrt/fmod`i zayıf sembol olarak verir;

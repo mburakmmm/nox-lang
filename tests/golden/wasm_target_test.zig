@@ -601,8 +601,9 @@ test "wasm32-freestanding --asyncify: nox.signal host sinyalini nox_host_signal 
 // 2.3 madde 5.5: Nox dışı araç zinciriyle derlenmiş gerçek C `pthread` programı Nox host'unda çalışır. `WASI_SDK_PATH` (wasi-sdk >= 25) yoksa ya da `node` yoksa atlanır (CI'a bağımlılık eklemez).
 test "wasm32-wasip1-threads: wasi-sdk ile derlenmiş gerçek C pthread programı Nox host'unda çalışır" {
     const allocator = std.testing.allocator;
-    const sdk_z = std.c.getenv("WASI_SDK_PATH") orelse return error.SkipZigTest;
-    const sdk = std.mem.span(sdk_z);
+    var env = try std.testing.environ.createMap(allocator);
+    defer env.deinit();
+    const sdk = env.get("WASI_SDK_PATH") orelse return error.SkipZigTest;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

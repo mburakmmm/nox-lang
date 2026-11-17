@@ -42,5 +42,5 @@ export fn printf(fmt: ?[*:0]const u8, ...) callconv(.c) c_int {
     const f = fmt orelse return 0;
     var ap = @cVaStart();
     defer @cVaEnd(&ap);
-    return @intCast(wasm_printf.printfImpl(emit, f, &ap));
+    return @intCast(wasm_printf.printfImpl(emit, f, @ptrCast(&ap)));
 }

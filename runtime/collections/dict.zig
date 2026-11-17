@@ -234,13 +234,19 @@ fn hashSeed(rt: ?*anyopaque) u64 {
                 // sınırı — bkz. plan dosyası).
                 state.dict_hash_seed = 0xA5A5A5A5A5A5A5A5;
                 state.dict_hash_seed_init = true;
+                state.hot().hash_seed = state.dict_hash_seed;
                 return state.dict_hash_seed;
             }
         }
         var buf: [8]u8 = undefined;
         secureRandomBuf(&buf);
-        state.dict_hash_seed = std.mem.readInt(u64, &buf, .little);
+        var seed = std.mem.readInt(u64, &buf, .little);
+        // 0, sıcak bloktaki "ilklenmedi" işaretidir; tohum hiçbir zaman 0 olmaz.
+        if (seed == 0) seed = 0x9E3779B97F4A7C15;
+        state.dict_hash_seed = seed;
         state.dict_hash_seed_init = true;
+        // Derleyicinin satır içi `int` karması bu aynayı okur (bkz. `abi_layout.RT_HOT_HASH_SEED_BACK`).
+        state.hot().hash_seed = seed;
     }
     return state.dict_hash_seed;
 }
@@ -1312,6 +1318,29 @@ test "Güvenlik M-3: hashSeed sabit 0 DEĞİL VE aynı rt içinde TUTARLI (memoi
     const s2 = hashSeed(rt);
     try std.testing.expectEqual(s1, s2);
     try std.testing.expect(s1 != 0);
+}
+
+// 2.3 madde 5.3: derleyicinin satır içi `int` karması sıcak bloktaki tohum aynasını okur. Aynanın ilk kullanımdan önce 0 (ilklenmedi), sonra `hashSeed` ile aynı olduğunu ve
+// derleyicinin ürettiği formülün (tohum XOR, fmix64, 63 bit maskesi) `nox_hash_int` ile bit-bit aynı sonuç verdiğini doğrular.
+test "satır içi int karması: sıcak blok tohum aynası ve formül nox_hash_int ile aynı" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    try std.testing.expectEqual(@as(u64, 0), state.hot().hash_seed);
+    const probe = nox_hash_int(rt, 12345); // ilklemeyi tetikler
+    const seed = state.hot().hash_seed;
+    try std.testing.expect(seed != 0);
+    try std.testing.expectEqual(hashSeed(rt), seed);
+    for ([_]i64{ 0, 1, -1, 12345, 1 << 40, std.math.minInt(i64), std.math.maxInt(i64) }) |key| {
+        var k: u64 = @as(u64, @bitCast(key)) ^ seed;
+        k ^= k >> 33;
+        k *%= 0xff51afd7ed558ccd;
+        k ^= k >> 33;
+        k *%= 0xc4ceb9fe1a85ec53;
+        k ^= k >> 33;
+        try std.testing.expectEqual(@as(i64, @bitCast(k & 0x7fff_ffff_ffff_ffff)), nox_hash_int(rt, key));
+    }
+    _ = probe;
 }
 
 // SMALL_MAP_THRESHOLD'u AŞAN (hash-tabanlı `index` yoluna GEÇEN) bir dict,

@@ -351,27 +351,53 @@ class Counter[T]:
     _counts: list[int]
     _slots: list[int]
 
+    # 2.3 madde 5.3 (v2.2.8): Counter'da SİLME yoktur, bu yüzden karma tablosunda mezar taşı olmaz ve arama her zaman boş bir yuvada biter (yük <= 0,5). `add` aramayı satır içi yapar
+    # (yardımcı çağrısı + ikinci kez yerleştirme araması kalktı) ve yeni anahtarı aramanın bulduğu boş yuvaya doğrudan yazar; yalnızca tablo büyürken yeniden kurulur.
     def __init__(self: Counter) -> None:
         self._keys = []
         self._counts = []
-        self._slots = []
+        self._slots = [0] * 16
 
     def _index_of(self: Counter, v: T) -> int:
-        return _hx_find(self._keys, self._slots, v)
+        mask: int = len(self._slots) - 1
+        pos: int = __nox_hash(v) & mask
+        res: int = -1
+        searching: bool = True
+        while searching:
+            s: int = self._slots[pos]
+            if s == 0:
+                searching = False
+            elif self._keys[s - 1] == v:
+                res = s - 1
+                searching = False
+            else:
+                pos = (pos + 1) & mask
+        return res
 
     def add(self: Counter, v: T) -> None:
-        h: int = __nox_hash(v)
-        idx: int = _hx_find_h(self._keys, self._slots, v, h)
-        if idx < 0:
+        mask: int = len(self._slots) - 1
+        pos: int = __nox_hash(v) & mask
+        idx: int = -1
+        searching: bool = True
+        while searching:
+            s: int = self._slots[pos]
+            if s == 0:
+                searching = False
+            elif self._keys[s - 1] == v:
+                idx = s - 1
+                searching = False
+            else:
+                pos = (pos + 1) & mask
+        if idx >= 0:
+            self._counts[idx] = self._counts[idx] + 1
+        else:
             self._keys.append(v)
             self._counts.append(1)
             n: int = len(self._keys)
             if n * 2 > len(self._slots):
                 self._slots = _hx_rebuild(self._keys, _hx_cap_for(n, len(self._slots)))
             else:
-                _hx_place(self._slots, h, n - 1)
-        else:
-            self._counts[idx] = self._counts[idx] + 1
+                self._slots[pos] = n
 
     def count(self: Counter, v: T) -> int:
         idx: int = self._index_of(v)
@@ -487,116 +513,156 @@ class OrderedDict[K, V]:
         return len(self._keys) - self._ndead
 
 # ---------------------------------------------------------------------
-# LRUCache[K, V] — OrderedDict'in AYNI karma dizini (`_hx_*`) + mezar taşları: erişilen girdi
-# "sona taşınır" = eski girdi ölü işaretlenir, yenisi eklenir (amortize O(1); mezar taşları
-# yarıyı aşınca `_compact`). En eski girdi `_first`ten ileriye ilk canlı girdidir.
-# `get` erişileni SONA (en-son-kullanılan) taşır; `put` kapasiteyi AŞARSA en ESKİYİ atar;
-# `contains` sırayı DEĞİŞTİRMEZ. (2.2 aşama 2: önceden her işlem O(n) tarama + liste yeniden kurmaydı; 300k işlemde Python'dan 22x yavaştı.)
+# LRUCache[K, V] — sabit indeksli girdiler + çift bağlı güncellik listesi + karma indeksi (aşağıdaki sınıf notuna bakın).
+# `get` erişileni en-son-kullanılan yapar; `put` kapasiteyi AŞARSA en ESKİYİ atar; `contains` sırayı DEĞİŞTİRMEZ.
 class LRUCache[K, V]:
     _keys: list[K]
     _values: list[V]
+    # Girdi i için `_meta[3*i]` = karma, `_meta[3*i+1]` = bir önceki (daha yeni) girdi, `_meta[3*i+2]` = bir sonraki (daha eski) girdi; -1 = yok.
+    _meta: list[int]
     _slots: list[int]
-    _dead: list[bool]
-    _ndead: int
-    _first: int
+    _head: int
+    _tail: int
     _n: int
     capacity: int
 
+    # 2.3 madde 5.3 (v2.2.8): eski tasarım her `get`te girdiyi listenin sonuna taşıyıp mezar taşı bırakıyor, yarıdan fazlası ölü olunca TÜM anahtarları yeniden karmalıyordu. Yeni tasarım:
+    # girdiler sabit indekslerde durur, güncellik sırası bir çift bağlı liste (`_meta`), karma indeksi mezar taşı yerine GERİ KAYDIRMALI silme kullanır (Knuth R; girdinin karması `_meta`da saklı).
+    # Sıkıştırma/yeniden karma yoktur; dolu önbellekte en eski girdinin dizini yeni girdi için yeniden kullanılır. Dış davranış aynıdır.
     def __init__(self: LRUCache, capacity: int) -> None:
         self._keys = []
         self._values = []
-        self._slots = []
-        self._dead = []
-        self._ndead = 0
-        self._first = 0
+        self._meta = []
+        self._slots = [0] * 16
+        self._head = -1
+        self._tail = -1
         self._n = 0
         self.capacity = capacity
 
-    def _index_of(self: LRUCache, k: K) -> int:
-        return _hx_find(self._keys, self._slots, k)
+    # `k`nin karma yuvasının konumunu döndürür; yoksa -1.
+    def _find(self: LRUCache, k: K, h: int) -> int:
+        mask: int = len(self._slots) - 1
+        pos: int = h & mask
+        res: int = -2
+        while res == -2:
+            s: int = self._slots[pos]
+            if s == 0:
+                res = -1
+            elif self._keys[s - 1] == k:
+                res = pos
+            else:
+                pos = (pos + 1) & mask
+        return res
+
+    def _place(self: LRUCache, h: int, idx: int) -> None:
+        mask: int = len(self._slots) - 1
+        pos: int = h & mask
+        while self._slots[pos] != 0:
+            pos = (pos + 1) & mask
+        self._slots[pos] = idx + 1
+
+    def _rebuild(self: LRUCache, cap: int) -> None:
+        self._slots = [0] * cap
+        j: int = 0
+        while j < self._n:
+            self._place(self._meta[3 * j], j)
+            j = j + 1
+
+    # Yuva `pos`u boşaltır ve doğrusal yoklama zincirini geri kaydırarak onarır (girdi, karma konumu `(i, j]` aralığında DEĞİLSE boşluğa taşınır).
+    def _del_slot(self: LRUCache, pos: int) -> None:
+        mask: int = len(self._slots) - 1
+        i: int = pos
+        j: int = pos
+        active: bool = True
+        while active:
+            j = (j + 1) & mask
+            s: int = self._slots[j]
+            if s == 0:
+                active = False
+            else:
+                home: int = self._meta[3 * (s - 1)] & mask
+                mv: bool = False
+                if i <= j:
+                    mv = home <= i or home > j
+                else:
+                    mv = home <= i and home > j
+                if mv:
+                    self._slots[i] = s
+                    i = j
+        self._slots[i] = 0
+
+    def _unlink(self: LRUCache, i: int) -> None:
+        p: int = self._meta[3 * i + 1]
+        nx: int = self._meta[3 * i + 2]
+        if p >= 0:
+            self._meta[3 * p + 2] = nx
+        else:
+            self._head = nx
+        if nx >= 0:
+            self._meta[3 * nx + 1] = p
+        else:
+            self._tail = p
+
+    def _push_front(self: LRUCache, i: int) -> None:
+        self._meta[3 * i + 1] = -1
+        self._meta[3 * i + 2] = self._head
+        if self._head >= 0:
+            self._meta[3 * self._head + 1] = i
+        else:
+            self._tail = i
+        self._head = i
 
     def contains(self: LRUCache, k: K) -> bool:
-        return self._index_of(k) >= 0
-
-    def _compact(self: LRUCache) -> None:
-        keys: list[K] = self._keys
-        values: list[V] = self._values
-        dead: list[bool] = self._dead
-        new_keys: list[K] = []
-        new_values: list[V] = []
-        new_dead: list[bool] = []
-        i: int = 0
-        while i < len(keys):
-            if not dead[i]:
-                new_keys.append(keys[i])
-                new_values.append(values[i])
-                new_dead.append(False)
-            i = i + 1
-        self._keys = new_keys
-        self._values = new_values
-        self._dead = new_dead
-        self._ndead = 0
-        self._first = 0
-        # Sıkıştırma sonrası canlı girdi sayısının 2 katı kadar ekleme payı bırakılır (aksi halde her ~n/40 eklemede yeniden kurulurdu).
-        self._slots = _hx_rebuild(new_keys, _hx_cap_for(len(new_keys) * 2, len(self._slots)))
-
-    # Girdiyi (anahtar+değer) listelerin sonuna ekler ve karma dizinine yerleştirir (`h`: `k`nin karma değeri, çağıran bir kez hesaplar).
-    def _append(self: LRUCache, k: K, v: V, h: int) -> None:
-        self._keys.append(k)
-        self._values.append(v)
-        self._dead.append(False)
-        n: int = len(self._keys)
-        if n * 2 > len(self._slots):
-            if self._ndead > 0:
-                self._compact()
-            else:
-                self._slots = _hx_rebuild(self._keys, _hx_cap_for(n, len(self._slots)))
-        else:
-            _hx_place(self._slots, h, n - 1)
-
-    # Karma yuvası `pos`taki canlı girdiyi ölü işaretler (yuva mezar taşı olur).
-    def _kill_at(self: LRUCache, pos: int) -> None:
-        idx: int = self._slots[pos] - 1
-        self._slots[pos] = -1
-        self._dead[idx] = True
-        self._ndead = self._ndead + 1
-
-    def _maybe_compact(self: LRUCache) -> None:
-        if self._ndead >= 16 and self._ndead * 2 > len(self._keys):
-            self._compact()
+        return self._find(k, __nox_hash(k)) >= 0
 
     def get(self: LRUCache, k: K) -> V:
-        h: int = __nox_hash(k)
-        pos: int = _hx_find_slot_h(self._keys, self._slots, k, h)
+        pos: int = self._find(k, __nox_hash(k))
         if pos < 0:
             raise KeyError("key not in LRUCache")
-        idx: int = self._slots[pos] - 1
-        v: V = self._values[idx]
-        if idx != len(self._keys) - 1:
-            self._kill_at(pos)
-            self._append(k, v, h)
-            self._maybe_compact()
-        return v
+        i: int = self._slots[pos] - 1
+        if self._head != i:
+            self._unlink(i)
+            self._push_front(i)
+        return self._values[i]
 
     def put(self: LRUCache, k: K, v: V) -> None:
+        if self.capacity <= 0:
+            return
         h: int = __nox_hash(k)
-        pos: int = _hx_find_slot_h(self._keys, self._slots, k, h)
+        pos: int = self._find(k, h)
         if pos >= 0:
-            self._kill_at(pos)
-            self._n = self._n - 1
-        self._append(k, v, h)
-        self._n = self._n + 1
-        if self._n > self.capacity:
-            self._evict_oldest()
-        self._maybe_compact()
-
-    def _evict_oldest(self: LRUCache) -> None:
-        i: int = self._first
-        while self._dead[i]:
-            i = i + 1
-        self._kill_at(_hx_find_slot(self._keys, self._slots, self._keys[i]))
-        self._n = self._n - 1
-        self._first = i + 1
+            i: int = self._slots[pos] - 1
+            self._values[i] = v
+            if self._head != i:
+                self._unlink(i)
+                self._push_front(i)
+            return
+        if self._n < self.capacity:
+            e: int = self._n
+            self._keys.append(k)
+            self._values.append(v)
+            self._meta.append(h)
+            self._meta.append(-1)
+            self._meta.append(-1)
+            self._n = self._n + 1
+            if self._n * 2 > len(self._slots):
+                self._rebuild(len(self._slots) * 2)
+            else:
+                self._place(h, e)
+            self._push_front(e)
+        else:
+            t: int = self._tail
+            self._unlink(t)
+            mask: int = len(self._slots) - 1
+            p: int = self._meta[3 * t] & mask
+            while self._slots[p] != t + 1:
+                p = (p + 1) & mask
+            self._del_slot(p)
+            self._keys[t] = k
+            self._values[t] = v
+            self._meta[3 * t] = h
+            self._place(h, t)
+            self._push_front(t)
 
     def size(self: LRUCache) -> int:
         return self._n

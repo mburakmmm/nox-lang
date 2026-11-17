@@ -242,7 +242,10 @@ pub const HotState = extern struct {
     pending_exception: ?*anyopaque = null,
     pending_exception_line: i64 = 0,
     fiber_ever_active: u8 = 0,
-    _pad: [47]u8 = @splat(0),
+    _pad0: [7]u8 = @splat(0),
+    /// `dict.zig` `hashSeed`inin ilklenmiş tohumunun aynası (0 = ilklenmedi); derleyici `int` karmasını satır içi hesaplamak için okur.
+    hash_seed: u64 = 0,
+    _pad: [32]u8 = @splat(0),
 };
 
 comptime {
@@ -251,6 +254,7 @@ comptime {
     std.debug.assert(@offsetOf(HotState, "fiber_ever_active") == abi_layout.RT_HOT_PENDING_BACK - abi_layout.RT_HOT_FIBER_FLAG_BACK);
     // Faz 9.10: derleyicinin satır içi kullandığı HER alan ofseti, boyut ve hizalama derleme zamanında doğrulanır (sıcak blok `rt`nin hemen öncesindedir: `rt - RT_HOT_SIZE`).
     std.debug.assert(@offsetOf(HotState, "pending_exception_line") == abi_layout.RT_HOT_PENDING_BACK - abi_layout.RT_HOT_LINE_BACK);
+    std.debug.assert(@offsetOf(HotState, "hash_seed") == abi_layout.RT_HOT_PENDING_BACK - abi_layout.RT_HOT_HASH_SEED_BACK);
     std.debug.assert(abi_layout.RT_HOT_SIZE % @alignOf(HotState) == 0); // `rt - RT_HOT_SIZE` her hedefte (32/64 bit) HotState hizalamasını korur
     std.debug.assert(abi_layout.RT_HOT_PENDING_BACK == abi_layout.RT_HOT_SIZE); // blok başı = rt - RT_HOT_SIZE = bekleyen istisna işaretçisi
 }

@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.8]
+
+2.3 yol haritası 5.3 devamı: `LRUCache`/`Counter`/`Deque` C'ye yaklaştırma + CI'da kırmızı kalan hataların düzeltilmesi.
+
+- **Performans (5.3):** `LRUCache` bağlı liste + geri kaydırmalı silme tasarımına geçti (10,1× → 4,2× nox/C), `Counter` aramayı satır içi yapar (5,8× → 3,9×), `Deque` `reverse` hızlandırmasıyla 10,6× → 9,6×. `__nox_hash(int)` çağrısız (tohum sıcak blokta aynalı, `RT_HOT_HASH_SEED_BACK`), `nox_list_reverse` tipli döngü. Dış davranış aynı; referans modelli rastgele test (`collections_lru_counter_deque_model`) ve sızıntı testi eklendi. Ölçümler `benchmarks/RESULTS.md`.
+- **CI düzeltmeleri (v2.2.1'den beri kırmızıydı):** (a) `runtime/wasm_printf.zig`: `std.builtin.VaList` aarch64-linux ve x86_64-windows'ta Zig'de derleme hatasıdır, x86_64'te `.auto` işlevde var-args kullanımı reddedilir; gövde `callconv(.c)` bir tür fabrikasına alındı ve VaList yalnızca desteklenen hedeflerde derlenir. (b) `tests/golden/wasm_target_test.zig`: libc'siz derlemede `std.c.getenv` yoktu, `std.testing.environ` kullanıldı. (c) `runtime/stdlib_shims/pg_wasm.zig`: Windows'ta `std.c.clock_gettime` yok, `win_udp.nowNs` kullanıldı. (d) `net_dial` "kapalı yerel port" testi Windows çalıştırıcılarında `error.Timeout` da kabul eder (sınırlılık asıl iddiadır).
+- **Açık:** `mobile` iş akışının `ios-simulator` işi çalıştırıcı düzeyinde iptal oluyor (adım başlamıyor); D.1/D.2, 6.x.
+
 ## [2.2.7]
 
 2.3 yol haritası: Aşama 5 kalanı — `str` küçük kopyaları (5.3), WASM kota presetleri (5.6), paylaşılan modül durumu kapanışı (5.4).

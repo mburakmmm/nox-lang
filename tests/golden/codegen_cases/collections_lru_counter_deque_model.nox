@@ -1,0 +1,190 @@
+# 2.3 madde 5.3 (v2.2.8): LRUCache (bağlı liste + geri kaydırmalı silme), Counter (satır içi arama) ve Deque (hızlı reverse) — saf-liste/dict referans modelleriyle rastgele işlem dizisi karşılaştırması.
+from nox.collections import Deque, Counter, LRUCache
+
+class RefLRU:
+    keys: list[int]
+    vals: list[int]
+    cap: int
+
+    def __init__(self: RefLRU, cap: int) -> None:
+        self.keys = []
+        self.vals = []
+        self.cap = cap
+
+    def idx(self: RefLRU, k: int) -> int:
+        i: int = 0
+        r: int = -1
+        while i < len(self.keys):
+            if self.keys[i] == k:
+                r = i
+            i = i + 1
+        return r
+
+    def drop(self: RefLRU, i: int) -> None:
+        nk: list[int] = []
+        nv: list[int] = []
+        j: int = 0
+        while j < len(self.keys):
+            if j != i:
+                nk.append(self.keys[j])
+                nv.append(self.vals[j])
+            j = j + 1
+        self.keys = nk
+        self.vals = nv
+
+    def get(self: RefLRU, k: int) -> int:
+        i: int = self.idx(k)
+        v: int = self.vals[i]
+        self.drop(i)
+        self.keys.append(k)
+        self.vals.append(v)
+        return v
+
+    def put(self: RefLRU, k: int, v: int) -> None:
+        i: int = self.idx(k)
+        if i >= 0:
+            self.drop(i)
+        self.keys.append(k)
+        self.vals.append(v)
+        if len(self.keys) > self.cap:
+            self.drop(0)
+
+def check_lru(cap: int, universe: int, ops: int, seed: int) -> int:
+    lru: LRUCache[int, int] = LRUCache[int, int](cap)
+    ref: RefLRU = RefLRU(cap)
+    x: int = seed
+    bad: int = 0
+    misses: int = 0
+    i: int = 0
+    while i < ops:
+        x = (x * 1103515245 + 12345) % 2147483648
+        k: int = (x // 7) % universe
+        op: int = (x // 65536) % 3
+        if op == 0:
+            lru.put(k, i)
+            ref.put(k, i)
+        elif op == 1:
+            if ref.idx(k) >= 0:
+                if lru.get(k) != ref.get(k):
+                    bad = bad + 1
+            else:
+                try:
+                    lru.get(k)
+                    bad = bad + 1
+                except KeyError:
+                    misses = misses + 1
+        else:
+            if lru.contains(k) != (ref.idx(k) >= 0):
+                bad = bad + 1
+        if lru.size() != len(ref.keys):
+            bad = bad + 1
+        i = i + 1
+    # son durum: her anahtar için üyelik ve değer
+    k2: int = 0
+    while k2 < universe:
+        if lru.contains(k2) != (ref.idx(k2) >= 0):
+            bad = bad + 1
+        k2 = k2 + 1
+    print("lru cap", cap, "size", lru.size(), "bad", bad, "misses>0", misses > 0)
+    return bad
+
+def check_lru_str() -> int:
+    lru: LRUCache[str, str] = LRUCache[str, str](3)
+    lru.put("a", "1")
+    lru.put("b", "2")
+    lru.put("c", "3")
+    print(lru.get("a"))
+    lru.put("d", "4")
+    print(lru.contains("b"), lru.contains("a"), lru.contains("c"), lru.contains("d"))
+    lru.put("a", "9")
+    lru.put("e", "5")
+    print(lru.contains("c"), lru.get("a"), lru.size())
+    z: LRUCache[int, int] = LRUCache[int, int](0)
+    z.put(1, 1)
+    print(z.size(), z.contains(1))
+    return 0
+
+def check_counter(universe: int, ops: int, seed: int) -> int:
+    c: Counter[int] = Counter[int]()
+    ref: dict[int, int] = {1: 0}
+    x: int = seed
+    i: int = 0
+    n: int = 0
+    while i < ops:
+        x = (x * 1103515245 + 12345) % 2147483648
+        k: int = (x // 11) % universe + 2
+        c.add(k)
+        if k in ref:
+            ref[k] = ref[k] + 1
+        else:
+            ref[k] = 1
+            n = n + 1
+        i = i + 1
+    bad: int = 0
+    k2: int = 0
+    while k2 < universe + 5:
+        want: int = 0
+        if (k2 + 2) in ref:
+            want = ref[k2 + 2]
+        if c.count(k2 + 2) != want:
+            bad = bad + 1
+        k2 = k2 + 1
+    if c.size() != n:
+        bad = bad + 1
+    if c.total() != ops:
+        bad = bad + 1
+    print("counter universe", universe, "size", c.size(), "total", c.total(), "bad", bad)
+    return bad
+
+def check_counter_str() -> None:
+    c: Counter[str] = Counter[str]()
+    words: list[str] = ["x", "y", "x", "z", "x", "y"]
+    for w in words:
+        c.add(w)
+    print(c.count("x"), c.count("y"), c.count("z"), c.count("q"), c.size(), c.total())
+
+def check_deque(ops: int, seed: int) -> int:
+    d: Deque[int] = Deque[int]()
+    ref: list[int] = []
+    x: int = seed
+    bad: int = 0
+    i: int = 0
+    while i < ops:
+        x = (x * 1103515245 + 12345) % 2147483648
+        op: int = (x // 4096) % 6
+        if op == 0:
+            d.push_front(i)
+            ref.insert(0, i)
+        elif op == 1 or op == 2:
+            d.push_back(i)
+            ref.append(i)
+        elif op == 3 and len(ref) > 0:
+            if d.pop_front() != ref[0]:
+                bad = bad + 1
+            ref.pop(0)
+        elif op == 4 and len(ref) > 0:
+            if d.pop_back() != ref[len(ref) - 1]:
+                bad = bad + 1
+            ref.pop()
+        elif op == 5 and len(ref) > 0:
+            if d.peek_front() != ref[0] or d.peek_back() != ref[len(ref) - 1]:
+                bad = bad + 1
+        if d.size() != len(ref) or d.is_empty() != (len(ref) == 0):
+            bad = bad + 1
+        i = i + 1
+    print("deque size", d.size(), "bad", bad)
+    return bad
+
+total_bad: int = 0
+total_bad = total_bad + check_lru(1, 4, 3000, 11)
+total_bad = total_bad + check_lru(2, 6, 3000, 12)
+total_bad = total_bad + check_lru(5, 12, 3000, 13)
+total_bad = total_bad + check_lru(16, 40, 3000, 14)
+total_bad = total_bad + check_lru(64, 100, 3000, 15)
+check_lru_str()
+total_bad = total_bad + check_counter(5, 2000, 21)
+total_bad = total_bad + check_counter(300, 5000, 22)
+total_bad = total_bad + check_counter(5000, 20000, 23)
+check_counter_str()
+total_bad = total_bad + check_deque(6000, 31)
+print("total bad", total_bad)

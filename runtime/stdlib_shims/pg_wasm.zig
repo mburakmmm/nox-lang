@@ -369,6 +369,8 @@ fn nowMs() u64 {
         if (comptime wh.is_freestanding_wasm) return @intCast(wh.clock_ms(1));
         return 0;
     }
+    // Windows'ta `std.c.clock_gettime` yoktur (CI Windows derlemesi kırılıyordu): `win_udp.nowNs` QueryPerformanceCounter'dır.
+    if (comptime builtin.os.tag == .windows) return @intCast(@divTrunc(@import("win_udp.zig").nowNs(), std.time.ns_per_ms));
     var ts: std.c.timespec = undefined;
     _ = std.c.clock_gettime(.MONOTONIC, &ts);
     return @as(u64, @intCast(ts.sec)) * 1000 + @as(u64, @intCast(@divTrunc(ts.nsec, std.time.ns_per_ms)));

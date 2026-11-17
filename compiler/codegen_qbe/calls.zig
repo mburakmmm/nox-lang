@@ -12,6 +12,7 @@ const types = @import("types.zig");
 const abi = @import("abi.zig");
 const shared_globals = @import("shared_globals.zig");
 const dyn_share = @import("dyn_share.zig");
+const abi_layout = @import("abi_layout");
 const expr_mod = @import("expr.zig");
 const codegen = @import("codegen.zig");
 const async_thread_mod = @import("async_thread.zig");
@@ -1998,6 +1999,45 @@ fn genStrChars(self: *Codegen, c: ast.Call) CodegenError!Value {
     return .{ .text = result, .qtype = .l, .heap = .list, .elem_qtype = .l, .elem_heap_info = info, .elem_is_str = true };
 }
 
+/// 2.3 madde 5.3: `int` karmasını (`nox_hash_int` ile BİT-BİT aynı: tohum XOR, MurmurHash3 fmix64, 63 bit maskesi) çağrısız hesaplar. Tohum, çalışma zamanının sıcak bloğundaki
+/// aynadan okunur (`abi_layout.RT_HOT_HASH_SEED_BACK`); 0 ise (ilk kullanım) `nox_hash_int` bir kez çağrılarak tohum ilklenir. Yalnızca hosted 64-bit yerel hedeflerde kullanılır.
+fn emitInlineIntHash(self: *Codegen, result: []const u8, key: []const u8) CodegenError!void {
+    const seed_addr = try self.newTemp();
+    try self.qbeOp2Imm(seed_addr, .l, "sub", RT_PARAM, @intCast(abi_layout.RT_HOT_HASH_SEED_BACK));
+    const seed0 = try self.newTemp();
+    try self.qbeLoadL(seed0, seed_addr);
+    const unset = try self.newTemp();
+    try self.qbeOp2Imm(unset, .w, "ceql", seed0, 0);
+    const init_l = try self.newLabel("hash_seed_init");
+    const ok_l = try self.newLabel("hash_seed_ok");
+    try self.qbeJnz(unset, init_l, ok_l);
+    try self.qbeLabel(init_l);
+    try self.qbeCall(null, "$nox_hash_int", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "0" } });
+    try self.qbeJmp(ok_l);
+    try self.qbeLabel(ok_l);
+    const seed = try self.newTemp();
+    try self.qbeLoadL(seed, seed_addr);
+    const k0 = try self.newTemp();
+    try self.qbeOp2(k0, .l, "xor", key, seed);
+    const s1 = try self.newTemp();
+    try self.qbeOp2Imm(s1, .l, "shr", k0, 33);
+    const k1 = try self.newTemp();
+    try self.qbeOp2(k1, .l, "xor", k0, s1);
+    const k2 = try self.newTemp();
+    try self.qbeOp2Imm(k2, .l, "mul", k1, -49064778989728563);
+    const s2 = try self.newTemp();
+    try self.qbeOp2Imm(s2, .l, "shr", k2, 33);
+    const k3 = try self.newTemp();
+    try self.qbeOp2(k3, .l, "xor", k2, s2);
+    const k4 = try self.newTemp();
+    try self.qbeOp2Imm(k4, .l, "mul", k3, -4265267296055464877);
+    const s3 = try self.newTemp();
+    try self.qbeOp2Imm(s3, .l, "shr", k4, 33);
+    const k5 = try self.newTemp();
+    try self.qbeOp2(k5, .l, "xor", k4, s3);
+    try self.qbeOp2Imm(result, .l, "and", k5, 0x7fffffffffffffff);
+}
+
 fn genNoxHash(self: *Codegen, c: ast.Call) CodegenError!Value {
     if (c.args.len != 1) return error.Unsupported;
     const v = try self.genExpr(c.args[0]);
@@ -2014,7 +2054,11 @@ fn genNoxHash(self: *Codegen, c: ast.Call) CodegenError!Value {
             try self.qbeOp1(ext, .l, "extuw", v.text);
             lv_text = ext;
         }
-        try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_hash_int", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = lv_text } });
+        if (self.profile == .hosted and !self.isWasmTarget()) {
+            try emitInlineIntHash(self, result, lv_text);
+        } else {
+            try self.qbeCall(.{ .name = result, .ty = .l }, "$nox_hash_int", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = lv_text } });
+        }
     } else {
         try self.qbeOp1(result, .l, "copy", "0");
     }

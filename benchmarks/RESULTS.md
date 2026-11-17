@@ -1817,6 +1817,21 @@ Apple M4, ReleaseFast, `benchmarks/stdlib_perf/run.py`. Değişiklik (`runtime/s
 
 `str_concat_1M` ölçümü gürültülüdür (tahsis/bellek büyümesi sınırlı). Dürüst kalan açıklar: `LRUCache` 9,9×, `Deque` 10,6×, `Counter` 6× (karma + yuva yerleşimi, sınıf-alanı ARC'si); `set_add` C referansı doğrudan adreslemeli bir tablo olduğundan adil bir karşılaştırma DEĞİL.
 
+## `LRUCache` / `Counter` / `Deque` yeniden tasarımı (2.3 Aşama 5.3, v2.2.8)
+
+Apple M4, ReleaseFast, `benchmarks/stdlib_perf/run.py --suite 2 --repeat 5`. C = tek dosyalı `stdlib_perf2.c`.
+
+| iş | önce nox ms (nox/C) | şimdi nox ms (nox/C) |
+|---|---|---|
+| `LRUCache` 300k işlem | 10,1 (10,1×) | **4,2 (4,2×)** |
+| `Counter` 500k ekleme | 2,4 (5,8×) | **1,6 (3,9×)** |
+| `Deque` 1M ekle + çıkar | 5,7 (10,6×) | **4,8 (9,6×)** |
+| geometrik ortalama nox/C (11 iş) | 1,75 | **1,55** |
+
+Yapılanlar: (1) `LRUCache`: girdiler sabit indekste, güncellik sırası çift bağlı liste (`_meta`), karma indeksi mezar taşı yerine geri kaydırmalı silme; eski tasarımın "sona taşı + mezar taşı + yarıdan fazlası ölünce TÜM anahtarları yeniden karmala" maliyeti kalktı. (2) `Counter`: silme olmadığından arama satır içi, yeni anahtar aramanın bulduğu boş yuvaya yazılır. (3) `__nox_hash(int)` artık çağrısız: tohum çalışma zamanının sıcak bloğunda aynalanır (`abi_layout.RT_HOT_HASH_SEED_BACK`), derleyici fmix64'ü satır içi üretir (`nox_hash_int` ile bit-bit aynı; birim test). (4) `nox_list_reverse` 1/2/4/8 baytlık elemanlar için tipli döngü (1M `list[int]`: 1,6 → ~0,3 ms).
+
+Dürüst sınırlar: `Deque` kalanının çoğu `append` yolunun kendisidir (düz `list.append` 1M için ~3 ms; C'nin `realloc` katlamalı vektörü 0,7 ms): üretilen döngüde `len` başlığı bellekte tutulur ve her ekleme depo→yük iletim gecikmesine bağlanır; bunu kütüphane değil codegen/LLVM çözer (büyütme çağrısını `cold` işaretlemek denendi, fark yok, geri alındı). C referansındaki `Deque`/`Counter` önceden ayrılmış/doğrudan adreslemeli olduğundan tam adil bir kıyas değildir. `Counter`/`LRUCache`'te kalan maliyet liste indekslemenin Python negatif-indeks normalleştirmesi + sınır denetimi ve `str`/sınıf anahtarlarında `==`.
+
 ## Stdlib modül taraması, 2. küme (2.2 aşama 2, v2.1.183)
 
 `benchmarks/stdlib_perf/run.py --suite 2` (Nox / C / CPython, aynı iş, sağlama toplamları birebir eşit; **ölçüt C**: `stdlib_perf2.c`, clang -O2, özetler macOS'ta CommonCrypto). Apple M4, ReleaseFast, ortanca. `toml` ve `unicode` için C standart kütüphanesinde karşılık yok (C sütunu boş).

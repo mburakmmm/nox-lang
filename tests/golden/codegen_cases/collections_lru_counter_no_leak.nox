@@ -1,0 +1,41 @@
+# 2.3 madde 5.3 (v2.2.8): heap-yönetimli anahtar/değerli LRUCache ve Counter kullanımından sonra canlı blok sayısı artmaz (çıkarılan/değiştirilen girdiler serbest bırakılır).
+import nox.mem
+from nox.collections import Counter, LRUCache, Deque
+
+def churn() -> None:
+    lru: LRUCache[str, list[int]] = LRUCache[str, list[int]](8)
+    i: int = 0
+    while i < 400:
+        k: str = "k" + str(i % 37)
+        vs: list[int] = [i, i + 1, i + 2]
+        lru.put(k, vs)
+        if lru.contains("k" + str(i % 11)):
+            w: list[int] = lru.get("k" + str(i % 11))
+            if len(w) != 3:
+                print("bad")
+        i = i + 1
+    c: Counter[str] = Counter[str]()
+    j: int = 0
+    while j < 400:
+        c.add("w" + str(j % 53))
+        j = j + 1
+    d: Deque[str] = Deque[str]()
+    m: int = 0
+    while m < 200:
+        d.push_back("d" + str(m))
+        d.push_front("f" + str(m))
+        m = m + 1
+    while not d.is_empty():
+        d.pop_front()
+        if not d.is_empty():
+            d.pop_back()
+
+nox.mem.stats()
+churn()
+churn()
+m1: nox.mem.MemStats = nox.mem.stats()
+churn()
+churn()
+churn()
+m2: nox.mem.MemStats = nox.mem.stats()
+print(m2.live - m1.live)
