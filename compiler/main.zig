@@ -90,7 +90,9 @@ fn detectLiveProgress(io: std.Io, environ_map: *const std.process.Environ.Map) b
 /// ayarlar; tüm denetleyici kurulumları `applyDeniedCapabilities` ile okur. (Güvenilmeyen kodu derleyen playground için; bkz. spec §3.346.)
 var g_deny_capabilities: []const u8 = "";
 /// `--frontend zig|nox` (noxc-nightly Aşama 0.4): hangi ön yüz bileşeninin kullanılacağı. Normal `noxc`te yalnızca `zig`; nightly'de `nox` bileşen hazır oldukça (şimdilik hiçbiri) o bileşeni seçer.
-var g_frontend_nox: bool = false;
+var g_frontend_nox: bool = build_options.nightly;
+/// noxc-nightly: işlem boyunca yaşayan Nox çalışma zamanı (`nightlyMain` büyük yığınlı iş parçacığında kurar); normal `noxc`te `null`.
+var g_nightly_rt: ?*anyopaque = null;
 
 /// v2.0.148: `--vfs-dir`: `noxc run --target wasm32-freestanding`ın sanal dosya sistemini kalıcı kılan dizin (boş = kalıcı değil). Yalnızca node sürücüsüne iletilir.
 var g_vfs_dir: []const u8 = "";
@@ -278,6 +280,31 @@ fn parseUserSource(a: std.mem.Allocator, source: []const u8, path: []const u8) !
 }
 
 pub fn main(init: std.process.Init) !void {
+    if (comptime build_options.nightly) return nightlyMain(init);
+    return mainImpl(init);
+}
+
+/// noxc-nightly (Aşama 1.12): TÜM derleyici 256 MiB yığınlı bir iş parçacığında (Nox bileşenleri derin özyineleme yapabilir) ve tek bir Nox çalışma zamanıyla koşar; `--frontend zig` verilmedikçe
+/// Nox lexer'ı derleme hattının tüm lexer çağrılarının arkasına takılır (`realMain` bayrakları ayrıştırdıktan sonra).
+fn nightlyMain(init: std.process.Init) !void {
+    const glue = @import("selfhost_glue.zig");
+    const Ctx = struct {
+        init: std.process.Init,
+        err: ?anyerror = null,
+        fn run(self: *@This(), nrt: glue.Runtime) void {
+            var rt_copy = nrt;
+            g_nightly_rt = &rt_copy;
+            mainImpl(self.init) catch |e| {
+                self.err = e;
+            };
+        }
+    };
+    var ctx: Ctx = .{ .init = init };
+    try glue.runOnBigStack(&ctx, Ctx.run);
+    if (ctx.err) |e| return e;
+}
+
+fn mainImpl(init: std.process.Init) !void {
     return realMain(init) catch |e| {
         // `syntax_report` hatayı ZATEN okunaklı biçimde yazdı (örn. bir içe aktarılan modülde).
         const name = @errorName(e);
@@ -373,6 +400,9 @@ fn realMain(init: std.process.Init) !void {
             w += 1;
         }
         all_args.shrinkRetainingCapacity(w);
+    }
+    if (comptime build_options.nightly) {
+        if (g_frontend_nox) @import("selfhost_glue.zig").installLexerHook(@ptrCast(@alignCast(g_nightly_rt.?)));
     }
 
     var arena = std.heap.ArenaAllocator.init(gpa);
@@ -561,16 +591,8 @@ fn cmdTokens(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []c
     var lexed_err: ?lexer.LexError = null;
     var lexed_span: lexer.Span = .{};
     var lexed_trivia: []const lexer.Trivia = &.{};
-    if (g_frontend_nox) {
-        // `--frontend nox`: `selfhost/lexer.nox` (yalnızca nightly'de derlenir; normal `noxc` bayrağı zaten reddeder).
-        if (comptime build_options.nightly) {
-            const out = try @import("selfhost_glue.zig").lexOnBigStack(a, source, with_trivia);
-            lexed_tokens = out.tokens;
-            lexed_err = out.err;
-            lexed_span = out.err_span;
-            lexed_trivia = out.trivia;
-        } else unreachable;
-    } else if (with_trivia) {
+    // `--frontend nox` (nightly'de varsayılan) ya da zig: seçim `lexer.hook` ile yapılır, çağıran kod aynıdır.
+    if (with_trivia) {
         if (lexer.tokenizeWithTrivia(a, source)) |r| {
             lexed_tokens = r.tokens;
             lexed_trivia = r.trivia;
@@ -675,6 +697,11 @@ fn cmdLexBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void
         std.process.exit(1);
     };
     const reps: usize = if (rest.len > 1) (std.fmt.parseInt(usize, rest[1], 10) catch 20) else 20;
+    // `--max-ratio=<x>` (CI): Nox+dönüşüm süresi Zig'in x katını aşarsa çıkış kodu 1 (Aşama 1 bütçesi: 3,0).
+    var max_ratio: f64 = 0;
+    for (rest) |arg| if (std.mem.startsWith(u8, arg, "--max-ratio=")) {
+        max_ratio = std.fmt.parseFloat(f64, arg["--max-ratio=".len..]) catch 0;
+    };
     const src = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(256 * 1024 * 1024)) catch {
         printErr("lex-bench: cannot read {s}\n", .{path});
         std.process.exit(1);
@@ -683,6 +710,8 @@ fn cmdLexBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void
         io: std.Io,
         src: []const u8,
         reps: usize,
+        max_ratio: f64,
+        over_budget: bool = false,
         fn nowNs() u64 {
             var ts: std.c.timespec = undefined;
             _ = std.c.clock_gettime(.MONOTONIC, &ts);
@@ -698,7 +727,10 @@ fn cmdLexBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void
                 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
                 defer arena.deinit();
                 var t = nowNs();
+                const saved_hook = lexer.hook; // Zig tabanı: kanca geçici olarak kapatılır (yoksa Nox ölçülürdü)
+                lexer.hook = null;
                 const z = lexer.tokenize(arena.allocator(), self.src) catch &[_]lexer.Token{};
+                lexer.hook = saved_hook;
                 best_zig = @min(best_zig, nowNs() - t);
                 n_zig = z.len;
                 t = nowNs();
@@ -724,10 +756,16 @@ fn cmdLexBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void
                 @sizeOf(lexer.Token),
             }) catch return;
             w.interface.flush() catch return;
+            const conv_ratio = @as(f64, @floatFromInt(best_nox_conv)) / @as(f64, @floatFromInt(@max(best_zig, 1)));
+            if (self.max_ratio > 0 and conv_ratio > self.max_ratio) self.over_budget = true;
         }
     };
-    var ctx: Ctx = .{ .io = io, .src = src, .reps = reps };
-    try glue.runOnBigStack(&ctx, Ctx.run);
+    var ctx: Ctx = .{ .io = io, .src = src, .reps = reps, .max_ratio = max_ratio };
+    ctx.run(@as(*glue.Runtime, @ptrCast(@alignCast(g_nightly_rt.?))).*); // zaten nightly'nin büyük yığınlı iş parçacığındayız
+    if (ctx.over_budget) {
+        printErr("lex-bench: Nox lexer is over the {d:.1}x budget\n", .{max_ratio});
+        std.process.exit(1);
+    }
 }
 
 /// `noxc-nightly selfhost-info [dosya]`: nightly'ye bağlı Nox bileşenlerini listeler ve deneme bileşenini (tanımlayıcı sayacı) verilen dosyada çalıştırır. Normal `noxc`te bu komut yoktur.
@@ -739,24 +777,15 @@ fn cmdSelfhostInfo(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !
         printErr("selfhost-info: cannot read {s}\n", .{path});
         std.process.exit(1);
     };
-    const Ctx = struct {
-        io: std.Io,
-        path: []const u8,
-        src: []const u8,
-        fn run(self: *@This(), nrt: glue.Runtime) void {
-            var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-            defer arena_state.deinit();
-            const out = nrt.lex(arena_state.allocator(), self.src);
-            var stdout_buf: [512]u8 = undefined;
-            var w = std.Io.File.stdout().writer(self.io, &stdout_buf);
-            const count: usize = if (out.tokens) |t| t.len else 0;
-            w.interface.print("noxc-nightly {s}: Nox components linked: lexer (nox_lex_run)\n{s}: {d} bytes, {d} tokens{s}\n", .{ build_options.version, self.path, self.src.len, count, if (out.err != null) " (lex error)" else "" }) catch return;
-            w.interface.flush() catch return;
-        }
-    };
-    var ctx: Ctx = .{ .io = io, .path = path, .src = src };
-    // Nox bileşenleri her zaman büyük yığınlı iş parçacığında çalışır (derin özyineleme, plan 0.8).
-    try glue.runOnBigStack(&ctx, Ctx.run);
+    const nrt: *glue.Runtime = @ptrCast(@alignCast(g_nightly_rt.?));
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena_state.deinit();
+    const out = nrt.lex(arena_state.allocator(), src);
+    var stdout_buf: [512]u8 = undefined;
+    var w = std.Io.File.stdout().writer(io, &stdout_buf);
+    const count: usize = if (out.tokens) |t| t.len else 0;
+    try w.interface.print("noxc-nightly {s}: Nox components linked: lexer (nox_lex_run); default frontend: {s}\n{s}: {d} bytes, {d} tokens{s}\n", .{ build_options.version, if (g_frontend_nox) "nox" else "zig", path, src.len, count, if (out.err != null) " (lex error)" else "" });
+    try w.interface.flush();
 }
 
 /// `noxc upgrade [--check] [<sürüm>]` — bkz. `pkg/upgrade.zig`nin modül

@@ -19,8 +19,21 @@ pub const LexError = error{
     OutOfMemory,
 };
 
+/// noxc-nightly (Aşama 1.12): Nox ile yazılmış lexer'ı (`selfhost/lexer.nox`) bu üç giriş noktasının ARKASINA takan kanca. `null` (normal `noxc`) ⇒ Zig lexer'ı; nightly `main` kancayı
+/// `--frontend zig` verilmedikçe kurar. Derleme hattı tek iş parçacıklıdır; kanca işlemin ömrü boyunca bir kez kurulur.
+pub const HookResult = struct { tokens: ?[]Token, err: ?LexError, err_span: Span, trivia: []Trivia };
+pub const Hook = struct {
+    ctx: *anyopaque,
+    run: *const fn (ctx: *anyopaque, allocator: std.mem.Allocator, source: []const u8, want_trivia: bool) HookResult,
+};
+pub var hook: ?Hook = null;
+
 /// `source`'u token dizisine çevirir. Allocator her zaman açık parametredir (İlke #6).
 pub fn tokenize(allocator: std.mem.Allocator, source: []const u8) LexError![]Token {
+    if (hook) |h| {
+        const r = h.run(h.ctx, allocator, source, false);
+        return r.tokens orelse r.err.?;
+    }
     return tokenizeImpl(allocator, source, null, null);
 }
 
@@ -29,6 +42,10 @@ pub fn tokenize(allocator: std.mem.Allocator, source: []const u8) LexError![]Tok
 /// — gelecekteki formatlayıcı (Faz T.4b) DIŞINDA HİÇBİR tüketici bunu
 /// KULLANMAZ (`tokenize`nin KENDİSİ DEĞİŞMEDİ, davranışı/performansı AYNI).
 pub fn tokenizeWithTrivia(allocator: std.mem.Allocator, source: []const u8) LexError!struct { tokens: []Token, trivia: []Trivia } {
+    if (hook) |h| {
+        const r = h.run(h.ctx, allocator, source, true);
+        return .{ .tokens = r.tokens orelse return r.err.?, .trivia = r.trivia };
+    }
     var trivia: std.ArrayList(Trivia) = .empty;
     errdefer trivia.deinit(allocator);
     const tokens = try tokenizeImpl(allocator, source, &trivia, null);
@@ -45,6 +62,10 @@ pub fn tokenizeWithTrivia(allocator: std.mem.Allocator, source: []const u8) LexE
 /// recordDiagnostic`nin AYNI "OOM bir tanılama DEĞİLDİR" istisnasıyla
 /// TUTARLI — bellek yetersizliğinin ANLAMLI bir kaynak KONUMU YOKTUR).
 pub fn tokenizeCapturingSpan(allocator: std.mem.Allocator, source: []const u8) struct { tokens: ?[]Token, err: ?LexError, err_span: Span } {
+    if (hook) |h| {
+        const r = h.run(h.ctx, allocator, source, false);
+        return .{ .tokens = r.tokens, .err = r.err, .err_span = r.err_span };
+    }
     var span: Span = .{};
     if (tokenizeImpl(allocator, source, null, &span)) |tokens| {
         return .{ .tokens = tokens, .err = null, .err_span = .{} };

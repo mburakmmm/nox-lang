@@ -17,7 +17,7 @@ extern fn nox_lex_buffer(rt: ?*anyopaque) i64;
 extern fn nox_lex_err_line(rt: ?*anyopaque) i64;
 extern fn nox_lex_err_col(rt: ?*anyopaque) i64;
 
-pub const LexOut = struct { tokens: ?[]token_mod.Token, err: ?lexer.LexError, err_span: span_mod.Span, trivia: []token_mod.Trivia = &.{} };
+pub const LexOut = lexer.HookResult;
 
 /// Bir Nox çalışma zamanı bağlamı: `start` ... `stop`. Bileşen çağrıları arasında paylaşılır; iş parçacıkları arası kullanım yok (derleyici tek iş parçacıklıdır).
 pub const Runtime = struct {
@@ -62,11 +62,11 @@ pub const Runtime = struct {
             };
             const line: u32 = @intCast(nox_lex_err_line(self.rt));
             const col: u32 = @intCast(nox_lex_err_col(self.rt));
-            return .{ .tokens = null, .err = err, .err_span = if (line == 0) .{} else .{ .start_byte = 0, .end_byte = 0, .start_line = line, .start_col = col, .end_line = line, .end_col = col + 1 } };
+            return .{ .tokens = null, .err = err, .err_span = if (line == 0) .{} else .{ .start_byte = 0, .end_byte = 0, .start_line = line, .start_col = col, .end_line = line, .end_col = col + 1 }, .trivia = &.{} };
         }
         const n: usize = @intCast(code);
         const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(nox_lex_buffer(self.rt))));
-        const toks = a.alloc(token_mod.Token, n) catch return .{ .tokens = null, .err = error.OutOfMemory, .err_span = .{} };
+        const toks = a.alloc(token_mod.Token, n) catch return .{ .tokens = null, .err = error.OutOfMemory, .err_span = .{}, .trivia = &.{} };
         for (toks, 0..) |*t, i| {
             const kind_int: i64 = buf[i * 5];
             const lo: usize = @intCast(buf[i * 5 + 3]);
@@ -88,7 +88,7 @@ pub const Runtime = struct {
         if (want_trivia) {
             const tn: usize = @intCast(nox_lex_trivia_count(self.rt));
             const tbuf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(nox_lex_trivia_buffer(self.rt))));
-            trivia = a.alloc(token_mod.Trivia, tn) catch return .{ .tokens = null, .err = error.OutOfMemory, .err_span = .{} };
+            trivia = a.alloc(token_mod.Trivia, tn) catch return .{ .tokens = null, .err = error.OutOfMemory, .err_span = .{}, .trivia = &.{} };
             for (trivia, 0..) |*tv, i| {
                 const is_comment = tbuf[i * 5] == 0;
                 tv.* = if (is_comment)
@@ -100,6 +100,16 @@ pub const Runtime = struct {
         return .{ .tokens = toks, .err = null, .err_span = .{}, .trivia = trivia };
     }
 };
+
+fn hookRun(ctx: *anyopaque, a: std.mem.Allocator, source: []const u8, want_trivia: bool) lexer.HookResult {
+    const nrt: *Runtime = @ptrCast(@alignCast(ctx));
+    return if (want_trivia) nrt.lexWithTrivia(a, source) else nrt.lex(a, source);
+}
+
+/// Nox lexer'ını derleme hattının TÜM lexer çağrılarının (parser, f-string iç ifadeleri, fmt, modül yükleyici) arkasına takar (`lexer.hook`). `nrt` işlem ömrü boyunca yaşamalıdır.
+pub fn installLexerHook(nrt: *Runtime) void {
+    lexer.hook = .{ .ctx = nrt, .run = hookRun };
+}
 
 /// Nox bileşenleri (parser/checker özyinelemesi) için ayrılan yığın: 256 MiB (yalnızca sanal bellek; dokunulan kadarı fiziksel). Deney (`selfhost/spike/02-deep-recursion`, LLVM -O2): 8 MiB'lık ana yığın
 /// iki çocuklu özyinelemede ~300 bin derinliğe yetiyor, 1 milyon çöküyor; 256 MiB 1 milyonu rahat taşıyor (zincir serbest bırakma dahil).
@@ -121,20 +131,4 @@ pub fn runOnBigStack(ctx: anytype, comptime f: fn (@TypeOf(ctx), Runtime) void) 
 
 test "selfhost_glue: bileşen simgeleri bu birimde çözülmez (yalnızca nightly ikilisinde bağlanır)" {
     // Bu dosya normal test derlemesinde analiz edilmez; yer tutucu.
-}
-
-/// `source`u Nox lexer'ıyla (büyük yığınlı iş parçacığında) tarar.
-pub fn lexOnBigStack(a: std.mem.Allocator, source: []const u8, want_trivia: bool) !LexOut {
-    const Ctx = struct {
-        a: std.mem.Allocator,
-        src: []const u8,
-        trivia: bool,
-        out: LexOut = .{ .tokens = null, .err = null, .err_span = .{} },
-        fn run(self: *@This(), nrt: Runtime) void {
-            self.out = if (self.trivia) nrt.lexWithTrivia(self.a, self.src) else nrt.lex(self.a, self.src);
-        }
-    };
-    var ctx: Ctx = .{ .a = a, .src = source, .trivia = want_trivia };
-    try runOnBigStack(&ctx, Ctx.run);
-    return ctx.out;
 }

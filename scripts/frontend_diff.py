@@ -16,7 +16,7 @@ import argparse, concurrent.futures, difflib, os, subprocess, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOXC = os.path.join(ROOT, "zig-out/bin/noxc")
 NIGHTLY = os.path.join(ROOT, "zig-out/bin/noxc-nightly")
-COMPONENTS = {"lexer": "tokens", "ast": "ast"}
+COMPONENTS = {"lexer": "tokens", "ast": "ast", "check": "check"}  # check: tüm hat (modül yükleme + ayrıştırma + tip denetimi) kararlı noxc ↔ nightly (Nox lexer varsayılan)
 
 
 def corpus(extra_dirs):

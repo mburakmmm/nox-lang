@@ -823,8 +823,11 @@ pub fn build(b: *std.Build) void {
     frontend_diff_nox_trivia.step.dependOn(&frontend_diff_nox.step);
     const frontend_diff_nox_json = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "lexer", "--sub-args=--json --trivia", "--fuzz", "800", "--seed", "3" });
     frontend_diff_nox_json.step.dependOn(&frontend_diff_nox_trivia.step);
+    // Tüm hat: kararlı `noxc check` ↔ `noxc-nightly check` (Nox lexer varsayılan; modül yükleme + ayrıştırma + tip denetimi çıktıları aynı olmalı).
+    const frontend_diff_check = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "check" });
+    frontend_diff_check.step.dependOn(&frontend_diff_nox_json.step);
     const frontend_diff_step = b.step("frontend-diff-test", "noxc-nightly farksal test koşucusu: kendi sağlamlık denetimi + Zig↔Zig özdeşliği + Zig↔Nox lexer farkı (opt-in; `zig build nightly` gerekir)");
-    frontend_diff_step.dependOn(&frontend_diff_nox_json.step);
+    frontend_diff_step.dependOn(&frontend_diff_check.step);
 
     // Faz W.2: `noxlsp` — minimal LSP sunucusu (bkz. compiler/lsp_main.zig'in
     // modül üstü notu). `noxc_mod` İLE AYNI desen (kendi kök dosyası, relative

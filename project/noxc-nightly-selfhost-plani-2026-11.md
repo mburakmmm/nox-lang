@@ -97,7 +97,8 @@ Girdi: `compiler/lexer/{lexer,token,unicode_ident}.zig` (~1 400 satır, 68 token
   **SONUÇ (v2.2.33):** farksal: 1 258 dosya + 4 mutasyon tohumu × 4 000 girdi (düz), `--trivia` ve `--json --trivia` (3 000 + 3 000 girdi); 0 fark; dört hata sınıfı da kapsandı.
 - [x] 1.11 Perf: 1 MB sentetik kaynak, ≥ Zig'in 1/3 hızı; bellek ≤ 2×.
   **SONUÇ (v2.2.33):** perf: 0,72 MiB stdlib metni Zig 3,6 ms, Nox 7,6 ms (**2,12×**), Token dizisine dönüşüm dahil 8,1 ms (**2,26×**); ham arabellek 40 B/token (Zig 56 B/Token).
-- [ ] 1.12 `--frontend nox` ile lexer'ın nightly'de varsayılan yapılması `[K]` (kapanış raporu: fark sayısı 0, perf, bellek).
+- [x] 1.12 `--frontend nox` ile lexer'ın nightly'de varsayılan yapılması `[K]` (kapanış raporu: fark sayısı 0, perf, bellek).
+  **KARAR (kullanıcı, 2026-11-18) ve SONUÇ (v2.2.34):** nightly'nin amacı self-hosting olduğundan Nox lexer'ı `noxc-nightly`de VARSAYILANDIR (`--frontend zig` Zig lexer'ına döner). `lexer.hook` (Zig `lexer.zig`) tokenize/tokenizeWithTrivia/tokenizeCapturingSpan çağrılarının arkasına Nox lexer'ını takar; `nightlyMain` tüm derleyiciyi 256 MiB yığınlı iş parçacığında ve tek Nox çalışma zamanıyla koşturur. Tüm hat kanıtı: 997 fixture için `check` çıktısı ve 60 örnekte `build` `.ll` metni kararlı `noxc` ile BAYT-BAYT aynı; `frontend_diff.py --component check` 1 258 dosyada 0 fark. CI: `lex-bench --max-ratio=3.0`.
 - [x] 1.13 Belge + CHANGELOG + spesifikasyon bölümü.
   **SONUÇ (v2.2.33):** belge + CHANGELOG [2.2.33] + spesifikasyon §3.476.
 
@@ -115,7 +116,8 @@ Girdi: `parser.zig` (~3 000 satır) + `ast.zig` (~640) + `ast_dump.zig`. Çıkı
 - [ ] 2.8 Span/konum sistemi (`Span`, deyim başlangıç/bitiş) birebir.
 - [ ] 2.9 AST dökümü (`ast_dump` eşdeğeri) + `noxc ast` aracı.
 - [ ] 2.10 Hata iletileri ve `syntax_report`: konum + işaretçi gösterimi aynı.
-- [ ] 2.11 C ABI: AST'nin Zig tarafına geçişi — **karar noktası `[K]`:** (a) Nox'un AST'yi bayt tamponuna serileştirmesi + Zig'in okuması (parser sınırı), ya da (b) Aşama 3'e kadar yalnızca doğrulama aracı olarak kalması (Zig checker Zig AST'siyle çalışır). Önerilen: (b) ile başla, checker Nox'a geçerken (a).
+- [x] 2.11 C ABI: AST'nin Zig tarafına geçişi — **karar noktası `[K]`:** (a) Nox'un AST'yi bayt tamponuna serileştirmesi + Zig'in okuması (parser sınırı), ya da (b) Aşama 3'e kadar yalnızca doğrulama aracı olarak kalması (Zig checker Zig AST'siyle çalışır). Önerilen: (b) ile başla, checker Nox'a geçerken (a).
+  **KARAR (2026-11-18, kullanıcı "gerçek selfhost için hangisi" diye sordu; öneri + uygulama):** **(b)**. Self-hosting'in bitiş durumunda AST Zig'e hiç geçmez (Nox parser → Nox checker); (a) iki dilde 100+ düğüm türü için geçici serileştirme olurdu. Parser doğruluğu `noxc ast` dökümü farksal eşitliğiyle kanıtlanır; tek köprü checker sonrası tiplenmiş AST sınırında (3.14) kurulur.
 - [ ] 2.12 Farksal test: AST dökümü eşitliği (tüm depo), sözdizimi hata korpusu, `noxc fmt` (formatter Nox AST'siyle) çıktı eşitliği.
 - [ ] 2.13 İlk "Nox ile üretilen araç": `noxc fmt` Nox lexer+parser ile (düşük risk, görünür kazanım).
 - [ ] 2.14 Perf ≤ 3× Zig; bellek; derin ifade (10 bin iç içe) testi.
@@ -207,14 +209,14 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 2. [x] 0.2 + 0.3 `selfhost/` iskeleti ve `zig build nightly` — v2.2.29.
 3. [x] 0.5 + 0.6 `noxc tokens` ve farksal test koşucusu (lexer için) — v2.2.30.
 4. [x] 0.7 + 0.8 derleyici kıyas seti ve yığın çözümü — v2.2.31.
-5. [x] Aşama 1 (lexer) — v2.2.33 (1.12 kararı bekliyor); sıradaki: Aşama 2 (parser/AST).
+5. [x] Aşama 1 (lexer) — v2.2.33–34; sıradaki: Aşama 2 (parser/AST).
 
 ## 13. İlerleme özeti (el ile güncellenir)
 
 | Aşama | Madde | Bitti | Durum |
 |---|---|---|---|
 | 0 Altyapı | 11 | 11 | **bitti (v2.2.32)** — sıradaki Aşama 1 (lexer) |
-| 1 Lexer | 13 | 12 | **1.12 `[K]` varsayılan yapma kararı bekliyor** (v2.2.33) |
+| 1 Lexer | 13 | 13 | **bitti (v2.2.33–34)** — sıradaki Aşama 2 (parser/AST) |
 | 2 Parser/AST | 15 | 0 | açık |
 | 3 Tip denetleyici | 17 | 0 | açık |
 | 4 Sahiplik + codegen | 13 | 0 | açık |

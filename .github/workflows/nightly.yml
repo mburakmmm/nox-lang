@@ -54,6 +54,10 @@ jobs:
         run: ./zig-out/bin/noxc-nightly selfhost-info compiler/main.zig
       - name: Farksal test koşucusu (Zig lexer ↔ Nox lexer: depo + mutasyonlu girdiler)
         run: zig build frontend-diff-test
+      - name: Nox lexer hız bütçesi (≤ 3× Zig, plan §10)
+        run: |
+          cat stdlib/nox/*.nox > "$RUNNER_TEMP/big.nox"
+          ./zig-out/bin/noxc-nightly lex-bench "$RUNNER_TEMP/big.nox" 20 --max-ratio=3.0
       - name: Derleyici-türü kıyas seti (Nox ↔ Zig)
         run: benchmarks/compiler_bench/run.sh
       - name: Artifact adı

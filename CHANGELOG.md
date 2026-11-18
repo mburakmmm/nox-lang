@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.34]
+
+noxc-nightly Aşama 1 kapanışı: Nox lexer'ı nightly'de varsayılan ve gerçek derleme hattında (kullanıcı kararı 1.12).
+
+- **`lexer.hook`:** `compiler/lexer/lexer.zig` `tokenize`/`tokenizeWithTrivia`/`tokenizeCapturingSpan` Nox lexer'ını arkalarına takabilir (normal `noxc`te `null`: davranış değişmedi). `noxc-nightly` kancayı `--frontend zig` verilmedikçe kurar; böylece parser, f-string iç ifadeleri, `fmt`, modül yükleyici ve çekirdek prelude dahil TÜM lexing Nox'tan geçer.
+- **`nightlyMain`:** nightly'de tüm derleyici 256 MiB yığınlı bir iş parçacığında ve süreç ömrü boyunca tek bir Nox çalışma zamanıyla koşar (ileride parser/checker özyinelemesi için hazır).
+- **Tüm hat kanıtı:** 997 fixture için `noxc check` çıktısı ve 60 örnek `noxc build` `.ll` metni kararlı `noxc` ile bayt-bayt aynı; `frontend_diff.py --component check` 1 258 dosyada 0 fark (`zig build frontend-diff-test`'e eklendi). `noxc-nightly lex-bench <dosya> [N] --max-ratio=3.0` hız bütçesini denetler (CI): 0,72 MiB stdlib metni 2,2× / dönüşümle 2,35×.
+- **Not:** tam takımda `install_test` (`noxc refresh ... up to date`) bir kez kırmızı çıktı, aynı kodla iki yeniden koşuda geçti (zamanlama/ağ duyarlı, bu sürümle ilgisiz; izleniyor).
+- **Karar kaydı (2.11):** AST Zig↔Nox sınırı için (b) seçildi: Nox parser doğrulama aracı olarak (AST dökümü farksal eşitliği) ilerler, tek köprü Nox checker sonrası tiplenmiş AST'de kurulur (gerekçe plan 2.11).
+
 ## [2.2.33]
 
 noxc-nightly Aşama 1: Nox lexer'ı (`selfhost/lexer.nox`).

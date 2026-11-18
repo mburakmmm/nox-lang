@@ -75,3 +75,4 @@ Two hidden developer commands print the front end's output in a stable form: `no
 
 `noxc tokens` also takes `--trivia` (print the comment and blank-line channel the formatter uses). In the nightly binary `--frontend nox tokens` runs the lexer written in Nox (`selfhost/lexer.nox`, generated from `selfhost/lexer.nox.in` by `scripts/gen_selfhost_lexer.py`), and `noxc-nightly lex-bench <file>` compares its speed with the Zig lexer. `frontend_diff.py --fuzz N --seed S` adds N randomly damaged inputs (broken quotes, tabs, truncated UTF-8) so error paths are compared too; `--sub-args=--trivia` passes extra flags to the sub-command.
 
+`frontend_diff.py --component check` compares the whole front half of the pipeline (module loading, parsing, type checking) between the stable `noxc` and `noxc-nightly`, whose default front end is the Nox lexer. `noxc-nightly lex-bench <file> [N] --max-ratio=3.0` fails when the Nox lexer is more than three times slower than the Zig one.
