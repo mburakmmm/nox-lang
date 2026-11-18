@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.13]
+
+B1 (ARC/ASAP) devamı: sabit boyutlu sınıf örnekleri için satır içi havuz tahsisi/serbest bırakması.
+
+- **Derleyici + çalışma zamanı (B1/I4):** sınıf kurucusundaki `nox_rc_alloc` ve sınıf `_release` içindeki `nox_rc_free_payload` çağrıları, hosted 64-bit hedeflerde Release çalışma zamanında IR'da satır içi serbest-liste pop/push'a dönüşür (sıcak blokta slot 0 havuz satırının adresi `rt-32` ve AÇIK bayrağı `rt-24`: `abi_layout.RT_HOT_POOL_ROW_BACK`/`RT_HOT_FAST_OFF_BACK`). Bayrak yalnızca Debug olmayan, işçi havuzu etkinleşmemiş, `nox.mem.stats`/`NOX_RC_STATS` kapalı çalışma zamanında 1'dir; liste boşsa ya da bayrak 0 ise eski `nox_rc_alloc`/`nox_rc_free_payload` çağrısına düşer. Bayrak **fail-closed**: bu alanı bilmeyen (eski) bir çalışma zamanı nesnesinde sıfırdır, yani kapalıdır (iOS embed korpusu bu sayede bayatlığı yakaladı). Sınıf AST iş yükü 28,0 → 16,1 ms (−%42; v2.2.8'den beri toplam).
+- ReleaseFast çalışma zamanıyla 624 fixture'ın 624'ü iki backend'de geçti; Aether sunucusu 1 ve 4 işçiyle yük altında çalışıyor. 644 IR anlık görüntüsü yenilendi.
+
 ## [2.2.12]
 
 B1 (ARC/ASAP) devamı: basit olmayan `__init__`li kurucular için tüketen parametre sözleşmesi.

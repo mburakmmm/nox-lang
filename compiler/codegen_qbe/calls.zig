@@ -1791,10 +1791,10 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
         const temp = try self.newTemp();
         if (arena) |ap| {
             try self.qbeCall(.{ .name = temp, .ty = .l }, "$nox_arena_alloc", &.{ .{ .ty = .l, .text = ap }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size}) } });
+            break :blk temp;
         } else {
-            try self.qbeCall(.{ .name = temp, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size}) } });
+            break :blk try self.emitClassAlloc(cinfo.total_size);
         }
-        break :blk temp;
     };
     try self.qbeStoreImmL(@intCast(cinfo.class_id), t);
     // Faz 7 (tekli kalıtım): `has_vtable` İSE, TAG'den HEMEN SONRA (alanlar

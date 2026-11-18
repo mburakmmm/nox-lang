@@ -199,6 +199,7 @@ pub const WorkerPool = struct {
         // ÇÜNKÜ bir havuz `main`in BAŞINDAN SONRA, program ÇALIŞIRKEN de
         // yaratılabilir (`pool_run`/`serve_multicore`).
         state.pool_ever_active.store(true, .monotonic);
+        asap.refreshFastAlloc(state);
         return self;
     }
 

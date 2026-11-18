@@ -245,7 +245,10 @@ pub const HotState = extern struct {
     _pad0: [7]u8 = @splat(0),
     /// `dict.zig` `hashSeed`inin ilklenmiş tohumunun aynası (0 = ilklenmedi); derleyici `int` karmasını satır içi hesaplamak için okur.
     hash_seed: u64 = 0,
-    _pad: [32]u8 = @splat(0),
+    /// B1/I4: slot 0 havuz serbest-liste satırının adresi (derleyicinin satır içi sınıf tahsisi/serbest bırakması için) ve satır içi yolun AÇIK bayrağı (0 = kapalı: sıfırlanmış/eski çalışma zamanı nesneleri güvenli tarafta kalır). Bkz. `refreshFastAlloc`.
+    pool_row0: ?*anyopaque = null,
+    fast_alloc_on: u64 = 0,
+    _pad: [16]u8 = @splat(0),
 };
 
 comptime {
@@ -255,6 +258,9 @@ comptime {
     // Faz 9.10: derleyicinin satır içi kullandığı HER alan ofseti, boyut ve hizalama derleme zamanında doğrulanır (sıcak blok `rt`nin hemen öncesindedir: `rt - RT_HOT_SIZE`).
     std.debug.assert(@offsetOf(HotState, "pending_exception_line") == abi_layout.RT_HOT_PENDING_BACK - abi_layout.RT_HOT_LINE_BACK);
     std.debug.assert(@offsetOf(HotState, "hash_seed") == abi_layout.RT_HOT_PENDING_BACK - abi_layout.RT_HOT_HASH_SEED_BACK);
+    std.debug.assert(@offsetOf(HotState, "pool_row0") == abi_layout.RT_HOT_PENDING_BACK - abi_layout.RT_HOT_POOL_ROW_BACK);
+    std.debug.assert(@offsetOf(HotState, "fast_alloc_on") == abi_layout.RT_HOT_PENDING_BACK - abi_layout.RT_HOT_FAST_OFF_BACK);
+    std.debug.assert(abi_layout.POOL_NUM_CLASSES == POOL_NUM_CLASSES);
     std.debug.assert(abi_layout.RT_HOT_SIZE % @alignOf(HotState) == 0); // `rt - RT_HOT_SIZE` her hedefte (32/64 bit) HotState hizalamasını korur
     std.debug.assert(abi_layout.RT_HOT_PENDING_BACK == abi_layout.RT_HOT_SIZE); // blok başı = rt - RT_HOT_SIZE = bekleyen istisna işaretçisi
 }
@@ -885,7 +891,15 @@ pub fn createState(backing: std.mem.Allocator, init: RuntimeState) ?*RuntimeStat
             state.mem_stats_on = true;
         }
     }
+    state.hot().pool_row0 = &state.pool_free_lists_slot0.classes;
+    refreshFastAlloc(state);
     return state;
+}
+
+/// B1/I4: derleyicinin satır içi sınıf tahsisi/serbest bırakması yalnızca Release'te, havuz/işçi etkin DEĞİLKEN (tek iş parçacıklı serbest listeler), bellek sayaçları kapalıyken açıktır; durum değişince çağrılır.
+pub fn refreshFastAlloc(state: *RuntimeState) void {
+    const off: bool = builtin.mode == .Debug or is_freestanding or builtin.cpu.arch.isWasm() or state.pool_ever_active.load(.monotonic) or state.mem_stats_on or state.rcstat_on;
+    state.hot().fast_alloc_on = @intFromBool(!off);
 }
 
 pub fn destroyState(backing: std.mem.Allocator, state: *RuntimeState) void {

@@ -332,7 +332,7 @@ pub fn genClassRelease(self: *Codegen, class_name: []const u8, cinfo: ClassInfo)
             try self.destroyNonArcValue(fv, f.info.heap);
         }
     }
-    try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{cinfo.total_size}) } });
+    try self.emitClassFreePayload("%p", cinfo.total_size);
     try self.qbeJmp(done_label);
     try self.qbeLabel(done_label);
     try self.qbeRet(null);

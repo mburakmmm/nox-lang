@@ -9,6 +9,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const ast = @import("../parser/ast.zig");
 const types = @import("types.zig");
+const abi_layout = @import("abi_layout");
 const abi = @import("abi.zig");
 const codegen = @import("codegen.zig");
 
@@ -833,6 +834,111 @@ pub fn emitInlineRetain(self: *Codegen, ptr: []const u8, heap: HeapKind) Codegen
     try self.qbeLabel(skip_label);
     try self.qbeJmp(done_label);
     try self.qbeLabel(done_label);
+}
+
+/// B1/I4 (2.3): havuz sınıf indeksi (`runtime/alloc/arc.zig` `poolClassIndex` ile aynı hesap; yalnızca sınıf sabit boyutluyken derleme zamanında). Havuz dışı boyutlarda `null`.
+fn inlinePoolIdx(payload_size: usize) ?usize {
+    const total = payload_size + 8;
+    if (total <= 16) return 0;
+    const idx: usize = @as(usize, @bitSizeOf(usize)) - @clz(total - 1) - 4;
+    if (idx >= abi_layout.POOL_NUM_CLASSES) return null;
+    return idx;
+}
+
+fn inlineAllocAllowed(self: *Codegen) bool {
+    return self.profile == .hosted and !self.isWasmTarget() and @bitSizeOf(usize) == 64;
+}
+
+/// Sabit boyutlu bir sınıf örneği için `nox_rc_alloc(rt, payload_size)` yerine: sıcak bloktaki "kapalı" bayrağı 0 VE slot 0 serbest-liste satırının ilgili sınıf başı doluysa listenin başını IR'da çek
+/// (refcount = 1), aksi halde çalışma zamanı çağrısı. Döndürülen değer (payload işaretçisi) çağrıdakiyle aynıdır.
+pub fn emitClassAlloc(self: *Codegen, payload_size: usize) CodegenError![]const u8 {
+    const idx = inlinePoolIdx(payload_size);
+    if (idx == null or !inlineAllocAllowed(self)) {
+        const t = try self.newTemp();
+        try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{payload_size}) } });
+        return t;
+    }
+    const slot = try self.newTemp();
+    try self.qbeAlloc(slot, .eight, 8);
+    const off_addr = try self.newTemp();
+    try self.qbeOp2Imm(off_addr, .l, "sub", RT_PARAM, @intCast(abi_layout.RT_HOT_FAST_OFF_BACK));
+    const off = try self.newTemp();
+    try self.qbeLoadL(off, off_addr);
+    const off_set = try self.newTemp();
+    try self.qbeOp2Imm(off_set, .w, "ceql", off, 0); // 0 = satır içi yol KAPALI (fail-closed)
+    const slow_l = try self.newLabel("calloc_slow");
+    const chk_l = try self.newLabel("calloc_chk");
+    const pop_l = try self.newLabel("calloc_pop");
+    const done_l = try self.newLabel("calloc_done");
+    try self.qbeJnz(off_set, slow_l, chk_l);
+    try self.qbeLabel(chk_l);
+    const row_addr = try self.newTemp();
+    try self.qbeOp2Imm(row_addr, .l, "sub", RT_PARAM, @intCast(abi_layout.RT_HOT_POOL_ROW_BACK));
+    const row = try self.newTemp();
+    try self.qbeLoadL(row, row_addr);
+    const head_addr = try self.newTemp();
+    try self.qbeOp2Imm(head_addr, .l, "add", row, @intCast(idx.? * 8));
+    const head = try self.newTemp();
+    try self.qbeLoadL(head, head_addr);
+    const has = try self.newTemp();
+    try self.qbeOp2Imm(has, .w, "cnel", head, 0);
+    try self.qbeJnz(has, pop_l, slow_l);
+    try self.qbeLabel(pop_l);
+    const nxt = try self.newTemp();
+    try self.qbeLoadL(nxt, head);
+    try self.qbeStoreL(nxt, head_addr);
+    try self.qbeStoreImmL(1, head);
+    const payload = try self.newTemp();
+    try self.qbeOp2Imm(payload, .l, "add", head, 8);
+    try self.qbeStoreL(payload, slot);
+    try self.qbeJmp(done_l);
+    try self.qbeLabel(slow_l);
+    const sp = try self.newTemp();
+    try self.qbeCall(.{ .name = sp, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{payload_size}) } });
+    try self.qbeStoreL(sp, slot);
+    try self.qbeJmp(done_l);
+    try self.qbeLabel(done_l);
+    const res = try self.newTemp();
+    try self.qbeLoadL(res, slot);
+    return res;
+}
+
+/// `nox_rc_free_payload(rt, ptr, payload_size)` yerine (sabit boyutlu sınıf): satır içi yol açıksa düğümü serbest-liste başına it, değilse çalışma zamanı çağrısı.
+pub fn emitClassFreePayload(self: *Codegen, ptr: []const u8, payload_size: usize) CodegenError!void {
+    const idx = inlinePoolIdx(payload_size);
+    const size_text = try std.fmt.allocPrint(self.allocator, "{d}", .{payload_size});
+    if (idx == null or !inlineAllocAllowed(self)) {
+        try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr }, .{ .ty = .l, .text = size_text } });
+        return;
+    }
+    const off_addr = try self.newTemp();
+    try self.qbeOp2Imm(off_addr, .l, "sub", RT_PARAM, @intCast(abi_layout.RT_HOT_FAST_OFF_BACK));
+    const off = try self.newTemp();
+    try self.qbeLoadL(off, off_addr);
+    const off_set = try self.newTemp();
+    try self.qbeOp2Imm(off_set, .w, "ceql", off, 0); // 0 = satır içi yol KAPALI (fail-closed)
+    const slow_l = try self.newLabel("cfree_slow");
+    const fast_l = try self.newLabel("cfree_fast");
+    const done_l = try self.newLabel("cfree_done");
+    try self.qbeJnz(off_set, slow_l, fast_l);
+    try self.qbeLabel(fast_l);
+    const row_addr = try self.newTemp();
+    try self.qbeOp2Imm(row_addr, .l, "sub", RT_PARAM, @intCast(abi_layout.RT_HOT_POOL_ROW_BACK));
+    const row = try self.newTemp();
+    try self.qbeLoadL(row, row_addr);
+    const head_addr = try self.newTemp();
+    try self.qbeOp2Imm(head_addr, .l, "add", row, @intCast(idx.? * 8));
+    const old = try self.newTemp();
+    try self.qbeLoadL(old, head_addr);
+    const node = try self.newTemp();
+    try self.qbeOp2Imm(node, .l, "sub", ptr, 8);
+    try self.qbeStoreL(old, node);
+    try self.qbeStoreL(node, head_addr);
+    try self.qbeJmp(done_l);
+    try self.qbeLabel(slow_l);
+    try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr }, .{ .ty = .l, .text = size_text } });
+    try self.qbeJmp(done_l);
+    try self.qbeLabel(done_l);
 }
 
 /// `nox_rc_predecrement`in gömülü (inline) karşılığı — `emitInlineRetain`

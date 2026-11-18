@@ -188,6 +188,7 @@ pub export fn nox_mem_stat(rt: ?*anyopaque, which: i64) i64 {
     const st: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return 0));
     if (!st.mem_stats_on) {
         st.mem_stats_on = true;
+        asap.refreshFastAlloc(st);
         return 0;
     }
     const v: usize = switch (which) {

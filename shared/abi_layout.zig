@@ -202,6 +202,11 @@ pub const RT_HOT_PENDING_BACK: usize = 64;
 pub const RT_HOT_FIBER_FLAG_BACK: usize = 48;
 /// 2.3 madde 5.3: `int` anahtar karması için satır içi okunan tohum (`rt - 40`, u64). 0 = henüz ilklenmedi (derleyici o zaman `nox_hash_int` ile ilklenmesini tetikler). Çalışma zamanı tohumu hiçbir zaman 0 üretmez.
 pub const RT_HOT_HASH_SEED_BACK: usize = 40;
+/// B1/I4 (2.3): satır içi sınıf tahsisi/serbest bırakması için sıcak blok alanları. `rt - 32`: slot 0 havuz serbest-liste satırının (`classes[N]`, 8 baytlık `?*PoolNode` dizisi; düğümün `next`i ofset 0) adresi;
+/// `rt - 24`: sıfırdan farklıysa satır içi yol AÇIK; 0 ise KAPALI (Debug, havuz/işçi etkin, `nox.mem.stats`/`NOX_RC_STATS` açık ya da bu alanı bilmeyen eski çalışma zamanı nesnesi: fail-closed). Havuz sınıf boyutları `16 << idx` (idx < `POOL_NUM_CLASSES`).
+pub const RT_HOT_POOL_ROW_BACK: usize = 32;
+pub const RT_HOT_FAST_OFF_BACK: usize = 24;
+pub const POOL_NUM_CLASSES: usize = 10;
 /// Faz 9.0 F1: ARC başlık sözcüğünün (8 bayt, `payload - 8`) paylaşım bitleri. Düşük 32 bit refcount, 32-57 döngü çözücü yuvası, 60-61 renk, 62 tamponlu.
 /// `SHARED`: nesne birden çok görevden erişilebilir (yayımlandı; yapışkan). `LOCK`: nesne başına döndürme kilidi (yalnız `SHARED` nesnelerde kullanılır).
 pub const HDR_SHARED_BIT: u64 = @as(u64, 1) << 58;
