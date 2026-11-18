@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.24]
+
+Bootstrap öncesi performans turu (2/2): sözlük işlemleri, kernel idiomları ve ölçüm kanıtları.
+
+- **Performans (derleyici):** `d.contains(k)`, `k in d`, `d[k]` ve `d[k] = v` (skaler anahtar/değer) için sözlük son-arama önbelleği isabeti artık satır içi IR (`compiler/codegen_qbe/dict_inline.zig`): paylaşılmayan sözlükte `last_idx < entries.len` ve `entries[last_idx].key == key` ise işlem çalışma zamanı çağrısı olmadan yapılır; kaçırma ve paylaşılan sözlük eski çağrıya düşer. `lang_perf` `dict_int_1.5M` 19,0 → 13,8 ms (Nox/C 5,6× → 4,1×), çapraz-dil `dict` 0,055 → 0,046 s (2,75× → 2,3×). Alan konumları `shared/abi_layout.zig`te (`DICT_*`), `dict.zig` `comptime` ile ve ham-okuma birim testiyle doğrular.
+- **Ölçüm düzeltmesi:** `benchmarks/cross_lang` kernel'leri `[x] * n` (v1.150.0'dan beri var, `memset`/`memcpy` katlamasıyla tek tahsis) kullanmıyordu; README "Nox'ta `[0]*n` yok" diyordu (yanlış). `sieve` ve `matmul` önceden ayırıyor: sieve Nox LLVM 0,037 → 0,019 s (C'ye 3,1× → 1,6×).
+- **Sınır denetimi kanıtı (yapılmadı):** liste-listesi yerleşimi ve her erişimde sınır denetimiyle yazılmış eşdeğer C, matmul 300³'te 28 ms/yineleme (düz diziyle 20 ms): Nox'un 37 ms'si aynı yapıdaki C'nin 1,3×'ine yakın; kalan fark kod üretiminden değil iç içe liste yerleşiminden geliyor. Sabit satır hoist'i zaten var (`planInvariantRows`); ek bir hoist/versiyonlama kazancı küçük olduğundan eklenmedi.
+- **Testler:** `dict_inline_hits` fixture'ı (isabet/kaçırma/üzerine yazma/silme-temizleme/float-bool-str değer/negatif anahtar; iki backend, Python referansıyla eşleşir), `Dict ABI` birim testi, 103 IR anlık görüntüsü yenilendi.
+
 ## [2.2.23]
 
 Benchmark yeniden ölçümü (bootstrap öncesi performans turu, 1/2): bir gerçek regresyon bulundu ve düzeltildi.

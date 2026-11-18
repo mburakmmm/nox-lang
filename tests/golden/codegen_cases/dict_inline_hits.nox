@@ -1,0 +1,60 @@
+# v2.2.24: dict son-arama önbelleği isabeti satır içi (contains / d[k] / d[k] = v); isabet, kaçırma, üzerine yazma, silme sonrası ve farklı değer tipleri.
+def run_int() -> int:
+    d: dict[int, int] = {}
+    total: int = 0
+    i: int = 0
+    while i < 2000:
+        k: int = (i * 37) % 101
+        if d.contains(k):
+            d[k] = d[k] + 1
+        else:
+            d[k] = 1
+        i = i + 1
+    for k2 in d.keys():
+        total = total + k2 * d[k2]
+    d.pop(5)
+    print(d.contains(5), 5 in d, len(d))
+    d[5] = 77
+    print(d.contains(5), d[5], len(d))
+    d.clear()
+    print(d.contains(0), len(d))
+    return total
+
+def run_float_bool() -> None:
+    f: dict[int, float] = {}
+    b: dict[int, bool] = {}
+    i: int = 0
+    while i < 50:
+        f[i % 7] = f.get(i % 7, 0.0) + 0.5
+        b[i % 3] = (i % 2) == 0
+        i = i + 1
+    print(f[0], f[6], len(f))
+    print(b[0], b[1], b[2], len(b))
+
+def run_str_keys() -> None:
+    s: dict[str, int] = {}
+    words: list[str] = ["a", "bb", "a", "ccc", "bb", "a"]
+    for w in words:
+        if w in s:
+            s[w] = s[w] + 1
+        else:
+            s[w] = 1
+    print(s["a"], s["bb"], s["ccc"], len(s))
+    t: dict[str, str] = {"x": "1"}
+    t["x"] = "2"
+    print(t["x"], t.contains("x"), t.contains("y"))
+
+def run_negative_and_missing() -> None:
+    d: dict[int, int] = {-1: 10, 0: 20, 2147483648: 30}
+    print(d[-1], d[0], d[2147483648])
+    d[-1] = d[-1] + d[0]
+    print(d[-1], d.contains(-2))
+    try:
+        print(d[99])
+    except KeyError:
+        print("missing")
+
+print(run_int())
+run_float_bool()
+run_str_keys()
+run_negative_and_missing()

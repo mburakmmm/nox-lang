@@ -825,4 +825,3 @@ test "nox_atomic_rc_add/sub işlem-sonrası değeri döner" {
     try std.testing.expectEqual(@as(i64, 4), nox_atomic_rc_sub(&v, 2));
     try std.testing.expectEqual(@as(i64, 4), v);
 }
-

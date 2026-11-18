@@ -12,6 +12,7 @@ const types = @import("types.zig");
 const abi = @import("abi.zig");
 const shared_globals = @import("shared_globals.zig");
 const dyn_share = @import("dyn_share.zig");
+const dict_inline = @import("dict_inline.zig");
 const abi_layout = @import("abi_layout");
 const expr_mod = @import("expr.zig");
 const codegen = @import("codegen.zig");
@@ -2517,7 +2518,7 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
         }
         try self.qbeOp2Imm(has_t, .w, "cnel", pp, 0);
         pre_payload = pp;
-    } else try self.qbeCall(.{ .name = has_t, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+    } else try dict_inline.contains(self, has_t, obj.text, key_is_str_lit, key_payload.text);
     const found_label = try self.newLabel("dict_found");
     const miss_label = try self.newLabel("dict_miss");
     const end_label = try self.newLabel("dict_end");
@@ -2552,7 +2553,7 @@ fn genDictGetLike(self: *Codegen, obj: Value, a: ast.Attribute, args: []const as
         } else if (is_pop) {
             try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_pop", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
         } else {
-            try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_get", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+            try dict_inline.get(self, payload_t, obj.text, key_is_str_lit, key_payload.text);
         }
         const conv = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, dinfo.value_qtype);
         found_val = dictValueOf(dinfo, conv);
@@ -2631,7 +2632,7 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         // Faz MN.4: `nox_dict_contains` ARTIK `rt` ALIYOR (hash-tohumu
         // `RuntimeState`e taşındı — bkz. `dict.zig`nin `hashSeed` belge
         // notu) — İLK argüman olarak `RT_PARAM` EKLENDİ.
-        try self.qbeCall(.{ .name = result, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+        try dict_inline.contains(self, result, obj.text, key_is_str_lit, key_payload.text);
         try self.releaseIfTemporary(args[0], key_v0);
         try self.releaseIfTemporary(a.obj.*, obj);
         return .{ .text = result, .qtype = .w };

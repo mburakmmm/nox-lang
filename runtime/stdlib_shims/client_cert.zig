@@ -222,36 +222,36 @@ pub fn load(gpa: std.mem.Allocator, io: std.Io, cert_path: []const u8, key_path:
 }
 
 const test_p256_sec1 =
-        \\-----BEGIN EC PRIVATE KEY-----
-        \\MHcCAQEEIFsTdrhnMtevDXcZIMjMHci3qoFVPdaTuuG0PEz9RR8HoAoGCCqGSM49
-        \\AwEHoUQDQgAExBlTiJt5/096A37MwgRuFQeBG7CS42jKtMbgDWIBtxTLkE65tsUJ
-        \\qstDHYyOSZ/RSrDpLT9842uigSrIc5wQXA==
-        \\-----END EC PRIVATE KEY-----
-        \\
-    ;
+    \\-----BEGIN EC PRIVATE KEY-----
+    \\MHcCAQEEIFsTdrhnMtevDXcZIMjMHci3qoFVPdaTuuG0PEz9RR8HoAoGCCqGSM49
+    \\AwEHoUQDQgAExBlTiJt5/096A37MwgRuFQeBG7CS42jKtMbgDWIBtxTLkE65tsUJ
+    \\qstDHYyOSZ/RSrDpLT9842uigSrIc5wQXA==
+    \\-----END EC PRIVATE KEY-----
+    \\
+;
 const test_p256_pkcs8 =
-        \\-----BEGIN PRIVATE KEY-----
-        \\MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgWxN2uGcy168Ndxkg
-        \\yMwdyLeqgVU91pO64bQ8TP1FHwehRANCAATEGVOIm3n/T3oDfszCBG4VB4EbsJLj
-        \\aMq0xuANYgG3FMuQTrm2xQmqy0MdjI5Jn9FKsOktP3zja6KBKshznBBc
-        \\-----END PRIVATE KEY-----
-        \\
-    ;
+    \\-----BEGIN PRIVATE KEY-----
+    \\MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgWxN2uGcy168Ndxkg
+    \\yMwdyLeqgVU91pO64bQ8TP1FHwehRANCAATEGVOIm3n/T3oDfszCBG4VB4EbsJLj
+    \\aMq0xuANYgG3FMuQTrm2xQmqy0MdjI5Jn9FKsOktP3zja6KBKshznBBc
+    \\-----END PRIVATE KEY-----
+    \\
+;
 const test_p384_pkcs8 =
-        \\-----BEGIN PRIVATE KEY-----
-        \\MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDChHe664fahi17HXL3x
-        \\h9fE4FBmGiTJmwxT09zAe2QrjbMO9+dZ6KGZY+VtrtAlkiyhZANiAAQ5p0ht92Us
-        \\j0BQ8JWDYU51ZZZCXNO079zdVldczjXc2XSGQe/+9MVdLwJs4vDTu/zIZ2Rl1tjC
-        \\V19CcQDiVOJliVg9MDixgg7z3bS9uUzFc4uvqZbQFkr790M84e5yeYk=
-        \\-----END PRIVATE KEY-----
-        \\
-    ;
+    \\-----BEGIN PRIVATE KEY-----
+    \\MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDChHe664fahi17HXL3x
+    \\h9fE4FBmGiTJmwxT09zAe2QrjbMO9+dZ6KGZY+VtrtAlkiyhZANiAAQ5p0ht92Us
+    \\j0BQ8JWDYU51ZZZCXNO079zdVldczjXc2XSGQe/+9MVdLwJs4vDTu/zIZ2Rl1tjC
+    \\V19CcQDiVOJliVg9MDixgg7z3bS9uUzFc4uvqZbQFkr790M84e5yeYk=
+    \\-----END PRIVATE KEY-----
+    \\
+;
 const test_ed25519 =
-        \\-----BEGIN PRIVATE KEY-----
-        \\MC4CAQAwBQYDK2VwBCIEIGdOua7eB9zyYKuJoNfzIjcLIMKyga8eHY4KvKNLwRRw
-        \\-----END PRIVATE KEY-----
-        \\
-    ;
+    \\-----BEGIN PRIVATE KEY-----
+    \\MC4CAQAwBQYDK2VwBCIEIGdOua7eB9zyYKuJoNfzIjcLIMKyga8eHY4KvKNLwRRw
+    \\-----END PRIVATE KEY-----
+    \\
+;
 
 // Test anahtarları yalnızca bu birim testi için üretilmiş, hiçbir yerde kullanılmayan rastgele anahtarlardır.
 test "SEC1 P-256, PKCS#8 P-256/P-384 ve PKCS#8 Ed25519 anahtarları okunur" {
@@ -269,66 +269,66 @@ test "SEC1 P-256, PKCS#8 P-256/P-384 ve PKCS#8 Ed25519 anahtarları okunur" {
 }
 
 const test_rsa_pkcs1 =
-        \\-----BEGIN RSA PRIVATE KEY-----
-        \\MIIEpAIBAAKCAQEAlIgpWB5hyck8WeP0lIfbNf3g/eMto0e+9pw8fU1nifDWufAZ
-        \\GF3vQJzdnTk8zVfFeqcMOZGXvuVnrqt+HpWqEjiKjMGqVEJSJ6DRbhhVwYhK6F83
-        \\mYJwr8LiOI+AwFd3yzzEa+JCCBla38AVqAzSKK2g1DK3VCCEvXzIu0+vidvhE9x3
-        \\N1xlJecJ7T178uorOdONbtF6bnxCKdM0A65FTjM6Ol/Vmrs3kuObImLaR0Fq4yZT
-        \\Q8MJFp0qXn+izWeJBmwgiA+qtTqU1M/3mzVrP7Xh/B8FSPQI43SXqv1P4A2vfh1D
-        \\rNxpimMqR4iFzLfl0DxEDAHg4Ujo9hoSyTI57QIDAQABAoIBABHeruC16QxyrFLh
-        \\SNn83VwJ0yGgjStVlK1NXz6xCxmustrUfuRuWrxSkxwZGI5Y9r6are8YK+JQ7dA3
-        \\PDl4RqmiCVNFcpVoFEPFxqShA2JBIEgEOqd6qM2QnBBzfWlGrLg0M6qKImkgic0d
-        \\Kk3ZWwh/WTfmcSWLMwUsJ+dXPzaN4YLbv3dLa19c4/OsSCuJ0MyvJtAz9KYMVX7V
-        \\41N/Tcj/MojB98e/cT21wGhyFfrl5mPi/fJlIamjhN9khDxJPL1S9M7VrdzYoPI/
-        \\gphzcHcwmzgledC9vD9CHiuKNuNGJ9qxi04StrmuJGl9ueaf+JV6G0Xz06ycnaW2
-        \\i0HnPMECgYEAw6PT0X/8qQ74VPE/p9wv6sB7xgL1qtLsm3H/oyz73yxqBBVgFEvY
-        \\yFaVn+7X7uqS6KzMIxy/NnqsOtxIDzURUT+BmAYVMyWAVuLn8jaVscTVDzBaMI+0
-        \\z5MVaa9jRWmyqed1abdRU85JmBWv+WMaDFeAG4n8HJH1y1sLHl6dWMECgYEAwluc
-        \\fJxbPZoy9+HOi1ewFislW074SCkGDTJtqyx48CinSjHfV8wW0D6FUZVePwYYF60l
-        \\v/8LaxO1cCYRsuJW+uPQbtlI2Iqv6nVJ1+QK3NdeTEYgFTB7q8ufq8YhkEU21yoe
-        \\i55qX0DXJa7mJdoQjR4HuhVNEer5RN1gLHtRoC0CgYEAi2GVkEVx2XQr4kB6THon
-        \\vUTjKcCEC+732QtPyI5M58P5x+z+pZcf3CMruGTufG2suo4ZZc6eQA8H02uK/yKc
-        \\stje2FNFGUpXdA92lm7jGWKVNJwLNVu8wsIUWFY3EIXsXvXjBa0wCNgIQIz68V70
-        \\eOSCBZy5/BTVG8tCUaGw0kECgYEAiWyDSmy36ufT8AeeplH7NMGPKW++CC/RkpU8
-        \\jBLm9FCacNCwrgClhNsgIx5tRDzH3j3UelwYs758xO52BzkY7U8VursyUcJGPo5u
-        \\BxO8RoiVqXLQDot4dnGE1c1DQCJgc2TZsjjx16YeOgvfuZXlrBI2vnF/TBML65Bo
-        \\Byuu/IUCgYAm8KBSbc0qXvxP0zvTae37tlypzZAEb71gPFx3uBGttMeQKJgOvJht
-        \\dpxEeVP1uAV+i2Fvjf+5L2fGDRUNqC5/nmZRO7Zzx5HUMhS+6LzYJsrMVJgfb61l
-        \\dicamwg8m9XHfykKGwmTalvgbV9yf0ctZl1TgjdTKCFBctAQVdUVSA==
-        \\-----END RSA PRIVATE KEY-----
-        \\
-    ;
+    \\-----BEGIN RSA PRIVATE KEY-----
+    \\MIIEpAIBAAKCAQEAlIgpWB5hyck8WeP0lIfbNf3g/eMto0e+9pw8fU1nifDWufAZ
+    \\GF3vQJzdnTk8zVfFeqcMOZGXvuVnrqt+HpWqEjiKjMGqVEJSJ6DRbhhVwYhK6F83
+    \\mYJwr8LiOI+AwFd3yzzEa+JCCBla38AVqAzSKK2g1DK3VCCEvXzIu0+vidvhE9x3
+    \\N1xlJecJ7T178uorOdONbtF6bnxCKdM0A65FTjM6Ol/Vmrs3kuObImLaR0Fq4yZT
+    \\Q8MJFp0qXn+izWeJBmwgiA+qtTqU1M/3mzVrP7Xh/B8FSPQI43SXqv1P4A2vfh1D
+    \\rNxpimMqR4iFzLfl0DxEDAHg4Ujo9hoSyTI57QIDAQABAoIBABHeruC16QxyrFLh
+    \\SNn83VwJ0yGgjStVlK1NXz6xCxmustrUfuRuWrxSkxwZGI5Y9r6are8YK+JQ7dA3
+    \\PDl4RqmiCVNFcpVoFEPFxqShA2JBIEgEOqd6qM2QnBBzfWlGrLg0M6qKImkgic0d
+    \\Kk3ZWwh/WTfmcSWLMwUsJ+dXPzaN4YLbv3dLa19c4/OsSCuJ0MyvJtAz9KYMVX7V
+    \\41N/Tcj/MojB98e/cT21wGhyFfrl5mPi/fJlIamjhN9khDxJPL1S9M7VrdzYoPI/
+    \\gphzcHcwmzgledC9vD9CHiuKNuNGJ9qxi04StrmuJGl9ueaf+JV6G0Xz06ycnaW2
+    \\i0HnPMECgYEAw6PT0X/8qQ74VPE/p9wv6sB7xgL1qtLsm3H/oyz73yxqBBVgFEvY
+    \\yFaVn+7X7uqS6KzMIxy/NnqsOtxIDzURUT+BmAYVMyWAVuLn8jaVscTVDzBaMI+0
+    \\z5MVaa9jRWmyqed1abdRU85JmBWv+WMaDFeAG4n8HJH1y1sLHl6dWMECgYEAwluc
+    \\fJxbPZoy9+HOi1ewFislW074SCkGDTJtqyx48CinSjHfV8wW0D6FUZVePwYYF60l
+    \\v/8LaxO1cCYRsuJW+uPQbtlI2Iqv6nVJ1+QK3NdeTEYgFTB7q8ufq8YhkEU21yoe
+    \\i55qX0DXJa7mJdoQjR4HuhVNEer5RN1gLHtRoC0CgYEAi2GVkEVx2XQr4kB6THon
+    \\vUTjKcCEC+732QtPyI5M58P5x+z+pZcf3CMruGTufG2suo4ZZc6eQA8H02uK/yKc
+    \\stje2FNFGUpXdA92lm7jGWKVNJwLNVu8wsIUWFY3EIXsXvXjBa0wCNgIQIz68V70
+    \\eOSCBZy5/BTVG8tCUaGw0kECgYEAiWyDSmy36ufT8AeeplH7NMGPKW++CC/RkpU8
+    \\jBLm9FCacNCwrgClhNsgIx5tRDzH3j3UelwYs758xO52BzkY7U8VursyUcJGPo5u
+    \\BxO8RoiVqXLQDot4dnGE1c1DQCJgc2TZsjjx16YeOgvfuZXlrBI2vnF/TBML65Bo
+    \\Byuu/IUCgYAm8KBSbc0qXvxP0zvTae37tlypzZAEb71gPFx3uBGttMeQKJgOvJht
+    \\dpxEeVP1uAV+i2Fvjf+5L2fGDRUNqC5/nmZRO7Zzx5HUMhS+6LzYJsrMVJgfb61l
+    \\dicamwg8m9XHfykKGwmTalvgbV9yf0ctZl1TgjdTKCFBctAQVdUVSA==
+    \\-----END RSA PRIVATE KEY-----
+    \\
+;
 const test_rsa_pkcs8 =
-        \\-----BEGIN PRIVATE KEY-----
-        \\MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCUiClYHmHJyTxZ
-        \\4/SUh9s1/eD94y2jR772nDx9TWeJ8Na58BkYXe9AnN2dOTzNV8V6pww5kZe+5Weu
-        \\q34elaoSOIqMwapUQlInoNFuGFXBiEroXzeZgnCvwuI4j4DAV3fLPMRr4kIIGVrf
-        \\wBWoDNIoraDUMrdUIIS9fMi7T6+J2+ET3Hc3XGUl5wntPXvy6is5041u0XpufEIp
-        \\0zQDrkVOMzo6X9WauzeS45siYtpHQWrjJlNDwwkWnSpef6LNZ4kGbCCID6q1OpTU
-        \\z/ebNWs/teH8HwVI9AjjdJeq/U/gDa9+HUOs3GmKYypHiIXMt+XQPEQMAeDhSOj2
-        \\GhLJMjntAgMBAAECggEAEd6u4LXpDHKsUuFI2fzdXAnTIaCNK1WUrU1fPrELGa6y
-        \\2tR+5G5avFKTHBkYjlj2vpqt7xgr4lDt0Dc8OXhGqaIJU0VylWgUQ8XGpKEDYkEg
-        \\SAQ6p3qozZCcEHN9aUasuDQzqooiaSCJzR0qTdlbCH9ZN+ZxJYszBSwn51c/No3h
-        \\gtu/d0trX1zj86xIK4nQzK8m0DP0pgxVftXjU39NyP8yiMH3x79xPbXAaHIV+uXm
-        \\Y+L98mUhqaOE32SEPEk8vVL0ztWt3Nig8j+CmHNwdzCbOCV50L28P0IeK4o240Yn
-        \\2rGLThK2ua4kaX255p/4lXobRfPTrJydpbaLQec8wQKBgQDDo9PRf/ypDvhU8T+n
-        \\3C/qwHvGAvWq0uybcf+jLPvfLGoEFWAUS9jIVpWf7tfu6pLorMwjHL82eqw63EgP
-        \\NRFRP4GYBhUzJYBW4ufyNpWxxNUPMFowj7TPkxVpr2NFabKp53Vpt1FTzkmYFa/5
-        \\YxoMV4AbifwckfXLWwseXp1YwQKBgQDCW5x8nFs9mjL34c6LV7AWKyVbTvhIKQYN
-        \\Mm2rLHjwKKdKMd9XzBbQPoVRlV4/BhgXrSW//wtrE7VwJhGy4lb649Bu2UjYiq/q
-        \\dUnX5Arc115MRiAVMHury5+rxiGQRTbXKh6LnmpfQNclruYl2hCNHge6FU0R6vlE
-        \\3WAse1GgLQKBgQCLYZWQRXHZdCviQHpMeie9ROMpwIQL7vfZC0/Ijkznw/nH7P6l
-        \\lx/cIyu4ZO58bay6jhllzp5ADwfTa4r/Ipyy2N7YU0UZSld0D3aWbuMZYpU0nAs1
-        \\W7zCwhRYVjcQhexe9eMFrTAI2AhAjPrxXvR45IIFnLn8FNUby0JRobDSQQKBgQCJ
-        \\bINKbLfq59PwB56mUfs0wY8pb74IL9GSlTyMEub0UJpw0LCuAKWE2yAjHm1EPMfe
-        \\PdR6XBizvnzE7nYHORjtTxW6uzJRwkY+jm4HE7xGiJWpctAOi3h2cYTVzUNAImBz
-        \\ZNmyOPHXph46C9+5leWsEja+cX9MEwvrkGgHK678hQKBgCbwoFJtzSpe/E/TO9Np
-        \\7fu2XKnNkARvvWA8XHe4Ea20x5AomA68mG12nER5U/W4BX6LYW+N/7kvZ8YNFQ2o
-        \\Ln+eZlE7tnPHkdQyFL7ovNgmysxUmB9vrWV2JxqbCDyb1cd/KQobCZNqW+BtX3J/
-        \\Ry1mXVOCN1MoIUFy0BBV1RVI
-        \\-----END PRIVATE KEY-----
-        \\
-    ;
+    \\-----BEGIN PRIVATE KEY-----
+    \\MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCUiClYHmHJyTxZ
+    \\4/SUh9s1/eD94y2jR772nDx9TWeJ8Na58BkYXe9AnN2dOTzNV8V6pww5kZe+5Weu
+    \\q34elaoSOIqMwapUQlInoNFuGFXBiEroXzeZgnCvwuI4j4DAV3fLPMRr4kIIGVrf
+    \\wBWoDNIoraDUMrdUIIS9fMi7T6+J2+ET3Hc3XGUl5wntPXvy6is5041u0XpufEIp
+    \\0zQDrkVOMzo6X9WauzeS45siYtpHQWrjJlNDwwkWnSpef6LNZ4kGbCCID6q1OpTU
+    \\z/ebNWs/teH8HwVI9AjjdJeq/U/gDa9+HUOs3GmKYypHiIXMt+XQPEQMAeDhSOj2
+    \\GhLJMjntAgMBAAECggEAEd6u4LXpDHKsUuFI2fzdXAnTIaCNK1WUrU1fPrELGa6y
+    \\2tR+5G5avFKTHBkYjlj2vpqt7xgr4lDt0Dc8OXhGqaIJU0VylWgUQ8XGpKEDYkEg
+    \\SAQ6p3qozZCcEHN9aUasuDQzqooiaSCJzR0qTdlbCH9ZN+ZxJYszBSwn51c/No3h
+    \\gtu/d0trX1zj86xIK4nQzK8m0DP0pgxVftXjU39NyP8yiMH3x79xPbXAaHIV+uXm
+    \\Y+L98mUhqaOE32SEPEk8vVL0ztWt3Nig8j+CmHNwdzCbOCV50L28P0IeK4o240Yn
+    \\2rGLThK2ua4kaX255p/4lXobRfPTrJydpbaLQec8wQKBgQDDo9PRf/ypDvhU8T+n
+    \\3C/qwHvGAvWq0uybcf+jLPvfLGoEFWAUS9jIVpWf7tfu6pLorMwjHL82eqw63EgP
+    \\NRFRP4GYBhUzJYBW4ufyNpWxxNUPMFowj7TPkxVpr2NFabKp53Vpt1FTzkmYFa/5
+    \\YxoMV4AbifwckfXLWwseXp1YwQKBgQDCW5x8nFs9mjL34c6LV7AWKyVbTvhIKQYN
+    \\Mm2rLHjwKKdKMd9XzBbQPoVRlV4/BhgXrSW//wtrE7VwJhGy4lb649Bu2UjYiq/q
+    \\dUnX5Arc115MRiAVMHury5+rxiGQRTbXKh6LnmpfQNclruYl2hCNHge6FU0R6vlE
+    \\3WAse1GgLQKBgQCLYZWQRXHZdCviQHpMeie9ROMpwIQL7vfZC0/Ijkznw/nH7P6l
+    \\lx/cIyu4ZO58bay6jhllzp5ADwfTa4r/Ipyy2N7YU0UZSld0D3aWbuMZYpU0nAs1
+    \\W7zCwhRYVjcQhexe9eMFrTAI2AhAjPrxXvR45IIFnLn8FNUby0JRobDSQQKBgQCJ
+    \\bINKbLfq59PwB56mUfs0wY8pb74IL9GSlTyMEub0UJpw0LCuAKWE2yAjHm1EPMfe
+    \\PdR6XBizvnzE7nYHORjtTxW6uzJRwkY+jm4HE7xGiJWpctAOi3h2cYTVzUNAImBz
+    \\ZNmyOPHXph46C9+5leWsEja+cX9MEwvrkGgHK678hQKBgCbwoFJtzSpe/E/TO9Np
+    \\7fu2XKnNkARvvWA8XHe4Ea20x5AomA68mG12nER5U/W4BX6LYW+N/7kvZ8YNFQ2o
+    \\Ln+eZlE7tnPHkdQyFL7ovNgmysxUmB9vrWV2JxqbCDyb1cd/KQobCZNqW+BtX3J/
+    \\Ry1mXVOCN1MoIUFy0BBV1RVI
+    \\-----END PRIVATE KEY-----
+    \\
+;
 
 test "RSA PKCS#1 ve PKCS#8 anahtarları aynı n/d değerlerini verir" {
     const gpa = std.testing.allocator;

@@ -214,3 +214,11 @@ pub const HDR_LOCK_BIT: u64 = @as(u64, 1) << 59;
 
 /// `pending_exception_line` alanının `rt`ye göre geri ofseti (`rt - 56`).
 pub const RT_HOT_LINE_BACK: usize = 56;
+
+/// Dict (runtime/collections/dict.zig) alan konumları — `d.contains(k)`/`d[k]`/`d[k] = v` son-arama önbelleği isabetinin satır içi üretimi için (v2.2.24). `entries` dilimi:
+/// işaretçi @DICT_ENTRIES_OFF, uzunluk @+8. `Entry` = `{ key: i64, value: i64 }`. `dict.zig` bu değerleri `comptime` ile doğrular.
+pub const DICT_ENTRIES_OFF: usize = 0;
+pub const DICT_LAST_IDX_OFF: usize = 56;
+pub const DICT_SHARED_OFF: usize = 106;
+pub const DICT_ENTRY_SIZE: usize = 16;
+pub const DICT_ENTRY_VALUE_OFF: usize = 8;

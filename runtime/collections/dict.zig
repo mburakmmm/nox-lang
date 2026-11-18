@@ -1576,3 +1576,43 @@ test "Aura L2: toplu silme otomatik sıkıştırır (dead sınırlı), str anaht
     try std.testing.expectEqual(@as(i64, 0), nox_dict_len(d));
     nox_dict_release(rt, d, 1, 0, 0);
 }
+
+// Dict ABI'si (v2.2.24): derleyici, son-arama önbelleği isabetini (`d.contains(k)`, `d[k]`, `d[k] = v`) satır içi IR olarak üretir (`compiler/codegen_qbe/dict_inline.zig`);
+// bunun için `entries` dilimi (işaretçi @+0, uzunluk @+8), `last_idx` ve `shared` alanlarının konumları `shared/abi_layout.zig`te sabitlenir. Zig alan sırasını değiştirirse
+// derleme burada durur (aşağıdaki `comptime` denetimleri) ve sabitler güncellenir.
+comptime {
+    if (@sizeOf(usize) != 8) {
+        // wasm32: düzen farklı; derleyici bu hedeflerde satır içi yoklama üretmez (`dict_inline.zig` `enabled`).
+    } else {
+        std.debug.assert(@offsetOf(Dict, "entries") == abi_layout.DICT_ENTRIES_OFF);
+        std.debug.assert(@offsetOf(Dict, "last_idx") == abi_layout.DICT_LAST_IDX_OFF);
+        std.debug.assert(@offsetOf(Dict, "shared") == abi_layout.DICT_SHARED_OFF);
+        std.debug.assert(@sizeOf(Entry) == abi_layout.DICT_ENTRY_SIZE);
+        std.debug.assert(@offsetOf(Entry, "key") == 0);
+        std.debug.assert(@offsetOf(Entry, "value") == abi_layout.DICT_ENTRY_VALUE_OFF);
+    }
+}
+
+test "Dict ABI: entries dilimi (işaretçi@0, uzunluk@8) ve alan konumları ham okumayla doğrulanır" {
+    if (@sizeOf(usize) != 8) return error.SkipZigTest;
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const dp = nox_dict_new(rt, 0) orelse return error.OutOfMemory;
+    nox_dict_set(rt, dp, 0, 0, 0, 7, 70);
+    nox_dict_set(rt, dp, 0, 0, 0, 9, 90);
+    const base: [*]const u8 = @ptrCast(dp);
+    const ents_ptr = @as(*align(1) const usize, @ptrCast(base + abi_layout.DICT_ENTRIES_OFF)).*;
+    const ents_len = @as(*align(1) const usize, @ptrCast(base + abi_layout.DICT_ENTRIES_OFF + 8)).*;
+    try std.testing.expectEqual(@as(usize, 2), ents_len);
+    const last = @as(*align(1) const usize, @ptrCast(base + abi_layout.DICT_LAST_IDX_OFF)).*;
+    try std.testing.expectEqual(@as(usize, 1), last);
+    const e1: [*]const u8 = @ptrFromInt(ents_ptr + last * abi_layout.DICT_ENTRY_SIZE);
+    try std.testing.expectEqual(@as(i64, 9), @as(*align(1) const i64, @ptrCast(e1)).*);
+    try std.testing.expectEqual(@as(i64, 90), @as(*align(1) const i64, @ptrCast(e1 + abi_layout.DICT_ENTRY_VALUE_OFF)).*);
+    try std.testing.expectEqual(@as(u8, 0), (base + abi_layout.DICT_SHARED_OFF)[0]);
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    state.main_pool_workers = 2; // paylaşım yalnızca çok işçili havuzda etkinleşir
+    nox_dict_make_shared(rt, dp);
+    try std.testing.expectEqual(@as(u8, 1), (base + abi_layout.DICT_SHARED_OFF)[0]);
+    nox_dict_release(rt, dp, 0, 0, 0);
+}

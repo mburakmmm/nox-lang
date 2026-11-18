@@ -10,6 +10,7 @@ const types = @import("types.zig");
 const abi = @import("abi.zig");
 const shared_globals = @import("shared_globals.zig");
 const dyn_share = @import("dyn_share.zig");
+const dict_inline = @import("dict_inline.zig");
 const codegen = @import("codegen.zig");
 const optimizations = @import("optimizations.zig");
 const layout = @import("layout.zig");
@@ -1777,7 +1778,7 @@ pub fn genIn(self: *Codegen, b: ast.Binary) CodegenError!Value {
             const key_payload = try self.toPayload(x);
             const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
             const t = try self.newTemp();
-            try self.qbeCall(.{ .name = t, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = coll.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+            try dict_inline.contains(self, t, coll.text, key_is_str_lit, key_payload.text);
             found = t;
         },
         .list => {

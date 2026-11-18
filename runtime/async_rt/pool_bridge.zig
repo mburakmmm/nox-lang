@@ -183,7 +183,6 @@ fn poolWorkerMain(rt: *anyopaque, slot: usize, ctx: *PoolRunCtx) void {
 /// gerekir).
 /// v2.1.142: `$main` havuzunun varsayılan işçi sayısı CPU sayısıdır (önceden `serve_multicore` kullanmayan programlar için sabit 2'ydi; başlangıç maliyeti ölçüldü: 1 → 10 işçi ≈ 4 ms,
 /// fark yok). `NOX_POOL_WORKERS` HER ZAMAN ezer; mod 2 (yalnız sınıflayıcının tanımadığı tipler için güvenlik ağı) tek işçidir.
-
 /// `NOX_POOL_MAX_WORKERS=<n>`: büyüyebilen havuzun işçi üst sınırı (`NOX_POOL_WORKERS` başlangıç sayısıyla birlikte verilirse havuz o sayıdan bu sınıra kadar büyüyebilir).
 fn poolMaxWorkersOverride() ?usize {
     if (comptime is_wasm_freestanding or builtin.os.tag == .windows) return null;

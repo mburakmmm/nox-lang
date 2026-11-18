@@ -11,7 +11,6 @@
 //!
 //! Asyncify'ın `asyncify.start_unwind/stop_unwind/start_rewind/stop_rewind` import'ları `wasm-opt` tarafından modülün İÇİNDE tanımlanır; ortaya host
 //! gerektiren bir import çıkmaz. Durum (`g_state`) burada ayrıca izlenir, çünkü Binaryen `get_state`i import olarak sağlamaz.
-
 //! **Host askıya alma (v2.0.149, spec §3.351).** Bir fiber değil TÜM program, host'a (JS olay döngüsüne) geri dönmek üzere askıya alınabilir: `hostSuspend` ana
 //! akışı (zamanlayıcı döngüsü dahil) `swap` ile aynı düzenekle bir arabelleğe kaydedip yığını sürücüye kadar açar ve sürücü `nox_asyncify_run`dan HOST'A DÖNER
 //! (`isHostSuspended()`). Host işini bitirince `nox_asyncify_run_resume` aynı akışı arabellekten yeniden sarar. `fetch` tabanlı HTTP istemcisi bunun üstüne kurulur.

@@ -430,7 +430,6 @@ export fn nox_http_handler_ctx_release(ctx: ?*anyopaque) callconv(.c) void {
         srv.handlerCtxRelease(ctx);
         return;
     }
-
 }
 
 // ---- Sunucu tarafı istek/yanıt erişimcileri (handler wrapper'ları yalnızca gerçek bir sunucuda çalışır) -------------------------------------------------

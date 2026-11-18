@@ -330,4 +330,3 @@ export fn nox_host_http_take_responses(out_len: *usize) callconv(.c) ?[*]u8 {
 export fn nox_host_http_stop() callconv(.c) void {
     g_stop = true;
 }
-

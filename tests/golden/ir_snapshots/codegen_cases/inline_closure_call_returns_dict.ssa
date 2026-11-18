@@ -4091,102 +4091,150 @@ export function d $sum_float(l %rt, l %p_xs, d %p_start) {
 export function l $use_ctx(l %rt, l %p_context) {
 @start
     %t0 =l alloc8 8
-    %t6 =l alloc8 8
+    %t19 =l alloc8 8
     storel %p_context, %t0
     %t1 =l loadl %t0
     %t2 =l add $str5, 16
-    %t3 =w call $nox_dict_contains(l %rt, l %t1, w 1, l %t2)
-    jnz %t3, @dict_get_ok1, @dict_get_err0
-@dict_get_err0
-    %t4 =l add $str6, 16
-    %t7 =l sub %rt, 24
-    %t8 =l loadl %t7
-    %t9 =w ceql %t8, 0
-    jnz %t9, @calloc_slow2, @calloc_chk3
-@calloc_chk3
-    %t10 =l sub %rt, 32
-    %t11 =l loadl %t10
-    %t12 =l add %t11, 16
-    %t13 =l loadl %t12
-    %t14 =w cnel %t13, 0
-    jnz %t14, @calloc_pop4, @calloc_slow2
-@calloc_pop4
-    %t15 =l loadl %t13
-    storel %t15, %t12
-    storel 1, %t13
-    %t16 =l add %t13, 8
-    storel %t16, %t6
-    jmp @calloc_done5
-@calloc_slow2
-    %t17 =l call $nox_rc_alloc(l %rt, l 40)
-    storel %t17, %t6
-    jmp @calloc_done5
-@calloc_done5
-    %t18 =l loadl %t6
-    storel 8, %t18
-    %t19 =l add %t18, 8
-    storel $KeyError_vtable, %t19
-    %t20 =l add %t18, 16
-    storel 0, %t20
-    %t21 =l add %t18, 24
-    storel 0, %t21
-    %t22 =l add %t18, 32
-    storel 0, %t22
-    call $Exception___init__(l %rt, l %t18, l %t4)
-    %t23 =w call $nox_exception_pending(l %rt)
-    jnz %t23, @ctor_init_failed6, @ctor_init_cont7
-@ctor_init_failed6
-    %t24 =w ceql %t18, 0
-    jnz %t24, @release_skip9, @release8
-@release8
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t18)
-    jmp @release_done10
-@release_skip9
-    jmp @release_done10
-@release_done10
-    jmp @ctor_init_cont7
-@ctor_init_cont7
-    %t25 =l sub %rt, 48
-    %t26 =w loadub %t25
-    %t27 =l sub %rt, 64
-    %t28 =l loadl %t27
-    jnz %t26, @exc_slow11, @exc_fast12
-@exc_fast12
-    %t29 =w cnel %t28, 0
-    jmp @exc_done13
-@exc_slow11
-    %t30 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done13
-@exc_done13
-    %t31 =w phi @exc_fast12 %t29, @exc_slow11 %t30
-    jnz %t31, @exc_propagate14, @exc_continue15
-@exc_propagate14
+    %t4 =l add %t1, 106
+    %t5 =w loadub %t4
+    jnz %t5, @dict_slow1, @dict_chk2
+@dict_chk2
+    %t7 =l add %t1, 56
+    %t6 =l loadl %t7
+    %t9 =l add %t1, 8
+    %t8 =l loadl %t9
+    %t10 =w cultl %t6, %t8
+    jnz %t10, @dict_chk3, @dict_slow1
+@dict_chk3
+    %t11 =l loadl %t1
+    %t12 =l shl %t6, 4
+    %t13 =l add %t11, %t12
+    %t14 =l loadl %t13
+    %t15 =w ceql %t14, %t2
+    jnz %t15, @dict_hit0, @dict_slow1
+@dict_hit0
+    jmp @dict_done4
+@dict_slow1
+    %t16 =w call $nox_dict_contains(l %rt, l %t1, w 1, l %t2)
+    jmp @dict_done4
+@dict_done4
+    %t3 =w phi @dict_hit0 1, @dict_slow1 %t16
+    jnz %t3, @dict_get_ok6, @dict_get_err5
+@dict_get_err5
+    %t17 =l add $str6, 16
+    %t20 =l sub %rt, 24
+    %t21 =l loadl %t20
+    %t22 =w ceql %t21, 0
+    jnz %t22, @calloc_slow7, @calloc_chk8
+@calloc_chk8
+    %t23 =l sub %rt, 32
+    %t24 =l loadl %t23
+    %t25 =l add %t24, 16
+    %t26 =l loadl %t25
+    %t27 =w cnel %t26, 0
+    jnz %t27, @calloc_pop9, @calloc_slow7
+@calloc_pop9
+    %t28 =l loadl %t26
+    storel %t28, %t25
+    storel 1, %t26
+    %t29 =l add %t26, 8
+    storel %t29, %t19
+    jmp @calloc_done10
+@calloc_slow7
+    %t30 =l call $nox_rc_alloc(l %rt, l 40)
+    storel %t30, %t19
+    jmp @calloc_done10
+@calloc_done10
+    %t31 =l loadl %t19
+    storel 8, %t31
+    %t32 =l add %t31, 8
+    storel $KeyError_vtable, %t32
+    %t33 =l add %t31, 16
+    storel 0, %t33
+    %t34 =l add %t31, 24
+    storel 0, %t34
+    %t35 =l add %t31, 32
+    storel 0, %t35
+    call $Exception___init__(l %rt, l %t31, l %t17)
+    %t36 =w call $nox_exception_pending(l %rt)
+    jnz %t36, @ctor_init_failed11, @ctor_init_cont12
+@ctor_init_failed11
+    %t37 =w ceql %t31, 0
+    jnz %t37, @release_skip14, @release13
+@release13
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t31)
+    jmp @release_done15
+@release_skip14
+    jmp @release_done15
+@release_done15
+    jmp @ctor_init_cont12
+@ctor_init_cont12
+    %t38 =l sub %rt, 48
+    %t39 =w loadub %t38
+    %t40 =l sub %rt, 64
+    %t41 =l loadl %t40
+    jnz %t39, @exc_slow16, @exc_fast17
+@exc_fast17
+    %t42 =w cnel %t41, 0
+    jmp @exc_done18
+@exc_slow16
+    %t43 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done18
+@exc_done18
+    %t44 =w phi @exc_fast17 %t42, @exc_slow16 %t43
+    jnz %t44, @exc_propagate19, @exc_continue20
+@exc_propagate19
     ret 0
-@exc_continue15
-    %t32 =l add %t18, 24
-    storel 6, %t32
-    call $nox_raise(l %rt, l %t18, l 6)
+@exc_continue20
+    %t45 =l add %t31, 24
+    storel 6, %t45
+    call $nox_raise(l %rt, l %t31, l 6)
     ret 0
-@dict_get_ok1
-    %t33 =l call $nox_dict_get(l %rt, l %t1, w 1, l %t2)
-    %t34 =w ceql %t33, 0
-    jnz %t34, @retain_skip17, @retain16
-@retain16
-    %t35 =l sub %t33, 16
-    %t36 =l loadl %t35
-    %t37 =w csgel %t36, 536870912
-    jnz %t37, @retain_done18, @retain_bump19
-@retain_bump19
-    %t38 =l loadl %t35
-    %t39 =l add %t38, 1
-    storel %t39, %t35
-    jmp @retain_done18
-@retain_skip17
-    jmp @retain_done18
-@retain_done18
-    ret %t33
-@after_return20
-@fn_end21
+@dict_get_ok6
+    %t47 =l add %t1, 106
+    %t48 =w loadub %t47
+    jnz %t48, @dict_slow22, @dict_chk23
+@dict_chk23
+    %t50 =l add %t1, 56
+    %t49 =l loadl %t50
+    %t52 =l add %t1, 8
+    %t51 =l loadl %t52
+    %t53 =w cultl %t49, %t51
+    jnz %t53, @dict_chk24, @dict_slow22
+@dict_chk24
+    %t54 =l loadl %t1
+    %t55 =l shl %t49, 4
+    %t56 =l add %t54, %t55
+    %t57 =l loadl %t56
+    %t58 =w ceql %t57, %t2
+    jnz %t58, @dict_hit21, @dict_slow22
+@dict_hit21
+    %t59 =l add %t56, 8
+    %t60 =l loadl %t59
+    jmp @dict_done25
+@dict_slow22
+    %t61 =l call $nox_dict_get(l %rt, l %t1, w 1, l %t2)
+    jmp @dict_done25
+@dict_done25
+    %t46 =l phi @dict_hit21 %t60, @dict_slow22 %t61
+    %t62 =w ceql %t46, 0
+    jnz %t62, @retain_skip27, @retain26
+@retain26
+    %t63 =l sub %t46, 16
+    %t64 =l loadl %t63
+    %t65 =w csgel %t64, 536870912
+    jnz %t65, @retain_done28, @retain_bump29
+@retain_bump29
+    %t66 =l loadl %t63
+    %t67 =l add %t66, 1
+    storel %t67, %t63
+    jmp @retain_done28
+@retain_skip27
+    jmp @retain_done28
+@retain_done28
+    ret %t46
+@after_return30
+@fn_end31
     ret 0
 }
 export function l $to_context(l %rt, l %p_r) {

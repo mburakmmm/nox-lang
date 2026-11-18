@@ -5196,72 +5196,95 @@ export function $main_task(l %rt) {
     %t614 =l call $nox_globals_get(l %rt)
     %t615 =l add %t614, 0
     %t616 =l loadl %t615
-    %t617 =w call $nox_dict_contains(l %rt, l %t616, w 1, l %t613)
-    jnz %t617, @print_true427, @print_false428
-@print_true427
+    %t618 =l add %t616, 106
+    %t619 =w loadub %t618
+    jnz %t619, @dict_slow428, @dict_chk429
+@dict_chk429
+    %t621 =l add %t616, 56
+    %t620 =l loadl %t621
+    %t623 =l add %t616, 8
+    %t622 =l loadl %t623
+    %t624 =w cultl %t620, %t622
+    jnz %t624, @dict_chk430, @dict_slow428
+@dict_chk430
+    %t625 =l loadl %t616
+    %t626 =l shl %t620, 4
+    %t627 =l add %t625, %t626
+    %t628 =l loadl %t627
+    %t629 =w ceql %t628, %t613
+    jnz %t629, @dict_hit427, @dict_slow428
+@dict_hit427
+    jmp @dict_done431
+@dict_slow428
+    %t630 =w call $nox_dict_contains(l %rt, l %t616, w 1, l %t613)
+    jmp @dict_done431
+@dict_done431
+    %t617 =w phi @dict_hit427 1, @dict_slow428 %t630
+    jnz %t617, @print_true432, @print_false433
+@print_true432
     call $printf(l $fmt_bool_true)
-    jmp @print_done429
-@print_false428
+    jmp @print_done434
+@print_false433
     call $printf(l $fmt_bool_false)
-    jmp @print_done429
-@print_done429
-    %t618 =l loadl %t0
-    call $nox_channel_destroy(l %rt, l %t618)
+    jmp @print_done434
+@print_done434
+    %t631 =l loadl %t0
+    call $nox_channel_destroy(l %rt, l %t631)
     storel 0, %t0
-    %t619 =l loadl %t9
-    %t620 =w ceql %t619, 0
-    jnz %t620, @release_skip431, @release430
-@release430
-    call $Entry_release(l %rt, l %t619)
-    jmp @release_done432
-@release_skip431
-    jmp @release_done432
-@release_done432
+    %t632 =l loadl %t9
+    %t633 =w ceql %t632, 0
+    jnz %t633, @release_skip436, @release435
+@release435
+    call $Entry_release(l %rt, l %t632)
+    jmp @release_done437
+@release_skip436
+    jmp @release_done437
+@release_done437
     storel 0, %t9
-    %t621 =l loadl %t10
-    %t622 =w ceql %t621, 0
-    jnz %t622, @release_skip434, @release433
-@release433
-    call $Entry_release(l %rt, l %t621)
-    jmp @release_done435
-@release_skip434
-    jmp @release_done435
-@release_done435
+    %t634 =l loadl %t10
+    %t635 =w ceql %t634, 0
+    jnz %t635, @release_skip439, @release438
+@release438
+    call $Entry_release(l %rt, l %t634)
+    jmp @release_done440
+@release_skip439
+    jmp @release_done440
+@release_done440
     storel 0, %t10
-    %t623 =l loadl %t7
-    %t624 =w ceql %t623, 0
-    jnz %t624, @release_skip437, @release436
-@release436
-    call $Entry_release(l %rt, l %t623)
-    jmp @release_done438
-@release_skip437
-    jmp @release_done438
-@release_done438
+    %t636 =l loadl %t7
+    %t637 =w ceql %t636, 0
+    jnz %t637, @release_skip442, @release441
+@release441
+    call $Entry_release(l %rt, l %t636)
+    jmp @release_done443
+@release_skip442
+    jmp @release_done443
+@release_done443
     storel 0, %t7
-    %t625 =l loadl %t4
-    %t626 =w ceql %t625, 0
-    jnz %t626, @release_skip440, @release439
-@release439
-    call $Entry_release(l %rt, l %t625)
-    jmp @release_done441
-@release_skip440
-    jmp @release_done441
-@release_done441
+    %t638 =l loadl %t4
+    %t639 =w ceql %t638, 0
+    jnz %t639, @release_skip445, @release444
+@release444
+    call $Entry_release(l %rt, l %t638)
+    jmp @release_done446
+@release_skip445
+    jmp @release_done446
+@release_done446
     storel 0, %t4
-    %t627 =l loadl %t2
-    call $nox_async_destroy_task(l %rt, l %t627)
+    %t640 =l loadl %t2
+    call $nox_async_destroy_task(l %rt, l %t640)
     storel 0, %t2
-    %t628 =l loadl %t8
-    %t629 =w ceql %t628, 0
-    jnz %t629, @release_skip443, @release442
-@release442
-    call $Entry_release(l %rt, l %t628)
-    jmp @release_done444
-@release_skip443
-    jmp @release_done444
-@release_done444
+    %t641 =l loadl %t8
+    %t642 =w ceql %t641, 0
+    jnz %t642, @release_skip448, @release447
+@release447
+    call $Entry_release(l %rt, l %t641)
+    jmp @release_done449
+@release_skip448
+    jmp @release_done449
+@release_done449
     storel 0, %t8
-@fn_end445
+@fn_end450
     ret
 @list_err110
     %t187 =l add $str12, 16

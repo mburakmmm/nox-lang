@@ -9,6 +9,7 @@ const types = @import("types.zig");
 const abi = @import("abi.zig");
 const shared_globals = @import("shared_globals.zig");
 const dyn_share = @import("dyn_share.zig");
+const dict_inline = @import("dict_inline.zig");
 const expr_mod = @import("expr.zig");
 const calls = @import("calls.zig");
 const codegen = @import("codegen.zig");
@@ -619,7 +620,10 @@ pub fn genDictAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     const value_is_class_lit: []const u8 = if (dinfo.valueIsArc()) "1" else "0";
     // Faz 9.0 F5: paylaşım kipinde yığın değerli sözlüğe konan değer eklenmeden ÖNCE yayımlanır.
     if (self.owned_dict_reads) if (dyn_share.dictValueTypeInfo(dinfo)) |vi| try dyn_share.emitPublishValue(self, value_converted.text, vi);
-    try self.qbeCall(null, "$nox_dict_set", &.{
+    if (!dinfo.key_is_str and !dinfo.value_is_str and !dinfo.valueIsArc() and dinfo.value_heap == .none) {
+        // v2.2.24: skaler anahtar/değer — son-arama önbelleği isabetinde değer yerinde güncellenir (`dict_inline.zig`).
+        try dict_inline.setScalar(self, obj.text, key_payload.text, value_payload.text);
+    } else try self.qbeCall(null, "$nox_dict_set", &.{
         .{ .ty = .l, .text = RT_PARAM },
         .{ .ty = .l, .text = obj.text },
         .{ .ty = .w, .text = key_is_str_lit },
@@ -664,8 +668,8 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     const key_is_str_lit: []const u8 = if (dinfo.key_is_str) "1" else "0";
 
     const contains_t = try self.newTemp();
-    // Faz MN.4: bkz. `calls.zig`nin `genDictMethod`indeki AYNI notu.
-    try self.qbeCall(.{ .name = contains_t, .ty = .w }, "$nox_dict_contains", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+    // v2.2.24: son-arama önbelleği isabeti satır içi (`dict_inline.zig`); kaçırma eski `nox_dict_contains` çağrısı.
+    try dict_inline.contains(self, contains_t, obj.text, key_is_str_lit, key_payload.text);
     const err_label = try self.newLabel("dict_get_err");
     const ok_label = try self.newLabel("dict_get_ok");
     try self.qbeJnz(contains_t, ok_label, err_label);
@@ -691,7 +695,7 @@ pub fn genDictGet(self: *Codegen, obj_expr: ast.Expr, obj: Value, key_expr: ast.
     try self.qbeLabel(ok_label);
 
     const payload_t = try self.newTemp();
-    try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_dict_get", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = obj.text }, .{ .ty = .w, .text = key_is_str_lit }, .{ .ty = .l, .text = key_payload.text } });
+    try dict_inline.get(self, payload_t, obj.text, key_is_str_lit, key_payload.text);
     const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, dinfo.value_qtype);
     try self.releaseIfTemporary(key_expr, key_v0);
     // `nox_dict_get` ÖDÜNÇ bir referans döner (bkz. `runtime/collections/

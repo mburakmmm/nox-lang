@@ -354,7 +354,7 @@ pub fn readDir(path: []const u8, names: *std.ArrayListUnmanaged([]const u8)) boo
     while (it.next()) |kv| {
         const key = kv.key_ptr.*;
         if (!isUnder(key, norm)) continue;
-        const rest = key[if (norm.len == 1) 1 else norm.len + 1 ..];
+        const rest = key[if (norm.len == 1) 1 else norm.len + 1..];
         if (std.mem.indexOfScalar(u8, rest, '/') != null) continue; // torun, doğrudan çocuk değil
         const owned = gpa.dupe(u8, rest) catch return false;
         names.append(gpa, owned) catch {

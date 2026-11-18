@@ -10,6 +10,8 @@
 
 **Yeniden ölçüm (v2.2.22, 2026-11-18, ReleaseFast, M4):** çapraz-dil kernel'leri (5 tekrar ortanca) Nox LLVM / C: fib 0,93×, loop 1,27× (Python tarzı işaretli `%`), sieve 3,1×, mandel 1,17×, matmul 1,95×, dict 2,75×, strings 1,0×, trees 0,75×, sort 0,92×, collatz 1,0×; `lang_perf` geometrik ortalama Nox/C = 1,30. Performans kapısında tek gerçek regresyon `str_concat_1M` çıktı (v2.2.3 → v2.2.9 arasında 2,6 ms → 6,5 ms; neden: `nox_str_append`ın yavaş yolu (tahsis/serbest bırakma) işleve satır içi girip yığın çerçevesini ve yedeklenen yazmaçları büyütmüş, tek baytlık eklemenin sıcak yolunu ~2× yavaşlatmıştı); yavaş yol `noinline`/`cold` ayrıldı, 2,7 ms'ye döndü (40M eklemede 242 → 106 ms). Kalan farklar yapısal: liste indekslemede sınır denetimi (matmul: iç döngüde 3 denetim; sieve), sözlükte çalışma zamanı çağrısı başına maliyet (3 çağrı/yineleme), Python semantiğinde işaretli `%`.
 
+**v2.2.24 turu:** `dict` son-arama önbelleği isabeti satır içi (`dict_int_1.5M` 19,0 → 13,8 ms), `sieve`/`matmul` kernel'leri `[x] * n` kullanıyor (sieve Nox LLVM 0,037 → 0,019 s; C'ye 1,6×). Kalan en büyük fark `dict` (2,3×, gerçek karma araması: her yinelemede yeni anahtar önbelleği kaçırır) ve `matmul` (1,85×; yapıdaş C'ye 1,3×: fark liste-listesi yerleşiminden).
+
 **Çapraz-dil benchmark (v1.142.5):** uzun çalışan 10 kernel'in Nox/C/Go/Node/Python karşılaştırması
 `benchmarks/cross_lang/` altında (README + `build.sh` + `run.py`); aşağıdaki `zig build bench`
 bölümleri kısa iş yüklerinde süreç başlangıcıyla bulanıktır, gerçek hız için oraya bakın.
