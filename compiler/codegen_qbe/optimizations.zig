@@ -549,7 +549,6 @@ fn aliasBorrowEligible(v: ast.VarDecl, locals: []const LocalDecl, full_body: []c
     return true;
 }
 
-
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 // B1/I6 (2.3, `project/b1-arc-asap-analizi-2026-11-17.md`): "SON KULLANIMDA SAHİPLİK TAŞIMA" (move). Taze bir değere (çağrı/kurucu/literal sonucu) bağlı yerel `x`, ya da bir inline-edilen çağrıda
 // taze bir geçici argümanla beslenen parametre, `x`in SON kullanımı basit-`__init__`li (yalnızca `self.alan = parametre` atamaları) bir sınıf kurucusunun argümanıysa, kurucu alana yazarken retain
@@ -704,7 +703,6 @@ pub fn findCtorMoveSite(self: *Codegen, body: []const ast.Stmt, name: []const u8
     return stmtMoveKey(self, stmt, name);
 }
 
-
 fn bodyHasEarlyExitOrGuard(body: []const ast.Stmt) bool {
     for (body) |stmt| {
         switch (stmt.kind) {
@@ -758,7 +756,6 @@ pub fn computeInitConsumed(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     if (keys.items.len == 0) return;
     try self.init_consumed.put(self.allocator, cd.name, .{ .consumed = consumed, .keys = try keys.toOwnedSlice(self.allocator) });
 }
-
 
 /// B1/I6 (genel işlevler/metodlar): serbest işlevlerin ve (kalıtıma katılmayan sınıfların, `__init__` dışı) metodlarının hangi heap parametrelerini SON kullanımda tükettiğini hesaplar (`Codegen.func_consumed`).
 /// `__init__` için `computeInitConsumed` ayrıdır. Klon, tüketilen parametreleri sahipli yerel gibi ele aldığından erken çıkış/istisna kısıtı yoktur (tüketilmeyen yollarda çıkışta bırakılır).

@@ -2606,3 +2606,66 @@ test "golden(typecheck): v2.1.141 — yeniden atanan tamsayı değişkeni sabit 
         @embedFile("typecheck_cases/err_const_int_reassigned_not_const.expected"),
     );
 }
+
+test "golden(typecheck): O1 (v2.2.20) — :=  ':=' modül düzeyinde yasak" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_infer_module_level.nox"),
+        @embedFile("typecheck_cases/err_infer_module_level.expected"),
+    );
+}
+
+test "golden(typecheck): O1 (v2.2.20) — :=  boş liste çıkarılamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_infer_empty_list.nox"),
+        @embedFile("typecheck_cases/err_infer_empty_list.expected"),
+    );
+}
+
+test "golden(typecheck): O1 (v2.2.20) — :=  boş sözlük çıkarılamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_infer_empty_dict.nox"),
+        @embedFile("typecheck_cases/err_infer_empty_dict.expected"),
+    );
+}
+
+test "golden(typecheck): O1 (v2.2.20) — :=  None'dan çıkarılamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_infer_none.nox"),
+        @embedFile("typecheck_cases/err_infer_none.expected"),
+    );
+}
+
+test "golden(typecheck): O1 (v2.2.20) — :=  None döndüren çağrı atanamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_infer_none_call.nox"),
+        @embedFile("typecheck_cases/err_infer_none_call.expected"),
+    );
+}
+
+test "golden(typecheck): O1 (v2.2.20) — :=  aynı ad farklı tiple yeniden bildirilemez" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_infer_redeclare_other_type.nox"),
+        @embedFile("typecheck_cases/err_infer_redeclare_other_type.expected"),
+    );
+}
+
+test "golden(typecheck): O1 (v2.2.20) — :=  atama tip hatası çıkarım satırını belirtir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_infer_assign_mismatch.nox"),
+        @embedFile("typecheck_cases/err_infer_assign_mismatch.expected"),
+    );
+}
+
+test "golden(typecheck): O1 (v2.2.20) — :=  nonlocal değişken açık tip ister" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_infer_nonlocal_needs_type.nox"),
+        @embedFile("typecheck_cases/err_infer_nonlocal_needs_type.expected"),
+    );
+}
+
+test "golden(typecheck): O1 (v2.2.20) — :=  çıkarımlı yerel bildirimler tip denetiminden geçer" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_infer_decl.nox"),
+        @embedFile("typecheck_cases/ok_infer_decl.expected"),
+    );
+}

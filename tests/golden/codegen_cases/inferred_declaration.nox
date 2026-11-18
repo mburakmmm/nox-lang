@@ -1,0 +1,79 @@
+# O1 (v2.2.20): `ad := ifade` — tip değerden çıkarılır; sınıf/jenerik/jeneratör/async/kapanış/yorumlama/optional kullanımları, iki backend.
+import nox.strings
+
+class Box:
+    v: int
+    def __init__(self: Box, v: int) -> None:
+        self.v = v
+    def twice(self: Box) -> int:
+        d := self.v * 2
+        return d
+
+def ident[T](x: T) -> T:
+    y := x
+    return y
+
+def gen(n: int) -> Iterator[int]:
+    i := 0
+    while i < n:
+        sq := i * i
+        yield sq
+        i = i + 1
+
+def counter() -> int:
+    c: int = 0
+    def bump() -> None:
+        nonlocal c
+        c = c + 1
+    bump()
+    bump()
+    return c
+
+def cap() -> int:
+    k := 10
+    def add(a: int) -> int:
+        return a + k
+    return add(5)
+
+async def fetch(n: int) -> int:
+    r := n + 1
+    return r
+
+async def amain() -> None:
+    t := spawn fetch(4)
+    v := await t
+    print("async", v)
+
+def misc() -> None:
+    xs := [3, 1, 2]
+    ys := [x * 2 for x in xs]
+    zs := sorted(ys)
+    print(ys, zs)
+    for q in xs:
+        w := q + 100
+        print(w)
+    try:
+        e := 1 // 1
+        print(e)
+    except ZeroDivisionError:
+        print("zde")
+    u := ident(7)
+    s := ident("str")
+    print(u, s)
+    bx := Box(21)
+    tw := bx.twice()
+    print(tw)
+    st := {1, 2, 3}
+    print(len(st))
+    tl := (1, 2.5, "z")
+    print(tl[1])
+    o := nox.strings.upper("abc")
+    print(o)
+    g := gen(4)
+    for item in g:
+        print("gen", item)
+    print(counter(), cap())
+
+misc()
+m: Task[None] = spawn amain()
+await m

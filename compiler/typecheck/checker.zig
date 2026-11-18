@@ -412,6 +412,8 @@ const FnCtx = struct {
     /// `"<dış_yol>.<iç_isim>"`) — `Checker.closure_infos`ın anahtarı olarak
     /// kullanılır (bkz. `checkNestedFuncDef`).
     path: []const u8 = "",
+    /// O1 (v2.2.20): bu fonksiyonda `:=` ile bildirilen yereller (ad → bildirim satırı); atama tip hatası iletisine "şu satırda çıkarıldı" notu eklemek için.
+    infer_lines: std.StringHashMapUnmanaged(usize) = .{},
     /// v2.2.3: bu fonksiyon gövdesinde bildirilen İÇ İÇE `async def`ler (ad → modül düzeyine kaldırılmış gerçek `async def` + yakaladığı değerler). `spawn ad(...)` çağrısı
     /// `spawn kaldırılmış_ad(yakalananlar..., args...)`e yeniden yazılır; doğrudan çağrı/değer olarak kullanım reddedilir.
     async_locals: std.StringHashMapUnmanaged(AsyncLocal) = .{},
@@ -6319,6 +6321,7 @@ pub const Checker = struct {
             .var_decl => |v| {
                 if (std.mem.startsWith(u8, v.name, "__nox_tup_") and try self.tryFuseTupleUnpack(ctx, stmt)) return;
                 // v1.157.0: tuple açma desugarının tip-çıkarımlı bildirimi (`__infer`): tip değerden çıkar; isim zaten bildirilmiş ve değer atanabilirse mevcut tip.
+                if (v.infer_assign) return self.checkWalrusDecl(ctx, v);
                 if (v.type_expr == .simple and std.mem.eql(u8, v.type_expr.simple, "__infer")) return self.checkInferVarDecl(ctx, v);
                 const declared = try self.typeExprToType(v.type_expr);
                 const value_t = try self.checkExprExpected(ctx, v.value, declared);
@@ -6744,6 +6747,9 @@ pub const Checker = struct {
                 };
                 const value_t = try self.checkExprExpected(ctx, a.value, existing);
                 if (!try self.assignableOrCoerce(existing, value_t, &a.value)) {
+                    if (ctx.infer_lines.get(name)) |decl_line| {
+                        return self.fail(error.TypeMismatch, "type mismatch for '{s}': ':=' inferred type '{s}' on line {d}, but the value is '{s}' (write the type on the first declaration if you need a different one)", .{ name, try self.typeText(existing), decl_line, try self.typeText(value_t) });
+                    }
                     return self.fail(error.TypeMismatch, "type mismatch for '{s}'", .{name});
                 }
                 // Faz FF.6: yeniden atama, daraltma DURUMUNU geçersiz kılar
@@ -10785,6 +10791,24 @@ pub const Checker = struct {
         callee.* = .{ .identifier = t.class };
         try self.expr_rewrites.put(self.allocator, @intFromPtr(elems.ptr), .{ .call = .{ .callee = callee, .args = @constCast(elems) } });
         return t;
+    }
+
+    /// O1 (v2.2.20): `ad := ifade` — tip değerden çıkarılır (`x: T = ifade` ile aynı sonuç). Yalnızca işlev/metod yerelleri; tek başına tip vermeyen sağ taraflar
+    /// (`None`, boş `[]`/`{}`) ve `None` döndüren çağrılar açık bir "tipi yazın" iletisiyle reddedilir. Aynı kapsamda aynı adın yeniden bildirimi `x: T = ...` ile aynı kuralı
+    /// izler (tip aynıysa serbest, farklıysa `declareVar` hatası).
+    fn checkWalrusDecl(self: *Checker, ctx: *FnCtx, v: ast.VarDecl) TypeError!void {
+        if (ctx.path.len == 0) return self.fail(error.TypeMismatch, "':=' can only be used inside a function or method; at module level write the type: '{s}: <type> = ...'", .{v.name});
+        switch (v.value) {
+            .none_lit => return self.fail(error.TypeMismatch, "cannot infer the type of '{s}' from 'None'; write the type: '{s}: <type> | None = None'", .{ v.name, v.name }),
+            .list_lit => |l| if (l.len == 0) return self.fail(error.TypeMismatch, "cannot infer the element type of '{s}' from an empty list; write the type: '{s}: list[<type>] = []'", .{ v.name, v.name }),
+            .dict_lit => |d| if (d.len == 0) return self.fail(error.TypeMismatch, "cannot infer the key/value types of '{s}' from an empty dict; write the type: '{s}: dict[<key>, <value>] = {{}}'", .{ v.name, v.name }),
+            else => {},
+        }
+        const t = try self.checkExpr(ctx, v.value);
+        if (t == .none) return self.fail(error.TypeMismatch, "the value for '{s}' does not produce a type (a call that returns None cannot be assigned)", .{v.name});
+        try self.declareVar(ctx, v.name, t);
+        if (!ctx.infer_lines.contains(v.name)) try ctx.infer_lines.put(self.allocator, v.name, self.current_line);
+        try self.infer_types.put(self.allocator, @intFromPtr(v.name.ptr), try self.typeToTypeExpr(t));
     }
 
     /// `__nox_tup_N_K` gizli yereli (tuple açma): değer bir tuple olmalı ve K hedefle eleman sayısı eşleşmeli. Diğer `__infer` bildirimleri: tip değerden çıkarılır.

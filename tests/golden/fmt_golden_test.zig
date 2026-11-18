@@ -620,3 +620,14 @@ test "fmt: yalnızca pass içeren gövdeler (sınıf/def/if/while/for/try) DEĞ�
         try std.testing.expectEqualStrings(s, out);
     }
 }
+
+test "fmt: O1 (v2.2.20) — `ad := ifade` yazılan biçimde korunur, anotasyonlu bildirim aynen kalır, işlem idempotenttir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = "def f() -> None:\n    n:=5\n    s   :=   \"a\"+\"b\"\n    m: int = 3\n    print(n,s,m)\n";
+    const once = try formatSource(allocator, source);
+    try std.testing.expectEqualStrings("def f() -> None:\n    n := 5\n    s := \"a\" + \"b\"\n    m: int = 3\n    print(n, s, m)\n", once);
+    const twice = try formatSource(allocator, once);
+    try std.testing.expectEqualStrings(once, twice);
+}

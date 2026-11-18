@@ -411,6 +411,13 @@ const Printer = struct {
             },
             .var_decl => |v| {
                 try self.indentTo(depth);
+                if (v.infer_assign) {
+                    // O1 (v2.2.20): yazılan `ad := ifade` biçimi korunur.
+                    try self.writer.print("{s} := ", .{v.name});
+                    try self.printExpr(v.value);
+                    try self.line(stmt.line);
+                    return;
+                }
                 try self.writer.print("{s}: ", .{v.name});
                 try self.printType(v.type_expr);
                 try self.writer.writeAll(" = ");

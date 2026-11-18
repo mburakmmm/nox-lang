@@ -441,8 +441,15 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
                 i += 1;
             },
             ':' => {
-                try tokens.append(allocator, mkToken(.colon, ":", line, col, i));
-                i += 1;
+                // O1 (v2.2.20): `x := ifade` (tip yazmadan yerel bildirimi). Yalnızca parantez/köşeli/süslü dışında (deyim düzeyinde) `:=` tek belirteçtir;
+                // içeride (dilim/sözlük/lambda) `:` ardından `=` eskisi gibi iki belirteç kalır.
+                if (paren_depth == 0 and i + 1 < source.len and source[i + 1] == '=' and !(i + 2 < source.len and source[i + 2] == '=')) {
+                    try tokens.append(allocator, mkToken(.colon_assign, ":=", line, col, i));
+                    i += 2;
+                } else {
+                    try tokens.append(allocator, mkToken(.colon, ":", line, col, i));
+                    i += 1;
+                }
             },
             ',' => {
                 try tokens.append(allocator, mkToken(.comma, ",", line, col, i));
@@ -760,4 +767,26 @@ test "tutarsız girinti hata üretir" {
         \\
     );
     try std.testing.expectError(error.InconsistentIndentation, result);
+}
+
+test "O1 (v2.2.20): `:=` deyim düzeyinde tek belirteç; parantez/köşeli/süslü içinde `:` ve `=` ayrı kalır" {
+    const alloc = std.testing.allocator;
+    const toks = try tokenize(alloc, "x := 1\ny = d[a:=1]\nz: int=2\n");
+    defer alloc.free(toks);
+    var found_walrus: usize = 0;
+    var found_colon_assign_in_brackets = false;
+    var depth: i32 = 0;
+    for (toks) |t| {
+        switch (t.kind) {
+            .l_bracket, .l_paren, .l_brace => depth += 1,
+            .r_bracket, .r_paren, .r_brace => depth -= 1,
+            .colon_assign => {
+                found_walrus += 1;
+                if (depth != 0) found_colon_assign_in_brackets = true;
+            },
+            else => {},
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), found_walrus);
+    try std.testing.expect(!found_colon_assign_in_brackets);
 }

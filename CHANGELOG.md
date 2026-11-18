@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.20]
+
+O1: tip yazmadan yerel bildirimi `ad := ifade` (kullanıcı kararı 2026-11-18, kısıtlı v1) ve K1 paket sürümleri dağıtımı.
+
+- **Dil:** işlev/metod gövdesinde `n := len(xs)`, `p := Point(1, 2)`, `r := find(k)` (→ `T | None`): tip değerden çıkarılır, `n: int = ...` ile birebir aynıdır (statik, dinamik tipleme değil). AGENTS.md §5'e üçüncü dar istisna. Kısıtlar: modül düzeyi/alan/parametre yok; `None`, boş `[]`/`{}` ve `None` döndüren çağrı açık "tipi yazın" iletisiyle reddedilir; `nonlocal` ile yakalanan değişken ilk bildiriminde açık tip ister; sonraki atamada tip uyuşmazlığı çıkarım satırını belirtir.
+- **Araçlar:** `noxc fmt` yazılan `:=` biçimini korur; LSP hover'ı çıkarımı belirtir; tree-sitter ve VS Code dilbilgileri `:=`yi tanır; belgeler (`docs/language/types.md`), dilbilgisi ve spesifikasyon §3.467 güncellendi.
+- **Testler:** 8 hata + 1 geçerli tip denetimi golden'ı, `inferred_declaration` çalıştırma fixture'ı (sınıf/jenerik/jeneratör/async/kapanış, iki backend), fmt ve lexer testleri.
+
 ## [2.2.19]
 
 Açık kalan işlerin kapanışı (belge/tanılama sürümü; çalışma zamanı ve derleyici davranışı değişmedi).

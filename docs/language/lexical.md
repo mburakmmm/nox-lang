@@ -154,7 +154,7 @@ second
 +  -  *  /  //  %  **          arithmetic
 &  |  ^  ~  <<  >>             bitwise
 == != <  <= >  >=              comparison
-=  +=  -=  *=  /=  //=  %=  **=  &=  |=  ^=  <<=  >>=    assignment
+=  :=  +=  -=  *=  /=  //=  %=  **=  &=  |=  ^=  <<=  >>=    assignment
 (  )  [  ]  {  }  ,  :  .  ->  delimiters
 ```
 

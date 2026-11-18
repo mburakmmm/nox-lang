@@ -455,6 +455,8 @@ pub const VarDecl = struct {
     class_attr: ?ClassAttrRef = null,
     /// `match` deyiminin parser'ın eklediği gizli konu değişkeni (`__match_N: __infer = konu`): formatter bunu yazmaz (`match` kaynağı `IfStmt.match_origin`den yeniden üretilir).
     is_match_temp: bool = false,
+    /// O1 (v2.2.20): kullanıcının `ad := ifade` yazdığı bildirim (tip `__infer`, değerden çıkarılır). Formatter `:=` biçimini korur; checker boş kapsayıcı/`None`/modül düzeyini reddeder.
+    infer_assign: bool = false,
 };
 
 pub const ClassAttrRef = struct { class: []const u8, name: []const u8 };

@@ -223,7 +223,11 @@ fn collectScopeAt(a: std.mem.Allocator, body: []const ast.Stmt, line1: u32, syms
     for (body) |s| {
         switch (s.kind) {
             .var_decl => |vd| {
-                const detail = try std.fmt.allocPrint(a, "{s}: {s}", .{ vd.name, try typeExprToString(a, vd.type_expr) });
+                // O1 (v2.2.20): `ad := ifade` — tip derleyici tarafından çıkarılır; ayrıştırıcı düzeyinde gösterilecek tip adı yok.
+                const detail = if (vd.infer_assign)
+                    try std.fmt.allocPrint(a, "{s}  (type inferred by ':=')", .{vd.name})
+                else
+                    try std.fmt.allocPrint(a, "{s}: {s}", .{ vd.name, try typeExprToString(a, vd.type_expr) });
                 try syms.put(a, vd.name, .{ .name = vd.name, .kind = .local_var, .detail = detail, .span = s.span });
             },
             .func_def => |fd| {

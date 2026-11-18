@@ -11,7 +11,7 @@ program        = { statement } ;
 block          = NEWLINE INDENT statement { statement } DEDENT ;
 
 statement      = simple_stmt NEWLINE | compound_stmt ;
-simple_stmt    = var_decl | assignment | aug_assignment | tuple_assignment
+simple_stmt    = var_decl | infer_decl | assignment | aug_assignment | tuple_assignment
                | expr
                | "pass" | "break" | "continue"
                | "return" [ expr { "," expr } ]
@@ -22,6 +22,7 @@ simple_stmt    = var_decl | assignment | aug_assignment | tuple_assignment
                | import_stmt ;
 
 var_decl       = NAME ":" type "=" expr ;
+infer_decl     = NAME ":=" expr ;            (* function/method locals only *)
 assignment     = target "=" expr ;
 aug_assignment = target aug_op expr ;
 aug_op         = "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;

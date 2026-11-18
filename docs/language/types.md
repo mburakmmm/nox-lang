@@ -21,6 +21,35 @@ print(count, name, ratio, ready)
 1 nox 0.5 True
 ```
 
+### Inferred local declarations (`:=`)
+
+Inside a function or method you may leave the type off and let the compiler take it from the value with `name := expression`. The result is exactly
+the same as writing the type yourself — the type is still static and fixed for the scope:
+
+```nox
+def total(xs: list[int]) -> int:
+    n := len(xs)          # int
+    scale := 1.5          # float
+    label := f"{n} items" # str
+    s := 0
+    for x in xs:
+        s = s + x
+    print(label, scale * s)
+    return s
+
+total([1, 2, 3])
+```
+
+```output
+3 items 9.0
+```
+
+Rules: `:=` is for function and method locals only (module-level names, class fields and parameters still carry their type). The right-hand side must
+carry its own type, so `x := None`, `xs := []` and `d := {}` are errors — write `xs: list[int] = []` there. A call that returns `None` cannot be
+assigned. `x := find(k)` gives the optional type `T | None` and must be narrowed before use. A variable captured by `nonlocal` needs an explicit type
+on its first declaration. Style rule of thumb: use `:=` when the right-hand side already shows the type (`Node(...)`, `len(xs)`, a literal) and
+write the annotation when it does not.
+
 Assigning a value of the wrong type is a compile error. Re-declaring a name in the same scope with a *different* type is a
 compile error too (this includes reusing a loop variable name for loops over different element types). The one implicit
 conversion is `int → float` on assignment and in mixed arithmetic.

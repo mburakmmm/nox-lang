@@ -281,6 +281,14 @@ pub const Parser = struct {
     }
 
     fn parseSimpleStmt(self: *Parser) ParseError!ast.StmtKind {
+        // O1 (v2.2.20): `ad := ifade` — tip anotasyonu yok, tip değerden çıkarılır (checker `infer_assign` bildirimini `__infer` yoluyla denetler).
+        if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon_assign) {
+            const name = self.advance().lexeme;
+            _ = try self.expect(.colon_assign);
+            const value = try self.parseExprOrTuple();
+            _ = try self.expect(.newline);
+            return .{ .var_decl = .{ .name = name, .type_expr = .{ .simple = "__infer" }, .value = value, .infer_assign = true } };
+        }
         if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon) {
             const name = self.advance().lexeme;
             _ = try self.expect(.colon);

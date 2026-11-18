@@ -7,6 +7,7 @@ differs, grouped by what you will hit first. Everything here is deliberate unles
 
 Every variable's first assignment, every parameter and every return value carries a type. There is no `Any`, no dynamic attribute
 creation, no `setattr`/`getattr`/`exec`/`eval`. `x = []` is an error — write `x: list[int] = []`. A name keeps its type for its scope.
+Inside functions `x := expr` infers the type from the value (not `None`/empty containers; see [Types](types.md#inferred-local-declarations)); this is not Python's walrus operator.
 
 ## Numbers
 

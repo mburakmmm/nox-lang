@@ -58,6 +58,8 @@ pub const TokenKind = enum {
 
     // punctuation
     colon,
+    /// `:=` — tip yazmadan yerel bildirimi (O1, v2.2.20); yalnızca parantez dışında üretilir.
+    colon_assign,
     comma,
     dot,
     l_paren,

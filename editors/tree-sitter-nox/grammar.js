@@ -61,6 +61,7 @@ module.exports = grammar({
         $.import_statement,
         $.from_import_statement,
         $.var_declaration,
+        $.inferred_declaration,
         $.assignment,
         $.augmented_assignment,
         $.assert_statement,
@@ -113,13 +114,20 @@ module.exports = grammar({
 
     dotted_name: $ => sep1($.identifier, '.'),
 
-    // `x: int = 1` — Nox'ta TÜM yeni değişkenler ZORUNLU tip anotasyonu
-    // taşır (bkz. AGENTS.md §5), tip ÇIKARIMLI bildirim YOK.
+    // `x: int = 1` — Nox'ta yeni değişkenler tip anotasyonu taşır (bkz. AGENTS.md §5);
+    // tek istisna işlev/metod yerellerinde `x := ifade` (aşağıdaki `inferred_declaration`).
     var_declaration: $ => seq(
       field('name', $.identifier),
       ':',
       field('type', $._type_expression),
       '=',
+      field('value', choice($._expression, $.expression_list)),
+    ),
+
+    // `x := 1` (v2.2.20, O1) — yalnızca işlev/metod yerellerinde tip yazmadan bildirim; tip değerden çıkarılır.
+    inferred_declaration: $ => seq(
+      field('name', $.identifier),
+      ':=',
       field('value', choice($._expression, $.expression_list)),
     ),
 
