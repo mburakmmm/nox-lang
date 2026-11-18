@@ -16,7 +16,7 @@ import argparse, concurrent.futures, difflib, os, subprocess, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOXC = os.path.join(ROOT, "zig-out/bin/noxc")
 NIGHTLY = os.path.join(ROOT, "zig-out/bin/noxc-nightly")
-COMPONENTS = {"lexer": "tokens", "ast": "ast", "check": "check"}  # check: tüm hat (modül yükleme + ayrıştırma + tip denetimi) kararlı noxc ↔ nightly (Nox lexer varsayılan)
+COMPONENTS = {"lexer": "tokens", "ast": "ast", "check": "check", "astdump": "ast --full"}  # check: tüm hat (modül yükleme + ayrıştırma + tip denetimi) kararlı noxc ↔ nightly (Nox lexer varsayılan)
 
 
 def corpus(extra_dirs):
@@ -74,13 +74,17 @@ def run(cmd, timeout=30):
 def make_runners(args):
     sub = COMPONENTS[args.component]
     extra = args.sub_args.split() if args.sub_args else []
-    zig = [NOXC, sub] + extra
+    sub_parts = sub.split()
+    zig = [NOXC] + sub_parts + extra
     if args.zig_only:
-        other = [NOXC, sub] + extra
+        other = [NOXC] + sub_parts + extra
+    elif args.component == "astdump":
+        # Aşama 2.B: Zig `ast --full` ↔ Zig AST'si → düz diziler → Nox yazıcısı (`ast-roundtrip`)
+        other = [NIGHTLY, "ast-roundtrip"] + extra
     else:
         other = [NIGHTLY, "--frontend", "nox", sub] + extra
     if args.zig_cmd:
-        zig = args.zig_cmd.split() + [sub] + extra
+        zig = args.zig_cmd.split() + sub_parts + extra
     if args.nox_cmd:
         other = args.nox_cmd.split() + [sub] + extra
     return zig, other

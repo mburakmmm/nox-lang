@@ -778,7 +778,7 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&install_noxc.step);
 
     // ---- noxc-nightly (project/noxc-nightly-selfhost-plani-2026-11.md, Aşama 0.3) ----
-    // `zig build nightly`: kurulu `noxc` (stage0) `selfhost/lexer.nox`u `--selfhost-obj` ile `main`siz nesneye derler; nesne + `noxrt.o` + `compiler/main.zig` (nightly seçeneği açık) tek ikilide
+    // `zig build nightly`: kurulu `noxc` (stage0) `selfhost/selfhost.nox`u (lexer + AST şeması) `--selfhost-obj` ile `main`siz nesneye derler; nesne + `noxrt.o` + `compiler/main.zig` (nightly seçeneği açık) tek ikilide
     // birleşir: `zig-out/bin/noxc-nightly`. İsteğe bağlı adım — `zig build`/`zig build test` bunu çalıştırmaz.
     const nightly_options = b.addOptions();
     nightly_options.addOption([]const u8, "version", build_zig_zon.version);
@@ -798,7 +798,7 @@ pub fn build(b: *std.Build) void {
     const nightly_obj_rel = "nightly/selfhost.o";
     const nightly_obj_path = b.pathJoin(&.{ b.install_prefix, nightly_obj_rel });
     const nightly_mkdir = b.addSystemCommand(&.{ "mkdir", "-p", b.pathJoin(&.{ b.install_prefix, "nightly" }) });
-    const nightly_stage0 = b.addSystemCommand(&.{ b.pathJoin(&.{ b.install_prefix, "bin", "noxc" }), "build", "--selfhost-obj", "-o", nightly_obj_path, "selfhost/lexer.nox" });
+    const nightly_stage0 = b.addSystemCommand(&.{ b.pathJoin(&.{ b.install_prefix, "bin", "noxc" }), "build", "--selfhost-obj", "-o", nightly_obj_path, "selfhost/selfhost.nox" });
     nightly_stage0.step.dependOn(&nightly_mkdir.step);
     nightly_stage0.step.dependOn(b.getInstallStep()); // stage0 noxc + stdlib + noxrt.o kurulu olmalı
     noxc_nightly_mod.addObjectFile(.{ .cwd_relative = nightly_obj_path });
@@ -824,7 +824,11 @@ pub fn build(b: *std.Build) void {
     const frontend_diff_nox_json = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "lexer", "--sub-args=--json --trivia", "--fuzz", "800", "--seed", "3" });
     frontend_diff_nox_json.step.dependOn(&frontend_diff_nox_trivia.step);
     // Tüm hat: kararlı `noxc check` ↔ `noxc-nightly check` (Nox lexer varsayılan; modül yükleme + ayrıştırma + tip denetimi çıktıları aynı olmalı).
+    // Aşama 2.B: Zig `ast --full` ↔ (Zig AST → düz diziler → Nox yazıcısı) bayt-bayt aynı (depo + mutasyonlu girdiler).
+    const frontend_diff_astdump = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "astdump", "--fuzz", "800", "--seed", "4" });
+    frontend_diff_astdump.step.dependOn(&frontend_diff_nox_json.step);
     const frontend_diff_check = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "check" });
+    frontend_diff_check.step.dependOn(&frontend_diff_astdump.step);
     frontend_diff_check.step.dependOn(&frontend_diff_nox_json.step);
     const frontend_diff_step = b.step("frontend-diff-test", "noxc-nightly farksal test koşucusu: kendi sağlamlık denetimi + Zig↔Zig özdeşliği + Zig↔Nox lexer farkı (opt-in; `zig build nightly` gerekir)");
     frontend_diff_step.dependOn(&frontend_diff_check.step);

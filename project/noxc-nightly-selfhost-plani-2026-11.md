@@ -121,7 +121,7 @@ Girdi: `parser.zig` (~3 000 satır) + `ast.zig` (~640) + `ast_dump.zig`. Çıkı
 - [ ] 2.6 Parser içi desugarlar (tuple açma `__nox_tup_*`, `match` konu geçicisi, sınıf sabitleri, `__infer`).
 - [ ] 2.7 f-string bölme + iç ifade ayrıştırma.
 - [ ] 2.8 Span/konum sistemi (`Span`, deyim başlangıç/bitiş) birebir.
-- [ ] 2.9 AST dökümü (`ast_dump` eşdeğeri) + `noxc ast` aracı.
+- [~] 2.9 AST dökümü (`ast_dump` eşdeğeri) + `noxc ast` aracı.
 - [ ] 2.10 Hata iletileri ve `syntax_report`: konum + işaretçi gösterimi aynı.
 - [x] 2.11 C ABI: AST'nin Zig tarafına geçişi — **karar noktası `[K]`:** (a) Nox'un AST'yi bayt tamponuna serileştirmesi + Zig'in okuması (parser sınırı), ya da (b) Aşama 3'e kadar yalnızca doğrulama aracı olarak kalması (Zig checker Zig AST'siyle çalışır). Önerilen: (b) ile başla, checker Nox'a geçerken (a).
   **KARAR (2026-11-18, kullanıcı "gerçek selfhost için hangisi" diye sordu; öneri + uygulama):** **(b)**. Self-hosting'in bitiş durumunda AST Zig'e hiç geçmez (Nox parser → Nox checker); (a) iki dilde 100+ düğüm türü için geçici serileştirme olurdu. Parser doğruluğu `noxc ast` dökümü farksal eşitliğiyle kanıtlanır; tek köprü checker sonrası tiplenmiş AST sınırında (3.14) kurulur.
@@ -129,6 +129,10 @@ Girdi: `parser.zig` (~3 000 satır) + `ast.zig` (~640) + `ast_dump.zig`. Çıkı
 - [ ] 2.13 İlk "Nox ile üretilen araç": `noxc fmt` Nox lexer+parser ile (düşük risk, görünür kazanım).
 - [ ] 2.14 Perf ≤ 3× Zig; bellek; derin ifade (10 bin iç içe) testi.
 - [ ] 2.15 Belge + CHANGELOG + spesifikasyon.
+
+### 5.1 Aşama 2 ilerleme notu (v2.2.41)
+
+Tamamlanan altyapı (tasarım: `project/selfhost-ast-tasarimi-2026-11.md`): **2.0** oracle `noxc ast --full`; **2.A** `scripts/gen_selfhost_ast.py` → `selfhost/ast_schema.nox` (59 tür: düz-dizi şeması, oluşturucular `mk_*`, Zig'le BİREBİR `d_*` yazıcıları; `--check` precheck + `zig build test`te); **2.B** Zig `ast.Module` → düz diziler yansıma kodlayıcısı (`compiler/parser/ast_flat.zig`) + `noxc-nightly ast-roundtrip`: Nox yazıcısının çıktısı depodaki 1 258 dosya + mutasyonlu girdilerde `ast --full` ile **bayt-bayt aynı** (`frontend_diff.py --component astdump`, `zig build frontend-diff-test`). Birleşik giriş `selfhost/selfhost.nox` (lexer + AST şeması, tek nesne). **Sırada:** parser çekirdeğinin (2.2–2.8, 2.10) Nox'a işlev-işlev taşınması — hepsi tamamlanmadan 2.x `[x]` yapılmaz.
 
 ## 6. Aşama 3 — Tip denetleyici (Nox)
 

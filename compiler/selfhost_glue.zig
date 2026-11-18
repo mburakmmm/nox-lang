@@ -10,13 +10,20 @@ extern fn nox_runtime_init() ?*anyopaque;
 extern fn nox_runtime_deinit(rt: ?*anyopaque) void;
 extern fn nox_lib_init(rt: ?*anyopaque) void;
 extern fn nox_lib_fini(rt: ?*anyopaque) void;
-extern fn nox_lex_run(rt: ?*anyopaque, base: i64, n: i64, want_trivia: i64) i64;
-extern fn nox_lex_trivia_count(rt: ?*anyopaque) i64;
-extern fn nox_lex_trivia_buffer(rt: ?*anyopaque) i64;
-extern fn nox_lex_buffer(rt: ?*anyopaque) i64;
-extern fn nox_lex_err_line(rt: ?*anyopaque) i64;
-extern fn nox_lex_err_col(rt: ?*anyopaque) i64;
-extern fn nox_lex_err_byte(rt: ?*anyopaque) i64;
+extern fn lexer_nox_lex_run(rt: ?*anyopaque, base: i64, n: i64, want_trivia: i64) i64;
+extern fn lexer_nox_lex_trivia_count(rt: ?*anyopaque) i64;
+extern fn lexer_nox_lex_trivia_buffer(rt: ?*anyopaque) i64;
+extern fn lexer_nox_lex_buffer(rt: ?*anyopaque) i64;
+extern fn lexer_nox_lex_err_line(rt: ?*anyopaque) i64;
+extern fn lexer_nox_lex_err_col(rt: ?*anyopaque) i64;
+extern fn lexer_nox_lex_err_byte(rt: ?*anyopaque) i64;
+extern fn ast_schema_nox_ast_reset(rt: ?*anyopaque, src: i64, src_len: i64) i64;
+extern fn ast_schema_nox_ast_push_n(rt: ?*anyopaque, v: i64) i64;
+extern fn ast_schema_nox_ast_push_l(rt: ?*anyopaque, v: i64) i64;
+extern fn ast_schema_nox_ast_push_sb(rt: ?*anyopaque, v: i64) i64;
+extern fn ast_schema_nox_ast_push_sp(rt: ?*anyopaque, id: i64, span: i64) i64;
+extern fn ast_schema_nox_ast_dump(rt: ?*anyopaque, body_start: i64, body_len: i64, exp_start: i64, exp_len: i64) i64;
+extern fn ast_schema_nox_ast_out_buffer(rt: ?*anyopaque) i64;
 
 pub const LexOut = lexer.HookResult;
 
@@ -35,9 +42,24 @@ pub const Runtime = struct {
         nox_runtime_deinit(self.rt);
     }
 
+    /// Aşama 2.B doğrulaması: Zig `ast.Module`ünün düz-dizi kodlamasını Nox AST şemasına yükler ve Nox `dump_module` yazıcısının ürettiği baytları döner (`noxc ast --full` ile BİREBİR aynı olmalı).
+    pub fn astRoundtripDump(self: Runtime, a: std.mem.Allocator, flat: @import("parser/ast_flat.zig").Flat, src: []const u8) ![]u8 {
+        _ = ast_schema_nox_ast_reset(self.rt, @intCast(@intFromPtr(src.ptr)), @intCast(src.len));
+        for (flat.n.items) |v| _ = ast_schema_nox_ast_push_n(self.rt, v);
+        for (flat.l.items) |v| _ = ast_schema_nox_ast_push_l(self.rt, v);
+        for (flat.sb.items) |b| _ = ast_schema_nox_ast_push_sb(self.rt, b);
+        var i: usize = 0;
+        while (i + 1 < flat.sp.items.len) : (i += 2) _ = ast_schema_nox_ast_push_sp(self.rt, flat.sp.items[i], flat.sp.items[i + 1]);
+        const len: usize = @intCast(ast_schema_nox_ast_dump(self.rt, flat.body_start, flat.body_len, flat.exp_start, flat.exp_len));
+        const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(ast_schema_nox_ast_out_buffer(self.rt))));
+        const out = try a.alloc(u8, len);
+        for (out, 0..) |*b, k| b.* = @intCast(buf[k]);
+        return out;
+    }
+
     /// Yalnızca Nox tarafının tarama süresi (token dizisine dönüştürme dahil değil): token sayısını ya da negatif hata kodunu döner (`lex-bench`).
     pub fn lexRaw(self: Runtime, source: []const u8) i64 {
-        return nox_lex_run(self.rt, @intCast(@intFromPtr(source.ptr)), @intCast(source.len), 0);
+        return lexer_nox_lex_run(self.rt, @intCast(@intFromPtr(source.ptr)), @intCast(source.len), 0);
     }
 
     /// Aşama 1: Nox lexer'ı (`selfhost/lexer.nox`). `compiler/lexer/lexer.zig` ile aynı sonucu (token dizisi ya da `LexError` + hata konumu) üretir; belirteçler `a` ile ayrılan bir dilime kopyalanır
@@ -52,7 +74,7 @@ pub const Runtime = struct {
     }
 
     fn lexImpl(self: Runtime, a: std.mem.Allocator, source: []const u8, want_trivia: bool) LexOut {
-        const code = nox_lex_run(self.rt, @intCast(@intFromPtr(source.ptr)), @intCast(source.len), @intFromBool(want_trivia));
+        const code = lexer_nox_lex_run(self.rt, @intCast(@intFromPtr(source.ptr)), @intCast(source.len), @intFromBool(want_trivia));
         if (code < 0) {
             const err: lexer.LexError = switch (-code) {
                 1 => error.UnexpectedCharacter,
@@ -61,13 +83,13 @@ pub const Runtime = struct {
                 4 => error.TabsNotAllowed,
                 else => unreachable,
             };
-            const line: u32 = @intCast(nox_lex_err_line(self.rt));
-            const col: u32 = @intCast(nox_lex_err_col(self.rt));
-            const byte: usize = @intCast(nox_lex_err_byte(self.rt));
+            const line: u32 = @intCast(lexer_nox_lex_err_line(self.rt));
+            const col: u32 = @intCast(lexer_nox_lex_err_col(self.rt));
+            const byte: usize = @intCast(lexer_nox_lex_err_byte(self.rt));
             return .{ .tokens = null, .err = err, .err_span = if (line == 0) .{} else .{ .start_byte = byte, .end_byte = byte + 1, .start_line = line, .start_col = col, .end_line = line, .end_col = col + 1 }, .trivia = &.{} };
         }
         const n: usize = @intCast(code);
-        const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(nox_lex_buffer(self.rt))));
+        const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(lexer_nox_lex_buffer(self.rt))));
         const toks = a.alloc(token_mod.Token, n) catch return .{ .tokens = null, .err = error.OutOfMemory, .err_span = .{}, .trivia = &.{} };
         for (toks, 0..) |*t, i| {
             const kind_int: i64 = buf[i * 5];
@@ -88,8 +110,8 @@ pub const Runtime = struct {
         }
         var trivia: []token_mod.Trivia = &.{};
         if (want_trivia) {
-            const tn: usize = @intCast(nox_lex_trivia_count(self.rt));
-            const tbuf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(nox_lex_trivia_buffer(self.rt))));
+            const tn: usize = @intCast(lexer_nox_lex_trivia_count(self.rt));
+            const tbuf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(lexer_nox_lex_trivia_buffer(self.rt))));
             trivia = a.alloc(token_mod.Trivia, tn) catch return .{ .tokens = null, .err = error.OutOfMemory, .err_span = .{}, .trivia = &.{} };
             for (trivia, 0..) |*tv, i| {
                 const is_comment = tbuf[i * 5] == 0;

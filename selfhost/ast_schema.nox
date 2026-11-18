@@ -1,0 +1,2767 @@
+# ÜRETİLMİŞ DOSYA: elle DÜZENLEMEYİN. Kaynak: `noxc ast --schema` (compiler/parser/ast.zig'nin yansıması) → scripts/gen_selfhost_ast.py.
+# Yeniden üretmek için: scripts/gen_selfhost_ast.py   (güncel mi: --check)
+
+# Düz-dizi AST (docs: project/selfhost-ast-tasarimi-2026-11.md): düğüm tablosu `n` (tamsayılar), liste tablosu `l`, sentezlenmiş dize baytları `sb`, ifade span'leri `sp` (düğüm kimliği -> Span düğümü),
+# yazıcı çıktısı `o` (bayt). Dize alanı iki tamsayıdır (x, y): x >= 0 ise kaynak metin [x, y); x < 0 ise `sb[-x-1 : -x-1+y]`.
+# `opt(str)`/`opt(slice)` yokluğu x == -4611686018427387904; düğüm başvurusunun yokluğu -1.
+
+class Ast:
+    src: int
+    src_len: int
+    n: list[int]
+    l: list[int]
+    sb: list[int]
+    sp_ids: list[int]
+    sp_vals: list[int]
+    o: list[int]
+
+    def __init__(self, src: int, src_len: int) -> None:
+        self.src = src
+        self.src_len = src_len
+        self.n = []
+        self.l = []
+        self.sb = []
+        self.sp_ids = []
+        self.sp_vals = []
+        self.o = []
+
+# --- çıktı yardımcıları (Zig `ast_dump_full.zig` ile aynı kaçışlama) ---
+def at(base: int, i: int) -> int:
+    c: int = 0
+    lowlevel:
+        c = int(ptr_read(ptr_offset(ptr[u8](base), i)))
+    return c
+
+def put(a: Ast, s: str) -> None:
+    for i in range(len(s)):
+        a.o.append(ord(s[i]))
+
+def put_int(a: Ast, v: int) -> None:
+    if v < 0:
+        a.o.append(45)
+        # -9223372036854775808 için güvenli: işareti ayrı basıp mutlak değeri bölme/mod ile üretmeden önce iki parçaya böl
+        if v == -9223372036854775807 - 1:
+            put(a, "9223372036854775808")
+            return
+        v = 0 - v
+    if v == 0:
+        a.o.append(48)
+        return
+    digits: list[int] = []
+    while v > 0:
+        digits.append(48 + v % 10)
+        v = v // 10
+    k: int = len(digits) - 1
+    while k >= 0:
+        a.o.append(digits[k])
+        k = k - 1
+
+def put_bool(a: Ast, v: int) -> None:
+    if v != 0:
+        put(a, "true")
+    else:
+        put(a, "false")
+
+def put_hex16(a: Ast, v: int) -> None:
+    k: int = 15
+    while k >= 0:
+        d: int = (v >> (k * 4)) & 15
+        if d < 10:
+            a.o.append(48 + d)
+        else:
+            a.o.append(87 + d)
+        k = k - 1
+
+def put_f64(a: Ast, v: int) -> None:
+    put(a, "f64:0x")
+    put_hex16(a, v)
+
+# Tek bayt (0..255) dize içinde: Zig `str` kaçışlaması.
+def put_byte_escaped(a: Ast, c: int) -> None:
+    if c == 34:
+        put(a, "\\\"")
+    elif c == 92:
+        put(a, "\\\\")
+    elif c == 10:
+        put(a, "\\n")
+    elif c == 13:
+        put(a, "\\r")
+    elif c == 9:
+        put(a, "\\t")
+    elif c < 32 or c == 127:
+        put(a, "\\u00")
+        d1: int = c >> 4
+        d2: int = c & 15
+        if d1 < 10:
+            a.o.append(48 + d1)
+        else:
+            a.o.append(87 + d1)
+        if d2 < 10:
+            a.o.append(48 + d2)
+        else:
+            a.o.append(87 + d2)
+    else:
+        a.o.append(c)
+
+def put_str(a: Ast, x: int, y: int) -> None:
+    a.o.append(34)
+    if x >= 0:
+        for i in range(x, y):
+            put_byte_escaped(a, at(a.src, i))
+    else:
+        base: int = 0 - x - 1
+        for i in range(y):
+            put_byte_escaped(a, a.sb[base + i])
+    a.o.append(34)
+
+def put_span_suffix(a: Ast, id: int) -> None:
+    for i in range(len(a.sp_ids)):
+        if a.sp_ids[i] == id:
+            sp: int = a.sp_vals[i]
+            put(a, "@")
+            put_int(a, a.n[sp + 2])
+            put(a, ":")
+            put_int(a, a.n[sp + 3])
+            put(a, "-")
+            put_int(a, a.n[sp + 4])
+            put(a, ":")
+            put_int(a, a.n[sp + 5])
+            put(a, "/")
+            put_int(a, a.n[sp + 0])
+            put(a, "-")
+            put_int(a, a.n[sp + 1])
+            return
+
+def d_UnaryOp(a: Ast, v: int) -> None:
+    if v == 0:
+        put(a, ".neg")
+        return
+    if v == 1:
+        put(a, ".not_")
+        return
+    if v == 2:
+        put(a, ".invert")
+        return
+    put(a, ".?")
+
+def d_BinaryOp(a: Ast, v: int) -> None:
+    if v == 0:
+        put(a, ".add")
+        return
+    if v == 1:
+        put(a, ".sub")
+        return
+    if v == 2:
+        put(a, ".mul")
+        return
+    if v == 3:
+        put(a, ".div")
+        return
+    if v == 4:
+        put(a, ".floordiv")
+        return
+    if v == 5:
+        put(a, ".mod")
+        return
+    if v == 6:
+        put(a, ".pow")
+        return
+    if v == 7:
+        put(a, ".eq")
+        return
+    if v == 8:
+        put(a, ".ne")
+        return
+    if v == 9:
+        put(a, ".lt")
+        return
+    if v == 10:
+        put(a, ".le")
+        return
+    if v == 11:
+        put(a, ".gt")
+        return
+    if v == 12:
+        put(a, ".ge")
+        return
+    if v == 13:
+        put(a, ".and_")
+        return
+    if v == 14:
+        put(a, ".or_")
+        return
+    if v == 15:
+        put(a, ".bit_and")
+        return
+    if v == 16:
+        put(a, ".bit_or")
+        return
+    if v == 17:
+        put(a, ".bit_xor")
+        return
+    if v == 18:
+        put(a, ".shl")
+        return
+    if v == 19:
+        put(a, ".shr")
+        return
+    if v == 20:
+        put(a, ".in_")
+        return
+    if v == 21:
+        put(a, ".not_in")
+        return
+    put(a, ".?")
+
+def d_Span(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "start_byte=")
+    put_int(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "end_byte=")
+    put_int(a, a.n[id + 1])
+    put(a, " ")
+    put(a, "start_line=")
+    put_int(a, a.n[id + 2])
+    put(a, " ")
+    put(a, "start_col=")
+    put_int(a, a.n[id + 3])
+    put(a, " ")
+    put(a, "end_line=")
+    put_int(a, a.n[id + 4])
+    put(a, " ")
+    put(a, "end_col=")
+    put_int(a, a.n[id + 5])
+    put(a, "}")
+
+def mk_Span(a: Ast, start_byte: int, end_byte: int, start_line: int, start_col: int, end_line: int, end_col: int) -> int:
+    id: int = len(a.n)
+    a.n.append(start_byte)
+    a.n.append(end_byte)
+    a.n.append(start_line)
+    a.n.append(start_col)
+    a.n.append(end_line)
+    a.n.append(end_col)
+    return id
+
+def d_TypeExpr(a: Ast, id: int) -> None:
+    tag: int = a.n[id]
+    if tag == 0:
+        put(a, "(simple")
+        put(a, " ")
+        put_str(a, a.n[id + 1], a.n[(id + 1) + 1])
+        put(a, ")")
+        return
+    if tag == 1:
+        put(a, "(generic")
+        put(a, " ")
+        d_Generic(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 2:
+        put(a, "(func_type")
+        put(a, " ")
+        d_FuncTypeExpr(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 3:
+        put(a, "(optional")
+        put(a, " ")
+        d_TypeExpr(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 4:
+        put(a, "(qualified")
+        put(a, " ")
+        s1: int = a.n[id + 1]
+        n2: int = a.n[(id + 1) + 1]
+        put(a, "[")
+        for i3 in range(n2):
+            if i3 > 0:
+                put(a, " ")
+            put_str(a, a.l[s1 + i3 * 2], a.l[(s1 + i3 * 2) + 1])
+        put(a, "]")
+        put(a, ")")
+        return
+    put(a, "(?)")
+
+def mk_TypeExpr_simple(a: Ast, v0: int, v1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(0)
+    a.n.append(v0)
+    a.n.append(v1)
+    return id
+
+def mk_TypeExpr_generic(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(1)
+    a.n.append(v0)
+    return id
+
+def mk_TypeExpr_func_type(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(2)
+    a.n.append(v0)
+    return id
+
+def mk_TypeExpr_optional(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(3)
+    a.n.append(v0)
+    return id
+
+def mk_TypeExpr_qualified(a: Ast, v0: int, v1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(4)
+    a.n.append(v0)
+    a.n.append(v1)
+    return id
+
+def d_Generic(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "args=")
+    s4: int = a.n[id + 2]
+    n5: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i6 in range(n5):
+        if i6 > 0:
+            put(a, " ")
+        d_TypeExpr(a, a.l[s4 + i6 * 1])
+    put(a, "]")
+    put(a, "}")
+
+def mk_Generic(a: Ast, name_0: int, name_1: int, args_0: int, args_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(args_0)
+    a.n.append(args_1)
+    return id
+
+def d_FuncTypeExpr(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "params=")
+    s7: int = a.n[id + 0]
+    n8: int = a.n[(id + 0) + 1]
+    put(a, "[")
+    for i9 in range(n8):
+        if i9 > 0:
+            put(a, " ")
+        d_TypeExpr(a, a.l[s7 + i9 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "return_type=")
+    d_TypeExpr(a, a.n[id + 2])
+    put(a, "}")
+
+def mk_FuncTypeExpr(a: Ast, params_0: int, params_1: int, return_type: int) -> int:
+    id: int = len(a.n)
+    a.n.append(params_0)
+    a.n.append(params_1)
+    a.n.append(return_type)
+    return id
+
+def d_Param(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "variadic=")
+    put_bool(a, a.n[id + 2])
+    put(a, " ")
+    put(a, "var_kw=")
+    put_bool(a, a.n[id + 3])
+    put(a, " ")
+    put(a, "kw_only=")
+    put_bool(a, a.n[id + 4])
+    put(a, " ")
+    put(a, "pos_only=")
+    put_bool(a, a.n[id + 5])
+    put(a, " ")
+    put(a, "type_expr=")
+    d_TypeExpr(a, a.n[id + 6])
+    put(a, " ")
+    put(a, "self_inferred=")
+    put_bool(a, a.n[id + 7])
+    put(a, " ")
+    put(a, "default=")
+    v10: int = a.n[id + 8]
+    if v10 < 0:
+        put(a, "null")
+    else:
+        d_Expr(a, a.n[id + 8])
+    put(a, "}")
+
+def mk_Param(a: Ast, name_0: int, name_1: int, variadic: int, var_kw: int, kw_only: int, pos_only: int, type_expr: int, self_inferred: int, default: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(variadic)
+    a.n.append(var_kw)
+    a.n.append(kw_only)
+    a.n.append(pos_only)
+    a.n.append(type_expr)
+    a.n.append(self_inferred)
+    a.n.append(default)
+    return id
+
+def d_Kwarg(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "value=")
+    d_Expr(a, a.n[id + 2])
+    put_span_suffix(a, a.n[id + 2])
+    put(a, "}")
+
+def mk_Kwarg(a: Ast, name_0: int, name_1: int, value: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(value)
+    return id
+
+def d_Ternary(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "cond=")
+    d_Expr(a, a.n[id + 0])
+    put_span_suffix(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "then_expr=")
+    d_Expr(a, a.n[id + 1])
+    put_span_suffix(a, a.n[id + 1])
+    put(a, " ")
+    put(a, "else_expr=")
+    d_Expr(a, a.n[id + 2])
+    put_span_suffix(a, a.n[id + 2])
+    put(a, "}")
+
+def mk_Ternary(a: Ast, cond: int, then_expr: int, else_expr: int) -> int:
+    id: int = len(a.n)
+    a.n.append(cond)
+    a.n.append(then_expr)
+    a.n.append(else_expr)
+    return id
+
+def d_Slice(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "obj=")
+    d_Expr(a, a.n[id + 0])
+    put_span_suffix(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "lo=")
+    v11: int = a.n[id + 1]
+    if v11 < 0:
+        put(a, "null")
+    else:
+        d_Expr(a, a.n[id + 1])
+        put_span_suffix(a, a.n[id + 1])
+    put(a, " ")
+    put(a, "hi=")
+    v12: int = a.n[id + 2]
+    if v12 < 0:
+        put(a, "null")
+    else:
+        d_Expr(a, a.n[id + 2])
+        put_span_suffix(a, a.n[id + 2])
+    put(a, " ")
+    put(a, "step=")
+    v13: int = a.n[id + 3]
+    if v13 < 0:
+        put(a, "null")
+    else:
+        d_Expr(a, a.n[id + 3])
+        put_span_suffix(a, a.n[id + 3])
+    put(a, "}")
+
+def mk_Slice(a: Ast, obj: int, lo: int, hi: int, step: int) -> int:
+    id: int = len(a.n)
+    a.n.append(obj)
+    a.n.append(lo)
+    a.n.append(hi)
+    a.n.append(step)
+    return id
+
+def d_CompForClause(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "var_name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "iterable=")
+    d_Expr(a, a.n[id + 2])
+    put(a, "}")
+
+def mk_CompForClause(a: Ast, var_name_0: int, var_name_1: int, iterable: int) -> int:
+    id: int = len(a.n)
+    a.n.append(var_name_0)
+    a.n.append(var_name_1)
+    a.n.append(iterable)
+    return id
+
+def d_CompClause(a: Ast, id: int) -> None:
+    tag: int = a.n[id]
+    if tag == 0:
+        put(a, "(for_clause")
+        put(a, " ")
+        d_CompForClause(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 1:
+        put(a, "(if_clause")
+        put(a, " ")
+        d_Expr(a, a.n[id + 1])
+        put(a, ")")
+        return
+    put(a, "(?)")
+
+def mk_CompClause_for_clause(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(0)
+    a.n.append(v0)
+    return id
+
+def mk_CompClause_if_clause(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(1)
+    a.n.append(v0)
+    return id
+
+def d_Lambda(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "params=")
+    s14: int = a.n[id + 0]
+    n15: int = a.n[(id + 0) + 1]
+    put(a, "[")
+    for i16 in range(n15):
+        if i16 > 0:
+            put(a, " ")
+        put_str(a, a.l[s14 + i16 * 2], a.l[(s14 + i16 * 2) + 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "body=")
+    d_Expr(a, a.n[id + 2])
+    put_span_suffix(a, a.n[id + 2])
+    put(a, "}")
+
+def mk_Lambda(a: Ast, params_0: int, params_1: int, body: int) -> int:
+    id: int = len(a.n)
+    a.n.append(params_0)
+    a.n.append(params_1)
+    a.n.append(body)
+    return id
+
+def d_ListComp(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "elem=")
+    d_Expr(a, a.n[id + 0])
+    put_span_suffix(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "clauses=")
+    s17: int = a.n[id + 1]
+    n18: int = a.n[(id + 1) + 1]
+    put(a, "[")
+    for i19 in range(n18):
+        if i19 > 0:
+            put(a, " ")
+        d_CompClause(a, a.l[s17 + i19 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "result_type=")
+    v20: int = a.n[id + 3]
+    if v20 < 0:
+        put(a, "null")
+    else:
+        d_TypeExpr(a, a.n[id + 3])
+    put(a, " ")
+    put(a, "is_genexpr=")
+    put_bool(a, a.n[id + 4])
+    put(a, "}")
+
+def mk_ListComp(a: Ast, elem: int, clauses_0: int, clauses_1: int, result_type: int, is_genexpr: int) -> int:
+    id: int = len(a.n)
+    a.n.append(elem)
+    a.n.append(clauses_0)
+    a.n.append(clauses_1)
+    a.n.append(result_type)
+    a.n.append(is_genexpr)
+    return id
+
+def d_DictComp(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "key=")
+    d_Expr(a, a.n[id + 0])
+    put_span_suffix(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "value=")
+    d_Expr(a, a.n[id + 1])
+    put_span_suffix(a, a.n[id + 1])
+    put(a, " ")
+    put(a, "clauses=")
+    s21: int = a.n[id + 2]
+    n22: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i23 in range(n22):
+        if i23 > 0:
+            put(a, " ")
+        d_CompClause(a, a.l[s21 + i23 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "result_type=")
+    v24: int = a.n[id + 4]
+    if v24 < 0:
+        put(a, "null")
+    else:
+        d_TypeExpr(a, a.n[id + 4])
+    put(a, "}")
+
+def mk_DictComp(a: Ast, key: int, value: int, clauses_0: int, clauses_1: int, result_type: int) -> int:
+    id: int = len(a.n)
+    a.n.append(key)
+    a.n.append(value)
+    a.n.append(clauses_0)
+    a.n.append(clauses_1)
+    a.n.append(result_type)
+    return id
+
+def d_Expr(a: Ast, id: int) -> None:
+    tag: int = a.n[id]
+    if tag == 0:
+        put(a, "(int_lit")
+        put(a, " ")
+        put_int(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 1:
+        put(a, "(float_lit")
+        put(a, " ")
+        put_f64(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 2:
+        put(a, "(bool_lit")
+        put(a, " ")
+        put_bool(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 3:
+        put(a, "(string_lit")
+        put(a, " ")
+        put_str(a, a.n[id + 1], a.n[(id + 1) + 1])
+        put(a, ")")
+        return
+    if tag == 4:
+        put(a, "(none_lit")
+        put(a, ")")
+        return
+    if tag == 5:
+        put(a, "(identifier")
+        put(a, " ")
+        put_str(a, a.n[id + 1], a.n[(id + 1) + 1])
+        put(a, ")")
+        return
+    if tag == 6:
+        put(a, "(unary")
+        put(a, " ")
+        d_Unary(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 7:
+        put(a, "(binary")
+        put(a, " ")
+        d_Binary(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 8:
+        put(a, "(call")
+        put(a, " ")
+        d_Call(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 9:
+        put(a, "(attribute")
+        put(a, " ")
+        d_Attribute(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 10:
+        put(a, "(index")
+        put(a, " ")
+        d_Index(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 11:
+        put(a, "(list_lit")
+        put(a, " ")
+        s25: int = a.n[id + 1]
+        n26: int = a.n[(id + 1) + 1]
+        put(a, "[")
+        for i27 in range(n26):
+            if i27 > 0:
+                put(a, " ")
+            d_Expr(a, a.l[s25 + i27 * 1])
+            put_span_suffix(a, a.l[s25 + i27 * 1])
+        put(a, "]")
+        put(a, ")")
+        return
+    if tag == 12:
+        put(a, "(dict_lit")
+        put(a, " ")
+        s28: int = a.n[id + 1]
+        n29: int = a.n[(id + 1) + 1]
+        put(a, "[")
+        for i30 in range(n29):
+            if i30 > 0:
+                put(a, " ")
+            d_DictPair(a, a.l[s28 + i30 * 1])
+        put(a, "]")
+        put(a, ")")
+        return
+    if tag == 13:
+        put(a, "(await_expr")
+        put(a, " ")
+        d_Expr(a, a.n[id + 1])
+        put_span_suffix(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 14:
+        put(a, "(spawn_expr")
+        put(a, " ")
+        d_Expr(a, a.n[id + 1])
+        put_span_suffix(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 15:
+        put(a, "(generic_construct")
+        put(a, " ")
+        d_GenericConstruct(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 16:
+        put(a, "(ternary")
+        put(a, " ")
+        d_Ternary(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 17:
+        put(a, "(kwarg")
+        put(a, " ")
+        d_Kwarg(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 18:
+        put(a, "(slice")
+        put(a, " ")
+        d_Slice(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 19:
+        put(a, "(lambda")
+        put(a, " ")
+        d_Lambda(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 20:
+        put(a, "(tuple_lit")
+        put(a, " ")
+        s31: int = a.n[id + 1]
+        n32: int = a.n[(id + 1) + 1]
+        put(a, "[")
+        for i33 in range(n32):
+            if i33 > 0:
+                put(a, " ")
+            d_Expr(a, a.l[s31 + i33 * 1])
+            put_span_suffix(a, a.l[s31 + i33 * 1])
+        put(a, "]")
+        put(a, ")")
+        return
+    if tag == 21:
+        put(a, "(list_comp")
+        put(a, " ")
+        d_ListComp(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 22:
+        put(a, "(dict_comp")
+        put(a, " ")
+        d_DictComp(a, a.n[id + 1])
+        put(a, ")")
+        return
+    put(a, "(?)")
+
+def mk_Expr_int_lit(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(0)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_float_lit(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(1)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_bool_lit(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(2)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_string_lit(a: Ast, v0: int, v1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(3)
+    a.n.append(v0)
+    a.n.append(v1)
+    return id
+
+def mk_Expr_none_lit(a: Ast) -> int:
+    id: int = len(a.n)
+    a.n.append(4)
+    return id
+
+def mk_Expr_identifier(a: Ast, v0: int, v1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(5)
+    a.n.append(v0)
+    a.n.append(v1)
+    return id
+
+def mk_Expr_unary(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(6)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_binary(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(7)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_call(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(8)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_attribute(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(9)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_index(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(10)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_list_lit(a: Ast, v0: int, v1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(11)
+    a.n.append(v0)
+    a.n.append(v1)
+    return id
+
+def mk_Expr_dict_lit(a: Ast, v0: int, v1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(12)
+    a.n.append(v0)
+    a.n.append(v1)
+    return id
+
+def mk_Expr_await_expr(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(13)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_spawn_expr(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(14)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_generic_construct(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(15)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_ternary(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(16)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_kwarg(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(17)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_slice(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(18)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_lambda(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(19)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_tuple_lit(a: Ast, v0: int, v1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(20)
+    a.n.append(v0)
+    a.n.append(v1)
+    return id
+
+def mk_Expr_list_comp(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(21)
+    a.n.append(v0)
+    return id
+
+def mk_Expr_dict_comp(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(22)
+    a.n.append(v0)
+    return id
+
+def d_Unary(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "op=")
+    d_UnaryOp(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "operand=")
+    d_Expr(a, a.n[id + 1])
+    put_span_suffix(a, a.n[id + 1])
+    put(a, "}")
+
+def mk_Unary(a: Ast, op: int, operand: int) -> int:
+    id: int = len(a.n)
+    a.n.append(op)
+    a.n.append(operand)
+    return id
+
+def d_Binary(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "op=")
+    d_BinaryOp(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "left=")
+    d_Expr(a, a.n[id + 1])
+    put_span_suffix(a, a.n[id + 1])
+    put(a, " ")
+    put(a, "right=")
+    d_Expr(a, a.n[id + 2])
+    put_span_suffix(a, a.n[id + 2])
+    put(a, " ")
+    put(a, "is_form=")
+    put_bool(a, a.n[id + 3])
+    put(a, " ")
+    put(a, "fstring=")
+    put_bool(a, a.n[id + 4])
+    put(a, " ")
+    put(a, "opt_eq=")
+    put_bool(a, a.n[id + 5])
+    put(a, " ")
+    put(a, "spread=")
+    put_bool(a, a.n[id + 6])
+    put(a, "}")
+
+def mk_Binary(a: Ast, op: int, left: int, right: int, is_form: int, fstring: int, opt_eq: int, spread: int) -> int:
+    id: int = len(a.n)
+    a.n.append(op)
+    a.n.append(left)
+    a.n.append(right)
+    a.n.append(is_form)
+    a.n.append(fstring)
+    a.n.append(opt_eq)
+    a.n.append(spread)
+    return id
+
+def d_Call(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "callee=")
+    d_Expr(a, a.n[id + 0])
+    put_span_suffix(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "args=")
+    s34: int = a.n[id + 1]
+    n35: int = a.n[(id + 1) + 1]
+    put(a, "[")
+    for i36 in range(n35):
+        if i36 > 0:
+            put(a, " ")
+        d_Expr(a, a.l[s34 + i36 * 1])
+        put_span_suffix(a, a.l[s34 + i36 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "fstring=")
+    put_bool(a, a.n[id + 3])
+    put(a, " ")
+    put(a, "set_lit=")
+    put_bool(a, a.n[id + 4])
+    put(a, " ")
+    put(a, "eval_order=")
+    v37: int = a.n[id + 5]
+    if v37 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 5], a.n[(id + 5) + 1])
+    put(a, " ")
+    put(a, "raise_from=")
+    put_bool(a, a.n[id + 7])
+    put(a, " ")
+    put(a, "spread_lit=")
+    put_bool(a, a.n[id + 8])
+    put(a, "}")
+
+def mk_Call(a: Ast, callee: int, args_0: int, args_1: int, fstring: int, set_lit: int, eval_order_0: int, eval_order_1: int, raise_from: int, spread_lit: int) -> int:
+    id: int = len(a.n)
+    a.n.append(callee)
+    a.n.append(args_0)
+    a.n.append(args_1)
+    a.n.append(fstring)
+    a.n.append(set_lit)
+    a.n.append(eval_order_0)
+    a.n.append(eval_order_1)
+    a.n.append(raise_from)
+    a.n.append(spread_lit)
+    return id
+
+def d_Attribute(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "obj=")
+    d_Expr(a, a.n[id + 0])
+    put_span_suffix(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "attr=")
+    put_str(a, a.n[id + 1], a.n[(id + 1) + 1])
+    put(a, "}")
+
+def mk_Attribute(a: Ast, obj: int, attr_0: int, attr_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(obj)
+    a.n.append(attr_0)
+    a.n.append(attr_1)
+    return id
+
+def d_Index(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "obj=")
+    d_Expr(a, a.n[id + 0])
+    put_span_suffix(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "index=")
+    d_Expr(a, a.n[id + 1])
+    put_span_suffix(a, a.n[id + 1])
+    put(a, "}")
+
+def mk_Index(a: Ast, obj: int, index: int) -> int:
+    id: int = len(a.n)
+    a.n.append(obj)
+    a.n.append(index)
+    return id
+
+def d_GenericConstruct(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "type_args=")
+    s38: int = a.n[id + 2]
+    n39: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i40 in range(n39):
+        if i40 > 0:
+            put(a, " ")
+        d_TypeExpr(a, a.l[s38 + i40 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "args=")
+    s41: int = a.n[id + 4]
+    n42: int = a.n[(id + 4) + 1]
+    put(a, "[")
+    for i43 in range(n42):
+        if i43 > 0:
+            put(a, " ")
+        d_Expr(a, a.l[s41 + i43 * 1])
+        put_span_suffix(a, a.l[s41 + i43 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "resolved_class_name=")
+    v44: int = a.n[id + 6]
+    if v44 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 6], a.n[(id + 6) + 1])
+    put(a, "}")
+
+def mk_GenericConstruct(a: Ast, name_0: int, name_1: int, type_args_0: int, type_args_1: int, args_0: int, args_1: int, resolved_class_name_0: int, resolved_class_name_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(type_args_0)
+    a.n.append(type_args_1)
+    a.n.append(args_0)
+    a.n.append(args_1)
+    a.n.append(resolved_class_name_0)
+    a.n.append(resolved_class_name_1)
+    return id
+
+def d_DictPair(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "key=")
+    d_Expr(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "value=")
+    d_Expr(a, a.n[id + 1])
+    put(a, "}")
+
+def mk_DictPair(a: Ast, key: int, value: int) -> int:
+    id: int = len(a.n)
+    a.n.append(key)
+    a.n.append(value)
+    return id
+
+def d_ElifClause(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "cond=")
+    d_Expr(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "body=")
+    s45: int = a.n[id + 1]
+    n46: int = a.n[(id + 1) + 1]
+    put(a, "[")
+    for i47 in range(n46):
+        put(a, "\n")
+        d_Stmt(a, a.l[s45 + i47 * 1])
+    put(a, "]")
+    put(a, "}")
+
+def mk_ElifClause(a: Ast, cond: int, body_0: int, body_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(cond)
+    a.n.append(body_0)
+    a.n.append(body_1)
+    return id
+
+def d_IfStmt(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "cond=")
+    d_Expr(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "then_body=")
+    s48: int = a.n[id + 1]
+    n49: int = a.n[(id + 1) + 1]
+    put(a, "[")
+    for i50 in range(n49):
+        put(a, "\n")
+        d_Stmt(a, a.l[s48 + i50 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "elif_clauses=")
+    s51: int = a.n[id + 3]
+    n52: int = a.n[(id + 3) + 1]
+    put(a, "[")
+    for i53 in range(n52):
+        if i53 > 0:
+            put(a, " ")
+        d_ElifClause(a, a.l[s51 + i53 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "else_body=")
+    v54: int = a.n[id + 5]
+    if v54 == -4611686018427387904:
+        put(a, "null")
+    else:
+        s55: int = a.n[id + 5]
+        n56: int = a.n[(id + 5) + 1]
+        put(a, "[")
+        for i57 in range(n56):
+            put(a, "\n")
+            d_Stmt(a, a.l[s55 + i57 * 1])
+        put(a, "]")
+    put(a, " ")
+    put(a, "is_assert=")
+    put_bool(a, a.n[id + 7])
+    put(a, " ")
+    put(a, "match_origin=")
+    v58: int = a.n[id + 8]
+    if v58 < 0:
+        put(a, "null")
+    else:
+        d_MatchOrigin(a, a.n[id + 8])
+    put(a, " ")
+    put(a, "is_else_tail=")
+    put_bool(a, a.n[id + 9])
+    put(a, "}")
+
+def mk_IfStmt(a: Ast, cond: int, then_body_0: int, then_body_1: int, elif_clauses_0: int, elif_clauses_1: int, else_body_0: int, else_body_1: int, is_assert: int, match_origin: int, is_else_tail: int) -> int:
+    id: int = len(a.n)
+    a.n.append(cond)
+    a.n.append(then_body_0)
+    a.n.append(then_body_1)
+    a.n.append(elif_clauses_0)
+    a.n.append(elif_clauses_1)
+    a.n.append(else_body_0)
+    a.n.append(else_body_1)
+    a.n.append(is_assert)
+    a.n.append(match_origin)
+    a.n.append(is_else_tail)
+    return id
+
+def d_MatchPatternArg(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "keyword=")
+    v59: int = a.n[id + 0]
+    if v59 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "bind=")
+    v60: int = a.n[id + 2]
+    if v60 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 2], a.n[(id + 2) + 1])
+    put(a, " ")
+    put(a, "sub=")
+    v61: int = a.n[id + 4]
+    if v61 < 0:
+        put(a, "null")
+    else:
+        d_MatchCase(a, a.n[id + 4])
+    put(a, " ")
+    put(a, "literal=")
+    v62: int = a.n[id + 5]
+    if v62 < 0:
+        put(a, "null")
+    else:
+        d_Expr(a, a.n[id + 5])
+    put(a, "}")
+
+def mk_MatchPatternArg(a: Ast, keyword_0: int, keyword_1: int, bind_0: int, bind_1: int, sub: int, literal: int) -> int:
+    id: int = len(a.n)
+    a.n.append(keyword_0)
+    a.n.append(keyword_1)
+    a.n.append(bind_0)
+    a.n.append(bind_1)
+    a.n.append(sub)
+    a.n.append(literal)
+    return id
+
+def d_MatchCase(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "path=")
+    s63: int = a.n[id + 0]
+    n64: int = a.n[(id + 0) + 1]
+    put(a, "[")
+    for i65 in range(n64):
+        if i65 > 0:
+            put(a, " ")
+        put_str(a, a.l[s63 + i65 * 2], a.l[(s63 + i65 * 2) + 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "args=")
+    s66: int = a.n[id + 2]
+    n67: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i68 in range(n67):
+        if i68 > 0:
+            put(a, " ")
+        d_MatchPatternArg(a, a.l[s66 + i68 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "has_parens=")
+    put_bool(a, a.n[id + 4])
+    put(a, " ")
+    put(a, "wildcard=")
+    put_bool(a, a.n[id + 5])
+    put(a, " ")
+    put(a, "scalars=")
+    s69: int = a.n[id + 6]
+    n70: int = a.n[(id + 6) + 1]
+    put(a, "[")
+    for i71 in range(n70):
+        if i71 > 0:
+            put(a, " ")
+        d_Expr(a, a.l[s69 + i71 * 1])
+        put_span_suffix(a, a.l[s69 + i71 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "capture=")
+    v72: int = a.n[id + 8]
+    if v72 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 8], a.n[(id + 8) + 1])
+    put(a, " ")
+    put(a, "guard=")
+    v73: int = a.n[id + 10]
+    if v73 < 0:
+        put(a, "null")
+    else:
+        d_Expr(a, a.n[id + 10])
+    put(a, " ")
+    put(a, "prefix=")
+    put_int(a, a.n[id + 11])
+    put(a, " ")
+    put(a, "line=")
+    put_int(a, a.n[id + 12])
+    put(a, "}")
+
+def mk_MatchCase(a: Ast, path_0: int, path_1: int, args_0: int, args_1: int, has_parens: int, wildcard: int, scalars_0: int, scalars_1: int, capture_0: int, capture_1: int, guard: int, prefix: int, line: int) -> int:
+    id: int = len(a.n)
+    a.n.append(path_0)
+    a.n.append(path_1)
+    a.n.append(args_0)
+    a.n.append(args_1)
+    a.n.append(has_parens)
+    a.n.append(wildcard)
+    a.n.append(scalars_0)
+    a.n.append(scalars_1)
+    a.n.append(capture_0)
+    a.n.append(capture_1)
+    a.n.append(guard)
+    a.n.append(prefix)
+    a.n.append(line)
+    return id
+
+def d_MatchOrigin(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "subject=")
+    d_Expr(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "cases=")
+    s74: int = a.n[id + 1]
+    n75: int = a.n[(id + 1) + 1]
+    put(a, "[")
+    for i76 in range(n75):
+        if i76 > 0:
+            put(a, " ")
+        d_MatchCase(a, a.l[s74 + i76 * 1])
+    put(a, "]")
+    put(a, "}")
+
+def mk_MatchOrigin(a: Ast, subject: int, cases_0: int, cases_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(subject)
+    a.n.append(cases_0)
+    a.n.append(cases_1)
+    return id
+
+def d_WhileStmt(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "cond=")
+    d_Expr(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "body=")
+    s77: int = a.n[id + 1]
+    n78: int = a.n[(id + 1) + 1]
+    put(a, "[")
+    for i79 in range(n78):
+        put(a, "\n")
+        d_Stmt(a, a.l[s77 + i79 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "else_origin=")
+    v80: int = a.n[id + 3]
+    if v80 < 0:
+        put(a, "null")
+    else:
+        d_LoopElseOrigin(a, a.n[id + 3])
+    put(a, "}")
+
+def mk_WhileStmt(a: Ast, cond: int, body_0: int, body_1: int, else_origin: int) -> int:
+    id: int = len(a.n)
+    a.n.append(cond)
+    a.n.append(body_0)
+    a.n.append(body_1)
+    a.n.append(else_origin)
+    return id
+
+def d_LoopElseOrigin(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "body=")
+    s81: int = a.n[id + 0]
+    n82: int = a.n[(id + 0) + 1]
+    put(a, "[")
+    for i83 in range(n82):
+        put(a, "\n")
+        d_Stmt(a, a.l[s81 + i83 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "else_body=")
+    s84: int = a.n[id + 2]
+    n85: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i86 in range(n85):
+        put(a, "\n")
+        d_Stmt(a, a.l[s84 + i86 * 1])
+    put(a, "]")
+    put(a, "}")
+
+def mk_LoopElseOrigin(a: Ast, body_0: int, body_1: int, else_body_0: int, else_body_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(body_0)
+    a.n.append(body_1)
+    a.n.append(else_body_0)
+    a.n.append(else_body_1)
+    return id
+
+def d_TryElseOrigin(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "try_body=")
+    s87: int = a.n[id + 0]
+    n88: int = a.n[(id + 0) + 1]
+    put(a, "[")
+    for i89 in range(n88):
+        put(a, "\n")
+        d_Stmt(a, a.l[s87 + i89 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "except_clauses=")
+    s90: int = a.n[id + 2]
+    n91: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i92 in range(n91):
+        if i92 > 0:
+            put(a, " ")
+        d_ExceptClause(a, a.l[s90 + i92 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "else_body=")
+    s93: int = a.n[id + 4]
+    n94: int = a.n[(id + 4) + 1]
+    put(a, "[")
+    for i95 in range(n94):
+        put(a, "\n")
+        d_Stmt(a, a.l[s93 + i95 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "finally_body=")
+    v96: int = a.n[id + 6]
+    if v96 == -4611686018427387904:
+        put(a, "null")
+    else:
+        s97: int = a.n[id + 6]
+        n98: int = a.n[(id + 6) + 1]
+        put(a, "[")
+        for i99 in range(n98):
+            put(a, "\n")
+            d_Stmt(a, a.l[s97 + i99 * 1])
+        put(a, "]")
+    put(a, "}")
+
+def mk_TryElseOrigin(a: Ast, try_body_0: int, try_body_1: int, except_clauses_0: int, except_clauses_1: int, else_body_0: int, else_body_1: int, finally_body_0: int, finally_body_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(try_body_0)
+    a.n.append(try_body_1)
+    a.n.append(except_clauses_0)
+    a.n.append(except_clauses_1)
+    a.n.append(else_body_0)
+    a.n.append(else_body_1)
+    a.n.append(finally_body_0)
+    a.n.append(finally_body_1)
+    return id
+
+def d_ForHoist(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "type_expr=")
+    d_TypeExpr(a, a.n[id + 2])
+    put(a, "}")
+
+def mk_ForHoist(a: Ast, name_0: int, name_1: int, type_expr: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(type_expr)
+    return id
+
+def d_ForStmt(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "var_name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "iterable=")
+    d_Expr(a, a.n[id + 2])
+    put(a, " ")
+    put(a, "body=")
+    s100: int = a.n[id + 3]
+    n101: int = a.n[(id + 3) + 1]
+    put(a, "[")
+    for i102 in range(n101):
+        put(a, "\n")
+        d_Stmt(a, a.l[s100 + i102 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "hoist=")
+    v103: int = a.n[id + 5]
+    if v103 < 0:
+        put(a, "null")
+    else:
+        d_ForHoist(a, a.n[id + 5])
+    put(a, " ")
+    put(a, "is_async=")
+    put_bool(a, a.n[id + 6])
+    put(a, " ")
+    put(a, "else_origin=")
+    v104: int = a.n[id + 7]
+    if v104 < 0:
+        put(a, "null")
+    else:
+        d_LoopElseOrigin(a, a.n[id + 7])
+    put(a, "}")
+
+def mk_ForStmt(a: Ast, var_name_0: int, var_name_1: int, iterable: int, body_0: int, body_1: int, hoist: int, is_async: int, else_origin: int) -> int:
+    id: int = len(a.n)
+    a.n.append(var_name_0)
+    a.n.append(var_name_1)
+    a.n.append(iterable)
+    a.n.append(body_0)
+    a.n.append(body_1)
+    a.n.append(hoist)
+    a.n.append(is_async)
+    a.n.append(else_origin)
+    return id
+
+def d_Decorator(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "args=")
+    s105: int = a.n[id + 2]
+    n106: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i107 in range(n106):
+        if i107 > 0:
+            put(a, " ")
+        d_Expr(a, a.l[s105 + i107 * 1])
+        put_span_suffix(a, a.l[s105 + i107 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "line=")
+    put_int(a, a.n[id + 4])
+    put(a, "}")
+
+def mk_Decorator(a: Ast, name_0: int, name_1: int, args_0: int, args_1: int, line: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(args_0)
+    a.n.append(args_1)
+    a.n.append(line)
+    return id
+
+def d_FuncDef(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "type_params=")
+    s108: int = a.n[id + 2]
+    n109: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i110 in range(n109):
+        if i110 > 0:
+            put(a, " ")
+        put_str(a, a.l[s108 + i110 * 2], a.l[(s108 + i110 * 2) + 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "params=")
+    s111: int = a.n[id + 4]
+    n112: int = a.n[(id + 4) + 1]
+    put(a, "[")
+    for i113 in range(n112):
+        if i113 > 0:
+            put(a, " ")
+        d_Param(a, a.l[s111 + i113 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "return_type=")
+    d_TypeExpr(a, a.n[id + 6])
+    put(a, " ")
+    put(a, "ret_omitted=")
+    put_bool(a, a.n[id + 7])
+    put(a, " ")
+    put(a, "body=")
+    s114: int = a.n[id + 8]
+    n115: int = a.n[(id + 8) + 1]
+    put(a, "[")
+    for i116 in range(n115):
+        put(a, "\n")
+        d_Stmt(a, a.l[s114 + i116 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "is_async=")
+    put_bool(a, a.n[id + 10])
+    put(a, " ")
+    put(a, "decorators=")
+    s117: int = a.n[id + 11]
+    n118: int = a.n[(id + 11) + 1]
+    put(a, "[")
+    for i119 in range(n118):
+        if i119 > 0:
+            put(a, " ")
+        d_Decorator(a, a.l[s117 + i119 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "link_name=")
+    v120: int = a.n[id + 13]
+    if v120 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 13], a.n[(id + 13) + 1])
+    put(a, " ")
+    put(a, "nonlocals=")
+    s121: int = a.n[id + 15]
+    n122: int = a.n[(id + 15) + 1]
+    put(a, "[")
+    for i123 in range(n122):
+        if i123 > 0:
+            put(a, " ")
+        put_str(a, a.l[s121 + i123 * 2], a.l[(s121 + i123 * 2) + 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "globals=")
+    s124: int = a.n[id + 17]
+    n125: int = a.n[(id + 17) + 1]
+    put(a, "[")
+    for i126 in range(n125):
+        if i126 > 0:
+            put(a, " ")
+        put_str(a, a.l[s124 + i126 * 2], a.l[(s124 + i126 * 2) + 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "allow_await=")
+    put_bool(a, a.n[id + 19])
+    put(a, "}")
+
+def mk_FuncDef(a: Ast, name_0: int, name_1: int, type_params_0: int, type_params_1: int, params_0: int, params_1: int, return_type: int, ret_omitted: int, body_0: int, body_1: int, is_async: int, decorators_0: int, decorators_1: int, link_name_0: int, link_name_1: int, nonlocals_0: int, nonlocals_1: int, globals_0: int, globals_1: int, allow_await: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(type_params_0)
+    a.n.append(type_params_1)
+    a.n.append(params_0)
+    a.n.append(params_1)
+    a.n.append(return_type)
+    a.n.append(ret_omitted)
+    a.n.append(body_0)
+    a.n.append(body_1)
+    a.n.append(is_async)
+    a.n.append(decorators_0)
+    a.n.append(decorators_1)
+    a.n.append(link_name_0)
+    a.n.append(link_name_1)
+    a.n.append(nonlocals_0)
+    a.n.append(nonlocals_1)
+    a.n.append(globals_0)
+    a.n.append(globals_1)
+    a.n.append(allow_await)
+    return id
+
+def d_FieldDecl(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "type_expr=")
+    d_TypeExpr(a, a.n[id + 2])
+    put(a, " ")
+    put(a, "line=")
+    put_int(a, a.n[id + 3])
+    put(a, "}")
+
+def mk_FieldDecl(a: Ast, name_0: int, name_1: int, type_expr: int, line: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(type_expr)
+    a.n.append(line)
+    return id
+
+def d_ConstDecl(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "type_expr=")
+    d_TypeExpr(a, a.n[id + 2])
+    put(a, " ")
+    put(a, "value=")
+    d_Expr(a, a.n[id + 3])
+    put(a, " ")
+    put(a, "line=")
+    put_int(a, a.n[id + 4])
+    put(a, " ")
+    put(a, "owner=")
+    v127: int = a.n[id + 5]
+    if v127 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 5], a.n[(id + 5) + 1])
+    put(a, " ")
+    put(a, "promoted=")
+    put_bool(a, a.n[id + 7])
+    put(a, "}")
+
+def mk_ConstDecl(a: Ast, name_0: int, name_1: int, type_expr: int, value: int, line: int, owner_0: int, owner_1: int, promoted: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(type_expr)
+    a.n.append(value)
+    a.n.append(line)
+    a.n.append(owner_0)
+    a.n.append(owner_1)
+    a.n.append(promoted)
+    return id
+
+def d_EnumVariant(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "tag=")
+    put_int(a, a.n[id + 2])
+    put(a, " ")
+    put(a, "fields=")
+    s128: int = a.n[id + 3]
+    n129: int = a.n[(id + 3) + 1]
+    put(a, "[")
+    for i130 in range(n129):
+        if i130 > 0:
+            put(a, " ")
+        d_FieldDecl(a, a.l[s128 + i130 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "has_parens=")
+    put_bool(a, a.n[id + 5])
+    put(a, " ")
+    put(a, "line=")
+    put_int(a, a.n[id + 6])
+    put(a, "}")
+
+def mk_EnumVariant(a: Ast, name_0: int, name_1: int, tag: int, fields_0: int, fields_1: int, has_parens: int, line: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(tag)
+    a.n.append(fields_0)
+    a.n.append(fields_1)
+    a.n.append(has_parens)
+    a.n.append(line)
+    return id
+
+def d_ClassDef(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "consts=")
+    s131: int = a.n[id + 2]
+    n132: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i133 in range(n132):
+        if i133 > 0:
+            put(a, " ")
+        d_ConstDecl(a, a.l[s131 + i133 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "doc=")
+    v134: int = a.n[id + 4]
+    if v134 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 4], a.n[(id + 4) + 1])
+    put(a, " ")
+    put(a, "base=")
+    v135: int = a.n[id + 6]
+    if v135 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 6], a.n[(id + 6) + 1])
+    put(a, " ")
+    put(a, "extra_bases=")
+    s136: int = a.n[id + 8]
+    n137: int = a.n[(id + 8) + 1]
+    put(a, "[")
+    for i138 in range(n137):
+        if i138 > 0:
+            put(a, " ")
+        put_str(a, a.l[s136 + i138 * 2], a.l[(s136 + i138 * 2) + 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "base_args=")
+    s139: int = a.n[id + 10]
+    n140: int = a.n[(id + 10) + 1]
+    put(a, "[")
+    for i141 in range(n140):
+        if i141 > 0:
+            put(a, " ")
+        d_TypeExpr(a, a.l[s139 + i141 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "mixins=")
+    s142: int = a.n[id + 12]
+    n143: int = a.n[(id + 12) + 1]
+    put(a, "[")
+    for i144 in range(n143):
+        if i144 > 0:
+            put(a, " ")
+        put_str(a, a.l[s142 + i144 * 2], a.l[(s142 + i144 * 2) + 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "type_params=")
+    s145: int = a.n[id + 14]
+    n146: int = a.n[(id + 14) + 1]
+    put(a, "[")
+    for i147 in range(n146):
+        if i147 > 0:
+            put(a, " ")
+        put_str(a, a.l[s145 + i147 * 2], a.l[(s145 + i147 * 2) + 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "methods=")
+    s148: int = a.n[id + 16]
+    n149: int = a.n[(id + 16) + 1]
+    put(a, "[")
+    for i150 in range(n149):
+        if i150 > 0:
+            put(a, " ")
+        d_FuncDef(a, a.l[s148 + i150 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "fields=")
+    s151: int = a.n[id + 18]
+    n152: int = a.n[(id + 18) + 1]
+    put(a, "[")
+    for i153 in range(n152):
+        if i153 > 0:
+            put(a, " ")
+        d_FieldDecl(a, a.l[s151 + i153 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "decorators=")
+    s154: int = a.n[id + 20]
+    n155: int = a.n[(id + 20) + 1]
+    put(a, "[")
+    for i156 in range(n155):
+        if i156 > 0:
+            put(a, " ")
+        d_Decorator(a, a.l[s154 + i156 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "enum_variants=")
+    s157: int = a.n[id + 22]
+    n158: int = a.n[(id + 22) + 1]
+    put(a, "[")
+    for i159 in range(n158):
+        if i159 > 0:
+            put(a, " ")
+        d_EnumVariant(a, a.l[s157 + i159 * 1])
+    put(a, "]")
+    put(a, "}")
+
+def mk_ClassDef(a: Ast, name_0: int, name_1: int, consts_0: int, consts_1: int, doc_0: int, doc_1: int, base_0: int, base_1: int, extra_bases_0: int, extra_bases_1: int, base_args_0: int, base_args_1: int, mixins_0: int, mixins_1: int, type_params_0: int, type_params_1: int, methods_0: int, methods_1: int, fields_0: int, fields_1: int, decorators_0: int, decorators_1: int, enum_variants_0: int, enum_variants_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(consts_0)
+    a.n.append(consts_1)
+    a.n.append(doc_0)
+    a.n.append(doc_1)
+    a.n.append(base_0)
+    a.n.append(base_1)
+    a.n.append(extra_bases_0)
+    a.n.append(extra_bases_1)
+    a.n.append(base_args_0)
+    a.n.append(base_args_1)
+    a.n.append(mixins_0)
+    a.n.append(mixins_1)
+    a.n.append(type_params_0)
+    a.n.append(type_params_1)
+    a.n.append(methods_0)
+    a.n.append(methods_1)
+    a.n.append(fields_0)
+    a.n.append(fields_1)
+    a.n.append(decorators_0)
+    a.n.append(decorators_1)
+    a.n.append(enum_variants_0)
+    a.n.append(enum_variants_1)
+    return id
+
+def d_ProtocolDef(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "methods=")
+    s160: int = a.n[id + 2]
+    n161: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i162 in range(n161):
+        if i162 > 0:
+            put(a, " ")
+        d_FuncDef(a, a.l[s160 + i162 * 1])
+    put(a, "]")
+    put(a, "}")
+
+def mk_ProtocolDef(a: Ast, name_0: int, name_1: int, methods_0: int, methods_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(methods_0)
+    a.n.append(methods_1)
+    return id
+
+def d_ExternDef(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "params=")
+    s163: int = a.n[id + 2]
+    n164: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i165 in range(n164):
+        if i165 > 0:
+            put(a, " ")
+        d_Param(a, a.l[s163 + i165 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "return_type=")
+    d_TypeExpr(a, a.n[id + 4])
+    put(a, " ")
+    put(a, "from_lib=")
+    put_str(a, a.n[id + 5], a.n[(id + 5) + 1])
+    put(a, " ")
+    put(a, "needs_rt=")
+    put_bool(a, a.n[id + 7])
+    put(a, " ")
+    put(a, "retains=")
+    s166: int = a.n[id + 8]
+    n167: int = a.n[(id + 8) + 1]
+    put(a, "[")
+    for i168 in range(n167):
+        if i168 > 0:
+            put(a, " ")
+        put_str(a, a.l[s166 + i168 * 2], a.l[(s166 + i168 * 2) + 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "decorators=")
+    s169: int = a.n[id + 10]
+    n170: int = a.n[(id + 10) + 1]
+    put(a, "[")
+    for i171 in range(n170):
+        if i171 > 0:
+            put(a, " ")
+        d_Decorator(a, a.l[s169 + i171 * 1])
+    put(a, "]")
+    put(a, "}")
+
+def mk_ExternDef(a: Ast, name_0: int, name_1: int, params_0: int, params_1: int, return_type: int, from_lib_0: int, from_lib_1: int, needs_rt: int, retains_0: int, retains_1: int, decorators_0: int, decorators_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(params_0)
+    a.n.append(params_1)
+    a.n.append(return_type)
+    a.n.append(from_lib_0)
+    a.n.append(from_lib_1)
+    a.n.append(needs_rt)
+    a.n.append(retains_0)
+    a.n.append(retains_1)
+    a.n.append(decorators_0)
+    a.n.append(decorators_1)
+    return id
+
+def d_VarDecl(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "type_expr=")
+    d_TypeExpr(a, a.n[id + 2])
+    put(a, " ")
+    put(a, "value=")
+    d_Expr(a, a.n[id + 3])
+    put(a, " ")
+    put(a, "class_attr=")
+    v172: int = a.n[id + 4]
+    if v172 < 0:
+        put(a, "null")
+    else:
+        d_ClassAttrRef(a, a.n[id + 4])
+    put(a, " ")
+    put(a, "is_match_temp=")
+    put_bool(a, a.n[id + 5])
+    put(a, " ")
+    put(a, "unpack_origin=")
+    v173: int = a.n[id + 6]
+    if v173 < 0:
+        put(a, "null")
+    else:
+        d_UnpackOrigin(a, a.n[id + 6])
+    put(a, " ")
+    put(a, "infer_assign=")
+    put_bool(a, a.n[id + 7])
+    put(a, "}")
+
+def mk_VarDecl(a: Ast, name_0: int, name_1: int, type_expr: int, value: int, class_attr: int, is_match_temp: int, unpack_origin: int, infer_assign: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(type_expr)
+    a.n.append(value)
+    a.n.append(class_attr)
+    a.n.append(is_match_temp)
+    a.n.append(unpack_origin)
+    a.n.append(infer_assign)
+    return id
+
+def d_UnpackTarget(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "expr=")
+    v174: int = a.n[id + 0]
+    if v174 < 0:
+        put(a, "null")
+    else:
+        d_Expr(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "star=")
+    put_bool(a, a.n[id + 1])
+    put(a, " ")
+    put(a, "nested=")
+    v175: int = a.n[id + 2]
+    if v175 == -4611686018427387904:
+        put(a, "null")
+    else:
+        s176: int = a.n[id + 2]
+        n177: int = a.n[(id + 2) + 1]
+        put(a, "[")
+        for i178 in range(n177):
+            if i178 > 0:
+                put(a, " ")
+            d_UnpackTarget(a, a.l[s176 + i178 * 1])
+        put(a, "]")
+    put(a, "}")
+
+def mk_UnpackTarget(a: Ast, expr: int, star: int, nested_0: int, nested_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(expr)
+    a.n.append(star)
+    a.n.append(nested_0)
+    a.n.append(nested_1)
+    return id
+
+def d_UnpackOrigin(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "targets=")
+    s179: int = a.n[id + 0]
+    n180: int = a.n[(id + 0) + 1]
+    put(a, "[")
+    for i181 in range(n180):
+        if i181 > 0:
+            put(a, " ")
+        d_UnpackTarget(a, a.l[s179 + i181 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "rhs=")
+    d_Expr(a, a.n[id + 2])
+    put(a, " ")
+    put(a, "skip=")
+    put_int(a, a.n[id + 3])
+    put(a, "}")
+
+def mk_UnpackOrigin(a: Ast, targets_0: int, targets_1: int, rhs: int, skip: int) -> int:
+    id: int = len(a.n)
+    a.n.append(targets_0)
+    a.n.append(targets_1)
+    a.n.append(rhs)
+    a.n.append(skip)
+    return id
+
+def d_TypeAliasStmt(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "target=")
+    d_TypeExpr(a, a.n[id + 2])
+    put(a, "}")
+
+def mk_TypeAliasStmt(a: Ast, name_0: int, name_1: int, target: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(target)
+    return id
+
+def d_ClassAttrRef(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "class=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "name=")
+    put_str(a, a.n[id + 2], a.n[(id + 2) + 1])
+    put(a, "}")
+
+def mk_ClassAttrRef(a: Ast, class_0: int, class_1: int, name_0: int, name_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(class_0)
+    a.n.append(class_1)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    return id
+
+def d_Assign(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "target=")
+    d_Expr(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "value=")
+    d_Expr(a, a.n[id + 1])
+    put(a, " ")
+    put(a, "ann=")
+    v182: int = a.n[id + 2]
+    if v182 < 0:
+        put(a, "null")
+    else:
+        d_TypeExpr(a, a.n[id + 2])
+    put(a, "}")
+
+def mk_Assign(a: Ast, target: int, value: int, ann: int) -> int:
+    id: int = len(a.n)
+    a.n.append(target)
+    a.n.append(value)
+    a.n.append(ann)
+    return id
+
+def d_ExceptClause(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "class_name=")
+    v183: int = a.n[id + 0]
+    if v183 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "bind_name=")
+    v184: int = a.n[id + 2]
+    if v184 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 2], a.n[(id + 2) + 1])
+    put(a, " ")
+    put(a, "body=")
+    s185: int = a.n[id + 4]
+    n186: int = a.n[(id + 4) + 1]
+    put(a, "[")
+    for i187 in range(n186):
+        put(a, "\n")
+        d_Stmt(a, a.l[s185 + i187 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "synth_bind=")
+    put_bool(a, a.n[id + 6])
+    put(a, " ")
+    put(a, "synth_class=")
+    put_bool(a, a.n[id + 7])
+    put(a, "}")
+
+def mk_ExceptClause(a: Ast, class_name_0: int, class_name_1: int, bind_name_0: int, bind_name_1: int, body_0: int, body_1: int, synth_bind: int, synth_class: int) -> int:
+    id: int = len(a.n)
+    a.n.append(class_name_0)
+    a.n.append(class_name_1)
+    a.n.append(bind_name_0)
+    a.n.append(bind_name_1)
+    a.n.append(body_0)
+    a.n.append(body_1)
+    a.n.append(synth_bind)
+    a.n.append(synth_class)
+    return id
+
+def d_TryStmt(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "try_body=")
+    s188: int = a.n[id + 0]
+    n189: int = a.n[(id + 0) + 1]
+    put(a, "[")
+    for i190 in range(n189):
+        put(a, "\n")
+        d_Stmt(a, a.l[s188 + i190 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "except_clauses=")
+    s191: int = a.n[id + 2]
+    n192: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i193 in range(n192):
+        if i193 > 0:
+            put(a, " ")
+        d_ExceptClause(a, a.l[s191 + i193 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "finally_body=")
+    v194: int = a.n[id + 4]
+    if v194 == -4611686018427387904:
+        put(a, "null")
+    else:
+        s195: int = a.n[id + 4]
+        n196: int = a.n[(id + 4) + 1]
+        put(a, "[")
+        for i197 in range(n196):
+            put(a, "\n")
+            d_Stmt(a, a.l[s195 + i197 * 1])
+        put(a, "]")
+    put(a, " ")
+    put(a, "else_origin=")
+    v198: int = a.n[id + 6]
+    if v198 < 0:
+        put(a, "null")
+    else:
+        d_TryElseOrigin(a, a.n[id + 6])
+    put(a, "}")
+
+def mk_TryStmt(a: Ast, try_body_0: int, try_body_1: int, except_clauses_0: int, except_clauses_1: int, finally_body_0: int, finally_body_1: int, else_origin: int) -> int:
+    id: int = len(a.n)
+    a.n.append(try_body_0)
+    a.n.append(try_body_1)
+    a.n.append(except_clauses_0)
+    a.n.append(except_clauses_1)
+    a.n.append(finally_body_0)
+    a.n.append(finally_body_1)
+    a.n.append(else_origin)
+    return id
+
+def d_LowLevelStmt(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "body=")
+    s199: int = a.n[id + 0]
+    n200: int = a.n[(id + 0) + 1]
+    put(a, "[")
+    for i201 in range(n200):
+        put(a, "\n")
+        d_Stmt(a, a.l[s199 + i201 * 1])
+    put(a, "]")
+    put(a, "}")
+
+def mk_LowLevelStmt(a: Ast, body_0: int, body_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(body_0)
+    a.n.append(body_1)
+    return id
+
+def d_WithStmt(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "ctx_expr=")
+    d_Expr(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "binding=")
+    v202: int = a.n[id + 1]
+    if v202 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 1], a.n[(id + 1) + 1])
+    put(a, " ")
+    put(a, "body=")
+    s203: int = a.n[id + 3]
+    n204: int = a.n[(id + 3) + 1]
+    put(a, "[")
+    for i205 in range(n204):
+        put(a, "\n")
+        d_Stmt(a, a.l[s203 + i205 * 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "is_async=")
+    put_bool(a, a.n[id + 5])
+    put(a, " ")
+    put(a, "uid=")
+    put_int(a, a.n[id + 6])
+    put(a, "}")
+
+def mk_WithStmt(a: Ast, ctx_expr: int, binding_0: int, binding_1: int, body_0: int, body_1: int, is_async: int, uid: int) -> int:
+    id: int = len(a.n)
+    a.n.append(ctx_expr)
+    a.n.append(binding_0)
+    a.n.append(binding_1)
+    a.n.append(body_0)
+    a.n.append(body_1)
+    a.n.append(is_async)
+    a.n.append(uid)
+    return id
+
+def d_DeferStmt(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "call=")
+    d_Call(a, a.n[id + 0])
+    put(a, "}")
+
+def mk_DeferStmt(a: Ast, call: int) -> int:
+    id: int = len(a.n)
+    a.n.append(call)
+    return id
+
+def d_ImportStmt(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "segments=")
+    s206: int = a.n[id + 0]
+    n207: int = a.n[(id + 0) + 1]
+    put(a, "[")
+    for i208 in range(n207):
+        if i208 > 0:
+            put(a, " ")
+        put_str(a, a.l[s206 + i208 * 2], a.l[(s206 + i208 * 2) + 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "alias=")
+    v209: int = a.n[id + 2]
+    if v209 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 2], a.n[(id + 2) + 1])
+    put(a, "}")
+
+def mk_ImportStmt(a: Ast, segments_0: int, segments_1: int, alias_0: int, alias_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(segments_0)
+    a.n.append(segments_1)
+    a.n.append(alias_0)
+    a.n.append(alias_1)
+    return id
+
+def d_FromImportName(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "name=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "alias=")
+    v210: int = a.n[id + 2]
+    if v210 == -4611686018427387904:
+        put(a, "null")
+    else:
+        put_str(a, a.n[id + 2], a.n[(id + 2) + 1])
+    put(a, "}")
+
+def mk_FromImportName(a: Ast, name_0: int, name_1: int, alias_0: int, alias_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(name_0)
+    a.n.append(name_1)
+    a.n.append(alias_0)
+    a.n.append(alias_1)
+    return id
+
+def d_FromImportStmt(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "segments=")
+    s211: int = a.n[id + 0]
+    n212: int = a.n[(id + 0) + 1]
+    put(a, "[")
+    for i213 in range(n212):
+        if i213 > 0:
+            put(a, " ")
+        put_str(a, a.l[s211 + i213 * 2], a.l[(s211 + i213 * 2) + 1])
+    put(a, "]")
+    put(a, " ")
+    put(a, "names=")
+    s214: int = a.n[id + 2]
+    n215: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i216 in range(n215):
+        if i216 > 0:
+            put(a, " ")
+        d_FromImportName(a, a.l[s214 + i216 * 1])
+    put(a, "]")
+    put(a, "}")
+
+def mk_FromImportStmt(a: Ast, segments_0: int, segments_1: int, names_0: int, names_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(segments_0)
+    a.n.append(segments_1)
+    a.n.append(names_0)
+    a.n.append(names_1)
+    return id
+
+def d_StmtKind(a: Ast, id: int) -> None:
+    tag: int = a.n[id]
+    if tag == 0:
+        put(a, "(expr_stmt")
+        put(a, " ")
+        d_Expr(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 1:
+        put(a, "(var_decl")
+        put(a, " ")
+        d_VarDecl(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 2:
+        put(a, "(type_alias")
+        put(a, " ")
+        d_TypeAliasStmt(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 3:
+        put(a, "(assign")
+        put(a, " ")
+        d_Assign(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 4:
+        put(a, "(if_stmt")
+        put(a, " ")
+        d_IfStmt(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 5:
+        put(a, "(while_stmt")
+        put(a, " ")
+        d_WhileStmt(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 6:
+        put(a, "(for_stmt")
+        put(a, " ")
+        d_ForStmt(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 7:
+        put(a, "(func_def")
+        put(a, " ")
+        d_FuncDef(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 8:
+        put(a, "(class_def")
+        put(a, " ")
+        d_ClassDef(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 9:
+        put(a, "(protocol_def")
+        put(a, " ")
+        d_ProtocolDef(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 10:
+        put(a, "(extern_def")
+        put(a, " ")
+        d_ExternDef(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 11:
+        put(a, "(return_stmt")
+        put(a, " ")
+        v217: int = a.n[id + 1]
+        if v217 < 0:
+            put(a, "null")
+        else:
+            d_Expr(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 12:
+        put(a, "(raise_stmt")
+        put(a, " ")
+        d_Expr(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 13:
+        put(a, "(try_stmt")
+        put(a, " ")
+        d_TryStmt(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 14:
+        put(a, "(lowlevel_stmt")
+        put(a, " ")
+        d_LowLevelStmt(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 15:
+        put(a, "(import_stmt")
+        put(a, " ")
+        d_ImportStmt(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 16:
+        put(a, "(from_import_stmt")
+        put(a, " ")
+        d_FromImportStmt(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 17:
+        put(a, "(pass_stmt")
+        put(a, ")")
+        return
+    if tag == 18:
+        put(a, "(break_stmt")
+        put(a, ")")
+        return
+    if tag == 19:
+        put(a, "(continue_stmt")
+        put(a, ")")
+        return
+    if tag == 20:
+        put(a, "(del_stmt")
+        put(a, " ")
+        d_Expr(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 21:
+        put(a, "(with_stmt")
+        put(a, " ")
+        d_WithStmt(a, a.n[id + 1])
+        put(a, ")")
+        return
+    if tag == 22:
+        put(a, "(defer_stmt")
+        put(a, " ")
+        d_DeferStmt(a, a.n[id + 1])
+        put(a, ")")
+        return
+    put(a, "(?)")
+
+def mk_StmtKind_expr_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(0)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_var_decl(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(1)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_type_alias(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(2)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_assign(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(3)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_if_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(4)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_while_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(5)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_for_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(6)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_func_def(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(7)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_class_def(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(8)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_protocol_def(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(9)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_extern_def(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(10)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_return_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(11)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_raise_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(12)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_try_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(13)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_lowlevel_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(14)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_import_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(15)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_from_import_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(16)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_pass_stmt(a: Ast) -> int:
+    id: int = len(a.n)
+    a.n.append(17)
+    return id
+
+def mk_StmtKind_break_stmt(a: Ast) -> int:
+    id: int = len(a.n)
+    a.n.append(18)
+    return id
+
+def mk_StmtKind_continue_stmt(a: Ast) -> int:
+    id: int = len(a.n)
+    a.n.append(19)
+    return id
+
+def mk_StmtKind_del_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(20)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_with_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(21)
+    a.n.append(v0)
+    return id
+
+def mk_StmtKind_defer_stmt(a: Ast, v0: int) -> int:
+    id: int = len(a.n)
+    a.n.append(22)
+    a.n.append(v0)
+    return id
+
+def d_Stmt(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "kind=")
+    d_StmtKind(a, a.n[id + 0])
+    put(a, " ")
+    put(a, "line=")
+    put_int(a, a.n[id + 1])
+    put(a, " ")
+    put(a, "span=")
+    d_Span(a, a.n[id + 2])
+    put(a, "}")
+
+def mk_Stmt(a: Ast, kind: int, line: int, span: int) -> int:
+    id: int = len(a.n)
+    a.n.append(kind)
+    a.n.append(line)
+    a.n.append(span)
+    return id
+
+def d_ModuleExports(a: Ast, id: int) -> None:
+    put(a, "{")
+    put(a, "module=")
+    put_str(a, a.n[id + 0], a.n[(id + 0) + 1])
+    put(a, " ")
+    put(a, "names=")
+    s218: int = a.n[id + 2]
+    n219: int = a.n[(id + 2) + 1]
+    put(a, "[")
+    for i220 in range(n219):
+        if i220 > 0:
+            put(a, " ")
+        put_str(a, a.l[s218 + i220 * 2], a.l[(s218 + i220 * 2) + 1])
+    put(a, "]")
+    put(a, "}")
+
+def mk_ModuleExports(a: Ast, module_0: int, module_1: int, names_0: int, names_1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(module_0)
+    a.n.append(module_1)
+    a.n.append(names_0)
+    a.n.append(names_1)
+    return id
+
+# Modül dökümü (Zig `dumpModuleFull`): `{body=[...] exports=[...]}` + satır sonu. Kökler: gövde (l içinde başlangıç, uzunluk) ve exports (başlangıç, uzunluk).
+def dump_module(a: Ast, body_start: int, body_len: int, exp_start: int, exp_len: int) -> None:
+    put(a, "{body=[")
+    for i in range(body_len):
+        put(a, "\n")
+        d_Stmt(a, a.l[body_start + i])
+    put(a, "] exports=[")
+    for i in range(exp_len):
+        if i > 0:
+            put(a, " ")
+        d_ModuleExports(a, a.l[exp_start + i])
+    put(a, "]}\n")
+
+G: Ast = Ast(0, 0)
+
+# --- Zig <-> Nox test köprüsü: Zig `ast.Module`ünü aynı kodlamayla düz dizilere çevirip bu işlevlerle yükler ---
+def nox_ast_reset(src: int, src_len: int) -> int:
+    global G
+    G = Ast(src, src_len)
+    return 0
+
+def nox_ast_push_n(v: int) -> int:
+    G.n.append(v)
+    return 0
+
+def nox_ast_push_l(v: int) -> int:
+    G.l.append(v)
+    return 0
+
+def nox_ast_push_sb(v: int) -> int:
+    G.sb.append(v)
+    return 0
+
+def nox_ast_push_sp(id: int, span: int) -> int:
+    G.sp_ids.append(id)
+    G.sp_vals.append(span)
+    return 0
+
+def nox_ast_dump(body_start: int, body_len: int, exp_start: int, exp_len: int) -> int:
+    dump_module(G, body_start, body_len, exp_start, exp_len)
+    return len(G.o)
+
+def nox_ast_out_buffer() -> int:
+    xs: list[int] = G.o
+    p: int = 0
+    lowlevel:
+        p = ptr_to_int(ptr_of(xs))
+    return p
+

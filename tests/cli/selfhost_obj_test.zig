@@ -201,3 +201,31 @@ test "selfhost lexer: tekrarli calistirma sizinti/cifte serbest birakma uretmez 
         return error.TestUnexpectedResult;
     }
 }
+
+// noxc-nightly Aşama 2.A: `selfhost/ast_schema.nox` `noxc ast --schema`dan ÜRETİLİR; güncel olmalı ve birleşik giriş (`selfhost/selfhost.nox`: lexer + AST şeması) `--selfhost-obj` ile derlenmeli.
+test "selfhost ast_schema: uretilmis dosya guncel ve birlesik giris derlenir" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    const gen = std.process.run(std.testing.allocator, io, .{ .argv = &.{ "python3", "scripts/gen_selfhost_ast.py", "--check" } }) catch return error.SkipZigTest;
+    defer std.testing.allocator.free(gen.stdout);
+    defer std.testing.allocator.free(gen.stderr);
+    if (gen.term != .exited or gen.term.exited != 0) {
+        std.debug.print("ast_schema.nox guncel degil: {s}{s}\n", .{ gen.stdout, gen.stderr });
+        return error.TestUnexpectedResult;
+    }
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(io, &buf)];
+    const obj = try std.fmt.allocPrint(std.testing.allocator, "{s}/selfhost.o", .{dir});
+    defer std.testing.allocator.free(obj);
+    const r = std.process.run(std.testing.allocator, io, .{ .argv = &.{ "zig-out/bin/noxc", "build", "--selfhost-obj", "-o", obj, "selfhost/selfhost.nox" } }) catch return error.SkipZigTest;
+    defer std.testing.allocator.free(r.stdout);
+    defer std.testing.allocator.free(r.stderr);
+    if (r.term != .exited or r.term.exited != 0) {
+        if (std.mem.indexOf(u8, r.stderr, "needs the native LLVM backend") != null) return error.SkipZigTest;
+        std.debug.print("selfhost.nox derlenemedi: {s}\n", .{r.stderr});
+        return error.TestUnexpectedResult;
+    }
+}
+

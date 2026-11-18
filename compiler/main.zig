@@ -32,6 +32,7 @@ const wasm_link = @import("wasm_link.zig");
 const ast = @import("parser/ast.zig");
 const ast_dump = @import("parser/ast_dump.zig");
 const ast_dump_full = @import("parser/ast_dump_full.zig");
+const ast_schema = @import("parser/ast_schema.zig");
 const checker = @import("typecheck/checker.zig");
 const ownership = @import("ownership/analysis.zig");
 const codegen = @import("codegen_qbe/codegen.zig");
@@ -465,7 +466,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, lex_bench, tokens_cmd, ast_cmd, legacy };
+    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, lex_bench, ast_roundtrip, tokens_cmd, ast_cmd, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -494,6 +495,7 @@ fn realMain(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "check")) break :blk .check;
         if (build_options.nightly and std.mem.eql(u8, first, "selfhost-info")) break :blk .selfhost_info;
         if (build_options.nightly and std.mem.eql(u8, first, "lex-bench")) break :blk .lex_bench;
+        if (build_options.nightly and std.mem.eql(u8, first, "ast-roundtrip")) break :blk .ast_roundtrip;
         if (std.mem.eql(u8, first, "tokens")) break :blk .tokens_cmd;
         if (std.mem.eql(u8, first, "ast")) break :blk .ast_cmd;
         if (std.mem.eql(u8, first, "expand")) break :blk .expand;
@@ -561,6 +563,7 @@ fn realMain(init: std.process.Init) !void {
         .cache => try cmdCache(io, a, rest, nox_home, run_limits),
         .selfhost_info => try cmdSelfhostInfo(io, a, rest),
         .lex_bench => try cmdLexBench(io, a, rest),
+        .ast_roundtrip => try cmdAstRoundtrip(gpa, io, a, rest),
         .tokens_cmd => try cmdTokens(gpa, io, a, rest),
         .ast_cmd => try cmdAst(gpa, io, a, rest),
     }
@@ -675,9 +678,18 @@ fn writeEscaped(w: *std.Io.Writer, s: []const u8) !void {
 /// (yüzey-koruma bayrakları, `*Origin` yapıları, span'ler, ifade span'leri) kayıpsız döken kanonik biçim (`parser/ast_dump_full.zig`; noxc-nightly Aşama 2'nin oracle'ı).
 fn cmdAst(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void {
     var full = false;
+    var schema = false;
     var path: ?[]const u8 = null;
     for (rest) |arg| {
-        if (std.mem.eql(u8, arg, "--full")) full = true else path = arg;
+        if (std.mem.eql(u8, arg, "--full")) full = true else if (std.mem.eql(u8, arg, "--schema")) schema = true else path = arg;
+    }
+    if (schema) {
+        // `noxc ast --schema`: ast.zig'nin şeması (gen_selfhost_ast.py girdisi); dosya argümanı gerekmez.
+        var sbuf: [1 << 14]u8 = undefined;
+        var sw = std.Io.File.stdout().writer(io, &sbuf);
+        try ast_schema.dumpSchema(&sw.interface);
+        try sw.interface.flush();
+        return;
     }
     const p = path orelse {
         printErr("usage: noxc ast [--full] <file.nox>\n", .{});
@@ -692,6 +704,30 @@ fn cmdAst(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []cons
     var stdout_buf: [1 << 16]u8 = undefined;
     var sw = std.Io.File.stdout().writer(io, &stdout_buf);
     if (full) try ast_dump_full.dumpModuleFull(&sw.interface, module) else try ast_dump.dumpModule(&sw.interface, module);
+    try sw.interface.flush();
+}
+
+/// `noxc-nightly ast-roundtrip <dosya>` (Aşama 2.B): Zig parser AST'si → düz-dizi kodlama → Nox AST yazıcısı (`selfhost/ast_schema.nox`); çıktı `noxc ast --full` ile BİREBİR aynı olmalıdır.
+fn cmdAstRoundtrip(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void {
+    if (comptime !build_options.nightly) unreachable;
+    const glue = @import("selfhost_glue.zig");
+    const flat_mod = @import("parser/ast_flat.zig");
+    if (rest.len == 0) {
+        printErr("usage: noxc-nightly ast-roundtrip <file.nox>\n", .{});
+        std.process.exit(1);
+    }
+    const source = std.Io.Dir.cwd().readFileAlloc(io, rest[0], gpa, .limited(64 * 1024 * 1024)) catch {
+        printErr("ast-roundtrip: cannot read {s}\n", .{rest[0]});
+        std.process.exit(1);
+    };
+    defer gpa.free(source);
+    const module = try parseUserSource(a, source, rest[0]);
+    const flat = try flat_mod.encodeModule(a, module, source);
+    const nrt: *glue.Runtime = @ptrCast(@alignCast(g_nightly_rt.?));
+    const out = try nrt.astRoundtripDump(a, flat, source);
+    var stdout_buf: [1 << 16]u8 = undefined;
+    var sw = std.Io.File.stdout().writer(io, &stdout_buf);
+    try sw.interface.writeAll(out);
     try sw.interface.flush();
 }
 

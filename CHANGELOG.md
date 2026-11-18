@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.41]
+
+noxc-nightly Aşama 2.A + 2.B: AST şeması üretici ve Nox yazıcısının Zig dökümüne karşı doğrulanması (parser henüz yok).
+
+- **`noxc ast --schema`:** `ast.zig`nin şemasını (59 tür, alan adları/türleri/varsayılanları) comptime yansımasıyla döker (`compiler/parser/ast_schema.zig`).
+- **`scripts/gen_selfhost_ast.py` → `selfhost/ast_schema.nox` (üretilmiş, 2 767 satır):** düz-dizi AST şeması (düğüm tablosu `n`, liste tablosu `l`, sentezlenmiş dize baytları `sb`, ifade span'leri), her tür için oluşturucu (`mk_*`) ve Zig `ast --full` biçimini birebir üreten `d_*` yazıcıları; `--check` precheck ve `zig build test`te (şema değişirse Nox tarafı sessizce geride kalamaz).
+- **Doğrulama köprüsü (2.B):** `compiler/parser/ast_flat.zig` (yansıma-tabanlı Zig AST → düz-dizi kodlayıcı) + `noxc-nightly ast-roundtrip`: Nox yazıcısının çıktısı depodaki 1 258 dosya ve mutasyonlu girdilerde `noxc ast --full` ile bayt-bayt aynı (`frontend_diff.py --component astdump`; `zig build frontend-diff-test`e eklendi).
+- **Birleşik giriş:** `selfhost/selfhost.nox` (lexer + AST şeması) tek nesneye derlenir; içe aktarılan modüllerin C simgeleri modül öneklidir (`lexer_nox_lex_run`, `ast_schema_nox_ast_dump`).
+- **Açık:** parser'ın Nox'a taşınması (2.2–2.8, 2.10).
+
 ## [2.2.40]
 
 noxc-nightly Aşama 2 başladı: oracle ve tasarım.
