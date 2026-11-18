@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.40]
+
+noxc-nightly Aşama 2 başladı: oracle ve tasarım.
+
+- **`noxc ast --full`:** AST'nin HER alanını (yüzey-koruma bayrakları, `*Origin` yapıları, `Stmt.span`, ifade span'leri) comptime yansımasıyla kayıpsız ve deterministik döker (`compiler/parser/ast_dump_full.zig`); `ast.zig`ye eklenen her yeni alan otomatik kapsanır. Nox parser'ının doğruluk ölçütü (farksal: `frontend_diff.py --component ast --sub-args=--full`).
+- **Tasarım (2.1):** `project/selfhost-ast-tasarimi-2026-11.md`: düz-dizi AST (ölçüm: 524 bin düğümde sınıf-düğüm 86 MB / düz dizi 35 MB; bellek bütçesi yalnızca düz diziyle sağlanır), şema `ast.zig`den üretilir (`scripts/gen_selfhost_ast.py`), Nox parser'ı `parser.zig`in tam yüzeyini işlev-işlev taşır; alt adımlar 2.0–2.J.
+- Test: `tests/cli/tokens_ast_test.zig` `ast --full` testi.
+
 ## [2.2.39]
 
 Aşama 1 dogfood defteri tamamen kapandı (D1.1–D1.8).

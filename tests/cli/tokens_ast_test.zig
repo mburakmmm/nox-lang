@@ -97,3 +97,27 @@ test "CRLF: trivia satir numaralari dogru, yorum metni \\r tasimaz, fmt karisik 
     defer std.testing.allocator.free(out);
     try std.testing.expectEqualStrings("x = 1\n\n# c1\ny = 2  # t\n", out);
 }
+
+// noxc-nightly Aşama 2 oracle'ı: `ast --full` AST'nin HER alanını (yüzey-koruma bayrakları, *Origin yapıları, span'ler) deterministik döker.
+test "ast --full: tum alanlar (spread bayragi, unpack_origin, span) ve deterministik cikti" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "f.nox", .data = "def f(a: int) -> int:\n    xs: list[int] = [a, *[a]]\n    p, *q = xs\n    return p\n" });
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(io, &buf)];
+    const path = try std.fmt.allocPrint(std.testing.allocator, "{s}/f.nox", .{dir});
+    defer std.testing.allocator.free(path);
+    const r1 = try runNoxc(std.testing.allocator, io, &.{ "zig-out/bin/noxc", "ast", "--full", path });
+    defer std.testing.allocator.free(r1.stdout);
+    defer std.testing.allocator.free(r1.stderr);
+    const r2 = try runNoxc(std.testing.allocator, io, &.{ "zig-out/bin/noxc", "ast", "--full", path });
+    defer std.testing.allocator.free(r2.stdout);
+    defer std.testing.allocator.free(r2.stderr);
+    try std.testing.expect(r1.term == .exited and r1.term.exited == 0);
+    try std.testing.expectEqualStrings(r1.stdout, r2.stdout);
+    try std.testing.expect(std.mem.startsWith(u8, r1.stdout, "{body=[\n{kind=(func_def {name=\"f\" "));
+    try std.testing.expect(std.mem.indexOf(u8, r1.stdout, "spread=true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r1.stdout, "unpack_origin={targets=[") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r1.stdout, "span={start_byte=") != null);
+}

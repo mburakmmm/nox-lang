@@ -31,6 +31,7 @@ const frontend = @import("frontend.zig");
 const wasm_link = @import("wasm_link.zig");
 const ast = @import("parser/ast.zig");
 const ast_dump = @import("parser/ast_dump.zig");
+const ast_dump_full = @import("parser/ast_dump_full.zig");
 const checker = @import("typecheck/checker.zig");
 const ownership = @import("ownership/analysis.zig");
 const codegen = @import("codegen_qbe/codegen.zig");
@@ -670,21 +671,27 @@ fn writeEscaped(w: *std.Io.Writer, s: []const u8) !void {
     try w.writeByte('"');
 }
 
-/// `noxc ast <dosya>`: yalnızca ayrıştırır (tip denetimi yok) ve AST dökümünü stdout'a yazar (`build --dump`un AST bölümüyle aynı biçim; noxc-nightly Aşama 0.5).
+/// `noxc ast [--full] <dosya>`: yalnızca ayrıştırır (tip denetimi yok) ve AST dökümünü stdout'a yazar. Varsayılan: `build --dump`un AST bölümüyle aynı özet biçim; `--full`: AST'nin HER alanını
+/// (yüzey-koruma bayrakları, `*Origin` yapıları, span'ler, ifade span'leri) kayıpsız döken kanonik biçim (`parser/ast_dump_full.zig`; noxc-nightly Aşama 2'nin oracle'ı).
 fn cmdAst(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void {
-    if (rest.len == 0) {
-        printErr("usage: noxc ast <file.nox>\n", .{});
-        std.process.exit(1);
+    var full = false;
+    var path: ?[]const u8 = null;
+    for (rest) |arg| {
+        if (std.mem.eql(u8, arg, "--full")) full = true else path = arg;
     }
-    const source = std.Io.Dir.cwd().readFileAlloc(io, rest[0], gpa, .limited(64 * 1024 * 1024)) catch {
-        printErr("ast: cannot read {s}\n", .{rest[0]});
+    const p = path orelse {
+        printErr("usage: noxc ast [--full] <file.nox>\n", .{});
+        std.process.exit(1);
+    };
+    const source = std.Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(64 * 1024 * 1024)) catch {
+        printErr("ast: cannot read {s}\n", .{p});
         std.process.exit(1);
     };
     defer gpa.free(source);
-    const module = try parseUserSource(a, source, rest[0]);
+    const module = try parseUserSource(a, source, p);
     var stdout_buf: [1 << 16]u8 = undefined;
     var sw = std.Io.File.stdout().writer(io, &stdout_buf);
-    try ast_dump.dumpModule(&sw.interface, module);
+    if (full) try ast_dump_full.dumpModuleFull(&sw.interface, module) else try ast_dump.dumpModule(&sw.interface, module);
     try sw.interface.flush();
 }
 

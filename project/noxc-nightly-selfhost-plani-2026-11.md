@@ -113,7 +113,7 @@ Değişmez kurala (§0) göre Aşama 1 yeniden denetlendi: (1) **yüzey/çıktı
 
 Girdi: `parser.zig` (~3 000 satır) + `ast.zig` (~640) + `ast_dump.zig`. Çıkış ölçütü: `--dump` çıktısı depodaki tüm dosyalarda Zig ile özdeş (`tests/golden/cases/*.ast.expected` dahil); sözdizimi hata konum/mesajları aynı; desugarlar (tuple açma, `match`, `defer`, dekoratör, dict/list comprehension, f-string bölme, lambda) birebir.
 
-- [ ] 2.1 AST sınıf hiyerarşisi tasarımı (`selfhost/ast.nox`): ifade/deyim birleşim tipleri (sınıf hiyerarşisi + `kind` alanı; jenerik enum gerekirse dil işi `[K]`).
+- [x] 2.1 (v2.2.40; tasarım: `project/selfhost-ast-tasarimi-2026-11.md` — düz-dizi temsil, ölçümlü karar) AST sınıf hiyerarşisi tasarımı (`selfhost/ast.nox`): ifade/deyim birleşim tipleri (sınıf hiyerarşisi + `kind` alanı; jenerik enum gerekirse dil işi `[K]`).
 - [ ] 2.2 Token akışı okuyucusu (Aşama 1 çıktısı ya da yerel lexer), `peek/advance/expect`, hata kurtarma kuralları (Zig ile aynı).
 - [ ] 2.3 İfade ayrıştırma: öncelik tırmanışı, üçlü, lambda, comprehension, `await/spawn`, çağrı/indeks/öznitelik, anahtar kelimeli argüman.
 - [ ] 2.4 Deyimler: atama/artırılmış/`:=`, `if/while/for/try/with/match`, `def/class/protocol/enum`, `import`, `defer`, `global/nonlocal`.
