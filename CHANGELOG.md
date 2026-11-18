@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.28]
+
+Bootstrap başladı: `noxc-nightly` Aşama 0.1 (Zig → Nox çağrı deneyi).
+
+- **Deney:** `selfhost/spike/01-zig-calls-nox/` — Nox'ta yazılmış `count_ident_tokens(buf: ptr[u8], n: int) -> int` işlevi `noxc` ile `.ll`ye, `clang -c` ile nesneye derlenir ve Zig harness'tan C ABI ile çağrılır (`run.sh` yeniden üretir). Yol A (statik bağlama) çalışıyor; Nox işlevleri `define i64 @ad(i64 %rt, ...)` dış bağlantılı simgelerdir; 1,9 MB saf tarama döngüsünde Nox, eşdeğer Zig'in 0,67–0,79×'i kadar sürüyor.
+- **Açık nokta:** hosted `--emit-obj`/dışa aktarma kipi yok (`main` simgesi çakışır): `project/noxc-nightly-selfhost-plani-2026-11.md` §3.1'deki `[K]` kararı 0.3'ü bekliyor. Kod değişikliği yok.
+
 ## [2.2.27]
 
 GPT-6 P1.5: STW güvenli-nokta gecikmesi ölçüldü (kod değişikliği yok).

@@ -1,0 +1,19 @@
+def is_ident_start(c: int) -> bool:
+    return (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 95
+
+def is_ident_char(c: int) -> bool:
+    return is_ident_start(c) or (c >= 48 and c <= 57)
+
+def count_ident_tokens(buf: ptr[u8], n: int) -> int:
+    count: int = 0
+    i: int = 0
+    lowlevel:
+        while i < n:
+            c: int = int(ptr_read(ptr_offset(buf, i)))
+            if is_ident_start(c):
+                count = count + 1
+                while i < n and is_ident_char(int(ptr_read(ptr_offset(buf, i)))):
+                    i = i + 1
+            else:
+                i = i + 1
+    return count
