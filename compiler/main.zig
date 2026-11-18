@@ -89,6 +89,8 @@ fn detectLiveProgress(io: std.Io, environ_map: *const std.process.Environ.Map) b
 /// (`filesystem|fs`, `network|net`, `clock`, `entropy|random`, `threads`, `process`, `shared_memory|shm`, `libc_math`, `dynamic_code|dynamic`). `main()` bir kez
 /// ayarlar; tüm denetleyici kurulumları `applyDeniedCapabilities` ile okur. (Güvenilmeyen kodu derleyen playground için; bkz. spec §3.346.)
 var g_deny_capabilities: []const u8 = "";
+/// `--frontend zig|nox` (noxc-nightly Aşama 0.4): hangi ön yüz bileşeninin kullanılacağı. Normal `noxc`te yalnızca `zig`; nightly'de `nox` bileşen hazır oldukça (şimdilik hiçbiri) o bileşeni seçer.
+var g_frontend_nox: bool = false;
 
 /// v2.0.148: `--vfs-dir`: `noxc run --target wasm32-freestanding`ın sanal dosya sistemini kalıcı kılan dizin (boş = kalıcı değil). Yalnızca node sürücüsüne iletilir.
 var g_vfs_dir: []const u8 = "";
@@ -326,6 +328,33 @@ fn realMain(init: std.process.Init) !void {
                 g_deny_capabilities = arg["--deny-capability=".len..];
                 continue;
             }
+            // `--frontend zig|nox` / `--frontend=zig|nox` (noxc-nightly Aşama 0.4): global; alt komut ayrıştırıcıları görmez.
+            var frontend_val: ?[]const u8 = null;
+            if (std.mem.eql(u8, arg, "--frontend")) {
+                if (r + 1 >= all_args.items.len) {
+                    printErr("--frontend expects 'zig' or 'nox'\n", .{});
+                    std.process.exit(1);
+                }
+                r += 1;
+                frontend_val = all_args.items[r];
+            } else if (std.mem.startsWith(u8, arg, "--frontend=")) {
+                frontend_val = arg["--frontend=".len..];
+            }
+            if (frontend_val) |fv| {
+                if (std.mem.eql(u8, fv, "zig")) {
+                    g_frontend_nox = false;
+                } else if (std.mem.eql(u8, fv, "nox")) {
+                    if (comptime !build_options.nightly) {
+                        printErr("--frontend nox: this noxc has no Nox frontend components (build the nightly with 'zig build nightly' and run noxc-nightly)\n", .{});
+                        std.process.exit(1);
+                    }
+                    g_frontend_nox = true;
+                } else {
+                    printErr("--frontend expects 'zig' or 'nox' (got '{s}')\n", .{fv});
+                    std.process.exit(1);
+                }
+                continue;
+            }
             // v2.0.148: `--vfs-dir <dizin>` / `--vfs-dir=<dizin>` — `noxc run --target wasm32-freestanding` için kalıcı sanal dosya sistemi (spec §3.350).
             if (std.mem.eql(u8, arg, "--vfs-dir")) {
                 if (r + 1 >= all_args.items.len) {
@@ -405,7 +434,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, legacy };
+    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, tokens_cmd, ast_cmd, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -433,6 +462,8 @@ fn realMain(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "init")) break :blk .init;
         if (std.mem.eql(u8, first, "check")) break :blk .check;
         if (build_options.nightly and std.mem.eql(u8, first, "selfhost-info")) break :blk .selfhost_info;
+        if (std.mem.eql(u8, first, "tokens")) break :blk .tokens_cmd;
+        if (std.mem.eql(u8, first, "ast")) break :blk .ast_cmd;
         if (std.mem.eql(u8, first, "expand")) break :blk .expand;
         if (std.mem.eql(u8, first, "explain")) break :blk .explain;
         if (std.mem.eql(u8, first, "bindgen")) break :blk .bindgen;
@@ -497,7 +528,98 @@ fn realMain(init: std.process.Init) !void {
         .refresh => try cmdRefresh(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, init.environ_map),
         .cache => try cmdCache(io, a, rest, nox_home, run_limits),
         .selfhost_info => try cmdSelfhostInfo(io, a, rest),
+        .tokens_cmd => try cmdTokens(gpa, io, a, rest),
+        .ast_cmd => try cmdAst(gpa, io, a, rest),
     }
+}
+
+/// Lexer çıktısının Nox/Zig ortak, farksal-test dostu dökümü (noxc-nightly Aşama 0.5). Gizli geliştirici komutu (yardım ekranında yok; `docs/internals/testing.md`).
+///   noxc tokens [--json] <dosya>
+/// Metin: `SATIR:SÜTUN KIND BAŞ-SON "kaçışlı lexeme"` (bayt aralığı yarı açık); hata: `ERROR HataAdı SATIR:SÜTUN` (çıkış kodu 1, stdout).
+fn cmdTokens(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void {
+    var json = false;
+    var path: ?[]const u8 = null;
+    for (rest) |arg| {
+        if (std.mem.eql(u8, arg, "--json")) json = true else path = arg;
+    }
+    const p = path orelse {
+        printErr("usage: noxc tokens [--json] <file.nox>\n", .{});
+        std.process.exit(1);
+    };
+    const source = std.Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(64 * 1024 * 1024)) catch {
+        printErr("tokens: cannot read {s}\n", .{p});
+        std.process.exit(1);
+    };
+    defer gpa.free(source);
+    var stdout_buf: [1 << 16]u8 = undefined;
+    var sw = std.Io.File.stdout().writer(io, &stdout_buf);
+    const w = &sw.interface;
+    if (g_frontend_nox) {
+        // Aşama 1'de `selfhost/lexer.nox` bu noktaya bağlanır (plan 1.9); o zamana kadar seçilemez.
+        printErr("--frontend nox: the Nox lexer is not implemented yet (plan Asama 1)\n", .{});
+        std.process.exit(2);
+    }
+    const lexed = lexer.tokenizeCapturingSpan(a, source);
+    if (lexed.tokens) |tokens| {
+        if (json) try w.writeAll("{\"tokens\":[");
+        for (tokens, 0..) |t, i| {
+            if (json) {
+                if (i != 0) try w.writeByte(',');
+                try w.print("{{\"kind\":\"{s}\",\"lexeme\":", .{@tagName(t.kind)});
+                try writeEscaped(w, t.lexeme);
+                try w.print(",\"line\":{d},\"col\":{d},\"start\":{d},\"end\":{d}}}", .{ t.line, t.col, t.start_byte, t.end_byte });
+            } else {
+                try w.print("{d}:{d} {s} {d}-{d} ", .{ t.line, t.col, @tagName(t.kind), t.start_byte, t.end_byte });
+                try writeEscaped(w, t.lexeme);
+                try w.writeByte('\n');
+            }
+        }
+        if (json) try w.writeAll("]}\n");
+        try w.flush();
+        return;
+    }
+    const err = lexed.err.?;
+    if (err == error.OutOfMemory) return error.OutOfMemory;
+    if (json) {
+        try w.print("{{\"error\":\"{s}\",\"line\":{d},\"col\":{d}}}\n", .{ @errorName(err), lexed.err_span.start_line, lexed.err_span.start_col });
+    } else {
+        try w.print("ERROR {s} {d}:{d}\n", .{ @errorName(err), lexed.err_span.start_line, lexed.err_span.start_col });
+    }
+    try w.flush();
+    std.process.exit(1);
+}
+
+/// `"..."` biçiminde, JSON ve metin dökümünde ORTAK kaçışlama (yalnızca `"`, `\\`, `\n`, `\r`, `\t` ve <0x20/0x7f baytları `\u00XX`; diğer baytlar olduğu gibi).
+fn writeEscaped(w: *std.Io.Writer, s: []const u8) !void {
+    try w.writeByte('"');
+    for (s) |c| switch (c) {
+        '"' => try w.writeAll("\\\""),
+        '\\' => try w.writeAll("\\\\"),
+        '\n' => try w.writeAll("\\n"),
+        '\r' => try w.writeAll("\\r"),
+        '\t' => try w.writeAll("\\t"),
+        0...8, 11, 12, 14...31, 127 => try w.print("\\u00{x:0>2}", .{c}),
+        else => try w.writeByte(c),
+    };
+    try w.writeByte('"');
+}
+
+/// `noxc ast <dosya>`: yalnızca ayrıştırır (tip denetimi yok) ve AST dökümünü stdout'a yazar (`build --dump`un AST bölümüyle aynı biçim; noxc-nightly Aşama 0.5).
+fn cmdAst(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void {
+    if (rest.len == 0) {
+        printErr("usage: noxc ast <file.nox>\n", .{});
+        std.process.exit(1);
+    }
+    const source = std.Io.Dir.cwd().readFileAlloc(io, rest[0], gpa, .limited(64 * 1024 * 1024)) catch {
+        printErr("ast: cannot read {s}\n", .{rest[0]});
+        std.process.exit(1);
+    };
+    defer gpa.free(source);
+    const module = try parseUserSource(a, source, rest[0]);
+    var stdout_buf: [1 << 16]u8 = undefined;
+    var sw = std.Io.File.stdout().writer(io, &stdout_buf);
+    try ast_dump.dumpModule(&sw.interface, module);
+    try sw.interface.flush();
 }
 
 /// `noxc-nightly selfhost-info [dosya]`: nightly'ye bağlı Nox bileşenlerini listeler ve deneme bileşenini (tanımlayıcı sayacı) verilen dosyada çalıştırır. Normal `noxc`te bu komut yoktur.

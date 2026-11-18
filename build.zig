@@ -809,6 +809,15 @@ pub fn build(b: *std.Build) void {
     const nightly_step = b.step("nightly", "noxc-nightly: noxc + Nox ile yazılmış bileşenler (selfhost/) -> zig-out/bin/noxc-nightly");
     nightly_step.dependOn(&install_nightly.step);
 
+    // noxc-nightly Aşama 0.6: farksal test koşucusu. `frontend-diff-test` koşucunun kendi sağlamlık denetimini (fark yakalama + küçültme) ve Zig↔Zig özdeşlik koşusunu çalıştırır; Nox bileşenleri
+    // (Aşama 1+) geldikçe `--component lexer` Zig'i `noxc-nightly --frontend nox` ile karşılaştırır (`scripts/frontend_diff.py`). Opt-in: `zig build test`in parçası değildir.
+    const frontend_diff_selftest = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--selftest" });
+    frontend_diff_selftest.step.dependOn(b.getInstallStep());
+    const frontend_diff_zig = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "lexer", "--zig-only" });
+    frontend_diff_zig.step.dependOn(&frontend_diff_selftest.step);
+    const frontend_diff_step = b.step("frontend-diff-test", "noxc-nightly farksal test koşucusu: kendi sağlamlık denetimi + Zig↔Zig özdeşlik koşusu (opt-in)");
+    frontend_diff_step.dependOn(&frontend_diff_zig.step);
+
     // Faz W.2: `noxlsp` — minimal LSP sunucusu (bkz. compiler/lsp_main.zig'in
     // modül üstü notu). `noxc_mod` İLE AYNI desen (kendi kök dosyası, relative
     // import'lar — `nox_mod`a İHTİYAÇ YOK, `main.zig` GİBİ `compiler/`
@@ -1624,6 +1633,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/grpc_test.zig",
         "tests/cli/http_multicore_factory_test.zig",
         "tests/cli/selfhost_obj_test.zig",
+        "tests/cli/tokens_ast_test.zig",
         "tests/cli/run_script_args_test.zig",
         "tests/cli/extern_path_test.zig",
         "tests/cli/path_confine_test.zig",

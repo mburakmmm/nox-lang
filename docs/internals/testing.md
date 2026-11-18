@@ -66,3 +66,10 @@ benchmarks/gate.py --update           # rewrite benchmarks/baseline.json (review
 ```
 
 The baseline is machine independent where it can be: a job that has a C reference (`stdlib_perf*.c`, compiled with `clang -O2`) is stored as the Nox/C ratio, the others as milliseconds, which only mean something on the same machine. The gate also fails any job that is more than 40 times slower than its C reference. Jobs under 1 ms are treated as noise.
+
+## Front-end diagnostics and the differential runner (noxc-nightly)
+
+Two hidden developer commands print the front end's output in a stable form: `noxc tokens [--json] <file>` (one line per token: `line:col kind start-end "lexeme"`, or `ERROR <name> line:col` with exit code 1 on a lexical error) and `noxc ast <file>` (parse only, then the AST dump that `build --dump` prints). They are not in the help screen.
+
+`scripts/frontend_diff.py` runs a Zig and a Nox front-end component over every `.nox` file in the repository and compares exit code and output (`--component lexer|ast`; `--zig-only` checks the runner itself; `--selftest` proves it catches a difference and shrinks it to a minimal example). `zig build frontend-diff-test` runs the self-check plus a Zig-against-Zig pass. The global `--frontend zig|nox` flag selects the component; the ordinary `noxc` accepts only `zig`.
+

@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.30]
+
+noxc-nightly Aşama 0.4–0.6: `--frontend` bayrağı, `noxc tokens`/`noxc ast` ve farksal test koşucusu.
+
+- **`noxc tokens [--json] <dosya>` / `noxc ast <dosya>`** (gizli geliştirici komutları, yardım ekranında yok): lexer'ın Nox/Zig ortak dökümü (`satır:sütun kind bayt-aralığı "lexeme"`, hata `ERROR Ad satır:sütun`, çıkış 1) ve yalnızca-ayrıştırma AST dökümü.
+- **Global `--frontend zig|nox`:** normal `noxc` yalnızca `zig` kabul eder (`nox` açık hata verir); `noxc-nightly --frontend nox tokens` Aşama 1'e kadar "henüz yok" der (çıkış 2). Alt komut ayrıştırıcıları bayrağı görmez.
+- **`scripts/frontend_diff.py` + `zig build frontend-diff-test`:** depodaki tüm `.nox` dosyalarında (1 257) iki bileşenin çıkış kodu + stdout'unu karşılaştırır, ilk farkı gösterir ve satır düzeyinde küçültür (ddmin); `--selftest` koşucunun fark yakaladığını ve küçülttüğünü sınar, `--zig-only` Zig↔Zig özdeşlik koşusudur (lexer ve ast için 1 257 dosyada fark 0). Opt-in adım; `zig build test`in parçası değil.
+- **Test:** `tests/cli/tokens_ast_test.zig` (3 test). **Belge:** `docs/internals/testing.md`.
+
 ## [2.2.29]
 
 noxc-nightly Aşama 0.2 + 0.3: `selfhost/` iskeleti ve `zig build nightly`.

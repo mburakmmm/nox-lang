@@ -48,9 +48,9 @@ Bağlama (hibrit): `build.zig`, önce Zig'li `noxc`'yi (stage0) derler; stage0, 
 - [x] **0.2 `selfhost/` iskeleti (v2.2.29):** `selfhost/nox.json`, `selfhost/lexer.nox`, `selfhost/tests/`, stil rehberi (`selfhost/README.md`).
 - [x] **0.3 `zig build nightly` (v2.2.29):** stage0 → Nox nesnesi → bağlama → `zig-out/bin/noxc-nightly`. `zig build test` bu adımı kırmaz (nightly isteğe bağlı adım).
   **SONUÇ:** karar (B) uygulandı: gizli `noxc build --selfhost-obj` (`main` yerine `nox_lib_init`/`nox_lib_fini`, `lib_split` kodgen bayrağı; `async` üst düzey kod reddedilir); `compiler/selfhost_glue.zig` köprüsü yalnızca nightly seçeneğiyle analiz edilir; `noxc-nightly selfhost-info [dosya]` gizli komutu bağlı Nox bileşenini çalıştırır. Testler: `tests/cli/selfhost_obj_test.zig` (sınıf + global + sözlük, Zig harness). IR anlık görüntüleri değişmedi.
-- [ ] **0.4 `--frontend zig|nox` bayrağı:** `build/run/check/fmt` komutlarında; nightly'de varsayılan `zig`, bileşen eşdeğer olunca bileşen bazında açılır. Normal `noxc`te bayrak yok (ya da yalnızca `zig`).
-- [ ] **0.5 Tanı araçları:** `noxc tokens <dosya>` (token dökümü, Nox/Zig ortak biçim), `noxc ast <dosya>` (mevcut `--dump` ile eşit), JSON çıktı seçeneği.
-- [ ] **0.6 Farksal test koşucusu:** `scripts/frontend_diff.py` (+ `zig build frontend-diff-test`): tüm depo `.nox` dosyaları (~9 800) üzerinde Zig ve Nox bileşenini çalıştırıp çıktıları karşılaştırır; fark = kırmızı; ilk farkı gösteren küçültücü (delta) çıktısı.
+- [x] **0.4 `--frontend zig|nox` bayrağı (v2.2.30; bileşen bazında açma Aşama 1+):** `build/run/check/fmt` komutlarında; nightly'de varsayılan `zig`, bileşen eşdeğer olunca bileşen bazında açılır. Normal `noxc`te bayrak yok (ya da yalnızca `zig`).
+- [x] **0.5 Tanı araçları (v2.2.30):** `noxc tokens <dosya>` (token dökümü, Nox/Zig ortak biçim), `noxc ast <dosya>` (mevcut `--dump` ile eşit), JSON çıktı seçeneği.
+- [x] **0.6 Farksal test koşucusu (v2.2.30):** `scripts/frontend_diff.py` (+ `zig build frontend-diff-test`): tüm depo `.nox` dosyaları (git'in bildiği 1 257 dosya; ~9 800 sayısı gömülü/üretilmiş kaynakları da sayıyordu — Zig↔Zig koşusu Debug `noxc` ile 5 sn) üzerinde Zig ve Nox bileşenini çalıştırıp çıktıları karşılaştırır; fark = kırmızı; ilk farkı gösteren küçültücü (delta) çıktısı.
 - [ ] **0.7 Derleyici-türü kıyas seti:** `benchmarks/compiler_bench/` (lexer, ağaç dönüşümü, dict[str,X] yoğun, str birleştirme); Zig ve Nox sütunu, hedef ≤ 3–5× Zig (parser/lexer için ≤ 3×).
 - [ ] **0.8 Derin özyineleme:** fiber yığını sabit 192 KiB; derleyici görevleri için ayarlanabilir büyük yığın ya da açık-yığınlı yineleme; `NOX_STACK_PAINT` ile ölçüm; derin AST testi (100 bin düğüm).
 - [ ] **0.9 CI hattı:** `nightly.yml` (günlük + `workflow_dispatch`): nightly derle, farksal test, kıyas, artifact `nightly-YYYY-MM-DD`; Release/`noxc upgrade` etkilenmez; `noxc upgrade --nightly` (isteğe bağlı, kararla).
@@ -183,7 +183,7 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 
 1. [x] 0.1 Zig→Nox çağrı deneyi (tek işlev, C ABI) — v2.2.28.
 2. [x] 0.2 + 0.3 `selfhost/` iskeleti ve `zig build nightly` — v2.2.29.
-3. [ ] 0.5 + 0.6 `noxc tokens` ve farksal test koşucusu (lexer için).
+3. [x] 0.5 + 0.6 `noxc tokens` ve farksal test koşucusu (lexer için) — v2.2.30.
 4. [ ] 0.7 + 0.8 derleyici kıyas seti ve yığın çözümü.
 5. [ ] Aşama 1 (lexer) başlangıcı.
 
@@ -191,7 +191,7 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 
 | Aşama | Madde | Bitti | Durum |
 |---|---|---|---|
-| 0 Altyapı | 11 | 3 | sürüyor (0.1–0.3 bitti; sıradaki 0.5 + 0.6) |
+| 0 Altyapı | 11 | 6 | sürüyor (0.1–0.6 bitti; sıradaki 0.7 + 0.8) |
 | 1 Lexer | 13 | 0 | açık |
 | 2 Parser/AST | 15 | 0 | açık |
 | 3 Tip denetleyici | 17 | 0 | açık |
