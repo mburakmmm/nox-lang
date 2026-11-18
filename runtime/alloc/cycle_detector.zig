@@ -206,8 +206,22 @@ const CycleGc = struct {
     /// ikili ağaç profilinde süreyi %40 şişiriyordu.
     scratch: []u8 = &.{},
     scratch_in_use: bool = false,
+    /// F: paralel toplama yapılandırması (bkz. `parConfigure`). `par_threads < 2` ⇒ her zaman sıralı.
+    par_threads: usize = 0,
+    /// Önceki toplamanın ziyaret ettiği düğüm sayısı bu değere ulaştıysa sonraki toplama paralel çalışır (iş parçacığı başlatma maliyeti amorti olsun).
+    par_min_visited: usize = PAR_MIN_VISITED_DEFAULT,
+    par_aux: [PAR_MAX_WORKERS]?*asap.RuntimeState = @splat(null),
+    /// Paralel yolun çalıştırıldığı toplama sayısı (tanılama/test).
+    par_runs: usize = 0,
 
     fn deinit(self: *CycleGc, allocator: std.mem.Allocator) void {
+        for (&self.par_aux) |*slot| {
+            if (slot.*) |aux| {
+                nox_cycle_deinit(@ptrCast(aux));
+                asap.destroyAuxState(aux);
+                slot.* = null;
+            }
+        }
         if (self.scratch.len > 0) allocator.rawFree(self.scratch, asap.nox_alloc_alignment, @returnAddress());
         self.roots.deinit(allocator);
     }
@@ -217,6 +231,7 @@ fn getGc(state: *asap.RuntimeState) *CycleGc {
     if (state.cycle_gc == null) {
         const gc = state.allocator().create(CycleGc) catch @panic("OOM: dongu cozucu");
         gc.* = .{};
+        parConfigure(gc);
         state.cycle_gc = gc;
     }
     return @ptrCast(@alignCast(state.cycle_gc.?));
@@ -493,13 +508,60 @@ pub export fn nox_cycle_collect(rt: ?*anyopaque) void {
 /// PAYLAŞILAN, KİLİTSİZ çekirdek — bkz. `nox_cycle_possible_root`un belge
 /// notu, "YENİDEN-GİRİLEBİLİR DEĞİL" gerekçesi.
 fn collectLocked(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
+    if (comptime gcTimingAvailable) {
+        if (state.rcstat_on) {
+            const t0 = nowNs();
+            collectLockedInner(rt, state, gc);
+            const dt = nowNs() -| t0;
+            const g = &state.gcstat;
+            g[0] += 1;
+            g[1] += dt;
+            g[2] = @max(g[2], dt);
+            g[3] += gc.visited_in_collect;
+            g[4] += gc.freed_in_collect;
+            g[5] = gc.par_runs;
+            const us = dt / 1000;
+            const bucket: usize = if (us == 0) 0 else @min(@as(usize, 64 - @clz(us)), 23);
+            g[8 + bucket] += 1;
+            return;
+        }
+    }
+    collectLockedInner(rt, state, gc);
+}
+
+/// E0: yalnızca hosted, Windows olmayan hedeflerde (tanılama aracı).
+const gcTimingAvailable = !is_freestanding and !builtin.cpu.arch.isWasm() and builtin.os.tag != .windows;
+
+fn nowNs() u64 {
+    var ts: std.c.timespec = undefined;
+    if (std.c.clock_gettime(.MONOTONIC, &ts) != 0) return 0;
+    return @as(u64, @intCast(ts.sec)) * 1_000_000_000 + @as(u64, @intCast(ts.nsec));
+}
+
+fn collectLockedInner(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
+    const prev_visited = gc.visited_in_collect;
     gc.possible_roots_since_collect = 0;
     gc.freed_in_collect = 0;
     gc.visited_in_collect = 0;
     const scanned = gc.roots.items.len;
+    if (comptime par_available) {
+        if (gc.par_threads >= 2 and prev_visited >= gc.par_min_visited) {
+            var whites: std.ArrayListUnmanaged(*anyopaque) = .empty;
+            defer whites.deinit(state.allocator());
+            if (parMarkScan(state, gc, &whites)) {
+                collectRootsFinish(rt, state, gc, &whites);
+                adaptThreshold(gc, scanned);
+                return;
+            }
+        }
+    }
     markRoots(rt, state, gc);
     scanRoots(rt, state, gc);
     collectRoots(rt, state, gc);
+    adaptThreshold(gc, scanned);
+}
+
+fn adaptThreshold(gc: *CycleGc, scanned: usize) void {
     // Uyarlanabilir eşik (bkz. `MAX_COLLECT_THRESHOLD`): verimsiz toplama →
     // sıklığı azalt; verimli → varsayılan.
     if (scanned > 0 and gc.freed_in_collect * 4 < scanned) {
@@ -608,6 +670,281 @@ fn scanBlack(rt: ?*anyopaque, state: *asap.RuntimeState, root: *anyopaque) void 
     }
 }
 
+// ---- F: paralel (durdur-ve-işaretle) işaretleme/tarama ----
+//
+// Dünya durmuşken (STW) `markGray` ve `scan` aşamaları birkaç iş parçacığına bölünür; mutator yoktur, bu yüzden E planındaki
+// yan-tablo/bariyer/karantina sorunları yoktur. Başlık kelimesi (sayaç + renk) yalnızca atomik RMW/CAS ile değiştirilir; her düğüm
+// bir kez "talep edilerek" (renk CAS'ı) işlenir. `collectRoots` (serbest bırakma) sıralı kalır. Doğruluk argümanı: `scan`de beyaza
+// boyama bayat `rc==0` okumasıyla yapılsa bile, siyah bir ebeveynin sayaç artışı çocuğu beyazdan da siyaha çevirip (CAS: siyah dışı → siyah)
+// yeniden işlediğinden son durum sıralı algoritmayla aynı sabit noktadır. Sayaç yalnızca `scan`de artar, bu yüzden `rc>0` okuması hiç yanlış pozitif değildir.
+
+const par_available = !is_freestanding and !builtin.cpu.arch.isWasm() and !builtin.single_threaded;
+const PAR_MAX_WORKERS: usize = 8;
+const PAR_MIN_VISITED_DEFAULT: usize = 32 * 1024;
+const PAR_ROOT_CHUNK: usize = 64;
+const PAR_DONATE_AT: usize = 512;
+const PAR_BATCH: usize = 256;
+const BLACK_TAG: usize = 1;
+
+/// `NOX_GC_THREADS=<n>`: paralel toplama iş parçacığı sayısı (0/1 = kapalı; varsayılan min(CPU, 4)). `NOX_GC_PAR_MIN=<n>`: paralele geçiş eşiği (düğüm).
+fn parConfigure(gc: *CycleGc) void {
+    if (comptime !par_available) return;
+    var n: usize = @min(std.Thread.getCpuCount() catch 1, 4);
+    if (std.c.getenv("NOX_GC_THREADS")) |v| n = std.fmt.parseInt(usize, std.mem.span(v), 10) catch n;
+    gc.par_threads = @min(n, PAR_MAX_WORKERS);
+    if (std.c.getenv("NOX_GC_PAR_MIN")) |v| gc.par_min_visited = std.fmt.parseInt(usize, std.mem.span(v), 10) catch gc.par_min_visited;
+}
+
+fn hdrAtomic(p: *anyopaque) *std.atomic.Value(u64) {
+    return @ptrCast(hdrWord(p));
+}
+
+fn colorOf(w: u64) Color {
+    return @enumFromInt(@as(u2, @truncate(w >> COLOR_SHIFT)));
+}
+
+/// Rengi `to`ya çeker; zaten `to` ise `false` (başka bir işçi talep etti).
+fn claimColor(p: *anyopaque, to: Color) bool {
+    const a = hdrAtomic(p);
+    var old = a.load(.monotonic);
+    while (true) {
+        if (colorOf(old) == to) return false;
+        const new = (old & ~COLOR_MASK) | (@as(u64, @intFromEnum(to)) << COLOR_SHIFT);
+        old = a.cmpxchgWeak(old, new, .monotonic, .monotonic) orelse return true;
+    }
+}
+
+/// `gray`den `white`a: başka bir işçi çoktan siyaha boyadıysa dokunmaz.
+fn whiten(p: *anyopaque) bool {
+    const a = hdrAtomic(p);
+    var old = a.load(.monotonic);
+    while (true) {
+        if (colorOf(old) != .gray) return false;
+        const new = (old & ~COLOR_MASK) | (@as(u64, @intFromEnum(Color.white)) << COLOR_SHIFT);
+        old = a.cmpxchgWeak(old, new, .monotonic, .monotonic) orelse return true;
+    }
+}
+
+/// `white`tan `black`e: yalnızca beyazsa (başka bir işçi çoktan talep etmediyse).
+fn claimWhite(p: *anyopaque) bool {
+    const a = hdrAtomic(p);
+    var old = a.load(.monotonic);
+    while (true) {
+        if (colorOf(old) != .white) return false;
+        const new = (old & ~COLOR_MASK) | (@as(u64, @intFromEnum(Color.black)) << COLOR_SHIFT);
+        old = a.cmpxchgWeak(old, new, .monotonic, .monotonic) orelse return true;
+    }
+}
+
+const ParShared = struct {
+    roots: []const ?*anyopaque,
+    n: usize,
+    next_root: std.atomic.Value(usize) = .init(0),
+    lock: asap.SpinLock = .{},
+    queue: std.ArrayListUnmanaged(usize) = .empty,
+    idle: usize = 0,
+    done: bool = false,
+    qalloc: std.mem.Allocator,
+};
+
+const ParPhase = enum { mark, scan, collect };
+
+const ParWorker = struct {
+    sh: *ParShared,
+    rt: *asap.RuntimeState,
+    phase: ParPhase,
+    stack: std.ArrayListUnmanaged(usize) = .empty,
+    whites: std.ArrayListUnmanaged(*anyopaque) = .empty,
+    visited: usize = 0,
+
+    fn push(self: *ParWorker, v: usize) void {
+        self.stack.append(self.sh.qalloc, v) catch {}; // OOM: düğüm atlanır (sıralı yolla aynı muhafazakâr davranış)
+    }
+
+    fn donate(self: *ParWorker) void {
+        if (self.stack.items.len < PAR_DONATE_AT) return;
+        const sh = self.sh;
+        sh.lock.lock();
+        defer sh.lock.unlock();
+        sh.queue.appendSlice(sh.qalloc, self.stack.items[0..PAR_BATCH]) catch return;
+        const rest = self.stack.items.len - PAR_BATCH;
+        std.mem.copyForwards(usize, self.stack.items[0..rest], self.stack.items[PAR_BATCH..]);
+        self.stack.items.len = rest;
+    }
+
+    /// Paylaşılan kuyruktan iş alır; hiç iş kalmadıysa (tüm işçiler boşta) `false`.
+    fn getWork(self: *ParWorker) bool {
+        const sh = self.sh;
+        self.stack.ensureTotalCapacity(sh.qalloc, PAR_BATCH) catch {
+            sh.lock.lock();
+            sh.idle += 1;
+            if (sh.idle >= sh.n) sh.done = true;
+            sh.lock.unlock();
+            return false;
+        };
+        var waiting = false;
+        while (true) {
+            sh.lock.lock();
+            if (sh.queue.items.len > 0) {
+                if (waiting) sh.idle -= 1;
+                const take = @min(sh.queue.items.len, PAR_BATCH);
+                const start = sh.queue.items.len - take;
+                self.stack.appendSliceAssumeCapacity(sh.queue.items[start..]);
+                sh.queue.items.len = start;
+                sh.lock.unlock();
+                return true;
+            }
+            if (!waiting) {
+                waiting = true;
+                sh.idle += 1;
+            }
+            if (sh.idle >= sh.n) sh.done = true;
+            const fin = sh.done;
+            sh.lock.unlock();
+            if (fin) return false;
+            std.Thread.yield() catch {};
+        }
+    }
+
+    fn processMark(self: *ParWorker, ptr: *anyopaque) void {
+        self.visited += 1;
+        var children = traceChildren(@ptrCast(self.rt), ptr);
+        defer children.deinit(self.rt);
+        for (children.items) |maybe_child| {
+            const child = abi_ptr.slotPtr(maybe_child) orelse continue;
+            _ = hdrAtomic(child).fetchSub(1, .monotonic);
+            if (claimColor(child, .gray)) self.push(@intFromPtr(child));
+        }
+    }
+
+    fn processScan(self: *ParWorker, item: usize) void {
+        if (item & BLACK_TAG != 0) {
+            const ptr: *anyopaque = @ptrFromInt(item & ~BLACK_TAG);
+            var children = traceChildren(@ptrCast(self.rt), ptr);
+            defer children.deinit(self.rt);
+            for (children.items) |maybe_child| {
+                const child = abi_ptr.slotPtr(maybe_child) orelse continue;
+                _ = hdrAtomic(child).fetchAdd(1, .monotonic);
+                if (claimColor(child, .black)) self.push(@intFromPtr(child) | BLACK_TAG);
+            }
+            return;
+        }
+        const ptr: *anyopaque = @ptrFromInt(item);
+        const w = hdrAtomic(ptr).load(.monotonic);
+        if (colorOf(w) != .gray) return;
+        if ((w & RC_MASK) > 0) {
+            if (claimColor(ptr, .black)) self.push(@intFromPtr(ptr) | BLACK_TAG);
+            return;
+        }
+        if (!whiten(ptr)) return;
+        var children = traceChildren(@ptrCast(self.rt), ptr);
+        defer children.deinit(self.rt);
+        for (children.items) |maybe_child| {
+            const child = abi_ptr.slotPtr(maybe_child) orelse continue;
+            if (colorOf(hdrAtomic(child).load(.monotonic)) == .gray) self.push(@intFromPtr(child));
+        }
+    }
+
+    fn processCollect(self: *ParWorker, ptr: *anyopaque) void {
+        var children = traceChildren(@ptrCast(self.rt), ptr);
+        defer children.deinit(self.rt);
+        for (children.items) |maybe_child| {
+            const child = abi_ptr.slotPtr(maybe_child) orelse continue;
+            if (claimWhite(child)) {
+                self.whites.append(self.sh.qalloc, child) catch continue;
+                self.push(@intFromPtr(child));
+            }
+        }
+    }
+
+    fn drain(self: *ParWorker) void {
+        while (self.stack.pop()) |item| {
+            switch (self.phase) {
+                .mark => self.processMark(@ptrFromInt(item)),
+                .scan => self.processScan(item),
+                .collect => self.processCollect(@ptrFromInt(item)),
+            }
+            self.donate();
+        }
+    }
+
+    fn run(self: *ParWorker) void {
+        const sh = self.sh;
+        while (true) {
+            const start = sh.next_root.fetchAdd(PAR_ROOT_CHUNK, .monotonic);
+            if (start >= sh.roots.len) break;
+            const end = @min(start + PAR_ROOT_CHUNK, sh.roots.len);
+            for (sh.roots[start..end]) |maybe_ptr| {
+                const ptr = maybe_ptr orelse continue;
+                switch (self.phase) {
+                    .mark => {
+                        if (colorOf(hdrAtomic(ptr).load(.monotonic)) == .purple) {
+                            if (claimColor(ptr, .gray)) self.push(@intFromPtr(ptr));
+                        } else {
+                            _ = hdrAtomic(ptr).fetchAnd(~(BUFFERED_BIT | IDX_MASK), .monotonic);
+                        }
+                    },
+                    .scan => self.push(@intFromPtr(ptr)),
+                    .collect => {
+                        // `collectRootsDiscover` ile aynı: tampon bayrakları temizlenir, renk korunur; yalnız beyaz kökler toplanır.
+                        const was_white = colorOf(hdrAtomic(ptr).fetchAnd(~(BUFFERED_BIT | IDX_MASK), .monotonic)) == .white;
+                        if (was_white and claimWhite(ptr)) {
+                            self.whites.append(self.sh.qalloc, ptr) catch continue;
+                            self.push(@intFromPtr(ptr));
+                        }
+                    },
+                }
+                self.drain();
+            }
+        }
+        while (self.getWork()) self.drain();
+        self.stack.deinit(sh.qalloc);
+    }
+};
+
+fn parPhase(state: *asap.RuntimeState, gc: *CycleGc, phase: ParPhase, n: usize, whites_out: ?*std.ArrayListUnmanaged(*anyopaque)) void {
+    var sh: ParShared = .{ .roots = gc.roots.items, .n = n, .qalloc = state.allocator() };
+    defer sh.queue.deinit(sh.qalloc);
+    var workers: [PAR_MAX_WORKERS]ParWorker = undefined;
+    var threads: [PAR_MAX_WORKERS]?std.Thread = @splat(null);
+    for (0..n) |i| workers[i] = .{ .sh = &sh, .rt = gc.par_aux[i].?, .phase = phase };
+    for (1..n) |i| {
+        threads[i] = std.Thread.spawn(.{}, ParWorker.run, .{&workers[i]}) catch blk: {
+            // Başlatılamayan işçi "kalıcı boşta" sayılır; kalan işçiler işi tamamlar.
+            sh.lock.lock();
+            sh.idle += 1;
+            if (sh.idle >= sh.n) sh.done = true;
+            sh.lock.unlock();
+            break :blk null;
+        };
+    }
+    workers[0].run();
+    for (1..n) |i| if (threads[i]) |t| t.join();
+    if (phase == .mark) {
+        for (0..n) |i| gc.visited_in_collect += workers[i].visited;
+    }
+    for (0..n) |i| {
+        if (whites_out) |out| out.appendSlice(state.allocator(), workers[i].whites.items) catch {};
+        workers[i].whites.deinit(sh.qalloc);
+    }
+}
+
+/// `true`: işaretleme + tarama + beyaz toplama paralel yapıldı (`whites` serbest bırakılacak düğümlerle dolar); `false`: kurulamadı (çağıran sıralı yola düşer).
+fn parMarkScan(state: *asap.RuntimeState, gc: *CycleGc, whites: *std.ArrayListUnmanaged(*anyopaque)) bool {
+    const n = gc.par_threads;
+    for (0..n) |i| {
+        if (gc.par_aux[i] == null) {
+            gc.par_aux[i] = asap.createAuxState();
+            if (gc.par_aux[i] == null) return false;
+        }
+    }
+    parPhase(state, gc, .mark, n, null);
+    parPhase(state, gc, .scan, n, null);
+    parPhase(state, gc, .collect, n, whites);
+    gc.par_runs += 1;
+    return true;
+}
+
 /// Beyaz (kanıtlanmış çöp) alt-grafikleri TOPLAR ve serbest bırakır. v1.142.14:
 /// renk/meta artık başlıkta olduğundan, serbest bırakılmış bir düğümün
 /// başlığı (havuz bağlı-listesi işaretçisiyle ÜZERİNE YAZILIR) BİR DAHA
@@ -618,6 +955,12 @@ fn scanBlack(rt: ?*anyopaque, state: *asap.RuntimeState, root: *anyopaque) void 
 fn collectRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
     var whites: std.ArrayListUnmanaged(*anyopaque) = .empty;
     defer whites.deinit(state.allocator());
+    collectRootsDiscover(rt, state, gc, &whites);
+    collectRootsFinish(rt, state, gc, &whites);
+}
+
+fn collectRootsDiscover(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, whites_out: *std.ArrayListUnmanaged(*anyopaque)) void {
+    const whites = whites_out;
     var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
     defer stack.deinit(state.allocator());
 
@@ -645,6 +988,9 @@ fn collectRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
             }
         }
     }
+}
+
+fn collectRootsFinish(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, whites: *std.ArrayListUnmanaged(*anyopaque)) void {
     gc.roots.clearRetainingCapacity();
     gc.live_roots = 0;
     // Faz 9.11: tepe yük sonrası kök tablosunun kapasitesi sonsuza dek tutulmasın (kararlı düşük yükte RSS şişkin kalıyordu): büyük kapasite boşaltılır, küçük kapasite korunur.
@@ -1173,4 +1519,76 @@ test "dispatch_registry: bir iş parçacığındaki kayıt, join() sonrası TÜM
 
     try testing.expect(dispatch_registry.traceFn() == &fakeTraceDispatch);
     try testing.expect(dispatch_registry.gcFreeFn() == &fakeGcFreeDispatch);
+}
+
+const ParGraphResult = struct { first: usize, second: usize, visited: usize, par_runs: usize };
+
+/// F: aynı rastgele graf (8'li döngü öbekleri + seyrek ileri çapraz kenarlar, 1/200 düğüm dışarıdan tutulu) önce `threads` iş parçacığıyla
+/// toplanır; ilk toplamada serbest kalan sayı, tutulu referanslar bırakıldıktan sonraki ikinci toplamada kalanların hepsi (sızıntı yok).
+fn parGraphRun(seed: u64, n: usize, threads: usize) !ParGraphResult {
+    injectFakeDispatchDiamond();
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    const gc = getGc(state);
+    gc.collect_threshold = 1 << 24; // otomatik toplama tetiklenmesin
+    gc.par_threads = threads;
+    gc.par_min_visited = 0;
+    var prng = std.Random.DefaultPrng.init(seed);
+    const rnd = prng.random();
+    const G: usize = 8;
+    const nodes = try testing.allocator.alloc(*anyopaque, n);
+    defer testing.allocator.free(nodes);
+    const held = try testing.allocator.alloc(bool, n);
+    defer testing.allocator.free(held);
+    for (nodes) |*nd| nd.* = newFakeObject2(rt);
+    for (0..n) |i| {
+        const base = i - i % G;
+        wireFieldAt(nodes[i], 0, nodes[base + (i % G + 1) % G]);
+        const gi = i / G;
+        if (rnd.uintLessThan(u32, 100) < 15 and gi + 1 < n / G) {
+            const tg = gi + 1 + rnd.uintLessThan(usize, n / G - gi - 1);
+            wireFieldAt(nodes[i], 1, nodes[tg * G + rnd.uintLessThan(usize, G)]);
+        }
+    }
+    for (nodes, 0..) |nd, i| {
+        held[i] = rnd.uintLessThan(u32, 200) == 0;
+        if (held[i]) continue;
+        try testing.expectEqual(@as(i32, 0), arc.nox_rc_predecrement(nd)); // halka kenarı nedeniyle rc ≥ 2
+        nox_cycle_possible_root(rt, nd);
+    }
+    nox_cycle_collect(rt);
+    const first = gc.freed_in_collect;
+    const visited = gc.visited_in_collect;
+    for (nodes, 0..) |nd, i| {
+        if (!held[i]) continue;
+        try testing.expectEqual(@as(i32, 0), arc.nox_rc_predecrement(nd));
+        nox_cycle_possible_root(rt, nd);
+    }
+    nox_cycle_collect(rt);
+    const second = gc.freed_in_collect;
+    const par_runs = gc.par_runs;
+    try deinitRuntimeExpectNoLeak(rt);
+    return .{ .first = first, .second = second, .visited = visited, .par_runs = par_runs };
+}
+
+test "F: paralel işaretleme/tarama, sıralı toplayıcıyla AYNI nesneleri serbest bırakır (rastgele döngü-öbekli graflar, 2/3/4/8 iş parçacığı)" {
+    if (comptime !par_available) return error.SkipZigTest;
+    // `NOX_GC_STRESS_SEEDS=<n>`: yerel yarış avı için tohum sayısı (varsayılan 3).
+    var n_seeds: u64 = 3;
+    if (std.c.getenv("NOX_GC_STRESS_SEEDS")) |v| n_seeds = std.fmt.parseInt(u64, std.mem.span(v), 10) catch n_seeds;
+    var seed: u64 = 1;
+    while (seed <= n_seeds) : (seed += 1) {
+        const n: usize = 20000;
+        const seq = try parGraphRun(seed, n, 0);
+        try testing.expectEqual(n, seq.first + seq.second);
+        try testing.expectEqual(@as(usize, 0), seq.par_runs);
+        try testing.expect(seq.first > 0);
+        for ([_]usize{ 2, 3, 4, 8 }) |t| {
+            const par = try parGraphRun(seed, n, t);
+            try testing.expectEqual(@as(usize, 2), par.par_runs); // iki toplamanın İKİSİ de paralel
+            try testing.expectEqual(seq.first, par.first);
+            try testing.expectEqual(seq.second, par.second);
+            try testing.expectEqual(seq.visited, par.visited);
+        }
+    }
 }

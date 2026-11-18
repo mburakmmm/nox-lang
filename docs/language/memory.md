@@ -64,6 +64,12 @@ NOX_RC_STATS=1 ./app          # prints NOXRC lines on stderr when the program ex
 
 The output lists inline retain and release counts per heap kind (`str`, `list`, `class`, `dict`, ...) and the totals together with allocation and free counts. Counts are best effort (not atomic), cover the code the compiler emits inline (not retains done inside the runtime), and the build-time variable only affects the hosted backends (not WebAssembly or freestanding). Sampling profilers (`sample`, `perf`) show where the time goes; combining the two tells you whether reference counting or allocation dominates.
 
+With `NOX_RC_STATS=1` the exit report also contains `NOXGC` lines: how many cycle collections ran, their total/longest pause and a log2 histogram of pause lengths (`parallel=` counts the collections that ran multi-threaded).
+
+### Cycle collector threads
+
+The cycle collector stops the world while it runs. When the previous collection visited at least 32 768 objects, the next one splits its mark/scan/collect phases over a few threads (default `min(CPU count, 4)`). Set `NOX_GC_THREADS=1` to force the single-threaded collector, or `NOX_GC_THREADS=<n>` to choose the thread count; `NOX_GC_PAR_MIN=<objects>` changes the switch-over threshold. Programs without cyclic data (most servers) never run the collector in steady state, so nothing changes for them. wasm and freestanding builds always use the single-threaded collector.
+
 ## `lowlevel` blocks
 
 `lowlevel:` gives a block **arena allocation** and, together with `ptr[T]`, raw memory access. It is Nox's analogue of `unsafe`, with one

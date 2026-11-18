@@ -1,0 +1,57 @@
+# Bacon-Rajan duraklama ölçümü, DALLANAN canlı graf (parent işaretçili ikili ağaç; paralel işaretleme için gerçekçi şekil).
+# `cycle_gc_pause.nox` halka (zincir) kullanır: zincir doğası gereği sıralıdır, paralel işaretlemeden fayda görmez.
+import nox.time
+
+class T:
+    left: T | None
+    right: T | None
+    parent: T | None
+    pad: int
+    def __init__(self: T, pad: int) -> None:
+        self.left = None
+        self.right = None
+        self.parent = None
+        self.pad = pad
+
+def now_us() -> int:
+    return nox.time.monotonic_ns() // 1000
+
+def run(live: int, iters: int) -> None:
+    nodes: list[T] = []
+    i: int = 0
+    while i < live:
+        nodes.append(T(i))
+        i = i + 1
+    i = 1
+    while i < live:
+        p: T = nodes[(i - 1) // 2]
+        nodes[i].parent = p
+        if i % 2 == 1:
+            p.left = nodes[i]
+        else:
+            p.right = nodes[i]
+        i = i + 1
+    worst: int = 0
+    over1ms: int = 0
+    total: int = 0
+    j: int = 0
+    while j < iters:
+        t0: int = now_us()
+        a: T = T(j)
+        b: T = T(j)
+        a.left = b
+        b.parent = a
+        x: T = nodes[j % live]
+        t1: int = now_us()
+        d: int = t1 - t0
+        total = total + d
+        if d > worst:
+            worst = d
+        if d > 1000:
+            over1ms = over1ms + 1
+        j = j + 1
+    print("live", live, "iters", iters, "worst_us", worst, "over1ms", over1ms, "avg_ns", total * 1000 // iters)
+
+run(1000, 300000)
+run(50000, 300000)
+run(500000, 300000)

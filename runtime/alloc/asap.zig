@@ -443,6 +443,8 @@ pub const RuntimeState = struct {
     /// ve çıkışta stderr'e döker. Tanılama aracıdır: kapalıyken (varsayılan) hiçbir maliyet/davranış farkı yoktur. Sayaçlar en-iyi-çaba (atomik değil).
     rcstat_on: bool = false,
     rcstat: [64]u64 = @splat(0),
+    /// E0 (bkz. `project/bacon-rajan-e-tasarimi-2026-11-18.md`): `NOX_RC_STATS=1` ile döngü toplama duraklama istatistiği (yalnız `rcstat_on`): [0]=toplama sayısı, [1]=toplam ns, [2]=en uzun ns, [3]=ziyaret edilen düğüm toplamı, [4]=serbest bırakılan toplamı, [5]=paralel yürütülen toplama sayısı, [8+i]=süre < 2^i µs kovası (i=0..23; son kova taşmayı da alır).
+    gcstat: [32]u64 = @splat(0),
     mem_allocs: std.atomic.Value(usize) = .init(0),
     mem_frees: std.atomic.Value(usize) = .init(0),
     mem_bytes: std.atomic.Value(usize) = .init(0),
@@ -908,6 +910,19 @@ pub fn destroyState(backing: std.mem.Allocator, state: *RuntimeState) void {
     backing.free(whole);
 }
 
+/// F (bkz. `project/bacon-rajan-e-tasarimi-2026-11-18.md`): paralel döngü toplamanın yardımcı iş parçacıkları, `trace` arabelleği için
+/// KENDİ (hafif) `RuntimeState`lerini kullanır: üretilen `$Sınıf_trace` `rt`yi yalnızca `nox_trace_buf_alloc`a iletir, böylece her işçi
+/// kendi tek-arabellekli `gc.scratch`ini (kilitsiz) kullanır. Yalnız hosted, wasm-dışı hedefler; diğerlerinde `null`.
+pub fn createAuxState() ?*RuntimeState {
+    if (comptime is_freestanding or builtin.cpu.arch.isWasm()) return null;
+    return createState(std.heap.page_allocator, .{ .debug_gpa = if (use_debug_allocator) .init else {} });
+}
+
+/// `createAuxState`in karşılığı; çağıran önce `nox_cycle_deinit(state)` ile `trace` arabelleğini bırakmış olmalıdır.
+pub fn destroyAuxState(state: *RuntimeState) void {
+    if (use_debug_allocator) _ = state.debug_gpa.deinit();
+    destroyState(state.bootstrap_allocator, state);
+}
 
 /// Faz F.0.2: GERÇEK allocator enjeksiyonu İçİn YENİ, AYRI bir giriş
 /// noktası — `backing`i HEM `RuntimeState`in KENDİ bootstrap tahsisi
@@ -988,6 +1003,14 @@ fn dumpRcStats(state: *RuntimeState) void {
         retain_total += r;
         release_total += d;
         if (r != 0 or d != 0) std.debug.print("NOXRC {s} {d} {d}\n", .{ k, r, d });
+    }
+    if (state.gcstat[0] != 0) {
+        const g = state.gcstat;
+        std.debug.print("NOXGC collections={d} total_us={d} max_us={d} visited={d} freed={d} parallel={d}\n", .{ g[0], g[1] / 1000, g[2] / 1000, g[3], g[4], g[5] });
+        var i: usize = 0;
+        while (i < 24) : (i += 1) {
+            if (g[8 + i] != 0) std.debug.print("NOXGC bucket_lt_{d}us {d}\n", .{ @as(u64, 1) << @intCast(i), g[8 + i] });
+        }
     }
     std.debug.print("NOXRC total retain={d} release={d} alloc={d} free={d} bytes={d}\n", .{ retain_total, release_total, state.mem_allocs.load(.monotonic), state.mem_frees.load(.monotonic), state.mem_bytes.load(.monotonic) });
 }

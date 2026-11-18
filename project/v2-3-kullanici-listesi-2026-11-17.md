@@ -15,6 +15,7 @@ Kural (AGENTS §16): dil özelliği / bellek modeli / ABI etkili maddeler `[K]` 
 - [x] **K2 Bacon-Rajan döngü toplayıcımız eşzamanlı (concurrent) mı? Analiz.** (bitti: `project/bacon-rajan-analizi-2026-11-18.md`)
   - Bulgu: HAYIR. Senkron "trial deletion" (modül başlığı bunu açıkça söyler); eşzamanlı Bacon-Rajan değil. Tek iş parçacıklı programda eşiği aşan `possible_root` çağrısı toplamayı satır içi çalıştırır; M:N havuzda dünyayı durdurma (STW) bariyeri kullanır. Çıktı: kısa rapor (aşağıdaki K3 ile birleşik).
 - [x] **K3 Bacon-Rajan ne kadar stop-the-world yapıyor? Ölçüm.** (bitti, v2.2.15: ölçüm + eşik düzeltmesi, 500 bin canlı düğümde yineleme başına 13,9 µs → 165 ns; rapor `project/bacon-rajan-analizi-2026-11-18.md`)
+  - Devam (v2.2.18): eşzamanlı toplayıcı (E) değerlendirildi ve KAPATILDI (`project/bacon-rajan-e-tasarimi-2026-11-18.md`: gerçek yüklerde toplayıcı çalışmıyor); kullanıcı kararıyla paralel STW işaretleme (F) yapıldı: 500 bin düğümlü parent'lı ağaçta en uzun duraklama ~24 → ~13 ms.
   - Bilinenler (kaynak okumasıyla): varsayılan eşik 700 olası kök, verimsiz toplamada ×2 ile 16M'ye kadar uyarlanır; her toplama ziyaret edilen alt-graf kadar sürer (öbek boyutu kadar değil); havuzda beklemeyen işçiler `sleep 1 ms` döngüsüyle bariyerde bekler ve en yavaş işçinin güvenli noktaya varışı kadar gecikir.
   - Kalan: gerçek duraklama süresi ölçümü (saf çöp döngüleri / büyük canlı graf / M:N 4 işçi), rapor `project/` altına, gerekirse iyileştirme önerisi (artımlı/eşzamanlı işaretleme, `sleep` yerine park).
 

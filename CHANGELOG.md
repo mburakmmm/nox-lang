@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.18]
+
+K2/K3 sonrası: eşzamanlı Bacon-Rajan (E) değerlendirmesi kapatıldı, bunun yerine paralel durdur-ve-işaretle (F) yapıldı.
+
+- **Çalışma zamanı (F):** döngü toplayıcının `markGray`, `scan` ve beyaz-toplama aşamaları, önceki toplama ≥ 32 bin düğüm ziyaret ettiyse dünya durmuşken birkaç iş parçacığına bölünür (varsayılan min(CPU, 4); `NOX_GC_THREADS=<n>`, 0/1 kapatır; `NOX_GC_PAR_MIN=<n>` eşiği değiştirir). Başlık kelimesi yalnızca atomik RMW/CAS ile değişir, her düğüm renk CAS'ıyla bir kez talep edilir; işçiler `trace` arabelleği için kendi hafif `RuntimeState`lerini kullanır (kilitsiz); serbest bırakma lider iş parçacığında sıralı kalır. wasm/freestanding/tek iş parçacıklı derlemelerde kod yoktur (sıralı toplayıcı).
+- Ölçüm (`benchmarks/cycle_gc_pause_tree.nox`, 500 bin canlı düğümlü parent işaretçili ikili ağaç + çöp döngüleri, ReleaseFast): en uzun toplama duraklaması 23–24 ms → 13,4 ms (4 iş parçacığı, ~1,75×), toplam toplama süresi 150 → 102 ms. Zincir/halka şekilli graflar (`benchmarks/cycle_gc_pause.nox`) doğası gereği sıralıdır, kazanç yok. Gerçek sunucu yüklerinde (Aether, ~200 bin istek/sn) toplayıcı zaten çalışmıyor (bkz. E0 ölçümü).
+- **Tanılama:** `NOX_RC_STATS=1` çıkışına `NOXGC collections=… total_us=… max_us=… visited=… freed=… parallel=…` ve log2 µs duraklama kovaları eklendi (yalnız çalışma zamanı env'i).
+- **Testler:** rastgele döngü-öbekli graflarda (8'li halka öbekleri, çapraz kenarlar, tutulu düğümler) paralel (2/3/4/8 iş parçacığı) toplama sıralı toplayıcıyla aynı nesneleri serbest bırakır, sızıntı yok (`NOX_GC_STRESS_SEEDS=<n>` ile yerel yarış avı; 3000 tohum ReleaseSafe'te yeşil); fixture korpusu `NOX_GC_THREADS=4 NOX_GC_PAR_MIN=0` ile (her toplama paralel) 625/625; yeni golden `cycle_gc_parallel_tree`.
+- **Karar (E kapatıldı):** Aether yükü altında toplama 1 kez (kapanışta, 5 µs) çalıştığından eşzamanlı toplayıcıyı haklı çıkaracak ölçülebilir iş yükü yok; ayrıntı ve plan `project/bacon-rajan-e-tasarimi-2026-11-18.md`.
+
 ## [2.2.17]
 
 K3 devamı: dünyayı durdurma (STW) bariyerinde bekleme.
