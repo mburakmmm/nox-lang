@@ -1,0 +1,24 @@
+# noxc-nightly (Aşama 0.2): Nox ile yazılmış derleyici bileşenlerinin ilk dosyası. Şimdilik YER TUTUCU: Aşama 0.1 deneyinin tanımlayıcı tarayıcısı (`sh_count_ident_tokens`);
+# Aşama 1'de gerçek lexer (`nox_lex`) ile değiştirilir. `noxc build --selfhost-obj` bu dosyayı `main`siz nesneye derler; Zig tarafı `compiler/selfhost_glue.zig`tir.
+# Kural: bu dizindeki her üst düzey `def` dış bağlantılı bir C simgesidir (`sh_` öneki) ve ilk gizli parametresi `rt`dir.
+
+def sh_is_ident_start(c: int) -> bool:
+    return (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 95
+
+def sh_is_ident_char(c: int) -> bool:
+    return sh_is_ident_start(c) or (c >= 48 and c <= 57)
+
+# `buf[0..n]` bayt arabelleğindeki ASCII tanımlayıcı sayısı (Zig tarafı kopyasız dilim verir).
+def sh_count_ident_tokens(buf: ptr[u8], n: int) -> int:
+    count: int = 0
+    i: int = 0
+    lowlevel:
+        while i < n:
+            c: int = int(ptr_read(ptr_offset(buf, i)))
+            if sh_is_ident_start(c):
+                count = count + 1
+                while i < n and sh_is_ident_char(int(ptr_read(ptr_offset(buf, i)))):
+                    i = i + 1
+            else:
+                i = i + 1
+    return count

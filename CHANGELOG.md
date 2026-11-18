@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.29]
+
+noxc-nightly Aşama 0.2 + 0.3: `selfhost/` iskeleti ve `zig build nightly`.
+
+- **Gizli kütüphane kipi (kullanıcı kararı B):** `noxc build --selfhost-obj -o x.o dosya.nox` (yalnızca yerel LLVM backend'i, `--target` yok; yardım ekranında ve belgelerde yok) `main` yerine `nox_lib_init(rt)` (dispatch tablosu + modül global ayırma/başlatma + üst düzey kod) ve `nox_lib_fini(rt)` (`nox_deinit_globals`) üretir; tüm üst düzey `def`ler dış bağlantılı kalır. Üst düzey async/`spawn` reddedilir. Codegen: `generateModuleWithMetaSinkSplit` + `Codegen.lib_split`; diğer tüm yollar (IR anlık görüntüleri dahil) değişmedi.
+- **`zig build nightly`:** kurulu `noxc` `selfhost/lexer.nox`u nesneye derler; nesne + `noxrt.o` + `compiler/main.zig` (`build_options.nightly = true`) → `zig-out/bin/noxc-nightly`. `noxc-nightly selfhost-info [dosya]` bağlı Nox bileşenini çalıştırır; normal `noxc`te bu komut yoktur. `zig build`/`zig build test` nightly'yi derlemez.
+- **İskelet:** `selfhost/{nox.json,lexer.nox,README.md,tests/}`, `compiler/selfhost_glue.zig` (`Runtime.start/stop` + bileşen çağrıları).
+- **Test:** `tests/cli/selfhost_obj_test.zig` (nesne `main`siz, Zig harness ile sınıf + modül global'i + global sözlük doğru çalışır; `run` ile kullanılamaz).
+- **Belge:** `docs/internals/architecture.md` "noxc-nightly (experimental)", AGENTS.md §0 işaretçisi, plan §3.1.
+
 ## [2.2.28]
 
 Bootstrap başladı: `noxc-nightly` Aşama 0.1 (Zig → Nox çağrı deneyi).

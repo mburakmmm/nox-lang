@@ -762,6 +762,7 @@ pub fn build(b: *std.Build) void {
     // `NOX_BUILD_COMMIT` (sürüm CI'ı etiketli commit'i verir), yoksa `git rev-parse HEAD`; ikisi de
     // yoksa (git'siz kaynak arşivi) "unknown" — asla uydurulmaz.
     version_options.addOption([]const u8, "commit", sourceCommit(b));
+    version_options.addOption(bool, "nightly", false); // `zig build nightly` ayrı bir seçenek kümesiyle true yapar (compiler/main.zig `build_options.nightly`)
     noxc_mod.addOptions("build_options", version_options);
     // `compiler/pkg/upgrade.zig` (bkz. `noxc upgrade`nin belge notu) `nox_mod`
     // (lib_test'in kökü, bkz. `compiler/lib.zig`) ÜZERİNDEN de erişildiği
@@ -775,6 +776,38 @@ pub fn build(b: *std.Build) void {
     });
     const install_noxc = b.addInstallArtifact(noxc, .{});
     b.getInstallStep().dependOn(&install_noxc.step);
+
+    // ---- noxc-nightly (project/noxc-nightly-selfhost-plani-2026-11.md, Aşama 0.3) ----
+    // `zig build nightly`: kurulu `noxc` (stage0) `selfhost/lexer.nox`u `--selfhost-obj` ile `main`siz nesneye derler; nesne + `noxrt.o` + `compiler/main.zig` (nightly seçeneği açık) tek ikilide
+    // birleşir: `zig-out/bin/noxc-nightly`. İsteğe bağlı adım — `zig build`/`zig build test` bunu çalıştırmaz.
+    const nightly_options = b.addOptions();
+    nightly_options.addOption([]const u8, "version", build_zig_zon.version);
+    nightly_options.addOption([]const u8, "commit", sourceCommit(b));
+    nightly_options.addOption(bool, "nightly", true);
+    const noxc_nightly_mod = b.createModule(.{
+        .root_source_file = b.path("compiler/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "abi_layout", .module = abi_layout_mod },
+            .{ .name = "hpy_contract", .module = hpy_contract_mod },
+        },
+    });
+    noxc_nightly_mod.addOptions("build_options", nightly_options);
+    const nightly_obj_rel = "nightly/selfhost.o";
+    const nightly_obj_path = b.pathJoin(&.{ b.install_prefix, nightly_obj_rel });
+    const nightly_mkdir = b.addSystemCommand(&.{ "mkdir", "-p", b.pathJoin(&.{ b.install_prefix, "nightly" }) });
+    const nightly_stage0 = b.addSystemCommand(&.{ b.pathJoin(&.{ b.install_prefix, "bin", "noxc" }), "build", "--selfhost-obj", "-o", nightly_obj_path, "selfhost/lexer.nox" });
+    nightly_stage0.step.dependOn(&nightly_mkdir.step);
+    nightly_stage0.step.dependOn(b.getInstallStep()); // stage0 noxc + stdlib + noxrt.o kurulu olmalı
+    noxc_nightly_mod.addObjectFile(.{ .cwd_relative = nightly_obj_path });
+    noxc_nightly_mod.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ b.install_prefix, "lib", "noxrt.o" }) });
+    const noxc_nightly = b.addExecutable(.{ .name = "noxc-nightly", .root_module = noxc_nightly_mod });
+    noxc_nightly.step.dependOn(&nightly_stage0.step);
+    const install_nightly = b.addInstallArtifact(noxc_nightly, .{});
+    const nightly_step = b.step("nightly", "noxc-nightly: noxc + Nox ile yazılmış bileşenler (selfhost/) -> zig-out/bin/noxc-nightly");
+    nightly_step.dependOn(&install_nightly.step);
 
     // Faz W.2: `noxlsp` — minimal LSP sunucusu (bkz. compiler/lsp_main.zig'in
     // modül üstü notu). `noxc_mod` İLE AYNI desen (kendi kök dosyası, relative
@@ -1590,6 +1623,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/redis_cluster_test.zig",
         "tests/cli/grpc_test.zig",
         "tests/cli/http_multicore_factory_test.zig",
+        "tests/cli/selfhost_obj_test.zig",
         "tests/cli/run_script_args_test.zig",
         "tests/cli/extern_path_test.zig",
         "tests/cli/path_confine_test.zig",

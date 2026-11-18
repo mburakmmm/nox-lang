@@ -45,8 +45,9 @@ Bağlama (hibrit): `build.zig`, önce Zig'li `noxc`'yi (stage0) derler; stage0, 
 
 - [x] **0.1 Zig→Nox çağrı deneyi (v2.2.28):** Nox'ta tek bir işlev (`def count_ident_tokens(buf: ptr[u8], n: int) -> int`) nesne dosyasına derlenir, Zig'den C ABI ile çağrılır. Sonuç: yol A (statik bağlama) çalışıyor mu? Çalışmazsa ek bir "kütüphane olarak derle" kipi (`noxc build --lib`/`--emit-obj`) tasarlanır. `[K]` kütüphane kipi gerekirse AGENTS §16 gereği önce sorulur.
   **SONUÇ:** yol A çalışıyor (`selfhost/spike/01-zig-calls-nox/`, `run.sh` yeniden üretir): `.ll` → `clang -c` → `noxrt.o` ile Zig harness'a bağlanır; Nox işlevi `define i64 @ad(i64 %rt, ...)` dış bağlantılı; 1,9 MB tarama döngüsü Nox 0,67–0,79× Zig süresi. Kalan engel `main` simgesi ve hosted `--emit-obj` yokluğu → **0.3 için `[K]` kütüphane kipi sorusu aşağıda (§3.1)**.
-- [ ] **0.2 `selfhost/` iskeleti:** `selfhost/nox.json`, `selfhost/lexer.nox`, `selfhost/tests/`, stil rehberi (`selfhost/README.md`).
-- [ ] **0.3 `zig build nightly`:** stage0 → Nox nesnesi → bağlama → `zig-out/bin/noxc-nightly`. `zig build test` bu adımı kırmaz (nightly isteğe bağlı adım).
+- [x] **0.2 `selfhost/` iskeleti (v2.2.29):** `selfhost/nox.json`, `selfhost/lexer.nox`, `selfhost/tests/`, stil rehberi (`selfhost/README.md`).
+- [x] **0.3 `zig build nightly` (v2.2.29):** stage0 → Nox nesnesi → bağlama → `zig-out/bin/noxc-nightly`. `zig build test` bu adımı kırmaz (nightly isteğe bağlı adım).
+  **SONUÇ:** karar (B) uygulandı: gizli `noxc build --selfhost-obj` (`main` yerine `nox_lib_init`/`nox_lib_fini`, `lib_split` kodgen bayrağı; `async` üst düzey kod reddedilir); `compiler/selfhost_glue.zig` köprüsü yalnızca nightly seçeneğiyle analiz edilir; `noxc-nightly selfhost-info [dosya]` gizli komutu bağlı Nox bileşenini çalıştırır. Testler: `tests/cli/selfhost_obj_test.zig` (sınıf + global + sözlük, Zig harness). IR anlık görüntüleri değişmedi.
 - [ ] **0.4 `--frontend zig|nox` bayrağı:** `build/run/check/fmt` komutlarında; nightly'de varsayılan `zig`, bileşen eşdeğer olunca bileşen bazında açılır. Normal `noxc`te bayrak yok (ya da yalnızca `zig`).
 - [ ] **0.5 Tanı araçları:** `noxc tokens <dosya>` (token dökümü, Nox/Zig ortak biçim), `noxc ast <dosya>` (mevcut `--dump` ile eşit), JSON çıktı seçeneği.
 - [ ] **0.6 Farksal test koşucusu:** `scripts/frontend_diff.py` (+ `zig build frontend-diff-test`): tüm depo `.nox` dosyaları (~9 800) üzerinde Zig ve Nox bileşenini çalıştırıp çıktıları karşılaştırır; fark = kırmızı; ilk farkı gösteren küçültücü (delta) çıktısı.
@@ -56,7 +57,7 @@ Bağlama (hibrit): `build.zig`, önce Zig'li `noxc`'yi (stage0) derler; stage0, 
 - [ ] **0.10 Belgeler:** AGENTS.md §0 işaretçisi, spesifikasyon bölümü (§3.4xx "noxc-nightly"), `docs/` iç belge sayfası, bu listenin güncelleme kuralı.
 - [ ] **0.11 Eksik dil/çalışma zamanı özellikleri (Aşama 0 değerlendirmesi):** jenerik `enum`, büyük `match` performansı, `dict[str, X]` hızı, `list[T]` ayırma/`str` birleştirme; bulgu listesi bu dosyaya eklenir `[K]`.
 
-### 3.1 Açık karar `[K]` (0.3'ü bekliyor): temiz kütüphane kipi
+### 3.1 Karar (kullanıcı, 2026-11-18): temiz kütüphane kipi = (B) dahili `--selfhost-obj`
 
 Deney `.ll` metnini elle işledi (`@main` yeniden adlandırma). `zig build nightly` için kalıcı çözüm gerekir; `noxc`de bugün `--emit-obj/--emit-static-lib` yalnızca mobil hedeflerde var. Seçenekler: **(A)** hosted hedefte `--emit-obj` açılır ve yeni bir `--lib-prefix <ön ek>` / modülde `main` simgesi atlanır ("kütüphane modülü": üst düzey kod çalıştırılmaz, `def`ler dışa aktarılır); **(B)** yalnızca `build.zig` için dahili bir `noxc selfhost-obj` alt komutu (kullanıcıya açılmaz); **(C)** `@export` dekoratörü + açık dışa aktarma listesi. Öneri: **(B)** ile başla (kullanıcı yüzeyi/AGENTS §16 riski yok), kanıtlanınca (A)'ya genelleştir.
 
@@ -181,7 +182,7 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 ## 12. Sıralı ilk adımlar (başlangıç)
 
 1. [x] 0.1 Zig→Nox çağrı deneyi (tek işlev, C ABI) — v2.2.28.
-2. [ ] 0.2 + 0.3 `selfhost/` iskeleti ve `zig build nightly`.
+2. [x] 0.2 + 0.3 `selfhost/` iskeleti ve `zig build nightly` — v2.2.29.
 3. [ ] 0.5 + 0.6 `noxc tokens` ve farksal test koşucusu (lexer için).
 4. [ ] 0.7 + 0.8 derleyici kıyas seti ve yığın çözümü.
 5. [ ] Aşama 1 (lexer) başlangıcı.
@@ -190,7 +191,7 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 
 | Aşama | Madde | Bitti | Durum |
 |---|---|---|---|
-| 0 Altyapı | 11 | 1 | sürüyor (0.1 bitti; 0.3 `[K]` bekliyor) |
+| 0 Altyapı | 11 | 3 | sürüyor (0.1–0.3 bitti; sıradaki 0.5 + 0.6) |
 | 1 Lexer | 13 | 0 | açık |
 | 2 Parser/AST | 15 | 0 | açık |
 | 3 Tip denetleyici | 17 | 0 | açık |

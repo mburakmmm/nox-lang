@@ -116,12 +116,14 @@ pub const EmitOptions = struct {
     /// `-g`: kaynak yolu gömülür (codegen `dbgfile`).
     debug_source_path: ?[]const u8 = null,
     library_mode: bool = false,
+    /// `noxc build --selfhost-obj`: `main` yerine `nox_lib_init`/`nox_lib_fini` (bkz. `codegen.generateModuleWithMetaSinkSplit`).
+    lib_split: bool = false,
     llvm_triple: []const u8 = "",
 };
 
 /// `analyze` sonucundan IR metnini üretir. Desteklenmeyen bir yapı ya da global başlatma sırası hatası `sink`e yazılır ve `error.BuildFailed` döner.
 pub fn emit(a: std.mem.Allocator, module: ast.Module, an: *const Analysis, cfg: Config, opts: EmitOptions, sink: report_sink.Sink) ![]const u8 {
-    return codegen.generateModuleWithMetaSink(a, module, an.instantiations(), an.generic_names, an.classInstantiations(), an.generic_class_names, opts.debug_source_path, an.closure_infos, an.state.defer_synthetic_names, an.state.from_imports, an.functions_used_as_value, an.state.module_aliases, an.state.decorated_functions.items, cfg.backend, cfg.profile, null, an.callback_targets, an.resolved_bases, an.state.class_ctors.items, opts.library_mode, opts.llvm_triple, sink) catch |err| switch (err) {
+    return codegen.generateModuleWithMetaSinkSplit(a, module, an.instantiations(), an.generic_names, an.classInstantiations(), an.generic_class_names, opts.debug_source_path, an.closure_infos, an.state.defer_synthetic_names, an.state.from_imports, an.functions_used_as_value, an.state.module_aliases, an.state.decorated_functions.items, cfg.backend, cfg.profile, null, an.callback_targets, an.resolved_bases, an.state.class_ctors.items, opts.library_mode, opts.llvm_triple, sink, opts.lib_split) catch |err| switch (err) {
         error.Unsupported => {
             sink.print(
                 "codegen: this program contains a construct that is not supported at the moment " ++

@@ -2557,7 +2557,10 @@ fn emitDispatchTableRegistration(self: *Codegen) CodegenError!void {
 }
 
 pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_multicore_pool: bool, pin_single_worker: bool) CodegenError!void {
-    if (use_async) return self.genMainAsync(stmts, wants_multicore_pool, pin_single_worker);
+    if (use_async) {
+        if (self.lib_split) return error.Unsupported; // `--selfhost-obj` modülleri async/spawn kullanamaz (üst düzey kod fiber değil, `nox_lib_init` içinde senkron çalışır)
+        return self.genMainAsync(stmts, wants_multicore_pool, pin_single_worker);
+    }
 
     self.vars.clearRetainingCapacity();
     self.narrowed_unbox.clearRetainingCapacity();
@@ -2595,7 +2598,11 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     // kodgen yolu YOK, argv'yi HİÇ kullanmayan programlar İÇİN bu
     // parametreler yalnızca kullanılmadan geçilir, sıfıra yakın
     // maliyet).
-    if (self.library_mode) {
+    if (self.lib_split) {
+        try self.qbeFuncHeaderStart(null, "$nox_lib_init");
+        try self.qbeFuncParam(.l, RT_PARAM, true);
+        try self.qbeFuncHeaderEnd();
+    } else if (self.library_mode) {
         try self.qbeFuncHeaderStart(null, "$nox_embed_user_entry");
         try self.qbeFuncParam(.l, RT_PARAM, true);
         try self.qbeFuncHeaderEnd();
@@ -2631,7 +2638,8 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
     // HER top-level, `async` OLMAYAN programı KAPSAR).
     try self.drainFunctionArena();
     try self.releaseAllLocals();
-    if (self.module_globals.count() > 0) {
+    // `lib_split`: globaller `nox_lib_init` ile ayrılır ve çağrılan işlevler boyunca yaşar; `$nox_lib_fini` bırakır.
+    if (self.module_globals.count() > 0 and !self.lib_split) {
         try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
     }
     if (!self.library_mode) {
@@ -2645,7 +2653,16 @@ pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_m
         try self.qbeRet("0");
     }
     try self.qbeFuncEnd();
-    if (self.library_mode) {
+    if (self.lib_split) {
+        try self.qbeFuncHeaderStart(null, "$nox_lib_fini");
+        try self.qbeFuncParam(.l, RT_PARAM, true);
+        try self.qbeFuncHeaderEnd();
+        if (self.module_globals.count() > 0) {
+            try self.qbeCall(null, "$nox_deinit_globals", &.{.{ .ty = .l, .text = RT_PARAM }});
+        }
+        try self.qbeRet(null);
+        try self.qbeFuncEnd();
+    } else if (self.library_mode) {
         try self.qbeFuncHeaderStart(null, "$nox_embed_bind");
         try self.qbeFuncParam(.l, "%app", true);
         try self.qbeFuncHeaderEnd();

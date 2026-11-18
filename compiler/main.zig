@@ -405,7 +405,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, legacy };
+    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -432,6 +432,7 @@ fn realMain(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "whoami")) break :blk .whoami;
         if (std.mem.eql(u8, first, "init")) break :blk .init;
         if (std.mem.eql(u8, first, "check")) break :blk .check;
+        if (build_options.nightly and std.mem.eql(u8, first, "selfhost-info")) break :blk .selfhost_info;
         if (std.mem.eql(u8, first, "expand")) break :blk .expand;
         if (std.mem.eql(u8, first, "explain")) break :blk .explain;
         if (std.mem.eql(u8, first, "bindgen")) break :blk .bindgen;
@@ -495,7 +496,25 @@ fn realMain(init: std.process.Init) !void {
         .list_installed => try cmdListInstalled(io, a, nox_home),
         .refresh => try cmdRefresh(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, init.environ_map),
         .cache => try cmdCache(io, a, rest, nox_home, run_limits),
+        .selfhost_info => try cmdSelfhostInfo(io, a, rest),
     }
+}
+
+/// `noxc-nightly selfhost-info [dosya]`: nightly'ye bağlı Nox bileşenlerini listeler ve deneme bileşenini (tanımlayıcı sayacı) verilen dosyada çalıştırır. Normal `noxc`te bu komut yoktur.
+fn cmdSelfhostInfo(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void {
+    if (comptime !build_options.nightly) unreachable;
+    const glue = @import("selfhost_glue.zig");
+    const path = if (rest.len > 0) rest[0] else "selfhost/lexer.nox";
+    const src = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(16 * 1024 * 1024)) catch {
+        printErr("selfhost-info: cannot read {s}\n", .{path});
+        std.process.exit(1);
+    };
+    const nrt = glue.Runtime.start();
+    defer nrt.stop();
+    var stdout_buf: [512]u8 = undefined;
+    var w = std.Io.File.stdout().writer(io, &stdout_buf);
+    try w.interface.print("noxc-nightly {s}: Nox components linked: sh_count_ident_tokens\n{s}: {d} bytes, {d} identifier tokens\n", .{ build_options.version, path, src.len, nrt.countIdentTokens(src) });
+    try w.interface.flush();
 }
 
 /// `noxc upgrade [--check] [<sürüm>]` — bkz. `pkg/upgrade.zig`nin modül
@@ -1500,7 +1519,8 @@ const BuildOpts = struct {
     emit: EmitKind = .exe,
 };
 
-const EmitKind = enum { exe, obj, static_lib, shared_lib };
+/// `host_obj`: gizli `--selfhost-obj` (noxc-nightly Aşama 0.3): masaüstü hedefte `main`siz LLVM nesnesi (`nox_lib_init`/`nox_lib_fini` + dış bağlantılı `def`ler). Kullanıcıya açık değildir.
+const EmitKind = enum { exe, obj, static_lib, shared_lib, host_obj };
 
 const BackendChoice = enum { auto, qbe, llvm };
 
@@ -1687,6 +1707,8 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
             setEmit(&opts, .static_lib);
         } else if (std.mem.eql(u8, arg, "--emit-shared-lib")) {
             setEmit(&opts, .shared_lib);
+        } else if (std.mem.eql(u8, arg, "--selfhost-obj")) {
+            setEmit(&opts, .host_obj);
         } else if (opts.path == null) {
             opts.path = arg;
         }
@@ -1780,7 +1802,7 @@ fn isRunnableOnHost(profile: codegen.Profile, target: []const u8) bool {
 fn buildFlagTakesValue(arg: []const u8) ?bool {
     const valued = [_][]const u8{ "-o", "--backend", "--profile", "--target" };
     for (valued) |f| if (std.mem.eql(u8, arg, f)) return true;
-    const bare = [_][]const u8{ "--dump", "-v", "-g", "--release", "--strict-spawn-shared", "--asyncify", "--threads", "--emit-asm", "--emit-obj", "--emit-static-lib", "--emit-shared-lib" };
+    const bare = [_][]const u8{ "--dump", "-v", "-g", "--release", "--strict-spawn-shared", "--asyncify", "--threads", "--emit-asm", "--emit-obj", "--emit-static-lib", "--emit-shared-lib", "--selfhost-obj" };
     for (bare) |f| if (std.mem.eql(u8, arg, f)) return false;
     return null;
 }
@@ -3390,7 +3412,11 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             }
         }
     }
-    if (emit != .exe and (hosted_info == null or !hosted_info.?.isMobile())) {
+    if (emit == .host_obj and (!release or target != null)) {
+        printErr("--selfhost-obj needs the native LLVM backend (clang on PATH) and no --target\n", .{});
+        return error.BuildFailed;
+    }
+    if (emit != .exe and emit != .host_obj and (hosted_info == null or !hosted_info.?.isMobile())) {
         printErr("--emit-obj, --emit-static-lib and --emit-shared-lib require a mobile --target\n", .{});
         return error.BuildFailed;
     }
@@ -3483,12 +3509,24 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
 
     const library_mode = emit != .exe;
     const llvm_triple: []const u8 = if (hosted_info) |ht| (if (ht.llvmOnly() or (release and ht.isDesktop())) ht.llvmTriple() else "") else "";
-    const ir = frontend.emit(a, module, &analysis, fe_cfg, .{ .debug_source_path = debug_source_path, .library_mode = library_mode, .llvm_triple = llvm_triple }, .{}) catch |e| switch (e) {
+    const ir = frontend.emit(a, module, &analysis, fe_cfg, .{ .debug_source_path = debug_source_path, .library_mode = library_mode, .lib_split = emit == .host_obj, .llvm_triple = llvm_triple }, .{}) catch |e| switch (e) {
         error.BuildFailed => return error.BuildFailed,
         else => return e,
     };
 
     const stem = output_override orelse stemOf(path_arg);
+    if (emit == .host_obj) {
+        const base = stripOneExt(stem);
+        const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{base});
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
+        const obj_path = try std.fmt.allocPrint(a, "{s}.o", .{base});
+        const argv: []const []const u8 = if (ccDriver(gpa, io) == .zig_cc)
+            &.{ "zig", "cc", "-c", "-O2", "-Wno-override-module", "-fPIC", "-o", obj_path, ll_path }
+        else
+            &.{ "clang", "-c", "-O2", "-Wno-override-module", "-fPIC", "-o", obj_path, ll_path };
+        try runTool(gpa, io, argv);
+        return obj_path;
+    }
     // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): MinGW'in `cc`si,
     // `-o` AÇIKÇA verilmiş olsa BİLE, PE (Windows) çıktı dosyasına HER ZAMAN
     // `.exe` uzantısı EKLER (`stem` zaten `.exe` İLE BİTMİYORSA) — `noxc`

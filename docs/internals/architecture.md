@@ -45,6 +45,10 @@ include/     nox_nni.h — the public native interface header
 
 Changes that would violate one of these are not accepted; they are raised with the maintainers instead.
 
+## noxc-nightly (experimental)
+
+`zig build nightly` builds `zig-out/bin/noxc-nightly`: the normal compiler plus components written in Nox itself (`selfhost/`), linked into one binary. The installed `noxc` compiles the Nox sources with a hidden, unsupported flag (`noxc build --selfhost-obj`) into an object without `main` that exports `nox_lib_init(rt)`, `nox_lib_fini(rt)` and every top-level `def` as a C symbol; the Zig side (`compiler/selfhost_glue.zig`) calls them over the C ABI. The ordinary `noxc` never contains these components and `zig build test` does not need them. The plan and progress list are in `project/noxc-nightly-selfhost-plani-2026-11.md`.
+
 ## Where to read next
 
 | Topic | Page |
