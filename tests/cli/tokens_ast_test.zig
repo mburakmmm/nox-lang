@@ -74,3 +74,26 @@ test "ast: yalnizca ayristirir ve AST dokumunu basar; --frontend nox normal noxc
     defer std.testing.allocator.free(z.stderr);
     try std.testing.expect(z.term == .exited and z.term.exited == 0);
 }
+
+// Aşama 1 dogfood kapanışı: CRLF kaynaklarda trivia (yorum metni `\r` taşımaz, boş satır çifte sayılmaz) ve `noxc fmt` çıktısı yalnızca LF.
+test "CRLF: trivia satir numaralari dogru, yorum metni \\r tasimaz, fmt karisik satir sonu uretmez" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "c.nox", .data = "x = 1\r\n\r\n# c1\r\ny = 2  # t\r\n" });
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(io, &buf)];
+    const path = try std.fmt.allocPrint(std.testing.allocator, "{s}/c.nox", .{dir});
+    defer std.testing.allocator.free(path);
+    const r = try runNoxc(std.testing.allocator, io, &.{ "zig-out/bin/noxc", "tokens", "--trivia", path });
+    defer std.testing.allocator.free(r.stdout);
+    defer std.testing.allocator.free(r.stderr);
+    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "TRIVIA blank_line line 2 trailing false \"\"\nTRIVIA comment line 3 trailing false \"# c1\"\nTRIVIA comment line 4 trailing true \"# t\"\n") != null);
+    const f = try runNoxc(std.testing.allocator, io, &.{ "zig-out/bin/noxc", "fmt", path });
+    defer std.testing.allocator.free(f.stdout);
+    defer std.testing.allocator.free(f.stderr);
+    try std.testing.expect(f.term == .exited and f.term.exited == 0);
+    const out = try tmp.dir.readFileAlloc(io, "c.nox", std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("x = 1\n\n# c1\ny = 2  # t\n", out);
+}

@@ -428,6 +428,12 @@ def emit_trivia(st: Lx, kind: int, line: int, trailing: int, start: int, end: in
     st.trivia.append(start)
     st.trivia.append(end)
 
+# Yorum metninin sonundaki CRLF `\r`si yorumun parçası değildir (Zig `trimCr`).
+def trim_cr_end(base: int, start: int, end: int) -> int:
+    if end > start and at(base, end - 1) == 13:
+        return end - 1
+    return end
+
 # Hata konumu (Zig `posSpan`): sütun = bayt - satır_başı + 1.
 def fail(st: Lx, code: int, line: int, byte: int, line_start: int) -> int:
     st.err_line = line
@@ -551,9 +557,11 @@ def lex(st: Lx) -> int:
                         comment_start: int = i
                         while i < n and at(base, i) != 10:
                             i = i + 1
-                        emit_trivia(st, 0, line, 0, comment_start, i)
+                        emit_trivia(st, 0, line, 0, comment_start, trim_cr_end(base, comment_start, i))
                     else:
                         emit_trivia(st, 1, line, 0, 0, 0)
+                        while i < n and at(base, i) != 10:
+                            i = i + 1
                 else:
                     while i < n and at(base, i) != 10:
                         i = i + 1
@@ -588,7 +596,7 @@ def lex(st: Lx) -> int:
             while i < n and at(base, i) != 10:
                 i = i + 1
             if st.want_trivia:
-                emit_trivia(st, 0, line, 1, tcs, i)
+                emit_trivia(st, 0, line, 1, tcs, trim_cr_end(base, tcs, i))
             continue
         if c == 10:
             i = i + 1

@@ -11,6 +11,7 @@ Plan ve takip listesi: `project/noxc-nightly-selfhost-plani-2026-11.md`. Bu dizi
 ## Stil ve sözleşme
 
 - Her üst düzey `def` dış bağlantılı bir C simgesidir; Nox işlevleri gizli ilk parametre olarak `rt` alır (`i64`). Simge çakışmasını önlemek için bu dizindeki dışa açık işlevler `sh_` önekiyle başlar (Aşama 1'de lexer girişi `nox_lex`).
+- **Liste takma adı kuralı (D1.2):** büyüyen bir listeye (`append`) yerel bir takma adla değil her zaman sahibi olan alan/değişken üzerinden ekle (`st.out.append(x)`); `a = st.out; a.append(x)` büyümede bayatlar. Bayt okuma `lowlevel` içinde ayrı işlevde yapılır (sınıf kurma/`list[Sınıf]` orada yok). Bulgu defteri: `project/selfhost-dogfood-defteri-2026-11.md`.
 - `ad := ifade` yalnızca sağ taraf tipi açıksa; aksi halde tam tip yazılır. Bu dizinde async/`spawn` yok (`--selfhost-obj` bunları reddeder).
 - Veri sınırı düz sayı arabelleği (`ptr[u8]`, `lowlevel` içinde) ya da bayt tamponudur; Nox nesneleri Zig'e sızdırılmaz.
 - Yeni dil özellikleri önce Zig derleyicisinde, farksal testle sonra buraya.

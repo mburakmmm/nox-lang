@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.36]
+
+noxc-nightly: dogfood süreci ve Aşama 1 dogfood kapanışı.
+
+- **Süreç (kullanıcı önerisi):** `project/selfhost-dogfood-defteri-2026-11.md` — her aşamada bulunan Nox/çalışma zamanı bulguları deftere yazılır, aşama sonunda düzelt/ertele/karar-iste olarak ele alınır (plan §0).
+- **Düzeltme (Zig, defter D1.1):** lexer trivia kipi CRLF kaynaklarda yorum metnine `\r` taşıyor ve CRLF boş satırı iki kez sayıyordu; `noxc fmt` CRLF dosyalarda karışık satır sonu (`\r\n` + `\n`) üretiyordu. Zig lexer'ı (`trimCr`, boş satırda `\r` atlanır) ve Nox portu düzeltildi; farksal testler yeniden 0 fark; `tests/cli/tokens_ast_test.zig` CRLF testi.
+- **Defter:** liste takma adı büyümede bayatlar (bilinen v1 sınırlaması, kullanıcı kararı bekliyor), enum/`if`-zinciri dağıtım maliyeti (performans adayları), tamsayı `match` deseni ve Optional özellik daraltması (dil kararları).
+
 ## [2.2.35]
 
 noxc-nightly: "tam geçiş" değişmez kuralı kaydedildi; Aşama 1 bu kurala göre denetlendi ve iki eksik kapatıldı.

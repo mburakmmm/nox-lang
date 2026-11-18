@@ -136,9 +136,11 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
                     if (i < source.len and source[i] == '#') {
                         const comment_start = i;
                         while (i < source.len and source[i] != '\n') : (i += 1) {}
-                        try t.append(allocator, .{ .kind = .comment, .line = line, .text = try allocator.dupe(u8, source[comment_start..i]), .trailing = false });
+                        try t.append(allocator, .{ .kind = .comment, .line = line, .text = try allocator.dupe(u8, trimCr(source[comment_start..i])), .trailing = false });
                     } else {
                         try t.append(allocator, .{ .kind = .blank_line, .line = line });
+                        // CRLF: `\r` satır sonunun parçasıdır; atlanır ki bir sonraki tur aynı satırı ikinci kez boş satır saymasın (satır numaraları kaymasın).
+                        while (i < source.len and source[i] != '\n') : (i += 1) {}
                     }
                 } else {
                     while (i < source.len and source[i] != '\n') : (i += 1) {}
@@ -192,7 +194,7 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
             if (trivia_out) |t| {
                 const comment_start = i;
                 while (i < source.len and source[i] != '\n') : (i += 1) {}
-                try t.append(allocator, .{ .kind = .comment, .line = line, .text = try allocator.dupe(u8, source[comment_start..i]), .trailing = true });
+                try t.append(allocator, .{ .kind = .comment, .line = line, .text = try allocator.dupe(u8, trimCr(source[comment_start..i])), .trailing = true });
             } else {
                 while (i < source.len and source[i] != '\n') : (i += 1) {}
             }
@@ -675,6 +677,11 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
         if (!(proto_at_line_start and next_is_name)) tok.kind = .identifier;
     }
     return tokens.toOwnedSlice(allocator);
+}
+
+/// Yorum metninin sonundaki CRLF'in `\r`si yorumun parçası değildir (formatter çıktısında karışık satır sonu üretirdi).
+fn trimCr(text: []const u8) []const u8 {
+    return if (text.len > 0 and text[text.len - 1] == '\r') text[0 .. text.len - 1] else text;
 }
 
 fn peek(source: []const u8, idx: usize) u8 {
