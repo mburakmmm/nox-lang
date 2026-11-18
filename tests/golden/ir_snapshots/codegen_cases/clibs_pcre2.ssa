@@ -13293,18 +13293,25 @@ export function l $nox_pcre2_build(l %rt, l %p_pattern, l %p_flags, w %p_jit) {
     storel 0, %t85
     %t86 =l add %t83, 24
     storel 0, %t86
-    call $nox_pcre2_Pcre2___init__(l %rt, l %t83, l %t72, l %t73, l %t75)
-    %t87 =w ceql %t75, 0
-    jnz %t87, @release_skip39, @release38
-@release38
-    call $List_str_release(l %rt, l %t75)
-    jmp @release_done40
-@release_skip39
-    jmp @release_done40
-@release_done40
+    %t87 =w ceql %t73, 0
+    jnz %t87, @retain_skip39, @retain38
+@retain38
+    %t88 =l sub %t73, 16
+    %t89 =l loadl %t88
+    %t90 =w csgel %t89, 536870912
+    jnz %t90, @retain_done40, @retain_bump41
+@retain_bump41
+    %t91 =l loadl %t88
+    %t92 =l add %t91, 1
+    storel %t92, %t88
+    jmp @retain_done40
+@retain_skip39
+    jmp @retain_done40
+@retain_done40
+    call $nox_pcre2_Pcre2___init___c(l %rt, l %t83, l %t72, l %t73, l %t75)
     ret %t83
-@after_return41
-@fn_end42
+@after_return42
+@fn_end43
     ret 0
 }
 export function l $nox_pcre2_compile(l %rt, l %p_pattern, l %p_flags, w %p_jit) {
@@ -25670,6 +25677,67 @@ export function w $List_JsonValue_eq(l %rt, l %a, l %b) {
     ret 1
 @listeq_lendiff0
     ret 0
+}
+export function $nox_pcre2_Pcre2___init___c(l %rt, l %p_self, l %p_h, l %p_pattern, l %p_names) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    %t3 =l alloc8 8
+    storel %p_self, %t0
+    storel %p_h, %t1
+    storel %p_pattern, %t2
+    storel %p_names, %t3
+    %t4 =l loadl %t0
+    %t5 =l loadl %t1
+    %t6 =l add %t4, 8
+    storel %t5, %t6
+    %t7 =l loadl %t0
+    %t8 =l loadl %t2
+    storel 0, %t2
+    %t9 =l add %t7, 16
+    %t10 =l loadl %t9
+    storel %t8, %t9
+    %t11 =w ceql %t10, 0
+    jnz %t11, @release_skip1, @release0
+@release0
+    %t12 =l sub %t10, 16
+    %t13 =l loadl %t12
+    %t14 =w csgel %t13, 536870912
+    jnz %t14, @str_free_done5, @str_rel_atomic6
+@str_rel_atomic6
+    %t15 =l sub %t10, 16
+    %t16 =l loadl %t15
+    %t17 =l sub %t16, 1
+    storel %t17, %t15
+    %t18 =w cslel %t17, 0
+    jnz %t18, @str_free3, @str_free_skip4
+@str_free3
+    call $nox_str_free_now(l %rt, l %t10)
+    jmp @str_free_done5
+@str_free_skip4
+    jmp @str_free_done5
+@str_free_done5
+    jmp @release_done2
+@release_skip1
+    jmp @release_done2
+@release_done2
+    %t19 =l loadl %t0
+    %t20 =l loadl %t3
+    storel 0, %t3
+    %t21 =l add %t19, 24
+    %t22 =l loadl %t21
+    storel %t20, %t21
+    %t23 =w ceql %t22, 0
+    jnz %t23, @release_skip8, @release7
+@release7
+    call $List_str_release(l %rt, l %t22)
+    jmp @release_done9
+@release_skip8
+    jmp @release_done9
+@release_done9
+@fn_end10
+    ret
 }
 data $__nox_decorators = { l 0 }
 data $__nox_decorator_args = { l 0 }

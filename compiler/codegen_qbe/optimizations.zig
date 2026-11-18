@@ -704,6 +704,61 @@ pub fn findCtorMoveSite(self: *Codegen, body: []const ast.Stmt, name: []const u8
     return stmtMoveKey(self, stmt, name);
 }
 
+
+fn bodyHasEarlyExitOrGuard(body: []const ast.Stmt) bool {
+    for (body) |stmt| {
+        switch (stmt.kind) {
+            .return_stmt, .raise_stmt, .try_stmt, .with_stmt, .defer_stmt, .lowlevel_stmt, .func_def => return true,
+            .if_stmt => |f| {
+                if (bodyHasEarlyExitOrGuard(f.then_body)) return true;
+                for (f.elif_clauses) |ec| if (bodyHasEarlyExitOrGuard(ec.body)) return true;
+                if (f.else_body) |eb| if (bodyHasEarlyExitOrGuard(eb)) return true;
+            },
+            .while_stmt => |w| if (bodyHasEarlyExitOrGuard(w.body)) return true,
+            .for_stmt => |f| if (bodyHasEarlyExitOrGuard(f.body)) return true,
+            else => {},
+        }
+    }
+    return false;
+}
+
+/// B1/I6 (devam): istisna fırlatmayan (`init_is_safe`), erken çıkışsız, basit olmayan bir `__init__`in hangi heap parametrelerini ÜST DÜZEY bir deyimde son kullanımda tükettiğini hesaplar
+/// (bkz. `Codegen.init_consumed`). Tüketilen parametre her zaman (koşulsuz) tüketilir: çıkışa giden başka yol yoktur, bu yüzden tüketen klonda param release'i gerekmez.
+pub fn computeInitConsumed(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
+    var init_fd: ?ast.FuncDef = null;
+    for (cd.methods) |m| {
+        if (std.mem.eql(u8, m.name, "__init__")) init_fd = m;
+    }
+    const m = init_fd orelse return;
+    const cinfo = self.classes.get(cd.name) orelse return;
+    if (!cinfo.has_init or cinfo.simple_init_ok or !cinfo.init_is_safe) return;
+    const owner = cinfo.init_owner orelse return;
+    if (!std.mem.eql(u8, owner, cd.name)) return;
+    if (m.params.len < 1 or cinfo.init_params.len != m.params.len - 1) return;
+    if (bodyHasEarlyExitOrGuard(m.body)) return;
+    const n = m.params.len - 1;
+    const consumed = try self.allocator.alloc(bool, n);
+    @memset(consumed, false);
+    var keys: std.ArrayListUnmanaged(usize) = .empty;
+    for (0..n) |k| {
+        const p = m.params[1 + k];
+        const info = cinfo.init_params[k];
+        if (!abi.isHeapManaged(info.heap) or info.heap == .boxed_scalar) continue;
+        const key = findCtorMoveSite(self, m.body, p.name, true) orelse continue;
+        var top_level = false;
+        for (m.body) |st| {
+            if (stmtMoveKey(self, st, p.name)) |k2| {
+                if (k2 == key) top_level = true;
+            }
+        }
+        if (!top_level) continue;
+        consumed[k] = true;
+        try keys.append(self.allocator, key);
+    }
+    if (keys.items.len == 0) return;
+    try self.init_consumed.put(self.allocator, cd.name, .{ .consumed = consumed, .keys = try keys.toOwnedSlice(self.allocator) });
+}
+
 /// Bir fonksiyon/metod gövdesindeki taze-bağlı yerellerin taşıma noktalarını `self.move_sites`e yazar (idempotent).
 pub fn markMoveSites(self: *Codegen, full_body: []const ast.Stmt) CodegenError!void {
     try markMoveSitesIn(self, full_body, full_body);

@@ -3659,26 +3659,10 @@ export function l $build(l %rt, l %p_d) {
     storel 0, %t20
     %t21 =l add %t16, 40
     storel 0, %t21
-    call $Node___init__(l %rt, l %t16, l %t9, l %t12, l %t15)
-    %t22 =w ceql %t12, 0
-    jnz %t22, @release_skip4, @release3
-@release3
-    call $Node_release(l %rt, l %t12)
-    jmp @release_done5
-@release_skip4
-    jmp @release_done5
-@release_done5
-    %t23 =w ceql %t15, 0
-    jnz %t23, @release_skip7, @release6
-@release6
-    call $Node_release(l %rt, l %t15)
-    jmp @release_done8
-@release_skip7
-    jmp @release_done8
-@release_done8
+    call $Node___init___c(l %rt, l %t16, l %t9, l %t12, l %t15)
     ret %t16
-@after_return9
-@fn_end10
+@after_return3
+@fn_end4
     ret 0
 }
 export function l $run(l %rt) {
@@ -4903,6 +4887,110 @@ export function w $List_JsonValue_eq(l %rt, l %a, l %b) {
 @listeq_lendiff0
     ret 0
 }
+export function $Node___init___c(l %rt, l %p_self, l %p_val, l %p_left, l %p_right) {
+@start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    %t3 =l alloc8 8
+    storel %p_self, %t0
+    storel %p_val, %t1
+    storel %p_left, %t2
+    storel %p_right, %t3
+    %t4 =l loadl %t0
+    %t5 =l loadl %t1
+    %t6 =l add %t4, 8
+    storel %t5, %t6
+    %t7 =l loadl %t0
+    %t8 =l add %t7, 16
+    storel 0, %t8
+    %t9 =l loadl %t0
+    %t10 =l add $str8, 16
+    %t11 =l loadl %t1
+    %t12 =l call $nox_int_to_str(l %rt, l %t11)
+    %t13 =l call $nox_str_concat(l %rt, l %t10, l %t12)
+    %t14 =w ceql %t12, 0
+    jnz %t14, @release_skip1, @release0
+@release0
+    %t15 =l sub %t12, 16
+    %t16 =l loadl %t15
+    %t17 =w csgel %t16, 536870912
+    jnz %t17, @str_free_done5, @str_rel_atomic6
+@str_rel_atomic6
+    %t18 =l sub %t12, 16
+    %t19 =l loadl %t18
+    %t20 =l sub %t19, 1
+    storel %t20, %t18
+    %t21 =w cslel %t20, 0
+    jnz %t21, @str_free3, @str_free_skip4
+@str_free3
+    call $nox_str_free_now(l %rt, l %t12)
+    jmp @str_free_done5
+@str_free_skip4
+    jmp @str_free_done5
+@str_free_done5
+    jmp @release_done2
+@release_skip1
+    jmp @release_done2
+@release_done2
+    %t22 =l add %t9, 24
+    %t23 =l loadl %t22
+    storel %t13, %t22
+    %t24 =w ceql %t23, 0
+    jnz %t24, @release_skip8, @release7
+@release7
+    %t25 =l sub %t23, 16
+    %t26 =l loadl %t25
+    %t27 =w csgel %t26, 536870912
+    jnz %t27, @str_free_done12, @str_rel_atomic13
+@str_rel_atomic13
+    %t28 =l sub %t23, 16
+    %t29 =l loadl %t28
+    %t30 =l sub %t29, 1
+    storel %t30, %t28
+    %t31 =w cslel %t30, 0
+    jnz %t31, @str_free10, @str_free_skip11
+@str_free10
+    call $nox_str_free_now(l %rt, l %t23)
+    jmp @str_free_done12
+@str_free_skip11
+    jmp @str_free_done12
+@str_free_done12
+    jmp @release_done9
+@release_skip8
+    jmp @release_done9
+@release_done9
+    %t32 =l loadl %t0
+    %t33 =l loadl %t2
+    storel 0, %t2
+    %t34 =l add %t32, 32
+    %t35 =l loadl %t34
+    storel %t33, %t34
+    %t36 =w ceql %t35, 0
+    jnz %t36, @release_skip15, @release14
+@release14
+    call $Node_release(l %rt, l %t35)
+    jmp @release_done16
+@release_skip15
+    jmp @release_done16
+@release_done16
+    %t37 =l loadl %t0
+    %t38 =l loadl %t3
+    storel 0, %t3
+    %t39 =l add %t37, 40
+    %t40 =l loadl %t39
+    storel %t38, %t39
+    %t41 =w ceql %t40, 0
+    jnz %t41, @release_skip18, @release17
+@release17
+    call $Node_release(l %rt, l %t40)
+    jmp @release_done19
+@release_skip18
+    jmp @release_done19
+@release_done19
+@fn_end20
+    ret
+}
 data $__nox_decorators = { l 0 }
 data $__nox_decorator_args = { l 0 }
 data $__nox_decorator_arg_kinds = { l 0 }
@@ -4948,7 +5036,7 @@ export function l $__nox_reflect_decorator_arg(l %rt, l %i, l %j) {
     %t8 =w ceql %t7, 0
     jnz %t8, @dec_arg_is_string0, @dec_arg_not_string1
 @dec_arg_not_string1
-    %t9 =l add $str8, 16
+    %t9 =l add $str9, 16
     ret %t9
 @dec_arg_is_string0
     %t10 =l mul %i, 40
@@ -5063,7 +5151,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t8 =w ceql %t7, 3
     jnz %t8, @dec_arg_list_item_match0, @dec_arg_list_item_mismatch1
 @dec_arg_list_item_mismatch1
-    %t9 =l add $str9, 16
+    %t9 =l add $str10, 16
     ret %t9
 @dec_arg_list_item_match0
     %t10 =l mul %i, 40
@@ -5078,7 +5166,7 @@ export function l $__nox_reflect_decorator_arg_list_item(l %rt, l %i, l %j, l %k
     %t19 =w cultl %k, %t18
     jnz %t19, @dec_arg_list_item_bounds_ok2, @dec_arg_list_item_bounds_bad3
 @dec_arg_list_item_bounds_bad3
-    %t20 =l add $str10, 16
+    %t20 =l add $str11, 16
     ret %t20
 @dec_arg_list_item_bounds_ok2
     %t21 =l shr %t17, 32
@@ -5109,6 +5197,7 @@ data $str4 = { l 1073741824, l 2305843009213693982, b "ord() cannot take an empt
 data $str5 = { l 1073741824, l 2305843009213693959, b "changed", b 0 }
 data $str6 = { l 1073741824, l 2305843009213693959, b "changed", b 0 }
 data $str7 = { l 1073741824, l 2305843009213693959, b "changed", b 0 }
-data $str8 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str8 = { l 1073741824, l 2305843009213693953, b "n", b 0 }
 data $str9 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str10 = { l 1073741824, l 2305843009213693952, b "", b 0 }
+data $str11 = { l 1073741824, l 2305843009213693952, b "", b 0 }

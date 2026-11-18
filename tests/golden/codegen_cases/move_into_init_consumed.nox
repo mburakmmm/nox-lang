@@ -1,0 +1,116 @@
+# 2.3 B1/I6 (devam): basit OLMAYAN (hesaplanmış alanlı) `__init__`li kurucularda tüketen parametre sözleşmesi: taze argüman retain/release çifti olmadan alana devredilir, takma ad argüman çağıranda retain edilir.
+# Doğruluk + sızıntı yok + tüketilmemesi gereken durumlar (erken dönüş, koşullu saklama, istisna) + miras (super().__init__) + ödünç çağıranlar.
+import nox.mem
+
+class Leaf:
+    v: int
+    def __init__(self: Leaf, v: int) -> None:
+        self.v = v
+
+class Node:
+    val: int
+    label: str
+    left: Leaf
+    right: Leaf
+
+    def __init__(self: Node, val: int, left: Leaf, right: Leaf) -> None:
+        self.val = val * 2
+        self.label = "n" + str(val)
+        self.left = left
+        self.right = right
+
+    def total(self: Node) -> int:
+        return self.val + self.left.v + self.right.v + len(self.label)
+
+# erken dönüş: tüketilmez (normal sözleşme)
+class Early:
+    a: Leaf
+    n: int
+    def __init__(self: Early, a: Leaf, n: int) -> None:
+        self.n = n + 1
+        if n > 100:
+            return
+        self.a = a
+
+# koşullu saklama: tüketilmez
+class Cond:
+    a: Leaf
+    n: int
+    def __init__(self: Cond, a: Leaf, n: int) -> None:
+        self.n = n * 3
+        if n > 0:
+            self.a = a
+        else:
+            self.a = Leaf(0)
+
+# miras: taban __init__ hem doğrudan hem super() ile çağrılır
+class Base:
+    h: Leaf
+    tag: str
+    def __init__(self: Base, h: Leaf, k: int) -> None:
+        self.tag = "b" + str(k)
+        self.h = h
+
+class Derived(Base):
+    extra: Leaf
+    def __init__(self: Derived, h: Leaf, extra: Leaf, k: int) -> None:
+        super().__init__(h, k)
+        self.extra = extra
+
+def fresh_args(n: int) -> int:
+    nd: Node = Node(n, Leaf(n), Leaf(n + 1))
+    return nd.total()
+
+def named_args(n: int) -> int:
+    a: Leaf = Leaf(n)
+    b: Leaf = Leaf(n + 1)
+    nd: Node = Node(n, a, b)
+    return nd.total() + a.v + b.v
+
+def mixed_args(n: int) -> int:
+    a: Leaf = Leaf(n)
+    nd: Node = Node(n, a, Leaf(7))
+    return nd.total() + a.v
+
+def early_cond(n: int) -> int:
+    e: Early = Early(Leaf(n), n)
+    c: Cond = Cond(Leaf(n), n)
+    c2: Cond = Cond(Leaf(5), 0 - 1)
+    return e.a.v + e.n + c.a.v + c.n + c2.a.v
+
+def inherit(n: int) -> int:
+    d: Derived = Derived(Leaf(n), Leaf(n + 2), n)
+    b: Base = Base(Leaf(n * 2), n)
+    return d.h.v + d.extra.v + len(d.tag) + b.h.v + len(b.tag)
+
+def in_loop(n: int) -> int:
+    t: int = 0
+    i: int = 0
+    while i < n:
+        nd: Node = Node(i, Leaf(i), Leaf(i * 2))
+        t = t + nd.total()
+        i = i + 1
+    return t
+
+def shared_leaf(n: int) -> int:
+    s: Leaf = Leaf(n)
+    x: Node = Node(1, s, s)
+    y: Node = Node(2, s, Leaf(3))
+    return x.total() + y.total() + s.v
+
+def run() -> int:
+    t: int = 0
+    t = t + fresh_args(3) + named_args(4) + mixed_args(2) + early_cond(5) + inherit(3) + in_loop(6) + shared_leaf(9)
+    return t
+
+print(fresh_args(3), named_args(4), mixed_args(2), early_cond(5))
+print(inherit(3), in_loop(6), shared_leaf(9))
+print(run())
+nox.mem.stats()
+r0: int = run()
+m1: nox.mem.MemStats = nox.mem.stats()
+r1: int = run()
+r2: int = run()
+m2: nox.mem.MemStats = nox.mem.stats()
+print(r0 == r1 and r1 == r2)
+print(m2.live - m1.live)

@@ -337,6 +337,8 @@ pub const MainPlanItem = union(enum) {
 /// Statik işlev-değeri kapanışının başlangıç sayacı (2^60): hiçbir gerçekçi retain/release dizisi sıfıra indiremez.
 pub const FNVAL_STATIC_REFCOUNT: i64 = 1 << 60;
 
+pub const InitConsume = struct { consumed: []const bool, keys: []const usize };
+
 pub const Codegen = struct {
     pub const isFuncInlineEligible = inlining.isFuncInlineEligible;
     pub const computeInlinableFunctions = inlining.computeInlinableFunctions;
@@ -684,6 +686,8 @@ pub const Codegen = struct {
     pub const markBorrowedFieldLocals = optimizations.markBorrowedFieldLocals;
     pub const markBorrowedAliasLocals = optimizations.markBorrowedAliasLocals;
     pub const markMoveSites = optimizations.markMoveSites;
+    pub const computeInitConsumed = optimizations.computeInitConsumed;
+    pub const genConsumingInitClone = registration.genConsumingInitClone;
     pub const findCtorMoveSite = optimizations.findCtorMoveSite;
     pub const detectWhileBoundsElideCtx = optimizations.detectWhileBoundsElideCtx;
     pub const enterStrLenCacheScope = optimizations.enterStrLenCacheScope;
@@ -1633,6 +1637,14 @@ pub const Codegen = struct {
     /// ayrıştırma (splice) süresince, taze geçici argümanla beslenen parametreler için etkin. Bkz. `optimizations.zig` blok notu.
     move_sites: std.AutoHashMapUnmanaged(usize, void) = .empty,
     active_param_moves: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    /// B1/I6 (devam): basit olmayan ama istisna fırlatmaz (`init_is_safe`) `__init__`lerde, gövdede üst düzey bir `self.f = p`/`xs.append(p)`/... ile SON kullanımda tüketilen heap parametreleri.
+    /// `consumed[k]`: k. `__init__` parametresi tüketilir; `keys`: tüketim noktalarının tanımlayıcı anahtarları. Kurucu çağrısı bu sınıf için `___init___c` (tüketen) klonunu çağırır: taze argüman devredilir,
+    /// takma ad argüman çağıranda retain edilir; klonda tüketim noktaları retain yapmaz. Normal `___init__` sembolü (super().__init__ ve diğer çağıranlar) ödünç sözleşmesiyle aynen kalır.
+    init_consumed: std.StringHashMapUnmanaged(InitConsume) = .empty,
+    consuming_clone: bool = false,
+    /// Tüketen klonun (`___init___c`) en az bir çağrı sitesi üretilen sınıflar / klonu zaten üretilenler (klon sonda, yalnızca gerekirse üretilir).
+    init_clone_needed: std.StringHashMapUnmanaged(void) = .empty,
+    init_clone_emitted: std.StringHashMapUnmanaged(void) = .empty,
     /// Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): "inline edilebilir"
     /// KANITLANMIŞ serbest fonksiyonların (isim → AST gövdesi) haritası —
     /// `computeInlinableFunctions` tarafından doldurulur, `prepareInlineSites`
@@ -2323,6 +2335,31 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
         // spec'e KAYDEDİLDİLERSE (module_globals.count() > 0) ÜRETİLİR.
         if (spec.globals_init_wrapper_name) |n| try gen.genPoolRunGlobalsInitWrapper(n);
         if (spec.globals_deinit_wrapper_name) |n| try gen.genPoolRunGlobalsDeinitWrapper(n);
+    }
+
+    // B1/I6 (devam): tüketen `__init__` klonları — yalnızca bir kurucu çağrı sitesi onları seçtiyse (klon gövdeleri başka klonlara ihtiyaç duyabilir, sabit noktaya kadar).
+    {
+        var progressed = true;
+        while (progressed) {
+            progressed = false;
+            for (module.body) |stmt| {
+                if (stmt.kind == .class_def and stmt.kind.class_def.type_params.len == 0 and !containsName(generic_class_template_names, stmt.kind.class_def.name)) {
+                    const cd = stmt.kind.class_def;
+                    if (gen.init_clone_needed.contains(cd.name) and !gen.init_clone_emitted.contains(cd.name)) {
+                        try gen.init_clone_emitted.put(allocator, cd.name, {});
+                        try gen.genConsumingInitClone(cd);
+                        progressed = true;
+                    }
+                }
+            }
+            for (extra_classes) |cd| {
+                if (gen.init_clone_needed.contains(cd.name) and !gen.init_clone_emitted.contains(cd.name)) {
+                    try gen.init_clone_emitted.put(allocator, cd.name, {});
+                    try gen.genConsumingInitClone(cd);
+                    progressed = true;
+                }
+            }
+        }
     }
 
     // Faz DD.1: her `nox.http.serve_multicore` çağrı sitesi için TEMBEL

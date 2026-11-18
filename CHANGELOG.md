@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.12]
+
+B1 (ARC/ASAP) devamı: basit olmayan `__init__`li kurucular için tüketen parametre sözleşmesi.
+
+- **Derleyici (B1/I6):** istisna fırlatmayan (`init_is_safe`), erken çıkışsız ve hesaplanmış alanları olan (basit-`__init__` satır içi açmasına girmeyen) bir `__init__`in, gövdesinde üst düzey bir deyimde SON kullanımda tükettiği heap parametreleri (`self.f = p`, `xs.append(p)`, iç kurucu...) için ikinci bir `___init___c` gövdesi üretilir (yalnızca bir kurucu çağrı sitesi onu seçerse, modül sonunda). Çağrı sitesi, taze bir argüman devredilebiliyorsa bu klonu çağırır: taze argüman retain/release çifti olmadan alana taşınır, takma ad argüman çağıranda retain edilir. Normal `___init__` sembolü (ve `super().__init__`, yığın-slotlu/arena argümanlı çağrılar) ödünç sözleşmesiyle aynen kalır. Golden: `move_into_init_consumed` (taze/adlandırılmış/karışık argüman, erken dönüş, koşullu saklama, miras, döngü, paylaşılan argüman; sızıntı yok). Sarmalayıcı-kurucu zincirlerinde (ör. `Node(val, build(), build())`, hesaplanmış `label` alanıyla) çift başına retain/release ve olası-kök kaydı ortadan kalktı.
+- 65 IR anlık görüntüsü yenilendi.
+
 ## [2.2.11]
 
 B1 (ARC/ASAP) devamı: taşıma kapsamı genişledi, ödünç alias analizi inceldi.

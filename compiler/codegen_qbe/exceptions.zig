@@ -1080,6 +1080,12 @@ pub fn computeMustNotRaise(self: *Codegen, module: ast.Module, extra_functions: 
         const sym = try std.fmt.allocPrint(self.allocator, "{s}___init__", .{entry.key_ptr.*});
         if (self.must_not_raise.contains(sym)) entry.value_ptr.init_is_safe = true;
     }
+
+    // B1/I6 (devam): `init_is_safe` hesaplandıktan SONRA — tüketen `__init__` klonu adayları.
+    for (module.body) |stmt| {
+        if (stmt.kind == .class_def) try self.computeInitConsumed(stmt.kind.class_def);
+    }
+    for (extra_classes) |cd| try self.computeInitConsumed(cd);
 }
 
 // ---- Faz GG.2: seçici serbest-fonksiyon inlining'i (bkz. nox-teknik-

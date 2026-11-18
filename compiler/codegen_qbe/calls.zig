@@ -1898,17 +1898,60 @@ pub fn genConstructFromValues(self: *Codegen, class_name: []const u8, cinfo: Cla
         try self.releaseTemporaryArgs(rel_exprs.items, rel_values.items);
     } else if (cinfo.has_init) {
         const init_owner = cinfo.init_owner.?;
+        // B1/I6 (devam): tüketen klon (`Codegen.init_consumed`). Yalnızca kaynak-düzeyi argüman ifadeleri bilindiğinde (`temp_release`) ve tüketilen konumlarda yığın-slotlu/arena değeri yokken.
+        var consumed_flags: ?[]const bool = null;
+        if (temp_release != null and !self.consuming_clone) {
+            if (self.init_consumed.get(init_owner)) |ic| {
+                var ok = true;
+                var any_fresh = false;
+                for (ic.consumed, 0..) |c_flag, i| {
+                    if (!c_flag) continue;
+                    const cv = arg_values[i];
+                    if (cv.is_stack_slot or cv.arena) ok = false;
+                    // Kazanç yalnızca taze bir argüman devredilebiliyorsa var (takma ad argümanlar zaten aynı sayıda retain yapar); aksi halde klon üretmeye değmez.
+                    if (!cv.is_pinned and isHeapManaged(cv.heap) and (cv.always_fresh or isTemporaryExpr(temp_release.?.exprs[i]))) any_fresh = true;
+                }
+                if (ok and any_fresh) {
+                    consumed_flags = ic.consumed;
+                    try self.init_clone_needed.put(self.allocator, init_owner, {});
+                }
+            }
+        }
+        const final_values = try self.allocator.alloc(Value, arg_values.len);
+        @memcpy(final_values, arg_values);
+        if (consumed_flags) |cf| {
+            const tr0 = temp_release.?;
+            for (cf, 0..) |c_flag, i| {
+                if (!c_flag) continue;
+                const v = arg_values[i];
+                const fresh = !v.is_pinned and !v.is_stack_slot and isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(tr0.exprs[i]));
+                if (!fresh) final_values[i] = try self.retainIfAliasing(tr0.exprs[i], v);
+            }
+        }
         {
             const init_args = try self.allocator.alloc(codegen.QbeArg, 2 + arg_values.len);
             init_args[0] = .{ .ty = .l, .text = RT_PARAM };
             init_args[1] = .{ .ty = .l, .text = t };
-            for (arg_values, 0..) |v, i| init_args[2 + i] = .{ .ty = v.qtype, .text = v.text };
-            const init_sym = try std.fmt.allocPrint(self.allocator, "${s}___init__", .{init_owner});
+            for (final_values, 0..) |v, i| init_args[2 + i] = .{ .ty = v.qtype, .text = v.text };
+            const init_sym = try std.fmt.allocPrint(self.allocator, "${s}___init__{s}", .{ init_owner, if (consumed_flags != null) "_c" else "" });
             try self.qbeCall(null, init_sym, init_args);
         }
         // Bkz. bu fonksiyonun `temp_release` belge notu — `__init__`
         // çağrısından HEMEN SONRA, `emitExceptionCheck`DEN ÖNCE.
-        if (temp_release) |tr| try self.releaseTemporaryArgs(tr.exprs, tr.values);
+        if (temp_release) |tr| {
+            if (consumed_flags) |cf| {
+                var rel_exprs: std.ArrayListUnmanaged(ast.Expr) = .empty;
+                var rel_values: std.ArrayListUnmanaged(Value) = .empty;
+                for (tr.exprs, 0..) |e, i| {
+                    if (cf[i]) continue; // tüketilen argümanın +1'i klonda alana devredildi
+                    try rel_exprs.append(self.allocator, e);
+                    try rel_values.append(self.allocator, tr.values[i]);
+                }
+                try self.releaseTemporaryArgs(rel_exprs.items, rel_values.items);
+            } else {
+                try self.releaseTemporaryArgs(tr.exprs, tr.values);
+            }
+        }
         // Performans fazı: `__init__`in ASLA istisna fırlatamayacağı
         // KANITLANDIYSA (bkz. `ClassInfo.init_is_safe`, `computeMustNotRaise`)
         // kontrolü ATLA.

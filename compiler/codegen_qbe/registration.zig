@@ -2427,7 +2427,7 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
         try self.markMoveSites(m.body);
     }
 
-    const fn_name = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ class_name, m.name });
+    const fn_name = try std.fmt.allocPrint(self.allocator, "{s}_{s}{s}", .{ class_name, m.name, if (self.consuming_clone) "_c" else "" });
     const fn_sym = try std.fmt.allocPrint(self.allocator, "${s}", .{fn_name});
     try self.qbeFuncHeaderStart(if (ret_info.qtype == .none) null else ret_info.qtype, fn_sym);
     try self.qbeFuncParam(.l, RT_PARAM, true);
@@ -2465,6 +2465,21 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     try self.qbeLabel(end_label);
     try self.emitDefaultReturn(ret_info.qtype);
     try self.qbeFuncEnd();
+}
+
+/// B1/I6 (devam): bkz. `Codegen.init_consumed`. Uygun `__init__` için ikinci bir (`___init___c`) gövde üretir: tüketim noktaları retain yapmaz (argümanların +1'ini kurucu alana devralır).
+pub fn genConsumingInitClone(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
+    const ic = self.init_consumed.get(cd.name) orelse return;
+    for (cd.methods) |m| {
+        if (!std.mem.eql(u8, m.name, "__init__")) continue;
+        for (ic.keys) |k| try self.active_param_moves.put(self.allocator, k, {});
+        self.consuming_clone = true;
+        defer {
+            self.consuming_clone = false;
+            for (ic.keys) |k| _ = self.active_param_moves.remove(k);
+        }
+        try genMethod(self, cd.name, m);
+    }
 }
 
 /// Faz F.0.1 (bkz. proje planı "Freestanding Nox — dlopen/dlsym-tabanlı
