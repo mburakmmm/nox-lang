@@ -45,7 +45,7 @@ test "tokens: --json ve sozcuk hatasi (cikis 1, stdout'ta ERROR)" {
     defer std.testing.allocator.free(e.stdout);
     defer std.testing.allocator.free(e.stderr);
     try std.testing.expect(e.term == .exited and e.term.exited == 1);
-    try std.testing.expectEqualStrings("ERROR UnexpectedCharacter 1:5\n", e.stdout);
+    try std.testing.expectEqualStrings("ERROR UnexpectedCharacter 1:5 4-5\n", e.stdout);
 }
 
 test "ast: yalnizca ayristirir ve AST dokumunu basar; --frontend nox normal noxc'te reddedilir" {

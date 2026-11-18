@@ -16,6 +16,7 @@ extern fn nox_lex_trivia_buffer(rt: ?*anyopaque) i64;
 extern fn nox_lex_buffer(rt: ?*anyopaque) i64;
 extern fn nox_lex_err_line(rt: ?*anyopaque) i64;
 extern fn nox_lex_err_col(rt: ?*anyopaque) i64;
+extern fn nox_lex_err_byte(rt: ?*anyopaque) i64;
 
 pub const LexOut = lexer.HookResult;
 
@@ -62,7 +63,8 @@ pub const Runtime = struct {
             };
             const line: u32 = @intCast(nox_lex_err_line(self.rt));
             const col: u32 = @intCast(nox_lex_err_col(self.rt));
-            return .{ .tokens = null, .err = err, .err_span = if (line == 0) .{} else .{ .start_byte = 0, .end_byte = 0, .start_line = line, .start_col = col, .end_line = line, .end_col = col + 1 }, .trivia = &.{} };
+            const byte: usize = @intCast(nox_lex_err_byte(self.rt));
+            return .{ .tokens = null, .err = err, .err_span = if (line == 0) .{} else .{ .start_byte = byte, .end_byte = byte + 1, .start_line = line, .start_col = col, .end_line = line, .end_col = col + 1 }, .trivia = &.{} };
         }
         const n: usize = @intCast(code);
         const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(nox_lex_buffer(self.rt))));

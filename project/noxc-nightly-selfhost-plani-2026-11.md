@@ -8,6 +8,7 @@ Durum işaretleri: `[ ]` açık · `[~]` sürüyor · `[x]` bitti (sürümle) ·
 
 ## 0. Verilen kararlar (yeniden tartışılmaz)
 
+- **DEĞİŞMEZ KURAL (kullanıcı, 2026-11-18): TAM GEÇİŞ, KISMİ DEĞİL.** Her bileşen (lexer, parser/AST, checker, codegen, sürücü…) geçişe girdiğinde Zig karşılığının **tüm dil yüzeyini, tüm davranışını ve tüm çıktı alanlarını eksiksiz** karşılar; "şimdilik şu alt küme / şu hata yolu / şu alan sonra" yoktur. Geçiş parça parça (bileşen bileşen) ilerler, ama her parça kendi içinde tamdır. Her parça ayrıca: (1) **Nox dili kurallarına uygun** yazılır (zorunlu statik tipler, ownership sözdizimi yok, Nox'un kendi desenleri; Nox'ta olmayan bir şey için dil/runtime hilesi değil, açık bir dil kararı), (2) **performans bütçesi** içindedir (§10; aşıyorsa tamam sayılmaz), (3) **bellek uyumludur** (bütçe + sızıntı/çifte serbest bırakma testleri: Debug çalışma zamanında sızıntı denetimi yeşil), (4) farksal testle Zig ile aynı çıktıyı üretir (alan alan, hata konumu dahil). "Tamam" kutusu bunların hepsi sağlanmadan işaretlenmez; bilinen bir eksik varsa kutu `[~]` kalır ve eksik listelenir.
 - Aynı depo (`nox-lang`), ayrı repo YOK. Nox kaynakları `selfhost/` altında; `zig build nightly` → `noxc-nightly` ikilisi.
 - `noxc-nightly` = normal `noxc` + Nox ile yazılmış bileşenler (tek ikili). Her Nox bileşeni `--frontend nox|zig` benzeri bayrakla seçilir; **Zig bileşeni her zaman yedekte kalır** (Zig tohumu süresiz).
 - Geçiş sırası: lexer → parser/AST → tip denetleyici → sahiplik + codegen → sürücü. Henüz Nox'a geçmemiş her şey Zig'den akar.
@@ -101,6 +102,10 @@ Girdi: `compiler/lexer/{lexer,token,unicode_ident}.zig` (~1 400 satır, 68 token
   **KARAR (kullanıcı, 2026-11-18) ve SONUÇ (v2.2.34):** nightly'nin amacı self-hosting olduğundan Nox lexer'ı `noxc-nightly`de VARSAYILANDIR (`--frontend zig` Zig lexer'ına döner). `lexer.hook` (Zig `lexer.zig`) tokenize/tokenizeWithTrivia/tokenizeCapturingSpan çağrılarının arkasına Nox lexer'ını takar; `nightlyMain` tüm derleyiciyi 256 MiB yığınlı iş parçacığında ve tek Nox çalışma zamanıyla koşturur. Tüm hat kanıtı: 997 fixture için `check` çıktısı ve 60 örnekte `build` `.ll` metni kararlı `noxc` ile BAYT-BAYT aynı; `frontend_diff.py --component check` 1 258 dosyada 0 fark. CI: `lex-bench --max-ratio=3.0`.
 - [x] 1.13 Belge + CHANGELOG + spesifikasyon bölümü.
   **SONUÇ (v2.2.33):** belge + CHANGELOG [2.2.33] + spesifikasyon §3.476.
+
+### 4.1 Aşama 1 tam-geçiş denetimi (v2.2.35)
+
+Değişmez kurala (§0) göre Aşama 1 yeniden denetlendi: (1) **yüzey/çıktı alanları:** tüm token alanları, trivia, TÜM hata kodları ve hata span'ı (bayt/satır/sütun/bitiş) Zig ile aynı (`tokens` çıktısına bayt aralığı eklendi, farksal test kapsıyor); açık eksik **yok**. (2) **Nox kuralları:** statik tipli, ownership sözdizimsiz; `lowlevel` yalnızca bayt okumada; token türü sayıları şablonla (modül global'i değil) — gerekçesi spesifikasyon §3.476. (3) **Performans:** 2,2×/2,35× ≤ 3× (CI kapısı). (4) **Bellek:** 60 tur düz/trivia/hata yolu + yıkım, Debug çalışma zamanında sızıntı raporu boş (`tests/cli/selfhost_obj_test.zig`; testin sızıntıyı gerçekten yakaladığı bilerek sızdıran harness ile doğrulandı). Denetimde bulunan iki eksik (hata span'ında bayt konumları; sızıntı testi yokluğu) bu sürümde kapatıldı.
 
 ## 5. Aşama 2 — Parser ve AST (Nox)
 
@@ -216,7 +221,7 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 | Aşama | Madde | Bitti | Durum |
 |---|---|---|---|
 | 0 Altyapı | 11 | 11 | **bitti (v2.2.32)** — sıradaki Aşama 1 (lexer) |
-| 1 Lexer | 13 | 13 | **bitti (v2.2.33–34)** — sıradaki Aşama 2 (parser/AST) |
+| 1 Lexer | 13 | 13 | **bitti (v2.2.33–35; tam-geçiş kuralına göre denetlendi)** — sıradaki Aşama 2 (parser/AST) |
 | 2 Parser/AST | 15 | 0 | açık |
 | 3 Tip denetleyici | 17 | 0 | açık |
 | 4 Sahiplik + codegen | 13 | 0 | açık |

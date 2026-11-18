@@ -15,6 +15,7 @@ class Lx:
     want_trivia: bool
     err_line: int
     err_col: int
+    err_byte: int
     kind: int
 
     def __init__(self, base: int, n: int, want_trivia: bool) -> None:
@@ -25,6 +26,7 @@ class Lx:
         self.want_trivia = want_trivia
         self.err_line = 0
         self.err_col = 0
+        self.err_byte = 0
         self.kind = 0
 
 UNI_START: list[int] = [
@@ -225,6 +227,7 @@ G_OUT: list[int] = []
 G_TRIVIA: list[int] = []
 G_ERR_LINE: int = 0
 G_ERR_COL: int = 0
+G_ERR_BYTE: int = 0
 
 # `base` adresindeki `i`. bayt (`lowlevel` içinde yalnızca ham okuma; sınıf kurma/`list[Sınıf]` burada yok).
 def at(base: int, i: int) -> int:
@@ -429,6 +432,7 @@ def emit_trivia(st: Lx, kind: int, line: int, trailing: int, start: int, end: in
 def fail(st: Lx, code: int, line: int, byte: int, line_start: int) -> int:
     st.err_line = line
     st.err_col = byte - line_start + 1
+    st.err_byte = byte
     return code
 
 # Sayı: `i0`dan başlar, bitiş indeksini döner; `st.kind` int_lit/float_lit (Zig sayı dalı).
@@ -744,6 +748,7 @@ def lex(st: Lx) -> int:
             if paren != 0:
                 st.err_line = 0
                 st.err_col = 0
+                st.err_byte = 0
                 return 1
             emit(st, 45, line, col, i, i + 1)
             i = i + 1
@@ -888,13 +893,14 @@ def lex(st: Lx) -> int:
 
 # `base` adresinde `n` baytlık kaynağı tarar. Token sayısı (≥ 1: en az `eof`) ya da `-hata_kodu` döner. Sonuç `nox_lex_buffer()`ta kalır.
 def nox_lex_run(base: int, n: int, want_trivia: int) -> int:
-    global G_OUT, G_TRIVIA, G_ERR_LINE, G_ERR_COL
+    global G_OUT, G_TRIVIA, G_ERR_LINE, G_ERR_COL, G_ERR_BYTE
     st: Lx = Lx(base, n, want_trivia != 0)
     code: int = lex(st)
     G_OUT = st.out
     G_TRIVIA = st.trivia
     G_ERR_LINE = st.err_line
     G_ERR_COL = st.err_col
+    G_ERR_BYTE = st.err_byte
     if code != 0:
         return 0 - code
     return len(st.out) // 5
@@ -923,3 +929,7 @@ def nox_lex_err_line() -> int:
 
 def nox_lex_err_col() -> int:
     return G_ERR_COL
+
+# Hata konumunun bayt ofseti (Zig `posSpan`: start_byte = bayt, end_byte = bayt + 1).
+def nox_lex_err_byte() -> int:
+    return G_ERR_BYTE

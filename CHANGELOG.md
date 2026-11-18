@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.35]
+
+noxc-nightly: "tam geçiş" değişmez kuralı kaydedildi; Aşama 1 bu kurala göre denetlendi ve iki eksik kapatıldı.
+
+- **Kural (kullanıcı, 2026-11-18):** Nox'a geçen her bileşen Zig karşılığının tüm yüzeyini/davranışını/çıktı alanlarını eksiksiz karşılar (kısmi geçiş yok); Nox dili kurallarına uygun, performans bütçesi içinde ve bellek-uyumlu (sızıntı testli) olmadan `[x]` işaretlenmez. Plan §0, AGENTS.md §0 ve hafızaya yazıldı.
+- **Eksik 1 (kapandı):** Nox lexer'ının hata span'ı yalnızca satır/sütun veriyordu; artık Zig `posSpan` ile aynı tüm alanlar (bayt başlangıç/bitiş dahil). `noxc tokens` hata çıktısına bayt aralığı eklendi (`ERROR Ad satır:sütun baş-son`, JSON `start`/`end`); farksal testler bunu da karşılaştırır (düz/JSON, 4 258 girdi, 0 fark).
+- **Eksik 2 (kapandı):** sızıntı testi yoktu. `selfhost/tests/lexer_leak_harness.zig` + `tests/cli/selfhost_obj_test.zig`: Nox lexer'ı 60 tur (düz/trivia/kesik/bozuk girdi) çalıştırıp çalışma zamanını yıkar; Debug çalışma zamanının sızıntı raporu boş olmalı (testin sızıntıyı yakaladığı, `nox_lib_fini`yi çıkaran harness ile doğrulandı).
+
 ## [2.2.34]
 
 noxc-nightly Aşama 1 kapanışı: Nox lexer'ı nightly'de varsayılan ve gerçek derleme hattında (kullanıcı kararı 1.12).

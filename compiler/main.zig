@@ -647,9 +647,9 @@ fn cmdTokens(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []c
     if (err == error.OutOfMemory) return error.OutOfMemory;
     // `--trivia` kipinde Zig API'si (`tokenizeWithTrivia`) hata konumu vermez (formatter da yalnızca hata adını basar): konum yazılmaz, iki taraf aynı biçimde karşılaştırılır.
     if (json) {
-        if (with_trivia) try w.print("{{\"error\":\"{s}\"}}\n", .{@errorName(err)}) else try w.print("{{\"error\":\"{s}\",\"line\":{d},\"col\":{d}}}\n", .{ @errorName(err), lexed_span.start_line, lexed_span.start_col });
+        if (with_trivia) try w.print("{{\"error\":\"{s}\"}}\n", .{@errorName(err)}) else try w.print("{{\"error\":\"{s}\",\"line\":{d},\"col\":{d},\"start\":{d},\"end\":{d}}}\n", .{ @errorName(err), lexed_span.start_line, lexed_span.start_col, lexed_span.start_byte, lexed_span.end_byte });
     } else {
-        if (with_trivia) try w.print("ERROR {s}\n", .{@errorName(err)}) else try w.print("ERROR {s} {d}:{d}\n", .{ @errorName(err), lexed_span.start_line, lexed_span.start_col });
+        if (with_trivia) try w.print("ERROR {s}\n", .{@errorName(err)}) else try w.print("ERROR {s} {d}:{d} {d}-{d}\n", .{ @errorName(err), lexed_span.start_line, lexed_span.start_col, lexed_span.start_byte, lexed_span.end_byte });
     }
     try w.flush();
     std.process.exit(1);
