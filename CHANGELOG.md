@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.38]
+
+Dogfood defteri: D1.3/D1.4 gerçekçi ölçümle yeniden değerlendirildi (belge sürümü).
+
+- **D1.4 kapandı (kanıtla):** aritmetik gövdeli 64 kollu `if/elif` zinciri derlenmiş assembly'de sıçrama tablosu (`lJTI` + `br`) — LLVM `-O2` zaten dönüştürüyor, codegen işi yok.
+- **D1.3 AÇIK:** yüklü olmayan enum varyantı oluştur+`match`+bırak 3,2 ns vs `int` 0,4 ns (8×; ReleaseFast, süreç-içi); statik tekil nesne tasarımı için çok işçili çekişme riski kaydedildi (önce ölçülecek). Kural gereği "kazancı küçük" diye kapatılmadı.
+- **Ölçüm tuzakları deftere yazıldı:** soğuk başlangıç, `zig build test`in çalışma zamanını Debug bırakması, sabit dönüşlü kodun katlanması.
+
 ## [2.2.37]
 
 Selfhost dogfood defteri (Aşama 1 kapanışı) — kullanıcı onaylı dil maddeleri ve ölçüm düzeltmesi.
