@@ -136,3 +136,31 @@ test "selfhost-obj: 100 bin derinlikte ozyineleme buyuk yiginli is parcaciginda 
     defer std.testing.allocator.free(r3.stderr);
     try std.testing.expectEqualStrings("n=100000 derinlik=100000\n", r3.stdout);
 }
+
+// noxc-nightly Aşama 1: `selfhost/lexer.nox` üretilmiş bir dosyadır; token türleri/anahtar sözcükler/Unicode tabloları Zig kaynaklarıyla senkron olmalı ve normal boru hattında derlenebilmelidir.
+test "selfhost lexer: uretilmis dosya guncel ve --selfhost-obj ile derlenir" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    const gen = std.process.run(std.testing.allocator, io, .{ .argv = &.{ "python3", "scripts/gen_selfhost_lexer.py", "--check" } }) catch return error.SkipZigTest; // python3 yok
+    defer std.testing.allocator.free(gen.stdout);
+    defer std.testing.allocator.free(gen.stderr);
+    if (gen.term != .exited or gen.term.exited != 0) {
+        std.debug.print("lexer.nox guncel degil: {s}{s}\n", .{ gen.stdout, gen.stderr });
+        return error.TestUnexpectedResult;
+    }
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(io, &buf)];
+    const obj = try std.fmt.allocPrint(std.testing.allocator, "{s}/lexer.o", .{dir});
+    defer std.testing.allocator.free(obj);
+    const r = std.process.run(std.testing.allocator, io, .{ .argv = &.{ "zig-out/bin/noxc", "build", "--selfhost-obj", "-o", obj, "selfhost/lexer.nox" } }) catch return error.SkipZigTest;
+    defer std.testing.allocator.free(r.stdout);
+    defer std.testing.allocator.free(r.stderr);
+    if (r.term != .exited or r.term.exited != 0) {
+        if (std.mem.indexOf(u8, r.stderr, "needs the native LLVM backend") != null) return error.SkipZigTest;
+        std.debug.print("lexer.nox derlenemedi: {s}\n", .{r.stderr});
+        return error.TestUnexpectedResult;
+    }
+}
+

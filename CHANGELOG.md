@@ -11,6 +11,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.33]
+
+noxc-nightly Aşama 1: Nox lexer'ı (`selfhost/lexer.nox`).
+
+- **Nox lexer'ı:** `compiler/lexer/lexer.zig`in birebir portu (girinti/dedent, sayılar, ham/üç tırnaklı dizeler, f-string, `:=`/`...`/`;` kuralları, Unicode tanımlayıcılar, `protocol` yeniden etiketleme, hata konumları, trivia kanalı). Kaynak `selfhost/lexer.nox.in` şablonudur; `scripts/gen_selfhost_lexer.py` token türü sayılarını (`token.zig` sırası), anahtar sözcük işlevini ve Unicode tablolarını üretip `selfhost/lexer.nox`u yazar (`--check` precheck'te ve `zig build test`te).
+- **Veri sınırı:** düz sayı arabelleği (token başına 5 `i64`); Zig tarafı `selfhost_glue.Runtime.lex/lexWithTrivia` ile `Token` dizisine çevirir (lexeme'ler kaynağa işaret eder). `noxc-nightly --frontend nox tokens [--json] [--trivia] <dosya>` Nox lexer'ını kullanır; yeni gizli komut `lex-bench`.
+- **Eşdeğerlik kanıtı:** `scripts/frontend_diff.py --component lexer` depodaki 1 258 dosyada ve mutasyonlu girdilerde (toplam ~20 bin; `UnexpectedCharacter`/`UnterminatedString`/`InconsistentIndentation`/`TabsNotAllowed` dahil; düz, `--trivia`, `--json --trivia`) **0 fark**. Yeni seçenekler: `--fuzz N --seed S`, `--sub-args=...`. `zig build frontend-diff-test` artık gerçek Zig↔Nox farkını da çalıştırır (nightly gerekir); `nightly.yml` bunu çağırır.
+- **Performans (Aşama 1.11):** 0,72 MiB stdlib metninde Nox lexer Zig'in **2,12×** süresi (Token dizisine dönüşüm dahil 2,26×); bütçe ≤ 3×.
+- **Bulgu (Nox'un kendi lexer'ında ortaya çıkan, dili değiştirmeyen):** liste büyürken yeniden tahsis edilebildiği için yerel takma ad (`out: list = st.out`) bayatlar; token arabelleğine her zaman alan üzerinden (`st.out.append`) eklenir. Ayrıca Zig lexer'ının trivia kipi CRLF boş satırları iki kez sayar (satır numarası kayar); Nox portu bunu birebir korur (davranış değiştirilmedi, formatter'a dokunulmadı).
+- **Açık karar (1.12 `[K]`):** Nox lexer'ının nightly'de varsayılan yapılması.
+
 ## [2.2.32]
 
 noxc-nightly Aşama 0 kapanışı: CI hattı (0.9), belgeler (0.10) ve eksik özellik değerlendirmesi (0.11).

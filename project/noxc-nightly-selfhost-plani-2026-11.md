@@ -75,19 +75,31 @@ Deney `.ll` metnini elle işledi (`@main` yeniden adlandırma). `zig build night
 
 Girdi: `compiler/lexer/{lexer,token,unicode_ident}.zig` (~1 400 satır, 68 token türü, girinti/dedent, f-string, kaçışlar, unicode tanımlayıcı). Çıkış ölçütü: tüm depo `.nox` dosyalarında Nox lexer çıktısı Zig lexer ile token-token aynı; hata konumu/mesaj golden'ları aynı; lexer iş yükü ≤ 3× Zig.
 
-- [ ] 1.1 Token türü tablosu tek kaynaktan (`selfhost/token_kinds.nox` ↔ `token.zig`) üretilir; sıra/anlam uyumu testle kilitlenir.
-- [ ] 1.2 Çekirdek tarama: boşluk, yorum, satır sonu, `;`, girinti yığını, `indent/dedent/newline` kuralları (parantez derinliği dahil).
-- [ ] 1.3 Tanımlayıcı + anahtar sözcükler (+ unicode, `unicode_ident` tabloları).
-- [ ] 1.4 Sayılar: int/float, `_` ayırıcı, hex/oct/bin, üs, taşma hataları.
-- [ ] 1.5 Dizeler: tek/üç tırnak, kaçışlar, ham, bayt dizeleri, hata (kapanmamış dize).
-- [ ] 1.6 f-string ham belirteci (parser içi bölme Aşama 2'de).
-- [ ] 1.7 İşleçler ve `:=` kuralı (parantez dışında tek belirteç), `->`, `**=` vb.
-- [ ] 1.8 Trivia (yorum/boş satır) kanalı — formatter için.
-- [ ] 1.9 C ABI sarmalayıcı: `nox_lex(src_ptr, len, out_buf)` + Zig tarafı `Token` yeniden kurma (kopyasız dilimler).
-- [ ] 1.10 Farksal test: tüm depo + fuzz korpusu (`tests/fuzz`); hata yolları (bad.nox serisi) aynı tanı.
-- [ ] 1.11 Perf: 1 MB sentetik kaynak, ≥ Zig'in 1/3 hızı; bellek ≤ 2×.
+- [x] 1.1 Token türü tablosu tek kaynaktan (`selfhost/token_kinds.nox` ↔ `token.zig`) üretilir; sıra/anlam uyumu testle kilitlenir.
+  **SONUÇ (v2.2.33):** token türü tablosu tek kaynaktan: `scripts/gen_selfhost_lexer.py` `token.zig` sırasından üretir, `--check` precheck + `zig build test`te kilitler.
+- [x] 1.2 Çekirdek tarama: boşluk, yorum, satır sonu, `;`, girinti yığını, `indent/dedent/newline` kuralları (parantez derinliği dahil).
+  **SONUÇ (v2.2.33):** çekirdek tarama (boşluk, yorum, CR/CRLF, `\` devamı, `;`, girinti yığını, parantez derinliği).
+- [x] 1.3 Tanımlayıcı + anahtar sözcükler (+ unicode, `unicode_ident` tabloları).
+  **SONUÇ (v2.2.33):** tanımlayıcı + anahtar sözcükler (üretilmiş `kw_lookup`) + Unicode (`UNI_START/UNI_CONT` ikili arama, `std.unicode` doğrulamasıyla aynı).
+- [x] 1.4 Sayılar: int/float, `_` ayırıcı, hex/oct/bin, üs, taşma hataları.
+  **SONUÇ (v2.2.33):** sayılar.
+- [x] 1.5 Dizeler: tek/üç tırnak, kaçışlar, ham, bayt dizeleri, hata (kapanmamış dize).
+  **SONUÇ (v2.2.33):** dizeler (tek/üç tırnak, ham `r""`, kapanmamış dize hataları).
+- [x] 1.6 f-string ham belirteci (parser içi bölme Aşama 2'de).
+  **SONUÇ (v2.2.33):** f-string ham belirteci.
+- [x] 1.7 İşleçler ve `:=` kuralı (parantez dışında tek belirteç), `->`, `**=` vb.
+  **SONUÇ (v2.2.33):** işleçler ve `:=` kuralı.
+- [x] 1.8 Trivia (yorum/boş satır) kanalı — formatter için.
+  **SONUÇ (v2.2.33):** trivia kanalı (`want_trivia`; CRLF boş satır çifte sayım huyu dahil birebir).
+- [x] 1.9 C ABI sarmalayıcı: `nox_lex(src_ptr, len, out_buf)` + Zig tarafı `Token` yeniden kurma (kopyasız dilimler).
+  **SONUÇ (v2.2.33):** C ABI (`nox_lex_run/buffer/trivia_*`, `selfhost_glue.Runtime.lex`/`lexWithTrivia`); `noxc-nightly --frontend nox tokens`.
+- [x] 1.10 Farksal test: tüm depo + fuzz korpusu (`tests/fuzz`); hata yolları (bad.nox serisi) aynı tanı.
+  **SONUÇ (v2.2.33):** farksal: 1 258 dosya + 4 mutasyon tohumu × 4 000 girdi (düz), `--trivia` ve `--json --trivia` (3 000 + 3 000 girdi); 0 fark; dört hata sınıfı da kapsandı.
+- [x] 1.11 Perf: 1 MB sentetik kaynak, ≥ Zig'in 1/3 hızı; bellek ≤ 2×.
+  **SONUÇ (v2.2.33):** perf: 0,72 MiB stdlib metni Zig 3,6 ms, Nox 7,6 ms (**2,12×**), Token dizisine dönüşüm dahil 8,1 ms (**2,26×**); ham arabellek 40 B/token (Zig 56 B/Token).
 - [ ] 1.12 `--frontend nox` ile lexer'ın nightly'de varsayılan yapılması `[K]` (kapanış raporu: fark sayısı 0, perf, bellek).
-- [ ] 1.13 Belge + CHANGELOG + spesifikasyon bölümü.
+- [x] 1.13 Belge + CHANGELOG + spesifikasyon bölümü.
+  **SONUÇ (v2.2.33):** belge + CHANGELOG [2.2.33] + spesifikasyon §3.476.
 
 ## 5. Aşama 2 — Parser ve AST (Nox)
 
@@ -195,14 +207,14 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 2. [x] 0.2 + 0.3 `selfhost/` iskeleti ve `zig build nightly` — v2.2.29.
 3. [x] 0.5 + 0.6 `noxc tokens` ve farksal test koşucusu (lexer için) — v2.2.30.
 4. [x] 0.7 + 0.8 derleyici kıyas seti ve yığın çözümü — v2.2.31.
-5. [ ] Aşama 1 (lexer) başlangıcı — sıradaki.
+5. [x] Aşama 1 (lexer) — v2.2.33 (1.12 kararı bekliyor); sıradaki: Aşama 2 (parser/AST).
 
 ## 13. İlerleme özeti (el ile güncellenir)
 
 | Aşama | Madde | Bitti | Durum |
 |---|---|---|---|
 | 0 Altyapı | 11 | 11 | **bitti (v2.2.32)** — sıradaki Aşama 1 (lexer) |
-| 1 Lexer | 13 | 0 | açık |
+| 1 Lexer | 13 | 12 | **1.12 `[K]` varsayılan yapma kararı bekliyor** (v2.2.33) |
 | 2 Parser/AST | 15 | 0 | açık |
 | 3 Tip denetleyici | 17 | 0 | açık |
 | 4 Sahiplik + codegen | 13 | 0 | açık |

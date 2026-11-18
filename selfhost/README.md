@@ -15,6 +15,11 @@ Plan ve takip listesi: `project/noxc-nightly-selfhost-plani-2026-11.md`. Bu dizi
 - Veri sınırı düz sayı arabelleği (`ptr[u8]`, `lowlevel` içinde) ya da bayt tamponudur; Nox nesneleri Zig'e sızdırılmaz.
 - Yeni dil özellikleri önce Zig derleyicisinde, farksal testle sonra buraya.
 
+## Dosyalar
+
+- `lexer.nox.in`: elle düzenlenen **kaynak** (Aşama 1, Nox lexer'ı). `lexer.nox`: `scripts/gen_selfhost_lexer.py` ile ÜRETİLEN dosya (token türü sayıları, anahtar sözcük işlevi, Unicode tabloları); elle düzenlenmez, `--check` ile güncelliği denetlenir (precheck + `zig build test`).
+- `nox.json`: proje bildirimi. `tests/`: Aşama testleri için ayrılmış dizin (farksal testler `scripts/frontend_diff.py`de).
+
 ## Denemeler
 
 `selfhost/spike/` Aşama 0'ın kanıt deneylerini içerir (0.1: Zig→Nox çağrısı).

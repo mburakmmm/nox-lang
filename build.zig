@@ -815,8 +815,16 @@ pub fn build(b: *std.Build) void {
     frontend_diff_selftest.step.dependOn(b.getInstallStep());
     const frontend_diff_zig = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "lexer", "--zig-only" });
     frontend_diff_zig.step.dependOn(&frontend_diff_selftest.step);
-    const frontend_diff_step = b.step("frontend-diff-test", "noxc-nightly farksal test koşucusu: kendi sağlamlık denetimi + Zig↔Zig özdeşlik koşusu (opt-in)");
-    frontend_diff_step.dependOn(&frontend_diff_zig.step);
+    // Aşama 1: gerçek Zig↔Nox lexer farkı (depo + 1 500 mutasyonlu girdi; düz, `--trivia` ve JSON+trivia biçimleri). `noxc-nightly` gerekir.
+    const frontend_diff_nox = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "lexer", "--fuzz", "1500" });
+    frontend_diff_nox.step.dependOn(&frontend_diff_zig.step);
+    frontend_diff_nox.step.dependOn(&install_nightly.step);
+    const frontend_diff_nox_trivia = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "lexer", "--sub-args=--trivia", "--fuzz", "1500", "--seed", "2" });
+    frontend_diff_nox_trivia.step.dependOn(&frontend_diff_nox.step);
+    const frontend_diff_nox_json = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "lexer", "--sub-args=--json --trivia", "--fuzz", "800", "--seed", "3" });
+    frontend_diff_nox_json.step.dependOn(&frontend_diff_nox_trivia.step);
+    const frontend_diff_step = b.step("frontend-diff-test", "noxc-nightly farksal test koşucusu: kendi sağlamlık denetimi + Zig↔Zig özdeşliği + Zig↔Nox lexer farkı (opt-in; `zig build nightly` gerekir)");
+    frontend_diff_step.dependOn(&frontend_diff_nox_json.step);
 
     // Faz W.2: `noxlsp` — minimal LSP sunucusu (bkz. compiler/lsp_main.zig'in
     // modül üstü notu). `noxc_mod` İLE AYNI desen (kendi kök dosyası, relative

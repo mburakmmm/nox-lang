@@ -3,7 +3,7 @@ name: noxc-nightly
 # noxc-nightly (project/noxc-nightly-selfhost-plani-2026-11.md, Aşama 0.9): normal `noxc` + Nox ile yazılmış bileşenler (`selfhost/`). Günlük + elle tetikleme.
 # Bu iş akışı kararlı sürüm hattını (`release.yml`, `noxc upgrade`) ETKİLEMEZ: sonuç yalnızca bir iş akışı artifact'ıdır (`noxc-nightly-<os>-<tarih>`).
 # GitHub pre-release yayımlamak (`nightly-YYYY-MM-DD`) varsayılan olarak KAPALIDIR; yalnızca elle tetiklemede `publish: true` verilirse çalışır (dışarıya açık, geri alınması zor bir eylem).
-# Nox ön yüz bileşenleri (Aşama 1+) gelince farksal adım `--zig-only` yerine `--component <bileşen>` ile Zig'i `noxc-nightly --frontend nox` ile karşılaştırır.
+# Farksal adım Zig bileşenini `noxc-nightly --frontend nox` ile karşılaştırır (Aşama 1: lexer).
 
 on:
   schedule:
@@ -52,7 +52,7 @@ jobs:
         run: zig build nightly -Doptimize=ReleaseFast
       - name: Bağlı bileşenler çalışıyor mu
         run: ./zig-out/bin/noxc-nightly selfhost-info compiler/main.zig
-      - name: Farksal test koşucusu (kendi sağlamlık denetimi + Zig↔Zig)
+      - name: Farksal test koşucusu (Zig lexer ↔ Nox lexer: depo + mutasyonlu girdiler)
         run: zig build frontend-diff-test
       - name: Derleyici-türü kıyas seti (Nox ↔ Zig)
         run: benchmarks/compiler_bench/run.sh

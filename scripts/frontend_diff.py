@@ -4,6 +4,7 @@
   scripts/frontend_diff.py --component lexer                 # depodaki TÜM .nox dosyaları: `noxc tokens` ile `noxc-nightly --frontend nox tokens`
   scripts/frontend_diff.py --component lexer --zig-only      # Nox bileşeni henüz yokken: Zig'i iki kez çalıştırıp koşucunun kendisini sınar (fark 0 olmalı)
   scripts/frontend_diff.py --component ast                   # `noxc ast` ile `noxc-nightly --frontend nox ast`
+  scripts/frontend_diff.py --component lexer --fuzz 3000     # korpustan rastgele bozulmuş 3000 girdi daha; hata yolları dahil (`--seed` ile tekrarlanabilir)
   scripts/frontend_diff.py --selftest                        # koşucunun fark YAKALADIĞINI ve küçültücünün çalıştığını sınar (CI: `zig build frontend-diff-test`)
   scripts/frontend_diff.py --files a.nox b.nox ...           # yalnızca verilen dosyalar
 
@@ -27,6 +28,41 @@ def corpus(extra_dirs):
     return sorted(set(files))
 
 
+TRIPLE_D = b'"' * 3
+TRIPLE_S = b"'" * 3
+MUTATIONS = [b"\t", b"\r", b"\r\n", b'"', b"'", TRIPLE_D, TRIPLE_S, b"f'", b'f"', b'r"', b"{", b"}", b"(", b")", b"[", b"]", b"#", b"\\", b"\\\n", b":=", b"...", b";", b"!", b"$", b"?", b"`",
+             "é".encode(), "ğ".encode(), "世".encode(), b"\xc3", b"\xe2\x82", b"\xf0\x9f", b"\xff", b"\xed\xa0\x80", b"\xc0\x80", b"\x00", b"0x", b"0b", b"1e", b"1_", b"protocol ", b"\n    ", b"\n  "]
+
+
+def make_fuzz(files, count, seed, out_dir):
+    """Korpus dosyalarından rastgele (deterministik) mutasyonlu girdiler: bayt sil/ekle/çoğalt/kes, özel karakter ve UTF-8 parçası ekle. Hata yollarını ve kenar durumları zorlar."""
+    import random
+    rnd = random.Random(seed)
+    srcs = [f for f in files if os.path.getsize(f) < 20000] or files
+    made = []
+    for k in range(count):
+        data = bytearray(open(rnd.choice(srcs), "rb").read())
+        for _ in range(rnd.randint(1, 4)):
+            op = rnd.randint(0, 5)
+            pos = rnd.randint(0, max(len(data) - 1, 0))
+            if op == 0 and data:
+                del data[pos:pos + rnd.randint(1, 8)]
+            elif op == 1:
+                data[pos:pos] = rnd.choice(MUTATIONS)
+            elif op == 2 and data:
+                data[pos] = rnd.randint(0, 255)
+            elif op == 3 and data:
+                data[pos:pos] = data[max(0, pos - rnd.randint(1, 40)):pos]
+            elif op == 4:
+                del data[pos:]
+            else:
+                data[pos:pos] = rnd.choice(MUTATIONS) * rnd.randint(1, 3)
+        path = os.path.join(out_dir, f"fz{seed}_{k}.nox")
+        open(path, "wb").write(bytes(data))
+        made.append(path)
+    return made
+
+
 def run(cmd, timeout=30):
     try:
         p = subprocess.run(cmd, capture_output=True, timeout=timeout)
@@ -37,15 +73,16 @@ def run(cmd, timeout=30):
 
 def make_runners(args):
     sub = COMPONENTS[args.component]
-    zig = [NOXC, sub]
+    extra = args.sub_args.split() if args.sub_args else []
+    zig = [NOXC, sub] + extra
     if args.zig_only:
-        other = [NOXC, sub]
+        other = [NOXC, sub] + extra
     else:
-        other = [NIGHTLY, "--frontend", "nox", sub]
+        other = [NIGHTLY, "--frontend", "nox", sub] + extra
     if args.zig_cmd:
-        zig = args.zig_cmd.split() + [sub]
+        zig = args.zig_cmd.split() + [sub] + extra
     if args.nox_cmd:
-        other = args.nox_cmd.split() + [sub]
+        other = args.nox_cmd.split() + [sub] + extra
     return zig, other
 
 
@@ -110,6 +147,7 @@ def main():
     ap.add_argument("--zig-only", action="store_true", help="Nox bileşeni yerine Zig'i yeniden çalıştır (koşucu sağlık denetimi)")
     ap.add_argument("--zig-cmd", help="Zig tarafı komutu (alt komut hariç), ör. 'zig-out/bin/noxc'")
     ap.add_argument("--nox-cmd", help="Nox tarafı komutu (alt komut hariç), ör. 'zig-out/bin/noxc-nightly --frontend nox'")
+    ap.add_argument("--sub-args", default="", help="alt komuttan sonra eklenecek bayraklar, ör. '--trivia' (lexer'ın yorum/boş satır kanalı)")
     ap.add_argument("--stderr", action="store_true", help="stderr'i de karşılaştır")
     ap.add_argument("--files", nargs="*", help="yalnızca bu dosyalar")
     ap.add_argument("--dir", action="append", default=[], help="korpusa ek dizin")
@@ -117,6 +155,8 @@ def main():
     ap.add_argument("--max-diffs", type=int, default=5)
     ap.add_argument("--out", default=os.path.join(tempfile.gettempdir(), "frontend-diff"))
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--fuzz", type=int, default=0, help="korpus dosyalarından N mutasyonlu girdi üret ve onları da karşılaştır")
+    ap.add_argument("--seed", type=int, default=1)
     args = ap.parse_args()
 
     if args.selftest:
@@ -127,6 +167,9 @@ def main():
             print(f"frontend_diff: {exe} yok (önce `zig build` / `zig build nightly`)", file=sys.stderr)
             return 2
     files = args.files if args.files else corpus(args.dir)
+    if args.fuzz:
+        fuzz_dir = tempfile.mkdtemp(prefix="frontend-fuzz-")
+        files = files + make_fuzz(files, args.fuzz, args.seed, fuzz_dir)
     print(f"frontend_diff: bileşen={args.component} dosya={len(files)}  zig={' '.join(zig)}  nox={' '.join(other)}")
     diffs = []
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as ex:

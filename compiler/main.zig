@@ -434,7 +434,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, tokens_cmd, ast_cmd, legacy };
+    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, lex_bench, tokens_cmd, ast_cmd, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -462,6 +462,7 @@ fn realMain(init: std.process.Init) !void {
         if (std.mem.eql(u8, first, "init")) break :blk .init;
         if (std.mem.eql(u8, first, "check")) break :blk .check;
         if (build_options.nightly and std.mem.eql(u8, first, "selfhost-info")) break :blk .selfhost_info;
+        if (build_options.nightly and std.mem.eql(u8, first, "lex-bench")) break :blk .lex_bench;
         if (std.mem.eql(u8, first, "tokens")) break :blk .tokens_cmd;
         if (std.mem.eql(u8, first, "ast")) break :blk .ast_cmd;
         if (std.mem.eql(u8, first, "expand")) break :blk .expand;
@@ -528,6 +529,7 @@ fn realMain(init: std.process.Init) !void {
         .refresh => try cmdRefresh(gpa, io, a, rest, nox_home, resource_dirs, fetch_policy, init.environ_map),
         .cache => try cmdCache(io, a, rest, nox_home, run_limits),
         .selfhost_info => try cmdSelfhostInfo(io, a, rest),
+        .lex_bench => try cmdLexBench(io, a, rest),
         .tokens_cmd => try cmdTokens(gpa, io, a, rest),
         .ast_cmd => try cmdAst(gpa, io, a, rest),
     }
@@ -538,12 +540,13 @@ fn realMain(init: std.process.Init) !void {
 /// Metin: `SATIR:SÜTUN KIND BAŞ-SON "kaçışlı lexeme"` (bayt aralığı yarı açık); hata: `ERROR HataAdı SATIR:SÜTUN` (çıkış kodu 1, stdout).
 fn cmdTokens(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void {
     var json = false;
+    var with_trivia = false;
     var path: ?[]const u8 = null;
     for (rest) |arg| {
-        if (std.mem.eql(u8, arg, "--json")) json = true else path = arg;
+        if (std.mem.eql(u8, arg, "--json")) json = true else if (std.mem.eql(u8, arg, "--trivia")) with_trivia = true else path = arg;
     }
     const p = path orelse {
-        printErr("usage: noxc tokens [--json] <file.nox>\n", .{});
+        printErr("usage: noxc tokens [--json] [--trivia] <file.nox>\n", .{});
         std.process.exit(1);
     };
     const source = std.Io.Dir.cwd().readFileAlloc(io, p, gpa, .limited(64 * 1024 * 1024)) catch {
@@ -554,13 +557,35 @@ fn cmdTokens(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []c
     var stdout_buf: [1 << 16]u8 = undefined;
     var sw = std.Io.File.stdout().writer(io, &stdout_buf);
     const w = &sw.interface;
+    var lexed_tokens: ?[]lexer.Token = null;
+    var lexed_err: ?lexer.LexError = null;
+    var lexed_span: lexer.Span = .{};
+    var lexed_trivia: []const lexer.Trivia = &.{};
     if (g_frontend_nox) {
-        // Aşama 1'de `selfhost/lexer.nox` bu noktaya bağlanır (plan 1.9); o zamana kadar seçilemez.
-        printErr("--frontend nox: the Nox lexer is not implemented yet (plan Asama 1)\n", .{});
-        std.process.exit(2);
+        // `--frontend nox`: `selfhost/lexer.nox` (yalnızca nightly'de derlenir; normal `noxc` bayrağı zaten reddeder).
+        if (comptime build_options.nightly) {
+            const out = try @import("selfhost_glue.zig").lexOnBigStack(a, source, with_trivia);
+            lexed_tokens = out.tokens;
+            lexed_err = out.err;
+            lexed_span = out.err_span;
+            lexed_trivia = out.trivia;
+        } else unreachable;
+    } else if (with_trivia) {
+        if (lexer.tokenizeWithTrivia(a, source)) |r| {
+            lexed_tokens = r.tokens;
+            lexed_trivia = r.trivia;
+        } else |e| {
+            lexed_err = e;
+            const l = lexer.tokenizeCapturingSpan(a, source);
+            lexed_span = l.err_span;
+        }
+    } else {
+        const l = lexer.tokenizeCapturingSpan(a, source);
+        lexed_tokens = l.tokens;
+        lexed_err = l.err;
+        lexed_span = l.err_span;
     }
-    const lexed = lexer.tokenizeCapturingSpan(a, source);
-    if (lexed.tokens) |tokens| {
+    if (lexed_tokens) |tokens| {
         if (json) try w.writeAll("{\"tokens\":[");
         for (tokens, 0..) |t, i| {
             if (json) {
@@ -574,16 +599,35 @@ fn cmdTokens(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []c
                 try w.writeByte('\n');
             }
         }
-        if (json) try w.writeAll("]}\n");
+        if (json) try w.writeAll("]");
+        if (with_trivia) {
+            if (json) try w.writeAll(",\"trivia\":[");
+            for (lexed_trivia, 0..) |tv, i| {
+                const is_comment = tv.kind == .comment;
+                if (json) {
+                    if (i != 0) try w.writeByte(',');
+                    try w.print("{{\"kind\":\"{s}\",\"line\":{d},\"trailing\":{s},\"text\":", .{ if (is_comment) "comment" else "blank_line", tv.line, if (tv.trailing) "true" else "false" });
+                    try writeEscaped(w, tv.text);
+                    try w.writeByte('}');
+                } else {
+                    try w.print("TRIVIA {s} line {d} trailing {s} ", .{ if (is_comment) "comment" else "blank_line", tv.line, if (tv.trailing) "true" else "false" });
+                    try writeEscaped(w, tv.text);
+                    try w.writeByte('\n');
+                }
+            }
+            if (json) try w.writeByte(']');
+        }
+        if (json) try w.writeAll("}\n");
         try w.flush();
         return;
     }
-    const err = lexed.err.?;
+    const err = lexed_err.?;
     if (err == error.OutOfMemory) return error.OutOfMemory;
+    // `--trivia` kipinde Zig API'si (`tokenizeWithTrivia`) hata konumu vermez (formatter da yalnızca hata adını basar): konum yazılmaz, iki taraf aynı biçimde karşılaştırılır.
     if (json) {
-        try w.print("{{\"error\":\"{s}\",\"line\":{d},\"col\":{d}}}\n", .{ @errorName(err), lexed.err_span.start_line, lexed.err_span.start_col });
+        if (with_trivia) try w.print("{{\"error\":\"{s}\"}}\n", .{@errorName(err)}) else try w.print("{{\"error\":\"{s}\",\"line\":{d},\"col\":{d}}}\n", .{ @errorName(err), lexed_span.start_line, lexed_span.start_col });
     } else {
-        try w.print("ERROR {s} {d}:{d}\n", .{ @errorName(err), lexed.err_span.start_line, lexed.err_span.start_col });
+        if (with_trivia) try w.print("ERROR {s}\n", .{@errorName(err)}) else try w.print("ERROR {s} {d}:{d}\n", .{ @errorName(err), lexed_span.start_line, lexed_span.start_col });
     }
     try w.flush();
     std.process.exit(1);
@@ -622,6 +666,70 @@ fn cmdAst(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: []cons
     try sw.interface.flush();
 }
 
+/// `noxc-nightly lex-bench <dosya> [tekrar]`: Zig lexer'ı ile Nox lexer'ının en iyi süresini ve bellek kullanımını karşılaştırır (noxc-nightly Aşama 1.11). Gizli; yalnızca nightly.
+fn cmdLexBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void {
+    if (comptime !build_options.nightly) unreachable;
+    const glue = @import("selfhost_glue.zig");
+    const path = if (rest.len > 0) rest[0] else {
+        printErr("usage: noxc-nightly lex-bench <file> [reps]\n", .{});
+        std.process.exit(1);
+    };
+    const reps: usize = if (rest.len > 1) (std.fmt.parseInt(usize, rest[1], 10) catch 20) else 20;
+    const src = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(256 * 1024 * 1024)) catch {
+        printErr("lex-bench: cannot read {s}\n", .{path});
+        std.process.exit(1);
+    };
+    const Ctx = struct {
+        io: std.Io,
+        src: []const u8,
+        reps: usize,
+        fn nowNs() u64 {
+            var ts: std.c.timespec = undefined;
+            _ = std.c.clock_gettime(.MONOTONIC, &ts);
+            return @as(u64, @intCast(ts.sec)) * 1_000_000_000 + @as(u64, @intCast(ts.nsec));
+        }
+        fn run(self: *@This(), nrt: glue.Runtime) void {
+            var best_zig: u64 = std.math.maxInt(u64);
+            var best_nox: u64 = std.math.maxInt(u64);
+            var best_nox_conv: u64 = std.math.maxInt(u64);
+            var n_zig: usize = 0;
+            var n_nox: i64 = 0;
+            for (0..self.reps) |_| {
+                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer arena.deinit();
+                var t = nowNs();
+                const z = lexer.tokenize(arena.allocator(), self.src) catch &[_]lexer.Token{};
+                best_zig = @min(best_zig, nowNs() - t);
+                n_zig = z.len;
+                t = nowNs();
+                n_nox = nrt.lexRaw(self.src);
+                best_nox = @min(best_nox, nowNs() - t);
+                t = nowNs();
+                const o = nrt.lex(arena.allocator(), self.src);
+                best_nox_conv = @min(best_nox_conv, nowNs() - t);
+                std.mem.doNotOptimizeAway(o.tokens);
+            }
+            var stdout_buf: [768]u8 = undefined;
+            var w = std.Io.File.stdout().writer(self.io, &stdout_buf);
+            const mb = @as(f64, @floatFromInt(self.src.len)) / (1024.0 * 1024.0);
+            w.interface.print("{d:.2} MiB, tokens zig={d} nox={d}\nzig lexer      {d:>8} us\nnox lex_run    {d:>8} us  ({d:.2}x)\nnox + convert  {d:>8} us  ({d:.2}x, Token dizisi dahil)\nbellek: zig {d} B/token, nox ham arabellek 40 B/token\n", .{
+                mb,
+                n_zig,
+                n_nox,
+                best_zig / 1000,
+                best_nox / 1000,
+                @as(f64, @floatFromInt(best_nox)) / @as(f64, @floatFromInt(@max(best_zig, 1))),
+                best_nox_conv / 1000,
+                @as(f64, @floatFromInt(best_nox_conv)) / @as(f64, @floatFromInt(@max(best_zig, 1))),
+                @sizeOf(lexer.Token),
+            }) catch return;
+            w.interface.flush() catch return;
+        }
+    };
+    var ctx: Ctx = .{ .io = io, .src = src, .reps = reps };
+    try glue.runOnBigStack(&ctx, Ctx.run);
+}
+
 /// `noxc-nightly selfhost-info [dosya]`: nightly'ye bağlı Nox bileşenlerini listeler ve deneme bileşenini (tanımlayıcı sayacı) verilen dosyada çalıştırır. Normal `noxc`te bu komut yoktur.
 fn cmdSelfhostInfo(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void {
     if (comptime !build_options.nightly) unreachable;
@@ -636,9 +744,13 @@ fn cmdSelfhostInfo(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !
         path: []const u8,
         src: []const u8,
         fn run(self: *@This(), nrt: glue.Runtime) void {
+            var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena_state.deinit();
+            const out = nrt.lex(arena_state.allocator(), self.src);
             var stdout_buf: [512]u8 = undefined;
             var w = std.Io.File.stdout().writer(self.io, &stdout_buf);
-            w.interface.print("noxc-nightly {s}: Nox components linked: sh_count_ident_tokens\n{s}: {d} bytes, {d} identifier tokens\n", .{ build_options.version, self.path, self.src.len, nrt.countIdentTokens(self.src) }) catch return;
+            const count: usize = if (out.tokens) |t| t.len else 0;
+            w.interface.print("noxc-nightly {s}: Nox components linked: lexer (nox_lex_run)\n{s}: {d} bytes, {d} tokens{s}\n", .{ build_options.version, self.path, self.src.len, count, if (out.err != null) " (lex error)" else "" }) catch return;
             w.interface.flush() catch return;
         }
     };

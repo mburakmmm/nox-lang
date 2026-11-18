@@ -73,3 +73,5 @@ Two hidden developer commands print the front end's output in a stable form: `no
 
 `scripts/frontend_diff.py` runs a Zig and a Nox front-end component over every `.nox` file in the repository and compares exit code and output (`--component lexer|ast`; `--zig-only` checks the runner itself; `--selftest` proves it catches a difference and shrinks it to a minimal example). `zig build frontend-diff-test` runs the self-check plus a Zig-against-Zig pass. The global `--frontend zig|nox` flag selects the component; the ordinary `noxc` accepts only `zig`.
 
+`noxc tokens` also takes `--trivia` (print the comment and blank-line channel the formatter uses). In the nightly binary `--frontend nox tokens` runs the lexer written in Nox (`selfhost/lexer.nox`, generated from `selfhost/lexer.nox.in` by `scripts/gen_selfhost_lexer.py`), and `noxc-nightly lex-bench <file>` compares its speed with the Zig lexer. `frontend_diff.py --fuzz N --seed S` adds N randomly damaged inputs (broken quotes, tabs, truncated UTF-8) so error paths are compared too; `--sub-args=--trivia` passes extra flags to the sub-command.
+
