@@ -9,7 +9,7 @@ Yöntem (kullanıcı kuralları): her bulgu önce güncel kaynakta doğrulandı;
 | P1.1 | SafeHTTP yönlendirmede başlık sızıntısı | **D** | Karar yalnızca ana makine adına bakıyordu (aynı ana makinenin başka portuna `Authorization` gidiyordu — düzeltmesiz testte `True True True`). Köken (şema+ana makine+port) karşılaştırması + https→http reddi (`allow_downgrade`). Testler: `http_stdlib_golden_test.zig` iki yeni test. |
 | P1.2 | Paralel/sıralı fark testi yalnızca sayı | **T** | Test artık serbest bırakılan düğüm kimlik kümesini karşılaştırır (6 tohum × 2/3/4/8 iş parçacığı). |
 | P1.3 | Allocator iş parçacığı sözleşmesi | **T** | `docs/apis/internal-abi.md`: freestanding çalışma zamanı tek iş parçacıklı, kancalar kilitsiz, ≥8 bayt hizalama, kesme içinden yeniden girişsiz. |
-| P1.4 | Bayt farkında GC baskısı | **Ö / K** | 3000 tur × 2 × 800 KB döngüsel çöp: tepe RSS ≈ 600 MB (eşik düğüm sayısıyla, ~700 kök). Sınırsız değil (eşik uyarlanır) ama büyük yük taşıyan döngüsel çöpte bellek şişer. Çözüm `nox_alloc` büyük-tahsis yolunda bayt sayacı + `possible_root` güvenli noktasında tetikleme olurdu (tetikleyici tasarımı, ARC sıcak yoluna dokunur) → **kullanıcı kararı**. |
+| P1.4 | Bayt farkında GC baskısı | **D (v2.2.26)** | 600 MB → 89 MB tepe RSS, süre aynı; yalnız büyük tahsis/serbest yollarında bir sayaç, derleyici/IR değişmedi; kapı geçti, A/B 59 ms ↔ 59 ms. Tasarım: `nox-teknik-spesifikasyon.md` §3.472. |
 | P1.5 | STW güvenli-nokta gecikmesi | **K** | Ölçülmedi/değiştirilmedi: kooperatif STW'nin sınırı tasarımdır; önleyici (preemptive) güvenli nokta mimari karar. |
 | P1.6 | Tüketen işlev/kurucu/`_c` klon stresi | **T** | `ctor_consume_stress` fixture'ı: istisna atan kurucu, çift ters çevirme, listeye ekleme, 2000 tur; iki backend, sızıntı/çifte serbest bırakma denetimli (Debug çalışma zamanı). Hata bulunmadı. |
 | P1.7 | Satır içi havuz tahsisi / M geçişleri | **T (okuma)** | Satır içi yol yalnızca `pool_ever_active == false` iken açık; `WorkerPool.create` bayrağı işçilerden önce kapatır; slot 0 serbest listesine yalnızca çağıran dokunur; `nox.thread` çocukları kendi `rt`sine sahip. Çürütülen bir senaryo bulunmadı; P0.1 düzeltmesi ek olarak `fiber_ever_active`i havuzla birlikte açar. |
@@ -25,6 +25,6 @@ Yöntem (kullanıcı kuralları): her bulgu önce güncel kaynakta doğrulandı;
 
 ## Kullanıcıya bırakılan kararlar
 
-1. **P1.4** — bayt farkında GC tetikleyicisi (tepe RSS ~600 MB ölçüldü). Önerilen: büyük tahsis (≥ 64 KiB) yolunda bayt sayacı, eşik aşılınca bir sonraki `possible_root` güvenli noktasında toplama.
+1. ~~**P1.4**~~ — yapıldı (v2.2.26).
 2. **P1.5** — önleyici güvenli nokta (tasarım gereği kooperatif; değiştirmek mimari).
 3. **P0.2 politikası** — iş listesi OOM'unda panik (sessiz bozulmanın yerine). Alternatif (Boehm tarzı taşma yeniden taraması) daha karmaşık; istenirse sonraki tur.

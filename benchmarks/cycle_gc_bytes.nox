@@ -1,0 +1,20 @@
+# P1.4 (v2.2.26): bayt baskılı döngüsel çöp — her tur 2 x 800 KB döngüsel düğüm. `/usr/bin/time -l` ile tepe RSS: v2.2.25 ~600 MB, v2.2.26 ~90 MB (süre aynı).
+class Node:
+    next: Node | None
+    data: list[int]
+
+    def __init__(self, n: int) -> None:
+        self.next = None
+        self.data = [0] * n
+
+def churn(rounds: int, n: int) -> int:
+    total: int = 0
+    for i in range(rounds):
+        a: Node = Node(n)
+        b: Node = Node(n)
+        a.next = b
+        b.next = a
+        total = total + len(a.data)
+    return total
+
+print(churn(3000, 100000))

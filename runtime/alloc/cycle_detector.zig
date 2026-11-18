@@ -215,6 +215,8 @@ const CycleGc = struct {
     par_runs: usize = 0,
     /// YALNIZCA test derlemesi (GPT-6 P0.2): `N != 0` ise işaretleme/tarama iş listesinin N'inci itişi `error.OutOfMemory` ile başarısız olur (bellek-yetersizliği enjeksiyonu).
     test_fail_pushes: usize = 0,
+    /// P1.4: bayt baskısı adımı (bkz. `rearmPressure`).
+    pressure_step: usize = asap.GC_PRESSURE_BASE,
 
     fn deinit(self: *CycleGc, allocator: std.mem.Allocator) void {
         for (&self.par_aux) |*slot| {
@@ -425,7 +427,8 @@ pub export fn nox_cycle_possible_root(rt: ?*anyopaque, p: ?*anyopaque) void {
     // DERHAL uyandırmak İçİn TÜM DOLU `pool_wake_fds` slotlarına bir bayt
     // yazılır (AKSİ HALDE `io_reactor.zig`nin `poll()`ü NULL/-1 zaman
     // aşımıyla SONSUZA KADAR bloke KALIR, `stw_requested`i HİÇ FARK ETMEZ).
-    if (gc.possible_roots_since_collect >= gc.collect_threshold) {
+    // P1.4: büyük bloklarda bayt baskısı da toplamayı tetikler (`asap.RuntimeState.gc_pressure`; yalnızca tamponda kök varken buraya gelinir).
+    if (gc.possible_roots_since_collect >= gc.collect_threshold or state.gc_pressure.load(.monotonic)) {
         if (state.worker_pool == null) {
             collectLocked(rt, state, gc);
         } else if (comptime !is_freestanding) {
@@ -540,7 +543,28 @@ fn nowNs() u64 {
     return @as(u64, @intCast(ts.sec)) * 1_000_000_000 + @as(u64, @intCast(ts.nsec));
 }
 
+/// P1.4: baskı toplamasından sonra bayrağı indirir ve bir sonraki eşiği kurar: canlı büyük bayt + adım. Baskıyla yapılan toplama (kökün dörtte birinden azını serbest bıraktıysa) verimsizse adım
+/// ikiye katlanır (üst sınırlı) — büyük, canlı, döngüsel bir yapı için tekrarlı boş tarama olmaz; verimliyse taban adıma döner. Baskısız toplamada adım değişmez.
+fn rearmPressure(state: *asap.RuntimeState, gc: *CycleGc, by_pressure: bool, scanned: usize) void {
+    if (by_pressure) {
+        const wasted = gc.freed_in_collect * 4 < scanned;
+        gc.pressure_step = if (wasted) @min(gc.pressure_step *| 2, MAX_PRESSURE_STEP) else asap.GC_PRESSURE_BASE;
+    }
+    const net = state.gc_large_bytes.load(.monotonic);
+    state.gc_pressure_at.store(net +| gc.pressure_step, .monotonic);
+    state.gc_pressure.store(false, .monotonic);
+}
+
+const MAX_PRESSURE_STEP: usize = if (@sizeOf(usize) >= 8) 4 * 1024 * 1024 * 1024 else 1024 * 1024 * 1024; // 32-bit hedeflerde (wasm32) 4 GiB `usize`a sığmaz
+
 fn collectLockedInner(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
+    const by_pressure = state.gc_pressure.load(.monotonic);
+    const scanned_at_start = gc.roots.items.len;
+    collectBody(rt, state, gc);
+    rearmPressure(state, gc, by_pressure, scanned_at_start);
+}
+
+fn collectBody(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
     const prev_visited = gc.visited_in_collect;
     gc.possible_roots_since_collect = 0;
     gc.freed_in_collect = 0;
@@ -1593,6 +1617,45 @@ test "GPT-6 P0.2: paralel işçi mark/scan'de OOM'u bayrakla bildirir (collect't
     var w3: ParWorker = .{ .sh = &sh3, .rt = undefined, .phase = .scan };
     try testing.expect(!w3.getWork());
     try testing.expect(sh3.oom.load(.acquire));
+}
+
+test "P1.4: büyük blok baytı eşiği aşınca baskı bayrağı kalkar, toplama onu indirir; verimsiz baskı toplaması adımı ikiye katlar" {
+    if (comptime is_freestanding or builtin.cpu.arch.isWasm()) return error.SkipZigTest;
+    injectFakeDispatch();
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    const gc = getGc(state);
+    gc.collect_threshold = 1 << 24; // yalnızca bayt baskısı tetiklesin
+
+    const a = newFakeObject(rt);
+    const b = newFakeObject(rt);
+    wireField(a, b);
+    wireField(b, a);
+    simulateRelease(rt, a); // kök tamponlanır, henüz bayrak yok
+
+    // Eşik altı: bayrak kalkmaz.
+    const small = asap.nox_alloc(rt, 1 << 20) orelse return error.AllocFailed;
+    try testing.expect(!state.gc_pressure.load(.monotonic));
+    // Eşiği aşan büyük tahsis bayrağı kaldırır; serbest bırakma net baytı düşürür (bayrak toplamaya kadar kalır).
+    const big = asap.nox_alloc(rt, asap.GC_PRESSURE_BASE) orelse return error.AllocFailed;
+    try testing.expect(state.gc_pressure.load(.monotonic));
+    asap.nox_free(rt, big, asap.GC_PRESSURE_BASE);
+    asap.nox_free(rt, small, 1 << 20);
+    try testing.expectEqual(@as(usize, 0), state.gc_large_bytes.load(.monotonic));
+
+    // Bayrak varken bir sonraki olası kök kaydı toplamayı tetikler (eşik sayacı aşılmadan); döngüsel çöp serbest kalır, bayrak iner.
+    simulateRelease(rt, b);
+    try testing.expectEqual(@as(usize, 2), g_fake_freed_count);
+    try testing.expect(!state.gc_pressure.load(.monotonic));
+    try testing.expectEqual(asap.GC_PRESSURE_BASE, gc.pressure_step); // verimli toplama: taban adım
+
+    // Verimsiz baskı toplaması (hiçbir şey serbest kalmaz): adım iki katına çıkar.
+    state.gc_pressure.store(true, .monotonic);
+    rearmPressure(state, gc, true, 10);
+    try testing.expectEqual(asap.GC_PRESSURE_BASE * 2, gc.pressure_step);
+    try testing.expect(!state.gc_pressure.load(.monotonic));
+
+    try deinitRuntimeExpectNoLeak(rt);
 }
 
 // Faz F.0.1 (bkz. proje planı "Freestanding Nox — dlopen/dlsym-tabanlı

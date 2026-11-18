@@ -388,6 +388,12 @@ pub const RuntimeState = struct {
     large_cache_ptr: [LARGE_CACHE_SLOTS]?[*]u8 = @splat(null),
     large_cache_len: [LARGE_CACHE_SLOTS]usize = @splat(0),
     large_cache_next: usize = 0,
+    /// P1.4 (GPT-6, v2.2.26): bayt farkında döngü-toplama baskısı. `gc_large_bytes`: canlı büyük blokların (>= `LARGE_CACHE_MIN`) net bayt sayısı — YALNIZCA büyük tahsis/serbest bırakma
+    /// yavaş yollarında güncellenir (küçük nesne tahsisine/retain/release'e/üretilen koda hiçbir komut eklemez). `gc_pressure_at`: net bayt bu düzeye ulaşınca `gc_pressure` kalkar;
+    /// `possible_root` bayrağı zaten kilit altında okuduğu eşik kontrolüne ekler, toplama sonrası `cycle_detector.rearmPressure` bayrağı indirip düzeyi yeniden kurar (verimsizse üstel geri çekilme).
+    gc_large_bytes: std.atomic.Value(usize) = .init(0),
+    gc_pressure_at: std.atomic.Value(usize) = .init(GC_PRESSURE_BASE),
+    gc_pressure: std.atomic.Value(bool) = .init(false),
     /// Faz S.3 (Katman 3, döngü çözücü) — `runtime/alloc/cycle_detector.zig`nin
     /// KENDİ `CycleGc` durumuna opak bir işaretçi (tembel/lazy oluşturulur,
     /// bkz. onun `getGc`si). `arena_pool` İLE AYNI gerekçeyle opak: `asap.zig`
@@ -1102,6 +1108,29 @@ pub const nox_alloc_alignment = std.mem.Alignment.fromByteUnits(@alignOf(usize))
 
 /// `size` bayt tahsis eder. Başarısızlıkta `null` döner.
 const LARGE_CACHE_MIN: usize = 64 * 1024;
+/// P1.4: net büyük-blok baytı bu kadar BÜYÜDÜĞÜNDE (son toplamadan beri) döngü toplama baskısı kalkar.
+pub const GC_PRESSURE_BASE: usize = 64 * 1024 * 1024;
+/// wasm/çıplak çekirdekte kapalı (tek iş parçacıklı, bellek bütçesi başka yoldan yönetilir).
+const gc_pressure_on = !is_freestanding and !builtin.cpu.arch.isWasm();
+
+inline fn noteLargeAlloc(state: *RuntimeState, size: usize) void {
+    if (comptime !gc_pressure_on) return;
+    if (size < LARGE_CACHE_MIN) return;
+    const net = state.gc_large_bytes.fetchAdd(size, .monotonic) +% size;
+    if (net >= state.gc_pressure_at.load(.monotonic)) state.gc_pressure.store(true, .monotonic);
+}
+
+inline fn noteLargeFree(state: *RuntimeState, size: usize) void {
+    if (comptime !gc_pressure_on) return;
+    if (size < LARGE_CACHE_MIN) return;
+    _ = state.gc_large_bytes.fetchSub(size, .monotonic);
+}
+
+/// `nox_list_realloc`ın yerinde (libc `realloc`) büyütmesi/küçültmesi için net bayt farkı.
+pub fn noteLargeResize(state: *RuntimeState, old_size: usize, new_size: usize) void {
+    if (comptime !gc_pressure_on) return;
+    if (new_size >= old_size) noteLargeAlloc(state, new_size - old_size) else noteLargeFree(state, old_size - new_size);
+}
 const LARGE_CACHE_SLOTS = 8;
 const LARGE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 const use_large_cache = builtin.mode != .Debug and !is_freestanding;
@@ -1187,6 +1216,7 @@ pub fn largeCacheDrain(state: *RuntimeState) void {
 
 pub export fn nox_alloc(rt: ?*anyopaque, size: usize) ?*anyopaque {
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return null));
+    noteLargeAlloc(state, size);
     if (comptime use_large_cache) {
         if (size >= LARGE_CACHE_MIN) {
             if (largeCacheTake(state, size)) |p| return p;
@@ -1208,6 +1238,7 @@ pub export fn nox_free(rt: ?*anyopaque, ptr: ?*anyopaque, size: usize) void {
     const p = ptr orelse return;
     const state: *RuntimeState = @ptrCast(@alignCast(rt orelse return));
     const bytes: [*]u8 = @ptrCast(p);
+    noteLargeFree(state, size);
     if (comptime use_large_cache) {
         if (size >= LARGE_CACHE_MIN and largeCachePut(state, bytes, size)) return;
     }

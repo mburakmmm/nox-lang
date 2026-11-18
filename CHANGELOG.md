@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.26]
+
+Bayt farkında döngü toplama tetikleyicisi (GPT-6 P1.4; performans kaybı koşuluyla).
+
+- **Düzeltme (bellek):** döngü toplayıcı yalnızca olası-kök SAYISINA bakıyordu; her düğümü büyük bir liste/dize tutan döngüsel çöpte tepe bellek şişiyordu (3000 tur × 2 × 800 KB: 600 MB). Artık ≥ 64 KiB bloklarda net bayt sayacı (`RuntimeState.gc_large_bytes`, yalnızca büyük tahsis/serbest bırakma ve yerinde `realloc` yollarında güncellenir) son toplamadan beri 64 MiB büyüyünce `gc_pressure` bayrağını kaldırır; `possible_root` bayrağı zaten yaptığı eşik kontrolüne ekler. Toplama sonrası `rearmPressure` bayrağı indirir ve eşiği "canlı büyük bayt + adım" olarak kurar; baskı toplaması verimsizse (kökün dörtte birinden azı serbest) adım ikiye katlanır (üst sınır 4 GiB), verimliyse tabana döner. wasm/çıplak çekirdekte kapalı.
+- **Ölçüm:** `benchmarks/cycle_gc_bytes.nox` tepe RSS 600 → 89 MB, süre aynı (0,32 → 0,29 s). Büyük canlı döngüsel veri (300 × 1 MB) altında toplama sayısı değişmedi (571), döngüsüz büyük tampon döngüsünde toplama yok. 30 000 büyük tahsis/serbest bırakma çiftinde 59 ms ↔ 59 ms (sayaç kapalı/açık A/B); `benchmarks/gate.py --check --repeat 5` "gerileme yok". Derleyiciye dokunulmadı: IR anlık görüntüleri değişmedi.
+- **Test:** `cycle_detector.zig` "P1.4" birim testi (bayrak, serbest bırakmayla net bayt, baskıyla tetiklenen toplama, üstel geri çekilme).
+
 ## [2.2.25]
 
 GPT-6 bootstrap-öncesi sağlamlaştırma denetimi: 4 doğrulanmış hata + 1 yapılmayan/ölçülen tasarım kalemi (ayrıntı: `project/gpt6-sertlestirme-2026-11-18.md`).

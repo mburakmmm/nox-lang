@@ -497,6 +497,7 @@ pub export fn nox_list_realloc(rt: ?*anyopaque, old_ptr: ?*anyopaque, old_payloa
             const bytes: [*]u8 = @ptrCast(old);
             const base = bytes - HEADER_SIZE;
             const nb: [*]u8 = @ptrCast(std.c.realloc(base, new_total) orelse return null);
+            if (rt) |r| asap.noteLargeResize(@ptrCast(@alignCast(r)), old_total, new_total); // P1.4: net büyük-blok baytı
             return nb + HEADER_SIZE;
         }
     }
