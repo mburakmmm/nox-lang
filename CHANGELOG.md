@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.31]
+
+noxc-nightly Aşama 0.7 + 0.8: derleyici-türü kıyas seti ve derin özyineleme.
+
+- **`benchmarks/compiler_bench/` (0.7):** lexer (sınıf/düz arabellek), ağaç dönüşümü, `dict[str,int]` sembol tablosu ve iki IR-metni üretimi biçimi; Nox (`--selfhost-obj`) ve Zig'de aynı algoritma, aynı sağlama toplamı. Oranlar: lex 2,68–2,96×, dict 2,87×, ağaç 0,97×, str 1,28–1,36× (hepsi plan bütçesi içinde, lexer sınırda).
+- **Derin özyineleme (0.8):** `selfhost/spike/02-deep-recursion`: 8 MiB ana yığın iki çocuklu özyinelemede ~300 bin derinliğe yetiyor, 1 milyonda SIGSEGV; 256 MiB'lik iş parçacığı 1 milyonu (zincir serbest bırakma dahil) taşıyor. Fiber yığını bu yolda sınır değil. `selfhost_glue.runOnBigStack` (256 MiB) eklendi; `noxc-nightly selfhost-info` bileşeni bu iş parçacığında çalıştırır. Test: `tests/cli/selfhost_obj_test.zig` (100 bin derinlik).
+- **Dil bulguları (plan 0.11):** `lowlevel` içinde sınıf kurma/`list[Sınıf].append` codegen'de desteklenmiyor; özellik üzerinde Optional daraltma yok (`n.l is None` sonrası `n.l` daralmaz, yerel değişken gerekir). İkisi de tasarım gereği/mevcut kural olarak not edildi, değiştirilmedi.
+
 ## [2.2.30]
 
 noxc-nightly Aşama 0.4–0.6: `--frontend` bayrağı, `noxc tokens`/`noxc ast` ve farksal test koşucusu.

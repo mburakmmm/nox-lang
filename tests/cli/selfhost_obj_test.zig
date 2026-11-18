@@ -101,3 +101,38 @@ test "selfhost-obj: --target ile birlikte reddedilir, run ile kullanilamaz" {
     defer std.testing.allocator.free(r.stderr);
     try std.testing.expect(!(r.term == .exited and r.term.exited == 0));
 }
+
+// noxc-nightly Aşama 0.8: Nox bileşeni büyük yığınlı iş parçacığında çok derin özyinelemeyi (iki çocuklu yürüyüş + zincir serbest bırakma) taşır.
+test "selfhost-obj: 100 bin derinlikte ozyineleme buyuk yiginli is parcaciginda calisir" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(io, &buf)];
+
+    const obj = try std.fmt.allocPrint(a, "{s}/deep.o", .{dir});
+    const r1 = std.process.run(std.testing.allocator, io, .{ .argv = &.{ "zig-out/bin/noxc", "build", "--selfhost-obj", "-o", obj, "selfhost/spike/02-deep-recursion/deep.nox" } }) catch return error.SkipZigTest;
+    defer std.testing.allocator.free(r1.stdout);
+    defer std.testing.allocator.free(r1.stderr);
+    if (r1.term != .exited or r1.term.exited != 0) {
+        if (std.mem.indexOf(u8, r1.stderr, "needs the native LLVM backend") != null) return error.SkipZigTest;
+        return error.TestUnexpectedResult;
+    }
+    const exe = try std.fmt.allocPrint(a, "{s}/h", .{dir});
+    const femit = try std.fmt.allocPrint(a, "-femit-bin={s}", .{exe});
+    const r2 = std.process.run(std.testing.allocator, io, .{ .argv = &.{ "zig", "build-exe", "selfhost/spike/02-deep-recursion/harness.zig", obj, "zig-out/lib/noxrt.o", "-lc", "-OReleaseSafe", femit } }) catch return error.SkipZigTest;
+    defer std.testing.allocator.free(r2.stdout);
+    defer std.testing.allocator.free(r2.stderr);
+    if (r2.term != .exited or r2.term.exited != 0) {
+        std.debug.print("harness derlenemedi: {s}\n", .{r2.stderr});
+        return error.TestUnexpectedResult;
+    }
+    const r3 = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ exe, "100000", "256" } });
+    defer std.testing.allocator.free(r3.stdout);
+    defer std.testing.allocator.free(r3.stderr);
+    try std.testing.expectEqualStrings("n=100000 derinlik=100000\n", r3.stdout);
+}

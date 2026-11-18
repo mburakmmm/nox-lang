@@ -631,12 +631,20 @@ fn cmdSelfhostInfo(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !
         printErr("selfhost-info: cannot read {s}\n", .{path});
         std.process.exit(1);
     };
-    const nrt = glue.Runtime.start();
-    defer nrt.stop();
-    var stdout_buf: [512]u8 = undefined;
-    var w = std.Io.File.stdout().writer(io, &stdout_buf);
-    try w.interface.print("noxc-nightly {s}: Nox components linked: sh_count_ident_tokens\n{s}: {d} bytes, {d} identifier tokens\n", .{ build_options.version, path, src.len, nrt.countIdentTokens(src) });
-    try w.interface.flush();
+    const Ctx = struct {
+        io: std.Io,
+        path: []const u8,
+        src: []const u8,
+        fn run(self: *@This(), nrt: glue.Runtime) void {
+            var stdout_buf: [512]u8 = undefined;
+            var w = std.Io.File.stdout().writer(self.io, &stdout_buf);
+            w.interface.print("noxc-nightly {s}: Nox components linked: sh_count_ident_tokens\n{s}: {d} bytes, {d} identifier tokens\n", .{ build_options.version, self.path, self.src.len, nrt.countIdentTokens(self.src) }) catch return;
+            w.interface.flush() catch return;
+        }
+    };
+    var ctx: Ctx = .{ .io = io, .path = path, .src = src };
+    // Nox bileşenleri her zaman büyük yığınlı iş parçacığında çalışır (derin özyineleme, plan 0.8).
+    try glue.runOnBigStack(&ctx, Ctx.run);
 }
 
 /// `noxc upgrade [--check] [<sürüm>]` — bkz. `pkg/upgrade.zig`nin modül

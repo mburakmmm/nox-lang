@@ -30,6 +30,24 @@ pub const Runtime = struct {
     }
 };
 
+/// Nox bileşenleri (parser/checker özyinelemesi) için ayrılan yığın: 256 MiB (yalnızca sanal bellek; dokunulan kadarı fiziksel). Deney (`selfhost/spike/02-deep-recursion`, LLVM -O2): 8 MiB'lık ana yığın
+/// iki çocuklu özyinelemede ~300 bin derinliğe yetiyor, 1 milyon çöküyor; 256 MiB 1 milyonu rahat taşıyor (zincir serbest bırakma dahil).
+pub const BIG_STACK_BYTES: usize = 256 * 1024 * 1024;
+
+/// `f(ctx, runtime)`ü büyük yığınlı yeni bir iş parçacığında çalıştırır (`Runtime` o iş parçacığında kurulur/yıkılır; çalışma zamanı tek iş parçacığına aittir). `join` ile bekler.
+pub fn runOnBigStack(ctx: anytype, comptime f: fn (@TypeOf(ctx), Runtime) void) !void {
+    const Ctx = @TypeOf(ctx);
+    const Thunk = struct {
+        fn entry(c: Ctx) void {
+            const nrt = Runtime.start();
+            defer nrt.stop();
+            f(c, nrt);
+        }
+    };
+    const t = try std.Thread.spawn(.{ .stack_size = BIG_STACK_BYTES }, Thunk.entry, .{ctx});
+    t.join();
+}
+
 test "selfhost_glue: bileşen simgeleri bu birimde çözülmez (yalnızca nightly ikilisinde bağlanır)" {
     // Bu dosya normal test derlemesinde analiz edilmez; yer tutucu.
 }

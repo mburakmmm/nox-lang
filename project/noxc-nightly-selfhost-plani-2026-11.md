@@ -51,8 +51,10 @@ Bağlama (hibrit): `build.zig`, önce Zig'li `noxc`'yi (stage0) derler; stage0, 
 - [x] **0.4 `--frontend zig|nox` bayrağı (v2.2.30; bileşen bazında açma Aşama 1+):** `build/run/check/fmt` komutlarında; nightly'de varsayılan `zig`, bileşen eşdeğer olunca bileşen bazında açılır. Normal `noxc`te bayrak yok (ya da yalnızca `zig`).
 - [x] **0.5 Tanı araçları (v2.2.30):** `noxc tokens <dosya>` (token dökümü, Nox/Zig ortak biçim), `noxc ast <dosya>` (mevcut `--dump` ile eşit), JSON çıktı seçeneği.
 - [x] **0.6 Farksal test koşucusu (v2.2.30):** `scripts/frontend_diff.py` (+ `zig build frontend-diff-test`): tüm depo `.nox` dosyaları (git'in bildiği 1 257 dosya; ~9 800 sayısı gömülü/üretilmiş kaynakları da sayıyordu — Zig↔Zig koşusu Debug `noxc` ile 5 sn) üzerinde Zig ve Nox bileşenini çalıştırıp çıktıları karşılaştırır; fark = kırmızı; ilk farkı gösteren küçültücü (delta) çıktısı.
-- [ ] **0.7 Derleyici-türü kıyas seti:** `benchmarks/compiler_bench/` (lexer, ağaç dönüşümü, dict[str,X] yoğun, str birleştirme); Zig ve Nox sütunu, hedef ≤ 3–5× Zig (parser/lexer için ≤ 3×).
-- [ ] **0.8 Derin özyineleme:** fiber yığını sabit 192 KiB; derleyici görevleri için ayarlanabilir büyük yığın ya da açık-yığınlı yineleme; `NOX_STACK_PAINT` ile ölçüm; derin AST testi (100 bin düğüm).
+- [x] **0.7 Derleyici-türü kıyas seti (v2.2.31):** `benchmarks/compiler_bench/` (lexer, ağaç dönüşümü, dict[str,X] yoğun, str birleştirme); Zig ve Nox sütunu, hedef ≤ 3–5× Zig (parser/lexer için ≤ 3×).
+  **SONUÇ:** `benchmarks/compiler_bench/` (`run.sh`): lex 2,7–3,0×, dict[str,int] 2,9×, ağaç dönüşümü 0,97×, str 1,3×: hepsi bütçe içinde, lexer sınırda (ayrıntı + iki dil bulgusu README'de).
+- [x] **0.8 Derin özyineleme (v2.2.31):** fiber yığını sabit 192 KiB; derleyici görevleri için ayarlanabilir büyük yığın ya da açık-yığınlı yineleme; `NOX_STACK_PAINT` ile ölçüm; derin AST testi (100 bin düğüm).
+  **SONUÇ:** fiber yığını bu yolda sınır değil (bileşenler senkron, yerel iş parçacığı yığınında çalışır). 8 MiB ana yığın iki çocuklu özyinelemede ~300 bin derinliğe yetiyor, 1 milyonda SIGSEGV; 256 MiB iş parçacığı 1 milyonu taşıyor → `selfhost_glue.runOnBigStack` (256 MiB). Parser/checker'a ayrı derinlik sınırı Aşama 2/3'te. Ayrıntı: `selfhost/spike/02-deep-recursion/README.md`, test `tests/cli/selfhost_obj_test.zig`.
 - [ ] **0.9 CI hattı:** `nightly.yml` (günlük + `workflow_dispatch`): nightly derle, farksal test, kıyas, artifact `nightly-YYYY-MM-DD`; Release/`noxc upgrade` etkilenmez; `noxc upgrade --nightly` (isteğe bağlı, kararla).
 - [ ] **0.10 Belgeler:** AGENTS.md §0 işaretçisi, spesifikasyon bölümü (§3.4xx "noxc-nightly"), `docs/` iç belge sayfası, bu listenin güncelleme kuralı.
 - [ ] **0.11 Eksik dil/çalışma zamanı özellikleri (Aşama 0 değerlendirmesi):** jenerik `enum`, büyük `match` performansı, `dict[str, X]` hızı, `list[T]` ayırma/`str` birleştirme; bulgu listesi bu dosyaya eklenir `[K]`.
@@ -184,14 +186,14 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 1. [x] 0.1 Zig→Nox çağrı deneyi (tek işlev, C ABI) — v2.2.28.
 2. [x] 0.2 + 0.3 `selfhost/` iskeleti ve `zig build nightly` — v2.2.29.
 3. [x] 0.5 + 0.6 `noxc tokens` ve farksal test koşucusu (lexer için) — v2.2.30.
-4. [ ] 0.7 + 0.8 derleyici kıyas seti ve yığın çözümü.
+4. [x] 0.7 + 0.8 derleyici kıyas seti ve yığın çözümü — v2.2.31.
 5. [ ] Aşama 1 (lexer) başlangıcı.
 
 ## 13. İlerleme özeti (el ile güncellenir)
 
 | Aşama | Madde | Bitti | Durum |
 |---|---|---|---|
-| 0 Altyapı | 11 | 6 | sürüyor (0.1–0.6 bitti; sıradaki 0.7 + 0.8) |
+| 0 Altyapı | 11 | 8 | sürüyor (0.1–0.8 bitti; sıradaki 0.9 CI, 0.10 belge, 0.11 değerlendirme) |
 | 1 Lexer | 13 | 0 | açık |
 | 2 Parser/AST | 15 | 0 | açık |
 | 3 Tip denetleyici | 17 | 0 | açık |
