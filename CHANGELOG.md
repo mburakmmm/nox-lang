@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.23]
+
+Benchmark yeniden ölçümü (bootstrap öncesi performans turu, 1/2): bir gerçek regresyon bulundu ve düzeltildi.
+
+- **Düzeltme (performans):** `str_concat_1M` (`acc = acc + "x"` döngüsü) v2.2.9'dan beri 2,5× yavaştı (2,6 → 6,5 ms; 40M eklemede 126 → 242 ms). Kök neden: `nox_str_append`ın tahsis/serbest bırakma yavaş yolu işleve satır içi girmiş (138 → 221 komut, 4 → 6 yedeklenen yazmaç çifti), her eklemenin sıcak yolu daha büyük prolog/epilog ödüyordu. Yavaş yol `strAppendGrow` (`noinline`, `@branchHint(.cold)`) olarak ayrıldı: işlev 129 komuta indi, 40M ekleme 106 ms (v2.2.3'ten de hızlı). Performans kapısı (`benchmarks/gate.py --check`) bunu yakaladı ve düzeltmeden sonra yeşil.
+- **ARC/ASAP turu 2 (ölçüm):** çapraz-dil kernel'lerinde retain trafiği 0, Aether `/ping`te ARC/tahsis işlevleri CPU'nun ~%4'ü (sistem çağrıları %65); `noxc explain` için denenen "sahipli/paylaşımlı" etiketi yanıltıcı olacağından geri alındı; kalan iş yok (`project/b1-arc-asap-analizi-2026-11-17.md` §14).
+- **Ölçüm raporu:** `benchmarks/RESULTS.md`ye v2.2.22 yeniden ölçümü (çapraz-dil + `lang_perf` + stdlib kapısı) eklendi; kalan C farkları (sieve 3,1×, dict 2,75×, matmul 1,95×) yapısal nedenlerle belgelendi.
+
 ## [2.2.22]
 
 Dil yüzeyi 2 (bootstrap öncesi yüzey tamamlaması, kullanıcı kararları 2026-11-18).

@@ -151,3 +151,19 @@ v2.2.18 sonrası AST iş yükü (`ast_eval`, ReleaseFast) `NOX_RC_STATS` ile: **
 `text_proc`: 320 000 `str` retain/release çifti, 434 320 tahsis, toplam ~10–20 ms.
 
 Sonuç: §12'de "kalan" diye listelenen üç iş (çağrı sitesinde son kullanımdaki adlandırılmış yerelin klona taşınması, geçici `str` arenası, vtable'lı sınıf metodları için tüketen sözleşme) **hiçbir ölçülebilir iş yükünde hedef bulmuyor**; ölçüm olmadan codegen riski almak (AGENTS §8: muhafazakâr) haklı değil. B1 **kapatıldı**; yeni bir iş yükü (ör. vtable'lı sınıf hiyerarşisi üzerinde ağır tüketen çağrı) bu üç adaydan birini haklı çıkarırsa yeniden açılır.
+
+## 14. ARC/ASAP turu 2 — bootstrap öncesi yeniden ölçüm (2026-11-18, v2.2.23)
+
+Kullanıcı isteği: bootstrap öncesi benchmark'ların yeniden yapılması ve ARC/ASAP'in biraz daha geliştirilmesi. Ölçüm (`NOX_RC_STATS=1`, ReleaseFast):
+
+| iş yükü | retain | release | tahsis | not |
+|---|---|---|---|---|
+| çapraz-dil `strings`, `sort`, `matmul`, `dict` | 0 | 1 M / 1 / 903 / 0 | 3 M / 15 / 8 k / 1 | sayaç trafiği yok; maliyet tahsis/serbest bırakma |
+| `trees` (ikili ağaç, 8,4 M düğüm) | 0 | 8,4 M | 8,4 M | Nox/C = 0,75× (satır içi havuz tahsisi) |
+| `oop_arc_churn` | 3 M | 9 M | 6 M | Nox C'den hızlı (0,01 s vs 0,03 s) |
+| `ast_eval` | 0,49 M | 1,97 M | 1,47 M | retain'ler yaprakların `return n`i (alt sınır) |
+| Aether `/ping` (istek başına) | 74 | 72 | 44 | CPU'nun %65'i `read/write/kevent`; ARC/tahsis işlevleri ~%4 |
+
+`noxc explain` etiketi için bir "sahipli (retain'siz) / paylaşımlı" ayrımı denendi ve **geri alındı**: `localNeverEscapes` yığın terfisi için "güvenli kullanım" ölçütüdür (çağrıya argüman geçmek bile "kaçış" sayılır), oysa ARC'li bir değeri ödünç parametre olarak geçirmek retain üretmez; bu ölçütle "paylaşımlı" payı olduğundan çok büyük çıkıp yanıltıcı bir iddia olurdu. Gerçek ARC payının ölçüsü `NOX_RC_STATS` sayaçlarıdır (belge `docs/language/memory.md`).
+
+Sonuç: ölçülebilir hiçbir iş yükünde ARC/ASAP için kalan bir hedef yok; yeni bir codegen değişikliği spekülatif olurdu. Kalan C farkları (sieve 3,1×, dict 2,75×, matmul 1,95×) bellek yönetiminden değil, liste indekslemedeki sınır denetimlerinden, sözlük işlemlerinde çalışma zamanı çağrısı başına maliyetten ve liste önceden-ayırma biçimlerinin (`[x] * n`) yokluğundan gelir. ARC/ASAP işi bu turda yeniden kapatıldı.

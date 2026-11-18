@@ -543,6 +543,14 @@ pub export fn nox_str_append(rt: ?*anyopaque, a: ?[*:0]u8, b: ?[*:0]const u8) ?[
             return pa;
         }
     }
+    return strAppendGrow(rt, a, pa, pb, len_a, len_b, ascii_state, need_payload);
+}
+
+/// `nox_str_append`ın yavaş yolu (paylaşılan ya da kapasitesi yetmeyen dize: yeni blok açılır). Ayrı ve `noinline`: aksi halde tahsis/serbest bırakma kodu `nox_str_append`a
+/// satır içi girip işlevin yığın çerçevesini/yedeklenen yazmaç sayısını büyütür ve her tek baytlık eklemenin (hızlı yol) maliyetini ~2x artırırdı (v2.2.9, str_concat_1M).
+noinline fn strAppendGrow(rt: ?*anyopaque, a: ?[*:0]u8, pa: [*:0]u8, pb: [*:0]const u8, len_a: usize, len_b: usize, ascii_state: u64, need_payload: usize) ?[*:0]u8 {
+    @branchHint(.cold);
+    const total = len_a + len_b;
     // Yeni blok: büyük boyutta kapasiteyi 2'nin kuvvetine yuvarla (amortize büyüme).
     var alloc_payload: usize = need_payload;
     var new_cap_exp: u64 = 0;
