@@ -55,9 +55,17 @@ Bağlama (hibrit): `build.zig`, önce Zig'li `noxc`'yi (stage0) derler; stage0, 
   **SONUÇ:** `benchmarks/compiler_bench/` (`run.sh`): lex 2,7–3,0×, dict[str,int] 2,9×, ağaç dönüşümü 0,97×, str 1,3×: hepsi bütçe içinde, lexer sınırda (ayrıntı + iki dil bulgusu README'de).
 - [x] **0.8 Derin özyineleme (v2.2.31):** fiber yığını sabit 192 KiB; derleyici görevleri için ayarlanabilir büyük yığın ya da açık-yığınlı yineleme; `NOX_STACK_PAINT` ile ölçüm; derin AST testi (100 bin düğüm).
   **SONUÇ:** fiber yığını bu yolda sınır değil (bileşenler senkron, yerel iş parçacığı yığınında çalışır). 8 MiB ana yığın iki çocuklu özyinelemede ~300 bin derinliğe yetiyor, 1 milyonda SIGSEGV; 256 MiB iş parçacığı 1 milyonu taşıyor → `selfhost_glue.runOnBigStack` (256 MiB). Parser/checker'a ayrı derinlik sınırı Aşama 2/3'te. Ayrıntı: `selfhost/spike/02-deep-recursion/README.md`, test `tests/cli/selfhost_obj_test.zig`.
-- [ ] **0.9 CI hattı:** `nightly.yml` (günlük + `workflow_dispatch`): nightly derle, farksal test, kıyas, artifact `nightly-YYYY-MM-DD`; Release/`noxc upgrade` etkilenmez; `noxc upgrade --nightly` (isteğe bağlı, kararla).
-- [ ] **0.10 Belgeler:** AGENTS.md §0 işaretçisi, spesifikasyon bölümü (§3.4xx "noxc-nightly"), `docs/` iç belge sayfası, bu listenin güncelleme kuralı.
-- [ ] **0.11 Eksik dil/çalışma zamanı özellikleri (Aşama 0 değerlendirmesi):** jenerik `enum`, büyük `match` performansı, `dict[str, X]` hızı, `list[T]` ayırma/`str` birleştirme; bulgu listesi bu dosyaya eklenir `[K]`.
+- [x] **0.9 CI hattı (v2.2.32; `noxc upgrade --nightly` ayrı karar bekliyor):** `nightly.yml` (günlük + `workflow_dispatch`): nightly derle, farksal test, kıyas, artifact `nightly-YYYY-MM-DD`; Release/`noxc upgrade` etkilenmez; `noxc upgrade --nightly` (isteğe bağlı, kararla).
+  **SONUÇ:** `.github/workflows/nightly.yml` (günlük 02:17 UTC + elle): Linux x86-64 ve macOS arm64'te `zig build -Doptimize=ReleaseFast` → `zig build nightly` → `selfhost-info` → `frontend-diff-test` → `compiler_bench`; çıktı yalnızca artifact (`noxc-nightly-<OS>-<tarih>`, 14 gün). **`nightly-YYYY-MM-DD` GitHub pre-release'i varsayılan KAPALI**: yalnız elle tetiklemede `publish: true` ile (`--prerelease --latest=false`; `noxc upgrade` etkilenmez). Nox bileşenleri gelince farksal adım `--zig-only`den `--component`e geçer. `noxc upgrade --nightly` yapılmadı `[K]`.
+- [x] **0.10 Belgeler (v2.2.32):** AGENTS.md §0 işaretçisi, spesifikasyon bölümü (§3.4xx "noxc-nightly"), `docs/` iç belge sayfası, bu listenin güncelleme kuralı.
+  **SONUÇ:** AGENTS.md §0 işaretçisi, spesifikasyon §3.473–3.475, `docs/internals/architecture.md` (noxc-nightly) + `docs/internals/testing.md` (tanı komutları, farksal koşucu), `selfhost/README.md`. Güncelleme kuralı: bir iş bitince bu dosyada kutu `[x]` + sürüm; aşama kapanışında CHANGELOG girişi + spesifikasyon bölümü (AGENTS §7).
+- [x] **0.11 Eksik dil/çalışma zamanı özellikleri (Aşama 0 değerlendirmesi, v2.2.32):** jenerik `enum`, büyük `match` performansı, `dict[str, X]` hızı, `list[T]` ayırma/`str` birleştirme; bulgu listesi bu dosyaya eklenir `[K]`.
+  **BULGULAR (ölçümlü):**
+  1. **Enum varyantları öbek nesnesidir** (retain/release + atomik): 68 varyantlı `match` ~20 ns/dağıtım. Token/AST türleri bu yüzden `int` sabitleri + `kind: int` alanı olmalı (plan 1.1 zaten tablo/int). `[K]` jenerik enum açık kalır; AST için sınıf hiyerarşisi + `kind` ile başlanır (§11 riski).
+  2. **`match` yalnızca enum varyantı kabul eder**: tamsayı/sabit desen yok (`case 0:` sözdizimi hatası). Kind dağıtımı `if/elif k == C` zincirleriyle yazılır; 68 kollu zincir ~20 ns (kol başına ~0,3 ns), Zig `switch` jump table'ı ~2–3 ns. `[K]` **Zig-first perf işi önerisi:** yoğun `if k == C1 / elif k == C2 ...` zincirlerini LLVM `switch`e indirgemek (parser/checker sıcak yolu; kapı ölçütü bu).
+  3. **`dict[str, X]`**: Zig `StringHashMap`e 2,9× (bütçe içinde, düzeltme gerekmez).
+  4. **`list[T]`/`str` birleştirme**: 1,3× (bütçe içinde). `list[int]` üçlü append tabanlı lexer 2,7×: önceden ayrılmış arabellek Aşama 1'de denenecek.
+  5. **Dil kuralları (değişiklik yok):** `lowlevel` içinde sınıf kurma/`list[Sınıf].append` yok → bayt okuma ayrı işlevde; özellik üzerinde Optional daraltma yok → yerel değişkene al.
 
 ### 3.1 Karar (kullanıcı, 2026-11-18): temiz kütüphane kipi = (B) dahili `--selfhost-obj`
 
@@ -187,13 +195,13 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 2. [x] 0.2 + 0.3 `selfhost/` iskeleti ve `zig build nightly` — v2.2.29.
 3. [x] 0.5 + 0.6 `noxc tokens` ve farksal test koşucusu (lexer için) — v2.2.30.
 4. [x] 0.7 + 0.8 derleyici kıyas seti ve yığın çözümü — v2.2.31.
-5. [ ] Aşama 1 (lexer) başlangıcı.
+5. [ ] Aşama 1 (lexer) başlangıcı — sıradaki.
 
 ## 13. İlerleme özeti (el ile güncellenir)
 
 | Aşama | Madde | Bitti | Durum |
 |---|---|---|---|
-| 0 Altyapı | 11 | 8 | sürüyor (0.1–0.8 bitti; sıradaki 0.9 CI, 0.10 belge, 0.11 değerlendirme) |
+| 0 Altyapı | 11 | 11 | **bitti (v2.2.32)** — sıradaki Aşama 1 (lexer) |
 | 1 Lexer | 13 | 0 | açık |
 | 2 Parser/AST | 15 | 0 | açık |
 | 3 Tip denetleyici | 17 | 0 | açık |

@@ -1,0 +1,87 @@
+name: noxc-nightly
+
+# noxc-nightly (project/noxc-nightly-selfhost-plani-2026-11.md, Aşama 0.9): normal `noxc` + Nox ile yazılmış bileşenler (`selfhost/`). Günlük + elle tetikleme.
+# Bu iş akışı kararlı sürüm hattını (`release.yml`, `noxc upgrade`) ETKİLEMEZ: sonuç yalnızca bir iş akışı artifact'ıdır (`noxc-nightly-<os>-<tarih>`).
+# GitHub pre-release yayımlamak (`nightly-YYYY-MM-DD`) varsayılan olarak KAPALIDIR; yalnızca elle tetiklemede `publish: true` verilirse çalışır (dışarıya açık, geri alınması zor bir eylem).
+# Nox ön yüz bileşenleri (Aşama 1+) gelince farksal adım `--zig-only` yerine `--component <bileşen>` ile Zig'i `noxc-nightly --frontend nox` ile karşılaştırır.
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "nightly-YYYY-MM-DD GitHub pre-release'ini de yayımla (varsayılan: hayır, yalnızca artifact)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  nightly:
+    name: noxc-nightly (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Zig 0.16.0 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar -xJf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+      - name: Zig 0.16.0 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar -xJf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+      # Nightly yalnızca yerel LLVM backend'ini kullanır (`--selfhost-obj`): clang gerekir (ubuntu-latest ve macos-latest'te hazır).
+      - name: Kararlı noxc + çalışma zamanı (ReleaseFast)
+        run: zig build -Doptimize=ReleaseFast
+      - name: noxc-nightly
+        run: zig build nightly -Doptimize=ReleaseFast
+      - name: Bağlı bileşenler çalışıyor mu
+        run: ./zig-out/bin/noxc-nightly selfhost-info compiler/main.zig
+      - name: Farksal test koşucusu (kendi sağlamlık denetimi + Zig↔Zig)
+        run: zig build frontend-diff-test
+      - name: Derleyici-türü kıyas seti (Nox ↔ Zig)
+        run: benchmarks/compiler_bench/run.sh
+      - name: Artifact adı
+        id: name
+        run: echo "name=noxc-nightly-${{ runner.os }}-$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.name }}
+          path: zig-out/bin/noxc-nightly
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: nightly-YYYY-MM-DD pre-release (yalnızca elle + publish=true)
+    needs: nightly
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Pre-release oluştur (Latest'i DEĞİŞTİRMEZ)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="nightly-$(date -u +%Y-%m-%d)"
+          for d in artifacts/*/; do n=$(basename "$d"); (cd "$d" && tar -czf "../$n.tar.gz" noxc-nightly); done
+          gh release create "$tag" artifacts/*.tar.gz --repo "$GITHUB_REPOSITORY" --prerelease --latest=false --title "$tag" --notes "Deneysel noxc-nightly (Nox ile yazılmış bileşenler). Kararlı sürüm DEĞİLDİR; noxc upgrade bunu seçmez."

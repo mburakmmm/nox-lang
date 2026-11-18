@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.32]
+
+noxc-nightly Aşama 0 kapanışı: CI hattı (0.9), belgeler (0.10) ve eksik özellik değerlendirmesi (0.11).
+
+- **`.github/workflows/nightly.yml`:** günlük + elle tetikleme; Linux x86-64 ve macOS arm64'te ReleaseFast derleme, `zig build nightly`, `selfhost-info`, `frontend-diff-test`, `compiler_bench`; çıktı iş akışı artifact'ı. `nightly-YYYY-MM-DD` pre-release'i varsayılan KAPALI (yalnız elle `publish: true`); kararlı sürüm hattı ve `noxc upgrade` etkilenmez.
+- **Değerlendirme (0.11, ölçümlü):** enum varyantları öbek nesnesi (68 kollu `match` ~20 ns); `match` tamsayı deseni kabul etmez ve `if/elif` zincirleri doğrusaldır (68 kol ~20 ns, Zig `switch` ~2–3 ns) → öneri: yoğun `k == C` zincirlerini LLVM `switch`e indirgemek (Zig-first perf işi `[K]`); `dict[str,X]` 2,9×, `list`/`str` 1,3× (bütçe içinde). Ayrıntı: plan 0.11.
+- **Aşama 0 tamam (11/11).** Sıradaki: Aşama 1, Nox lexer (`selfhost/lexer.nox`).
+
 ## [2.2.31]
 
 noxc-nightly Aşama 0.7 + 0.8: derleyici-türü kıyas seti ve derin özyineleme.
