@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.39]
+
+Aşama 1 dogfood defteri tamamen kapandı (D1.1–D1.8).
+
+- **D1.3 (enum tekil nesne) ölçülüp reddedildi:** statik paylaşılan nesnede retain/release çekişmesi 1 iş parçacığında 5 ns, 4'te 51 ns, 8'de 285 ns/çift (iş parçacığı-yerel havuz tahsisi ~3 ns) — çok işçili çalışmada büyük gerileme. Sıcak yollarda `int` sabit + `kind` alanı kullanılır (selfhost böyle yapıyor).
+- **D1.2 (liste büyümesi ve takma adlar):** kalıcı, belgelenmiş v1 sınırlaması olarak kapandı; `docs/tutorial/05-collections.md` ve `docs/language/python-differences.md` artık gerçeği anlatıyor (öğretici "aynı listeye bakar" diyordu). Gerçek çözüm (liste için handle yeniden tasarımı) ayrı proje: yalnızca kullanıcı isterse.
+- Aşama 2 (parser/AST) başlıyor.
+
 ## [2.2.38]
 
 Dogfood defteri: D1.3/D1.4 gerçekçi ölçümle yeniden değerlendirildi (belge sürümü).
