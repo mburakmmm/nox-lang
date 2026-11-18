@@ -377,6 +377,8 @@ fn loadImportsRecursive(
             switch (s.kind) {
                 .func_def => |fd| try rename_map.put(a, fd.name, try mangleWith(a, segments, fd.name)),
                 .class_def => |cd| try rename_map.put(a, cd.name, try mangleWith(a, segments, cd.name)),
+                // `type Ad = Tip` takma adları modül kapsamlıdır (GPT-6 P1.9): sınıf/işlevlerle AYNI önekleme; çözümleme `type_alias.zig`de.
+                .type_alias => |ta| try rename_map.put(a, ta.name, try mangleWith(a, segments, ta.name)),
                 else => {},
             }
         }
@@ -869,7 +871,9 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         // Bir stdlib modülünün KENDİ `import`u — segmentler stdlib DOSYA
         // YOLUdur, Nox bildirim adı DEĞİLDİR; yeniden adlandırmaya gerek yok.
         // (Zaten `loadImportsRecursive` tarafından AYRICA işlenir.)
-        .import_stmt, .type_alias => return s,
+        .import_stmt => return s,
+        // Takma ad bildirimi: ad modül önekiyle yeniden adlandırılır, hedef tip modül-yerel ad/sınıflara göre yeniden yazılır.
+        .type_alias => |ta| .{ .type_alias = .{ .name = map.get(ta.name) orelse ta.name, .target = try renameTypeExpr(a, ta.target, map) } },
         // Faz U.3: `.import_stmt` İLE AYNI gerekçe — `from ... import`ın
         // `segments`i de bir DOSYA YOLUdur, `names`teki üye adları YEREL
         // takma adlardır (Nox bildirim adları DEĞİL) — yeniden adlandırmaya

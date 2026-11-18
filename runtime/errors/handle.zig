@@ -79,6 +79,13 @@ fn pendingException(state: *asap.RuntimeState) PendingException {
     const hot = state.hot();
     if (@atomicLoad(u8, &hot.fiber_ever_active, .monotonic) != 0) {
         if (bridge.currentFiber()) |f| return .{ .obj = &f.pending_exception, .line = &f.pending_exception_line };
+        // GPT-6 P0.1: havuz işçisi fiber DIŞINDA (ör. `serve_multicore` fabrikası) ise kendi slotunun deposu; slot 0 (çağıran/ana iş parçacığı) `HotState`i kullanmaya devam eder.
+        if (state.pool_ever_active.load(.monotonic)) {
+            const slot = asap.currentWorkerSlot();
+            if (slot != 0) {
+                if (state.pool_ext) |ext| return .{ .obj = &ext.pending_exceptions[slot - 1].obj, .line = &ext.pending_exceptions[slot - 1].line };
+            }
+        }
     }
     return .{ .obj = &hot.pending_exception, .line = &hot.pending_exception_line };
 }
@@ -238,4 +245,41 @@ test "raise sonrası pending true olur, take alır ve temizler" {
     const taken = nox_exception_take(rt);
     try std.testing.expectEqual(@as(?*anyopaque, &dummy), taken);
     try std.testing.expectEqual(@as(i32, 0), nox_exception_pending(rt));
+}
+
+test "GPT-6 P0.1: havuz işçileri fiber dışında birbirinin bekleyen istisnasını almaz (slot başına depo)" {
+    if (comptime is_freestanding or builtin.cpu.arch.isWasm() or builtin.single_threaded) return error.SkipZigTest;
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    const ext = try state.allocator().create(asap.PoolExtension);
+    ext.* = .{};
+    state.pool_ext = ext;
+    state.pool_ever_active.store(true, .monotonic);
+    @atomicStore(u8, &state.hot().fiber_ever_active, 1, .monotonic);
+
+    const Worker = struct {
+        fn run(rt_: *anyopaque, slot: usize, bad: *std.atomic.Value(usize)) void {
+            asap.setWorkerSlot(slot);
+            var marker: u8 = 0;
+            var i: usize = 0;
+            while (i < 20000) : (i += 1) {
+                nox_raise(rt_, &marker, @intCast(slot));
+                if (nox_exception_pending(rt_) != 1) {
+                    _ = bad.fetchAdd(1, .monotonic);
+                    continue;
+                }
+                if (nox_exception_take(rt_) != @as(?*anyopaque, &marker)) _ = bad.fetchAdd(1, .monotonic);
+            }
+        }
+    };
+    var bad: std.atomic.Value(usize) = .init(0);
+    var threads: [4]std.Thread = undefined;
+    for (&threads, 0..) |*t, i| t.* = try std.Thread.spawn(.{}, Worker.run, .{ rt, i + 1, &bad });
+    for (threads) |t| t.join();
+    try std.testing.expectEqual(@as(usize, 0), bad.load(.monotonic));
+
+    state.pool_ext = null;
+    state.pool_ever_active.store(false, .monotonic);
+    state.allocator().destroy(ext);
+    asap.nox_runtime_deinit(rt);
 }

@@ -1008,3 +1008,78 @@ test "3.8b: __all__ bilinmeyen bir adı listelerse hata; liste olmayan modülde 
     try std.testing.expect(open.ok);
     try std.testing.expectEqualStrings("3\n", open.stdout);
 }
+
+test "GPT-6 P1.9: type takma adlari MODUL KAPSAMLIDIR (iki modulde ayni ad, nitelikli/from/import-as erisim, iki backend)" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{ .sub_path = "ma.nox", .data = "type Id = int\ntype Ids = list[Id]\n\ndef make(n: int) -> Ids:\n    r: Ids = []\n    for i in range(n):\n        r.append(i)\n    return r\n" });
+    try proj.dir.writeFile(io, .{ .sub_path = "mb.nox", .data = "type Id = str\ntype Names = list[Id]\n\ndef names() -> Names:\n    return [\"x\", \"y\"]\n" });
+    try proj.dir.writeFile(io, .{
+        .sub_path = "main.nox",
+        .data = "import ma\nimport mb as bee\nfrom ma import Ids\nfrom mb import Id as BId\n\ntype Id = float\n\ndef total(xs: Ids) -> int:\n    t: int = 0\n    for x in xs:\n        t = t + x\n    return t\n\na: ma.Id = 5\nb: bee.Id = \"s\"\nc: BId = \"t\"\nd: Id = 2.5\ne: bee.Names = bee.names()\nprint(total(ma.make(4)), a, b, c, d, e)\n",
+    });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    for ([_][]const u8{ "llvm", "qbe" }) |backend| {
+        const bin_path = try std.fmt.allocPrint(a, "{s}/main_{s}", .{ proj_path, backend });
+        const build_result = try std.process.run(std.testing.allocator, io, .{
+            .argv = &.{ noxcPath(), "build", "--backend", backend, "-o", bin_path, main_path },
+            .environ_map = &env_map,
+        });
+        defer std.testing.allocator.free(build_result.stdout);
+        defer std.testing.allocator.free(build_result.stderr);
+        if (build_result.term != .exited or build_result.term.exited != 0) {
+            std.debug.print("build basarisiz ({s}), stderr: {s}\n", .{ backend, build_result.stderr });
+        }
+        try std.testing.expect(build_result.term == .exited and build_result.term.exited == 0);
+
+        const run_result = try std.process.run(std.testing.allocator, io, .{ .argv = &.{bin_path} });
+        defer std.testing.allocator.free(run_result.stdout);
+        defer std.testing.allocator.free(run_result.stderr);
+        try std.testing.expectEqualStrings("6 5 s t 2.5 ['x', 'y']\n", run_result.stdout);
+    }
+}
+
+test "GPT-6 P1.9: __all__ disinda kalan takma ad nitelikli kullanimda reddedilir" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{ .sub_path = "mb.nox", .data = "__all__: list[str] = [\"names\"]\ntype Id = str\n\ndef names() -> list[str]:\n    return [\"x\"]\n" });
+    try proj.dir.writeFile(io, .{ .sub_path = "main.nox", .data = "import mb\nx: mb.Id = \"s\"\nprint(x)\n" });
+
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const r = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ noxcPath(), "check", main_path }, .environ_map = &env_map });
+    defer std.testing.allocator.free(r.stdout);
+    defer std.testing.allocator.free(r.stderr);
+    try std.testing.expect(!(r.term == .exited and r.term.exited == 0));
+    try std.testing.expect(std.mem.indexOf(u8, r.stderr, "not part of the public API") != null or std.mem.indexOf(u8, r.stdout, "not part of the public API") != null);
+}

@@ -76,6 +76,8 @@ print(best({"ann": [3, 9, 4]}, "ann"))
 9
 ```
 
+Aliases are **module scoped**. An alias defined in an imported module is reached as `module.Name` (also through `import module as m`) or with `from module import Name`, and two modules may define aliases of the same name without clashing. If the module has an `__all__` list, an alias that is not listed there cannot be used from outside. Aliases may refer to each other in a chain of any length; a real cycle (`type A = list[A]`, or `A` → `B` → `A`) is an error that names the chain.
+
 Aliases may refer to one another (a cycle is an error), may be used before their definition, and cannot share a name with a class or function. Generic aliases (`type Pair[T] = …`) and aliases inside functions are not supported, and an alias is not exported from its module (import the target type instead).
 
 ## The scalar types

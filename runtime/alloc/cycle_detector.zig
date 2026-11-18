@@ -213,6 +213,8 @@ const CycleGc = struct {
     par_aux: [PAR_MAX_WORKERS]?*asap.RuntimeState = @splat(null),
     /// Paralel yolun çalıştırıldığı toplama sayısı (tanılama/test).
     par_runs: usize = 0,
+    /// YALNIZCA test derlemesi (GPT-6 P0.2): `N != 0` ise işaretleme/tarama iş listesinin N'inci itişi `error.OutOfMemory` ile başarısız olur (bellek-yetersizliği enjeksiyonu).
+    test_fail_pushes: usize = 0,
 
     fn deinit(self: *CycleGc, allocator: std.mem.Allocator) void {
         for (&self.par_aux) |*slot| {
@@ -556,7 +558,7 @@ fn collectLockedInner(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) 
         }
     }
     markRoots(rt, state, gc);
-    scanRoots(rt, state, gc);
+    scanRoots(rt, state, gc) catch fatalOom();
     collectRoots(rt, state, gc);
     adaptThreshold(gc, scanned);
 }
@@ -580,7 +582,7 @@ fn markRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
     for (gc.roots.items) |maybe_ptr| {
         const ptr = maybe_ptr orelse continue; // `nox_cycle_forget` tombstone'u
         if (getColor(ptr) == .purple) {
-            markGray(rt, state, gc, ptr);
+            markGray(rt, state, gc, ptr) catch fatalOom();
         } else {
             // Orijinal `meta.buffered = false`: yalnızca buffered/yuva bayrakları
             // temizlenir, RENK korunur (kök zaten başka bir kökün alt-grafiğinde
@@ -590,16 +592,35 @@ fn markRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
     }
 }
 
+/// GPT-6 P0.2: işaretleme/tarama (deneme-silme) aşamaları başlık sayaçlarını YERİNDE değiştirir; iş listesi büyütülemeyip bir düğüm atlanırsa sayaçlar tutarsız kalır
+/// (özellikle `scanBlack`te geri yüklenmemiş canlı çocuklar ⇒ erken serbest bırakma/UAF). Tutarlı biçimde sürdürülemediği için bu durum SESSİZCE yutulmaz: hata yayılır
+/// ve toplama giriş noktasında `fatalOom` ile kesin bir panikle sonlanır (`nox_cycle_collect`in diğer OOM yolu `getGc`nin `@panic`iyle aynı politika).
+const WorklistError = error{OutOfMemory};
+
+fn fatalOom() noreturn {
+    @panic("OOM: dongu cozucu is listesi buyutulemedi; toplama tutarli surdurulemez");
+}
+
+inline fn wlPush(state: *asap.RuntimeState, gc: *CycleGc, list: *std.ArrayListUnmanaged(*anyopaque), item: *anyopaque) WorklistError!void {
+    if (comptime builtin.is_test) {
+        if (gc.test_fail_pushes != 0) {
+            gc.test_fail_pushes -= 1;
+            if (gc.test_fail_pushes == 0) return error.OutOfMemory;
+        }
+    }
+    try list.append(state.allocator(), item);
+}
+
 /// GG.23 (bkz. plan dosyası "fiber-stack sertleştirmesi"): Zig-çağrı-yığını
 /// (dolayısıyla fiber'ın SABİT yığını) ÜZERİNDE ÖZYİNELEMELİ DEĞİL —
 /// worklist HEAP'te. v1.142.14: renk başlıkta; bir düğüm gri boyanırken
 /// (itme anında) işaretlenir, bu yüzden her düğüm tam bir kez işlenir.
-fn markGray(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) void {
+fn markGray(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) WorklistError!void {
     if (getColor(root) == .gray) return;
     var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
     defer stack.deinit(state.allocator());
+    try wlPush(state, gc, &stack, root); // kök boyanmadan ÖNCE: başarısızlık kökü değiştirilmemiş bırakır
     setColor(root, .gray);
-    stack.append(state.allocator(), root) catch return;
     while (stack.pop()) |ptr| {
         gc.visited_in_collect += 1;
 
@@ -610,29 +631,28 @@ fn markGray(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *any
             hdrWord(child).* -%= 1;
             if (getColor(child) == .gray) continue;
             setColor(child, .gray);
-            stack.append(state.allocator(), child) catch continue;
+            try wlPush(state, gc, &stack, child);
         }
     }
 }
 
-fn scanRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
+fn scanRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) WorklistError!void {
     for (gc.roots.items) |maybe_ptr| {
         const ptr = maybe_ptr orelse continue;
-        scan(rt, state, gc, ptr);
+        try scan(rt, state, gc, ptr);
     }
 }
 
 /// `markGray`İLE AYNI iteratif dönüşüm — `scanBlack`e devretme (`rcValue > 0`)
 /// dalı `scanBlack`i DOĞRUDAN çağırır (SIRALI çalışır, aynı anda DEĞİL).
-fn scan(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) void {
-    _ = gc;
+fn scan(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) WorklistError!void {
     var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
     defer stack.deinit(state.allocator());
-    stack.append(state.allocator(), root) catch return;
+    try wlPush(state, gc, &stack, root);
     while (stack.pop()) |ptr| {
         if (getColor(ptr) != .gray) continue;
         if (rcValue(ptr) > 0) {
-            scanBlack(rt, state, ptr);
+            try scanBlack(rt, state, gc, ptr);
             continue;
         }
         setColor(ptr, .white);
@@ -641,7 +661,7 @@ fn scan(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaq
         for (children.items) |maybe_child| {
             const child = abi_ptr.slotPtr(maybe_child) orelse continue;
             if (getColor(child) != .gray) continue; // zaten işlenmiş (beyaz/siyah)
-            stack.append(state.allocator(), child) catch continue;
+            try wlPush(state, gc, &stack, child);
         }
     }
 }
@@ -651,10 +671,10 @@ fn scan(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaq
 /// refcount'u YANLIŞLIKLA İKİ KEZ artırılırdı. Bu yüzden POP ANINDA `siyah
 /// mı` kontrolü ŞART (bkz. `scanBlack` diamond testi). Refcount artışı her
 /// zaman ebeveynin çocuk döngüsünde, push'tan ÖNCE koşulsuzdur.
-fn scanBlack(rt: ?*anyopaque, state: *asap.RuntimeState, root: *anyopaque) void {
+fn scanBlack(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, root: *anyopaque) WorklistError!void {
     var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
     defer stack.deinit(state.allocator());
-    stack.append(state.allocator(), root) catch return;
+    try wlPush(state, gc, &stack, root);
     while (stack.pop()) |ptr| {
         if (getColor(ptr) == .black) continue;
         setColor(ptr, .black);
@@ -664,7 +684,7 @@ fn scanBlack(rt: ?*anyopaque, state: *asap.RuntimeState, root: *anyopaque) void 
             const child = abi_ptr.slotPtr(maybe_child) orelse continue;
             hdrWord(child).* +%= 1;
             if (getColor(child) != .black) {
-                stack.append(state.allocator(), child) catch continue;
+                try wlPush(state, gc, &stack, child);
             }
         }
     }
@@ -745,6 +765,8 @@ const ParShared = struct {
     idle: usize = 0,
     done: bool = false,
     qalloc: std.mem.Allocator,
+    /// GPT-6 P0.2: mark/scan aşamalarında bir iş listesi büyütülemedi ⇒ işaretleme tutarsız; `parPhase` join'den sonra `fatalOom` verir.
+    oom: std.atomic.Value(bool) = .init(false),
 };
 
 const ParPhase = enum { mark, scan, collect };
@@ -758,7 +780,10 @@ const ParWorker = struct {
     visited: usize = 0,
 
     fn push(self: *ParWorker, v: usize) void {
-        self.stack.append(self.sh.qalloc, v) catch {}; // OOM: düğüm atlanır (sıralı yolla aynı muhafazakâr davranış)
+        self.stack.append(self.sh.qalloc, v) catch {
+            // mark/scan'de atlanan düğüm sayaçları tutarsız bırakır (fatal); collect'te yalnızca bir beyaz düğümün alt-ağacı toplanmadan (sızıntı) kalır.
+            if (self.phase != .collect) self.sh.oom.store(true, .release);
+        };
     }
 
     fn donate(self: *ParWorker) void {
@@ -776,6 +801,7 @@ const ParWorker = struct {
     fn getWork(self: *ParWorker) bool {
         const sh = self.sh;
         self.stack.ensureTotalCapacity(sh.qalloc, PAR_BATCH) catch {
+            if (self.phase != .collect) sh.oom.store(true, .release);
             sh.lock.lock();
             sh.idle += 1;
             if (sh.idle >= sh.n) sh.done = true;
@@ -920,6 +946,7 @@ fn parPhase(state: *asap.RuntimeState, gc: *CycleGc, phase: ParPhase, n: usize, 
     }
     workers[0].run();
     for (1..n) |i| if (threads[i]) |t| t.join();
+    if (sh.oom.load(.acquire)) fatalOom();
     if (phase == .mark) {
         for (0..n) |i| gc.visited_in_collect += workers[i].visited;
     }
@@ -1182,7 +1209,11 @@ fn fakeTraceDispatchDiamond(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(
     return buf.ptr;
 }
 
+/// GPT-6 P1.2: serbest bırakma kimlik günlüğü (yalnızca testler; toplama kilidi altında TEK iş parçacığında çağrılır). `null` ⇒ kapalı.
+var g_free_log: ?*std.ArrayListUnmanaged(usize) = null;
+
 fn fakeGcFreeDispatchDiamond(rt: ?*anyopaque, tag: i64, p: ?*anyopaque) callconv(.c) void {
+    if (g_free_log) |log| log.append(testing.allocator, @intFromPtr(p.?)) catch {};
     if (g_fake_freed_count < g_fake_freed_buf.len) {
         g_fake_freed_buf[g_fake_freed_count] = p.?;
         g_fake_freed_count += 1;
@@ -1465,14 +1496,13 @@ test "GG.23: scanBlack paylaşılan (elmas) bir çocuğun kendi alt-ağacını T
     // simüle eder — `scanBlack`nin KENDİSİ `nox_cycle_possible_root`/
     // `markGray`/`scan` ÇAĞRILMADAN doğrudan test edilir (beyaz-kutu).
     const gc = getGc(state);
-    _ = gc;
     setColor(root, .gray);
     setColor(d, .gray);
     setColor(b, .gray);
 
     const e_refcount_before = rcValue(e);
 
-    scanBlack(rt, state, root);
+    try scanBlack(rt, state, gc, root);
 
     // ANA İDDİA: `d`nin traceChildren'ı TAM OLARAK BİR KEZ çalıştı —
     // POP-anı "zaten siyah mı" kontrolü KALDIRILSAYDI (orijinal, GÜVENSİZ
@@ -1494,6 +1524,75 @@ test "GG.23: scanBlack paylaşılan (elmas) bir çocuğun kendi alt-ağacını T
     arc.nox_rc_free_payload(rt, e, FAKE_PAYLOAD_SIZE);
 
     try deinitRuntimeExpectNoLeak(rt);
+}
+
+test "GPT-6 P0.2: iş listesi OOM'u sessizce yutulmaz — markGray/scan/scanBlack her itişte error.OutOfMemory yayar (hata enjeksiyonu)" {
+    injectFakeDispatchDiamond();
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    const gc = getGc(state);
+
+    // root -> d -> e ; root -> b -> d  (elmas): markGray 4 düğümü iter (root, d, e, b)
+    const e = newFakeObject(rt);
+    const d = newFakeObject(rt);
+    wireField(d, e);
+    const b = newFakeObject(rt);
+    wireField(b, d);
+    const root = newFakeObject2(rt);
+    wireFieldAt(root, 0, d);
+    wireFieldAt(root, 1, b);
+
+    // markGray: her itiş noktasında (1..4) başarısızlık enjekte edilir; hepsi hata döndürmeli. Sonra durum atılır (bu test yalnızca ERROR yayılımını sınar).
+    var fail_at: usize = 1;
+    while (fail_at <= 4) : (fail_at += 1) {
+        // sayaç/renkleri her turda sıfırdan kur
+        for ([_]*anyopaque{ root, d, b, e }) |nd| hdrWord(nd).* = (hdrWord(nd).* & ~COLOR_MASK) | (@as(u64, @intFromEnum(Color.black)) << COLOR_SHIFT);
+        gc.test_fail_pushes = fail_at;
+        try testing.expectError(error.OutOfMemory, markGray(rt, state, gc, root));
+        gc.test_fail_pushes = 0;
+    }
+
+    // scan: gri + rc>0 kök scanBlack'e devreder; ilk itiş (scan) ve ilk scanBlack itişi (2.) ayrı ayrı başarısız olmalı.
+    for ([_]usize{ 1, 2 }) |n| {
+        for ([_]*anyopaque{ root, d, b, e }) |nd| setColor(nd, .gray);
+        gc.test_fail_pushes = n;
+        try testing.expectError(error.OutOfMemory, scan(rt, state, gc, root));
+        gc.test_fail_pushes = 0;
+    }
+
+    // scanBlack: kök itişi ve çocuk itişi
+    for ([_]usize{ 1, 2, 3 }) |n| {
+        for ([_]*anyopaque{ root, d, b, e }) |nd| setColor(nd, .gray);
+        gc.test_fail_pushes = n;
+        try testing.expectError(error.OutOfMemory, scanBlack(rt, state, gc, root));
+        gc.test_fail_pushes = 0;
+    }
+
+    arc.nox_rc_free_payload(rt, root, FAKE_PAYLOAD_SIZE_2);
+    arc.nox_rc_free_payload(rt, d, FAKE_PAYLOAD_SIZE);
+    arc.nox_rc_free_payload(rt, b, FAKE_PAYLOAD_SIZE);
+    arc.nox_rc_free_payload(rt, e, FAKE_PAYLOAD_SIZE);
+    try deinitRuntimeExpectNoLeak(rt);
+}
+
+test "GPT-6 P0.2: paralel işçi mark/scan'de OOM'u bayrakla bildirir (collect'te yalnızca sızıntı, bayrak yok)" {
+    if (comptime !par_available) return error.SkipZigTest;
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var sh: ParShared = .{ .roots = &.{}, .n = 1, .qalloc = failing.allocator() };
+    var w: ParWorker = .{ .sh = &sh, .rt = undefined, .phase = .mark };
+    w.push(0x1000);
+    try testing.expect(sh.oom.load(.acquire));
+    try testing.expectEqual(@as(usize, 0), w.stack.items.len);
+
+    var sh2: ParShared = .{ .roots = &.{}, .n = 1, .qalloc = failing.allocator() };
+    var w2: ParWorker = .{ .sh = &sh2, .rt = undefined, .phase = .collect };
+    w2.push(0x1000);
+    try testing.expect(!sh2.oom.load(.acquire));
+
+    var sh3: ParShared = .{ .roots = &.{}, .n = 1, .qalloc = failing.allocator() };
+    var w3: ParWorker = .{ .sh = &sh3, .rt = undefined, .phase = .scan };
+    try testing.expect(!w3.getWork());
+    try testing.expect(sh3.oom.load(.acquire));
 }
 
 // Faz F.0.1 (bkz. proje planı "Freestanding Nox — dlopen/dlsym-tabanlı
@@ -1521,7 +1620,8 @@ test "dispatch_registry: bir iş parçacığındaki kayıt, join() sonrası TÜM
     try testing.expect(dispatch_registry.gcFreeFn() == &fakeGcFreeDispatch);
 }
 
-const ParGraphResult = struct { first: usize, second: usize, visited: usize, par_runs: usize };
+/// `freed1`/`freed2`: düğüm İNDEKSİ başına bayrak — 1. / 2. toplamada serbest bırakıldı mı (kimlik kümesi karşılaştırması; sayı eşitliği tek başına yanlış-düğüm serbest bırakmayı yakalamaz). Çağıran serbest bırakır.
+const ParGraphResult = struct { first: usize, second: usize, visited: usize, par_runs: usize, freed1: []bool, freed2: []bool };
 
 /// F: aynı rastgele graf (8'li döngü öbekleri + seyrek ileri çapraz kenarlar, 1/200 düğüm dışarıdan tutulu) önce `threads` iş parçacığıyla
 /// toplanır; ilk toplamada serbest kalan sayı, tutulu referanslar bırakıldıktan sonraki ikinci toplamada kalanların hepsi (sızıntı yok).
@@ -1541,6 +1641,19 @@ fn parGraphRun(seed: u64, n: usize, threads: usize) !ParGraphResult {
     const held = try testing.allocator.alloc(bool, n);
     defer testing.allocator.free(held);
     for (nodes) |*nd| nd.* = newFakeObject2(rt);
+    var index_of: std.AutoHashMapUnmanaged(usize, usize) = .empty;
+    defer index_of.deinit(testing.allocator);
+    for (nodes, 0..) |nd, i| try index_of.put(testing.allocator, @intFromPtr(nd), i);
+    var free_log: std.ArrayListUnmanaged(usize) = .empty;
+    defer free_log.deinit(testing.allocator);
+    g_free_log = &free_log;
+    defer g_free_log = null;
+    const freed1 = try testing.allocator.alloc(bool, n);
+    errdefer testing.allocator.free(freed1);
+    const freed2 = try testing.allocator.alloc(bool, n);
+    errdefer testing.allocator.free(freed2);
+    @memset(freed1, false);
+    @memset(freed2, false);
     for (0..n) |i| {
         const base = i - i % G;
         wireFieldAt(nodes[i], 0, nodes[base + (i % G + 1) % G]);
@@ -1559,6 +1672,8 @@ fn parGraphRun(seed: u64, n: usize, threads: usize) !ParGraphResult {
     nox_cycle_collect(rt);
     const first = gc.freed_in_collect;
     const visited = gc.visited_in_collect;
+    for (free_log.items) |ptr| freed1[index_of.get(ptr).?] = true;
+    free_log.clearRetainingCapacity();
     for (nodes, 0..) |nd, i| {
         if (!held[i]) continue;
         try testing.expectEqual(@as(i32, 0), arc.nox_rc_predecrement(nd));
@@ -1567,8 +1682,9 @@ fn parGraphRun(seed: u64, n: usize, threads: usize) !ParGraphResult {
     nox_cycle_collect(rt);
     const second = gc.freed_in_collect;
     const par_runs = gc.par_runs;
+    for (free_log.items) |ptr| freed2[index_of.get(ptr).?] = true;
     try deinitRuntimeExpectNoLeak(rt);
-    return .{ .first = first, .second = second, .visited = visited, .par_runs = par_runs };
+    return .{ .first = first, .second = second, .visited = visited, .par_runs = par_runs, .freed1 = freed1, .freed2 = freed2 };
 }
 
 test "F: paralel işaretleme/tarama, sıralı toplayıcıyla AYNI nesneleri serbest bırakır (rastgele döngü-öbekli graflar, 2/3/4/8 iş parçacığı)" {
@@ -1580,12 +1696,21 @@ test "F: paralel işaretleme/tarama, sıralı toplayıcıyla AYNI nesneleri serb
     while (seed <= n_seeds) : (seed += 1) {
         const n: usize = 20000;
         const seq = try parGraphRun(seed, n, 0);
+        defer testing.allocator.free(seq.freed1);
+        defer testing.allocator.free(seq.freed2);
         try testing.expectEqual(n, seq.first + seq.second);
+        // Her düğüm tam bir kez serbest bırakılmış olmalı (1. ya da 2. turda; ikisinde birden değil, hiçbirinde değil değil).
+        for (seq.freed1, seq.freed2) |a, b| try testing.expect(a != b);
         try testing.expectEqual(@as(usize, 0), seq.par_runs);
         try testing.expect(seq.first > 0);
         for ([_]usize{ 2, 3, 4, 8 }) |t| {
             const par = try parGraphRun(seed, n, t);
+            defer testing.allocator.free(par.freed1);
+            defer testing.allocator.free(par.freed2);
             try testing.expectEqual(@as(usize, 2), par.par_runs); // iki toplamanın İKİSİ de paralel
+            // GPT-6 P1.2: yalnızca SAYI değil KİMLİK kümesi de sıralı toplayıcıyla aynı (yanlış düğümü serbest bırakıp başka birini sızdırmak sayıyı değiştirmez).
+            try testing.expectEqualSlices(bool, seq.freed1, par.freed1);
+            try testing.expectEqualSlices(bool, seq.freed2, par.freed2);
             try testing.expectEqual(seq.first, par.first);
             try testing.expectEqual(seq.second, par.second);
             try testing.expectEqual(seq.visited, par.visited);

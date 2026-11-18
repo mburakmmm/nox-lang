@@ -1,0 +1,66 @@
+class Leaf:
+    v: int
+
+    def __init__(self, v: int) -> None:
+        self.v = v
+
+class Pair:
+    a: Leaf
+    b: Leaf
+
+    def __init__(self, a: Leaf, b: Leaf) -> None:
+        self.a = a
+        self.b = b
+
+class Checked:
+    inner: Leaf
+    tag: str
+
+    def __init__(self, inner: Leaf, tag: str) -> None:
+        self.inner = inner
+        if inner.v < 0:
+            raise ValueError("negative leaf: " + tag)
+        self.tag = tag
+
+class Holder:
+    items: list[Leaf]
+
+    def __init__(self) -> None:
+        self.items = []
+
+    def add(self, x: Leaf) -> None:
+        self.items.append(x)
+
+def consume(p: Pair) -> int:
+    return p.a.v + p.b.v
+
+def make_pair(i: int) -> Pair:
+    return Pair(Leaf(i), Leaf(i * 2))
+
+def forward(p: Pair) -> Pair:
+    return Pair(p.b, p.a)
+
+def build_checked(v: int) -> int:
+    try:
+        c: Checked = Checked(Leaf(v), "t" + str(v))
+        return c.inner.v
+    except ValueError as e:
+        return -1
+
+def main_loop() -> int:
+    total: int = 0
+    h: Holder = Holder()
+    for i in range(2000):
+        p: Pair = make_pair(i)
+        total = total + consume(p)
+        q: Pair = forward(p)
+        total = total + q.a.v - q.b.v
+        h.add(q.a)
+        if i % 3 == 0:
+            total = total + build_checked(-i - 1)
+        else:
+            total = total + build_checked(i)
+    total = total + len(h.items)
+    return total
+
+print(main_loop())

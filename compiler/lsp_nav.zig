@@ -219,14 +219,29 @@ fn collectTopLevel(a: std.mem.Allocator, module: ast.Module, out: *std.StringHas
 /// GERÇEKTEN o iç fonksiyonun İÇİNDEYSE dış kapsamın sembolleri de (closure
 /// yakalaması İLE TUTARLI biçimde) korunur — yalnızca AYNI isimde bir iç
 /// sembol varsa ÜZERİNE YAZILIR (doğru gölgeleme/shadowing).
+/// Yalnızca kesin olan sabit değerlerin tipi (`:=` hover'ı için); başka her şey `null`.
+fn literalTypeName(e: ast.Expr) ?[]const u8 {
+    return switch (e) {
+        .int_lit => "int",
+        .float_lit => "float",
+        .bool_lit => "bool",
+        .string_lit => "str",
+        else => null,
+    };
+}
+
 fn collectScopeAt(a: std.mem.Allocator, body: []const ast.Stmt, line1: u32, syms: *std.StringHashMapUnmanaged(SymbolInfo)) std.mem.Allocator.Error!void {
     for (body) |s| {
         switch (s.kind) {
             .var_decl => |vd| {
                 if (vd.is_match_temp) continue; // `match`/`else` indirgemelerinin gizli geçicileri kullanıcıya gösterilmez
-                // O1 (v2.2.20): `ad := ifade` — tip derleyici tarafından çıkarılır; ayrıştırıcı düzeyinde gösterilecek tip adı yok.
+                // O1 (v2.2.20): `ad := ifade` — tip derleyici tarafından çıkarılır. Sağ taraf bir sabit değerse tip oradan okunur (`x: int  (inferred)`);
+                // aksi halde (çağrı, ifade …) ayrıştırıcı düzeyinde güvenilir bir tip yoktur ve eski genel metin gösterilir.
                 const detail = if (vd.infer_assign)
-                    try std.fmt.allocPrint(a, "{s}  (type inferred by ':=')", .{vd.name})
+                    (if (literalTypeName(vd.value)) |tn|
+                        try std.fmt.allocPrint(a, "{s}: {s}  (inferred)", .{ vd.name, tn })
+                    else
+                        try std.fmt.allocPrint(a, "{s}  (type inferred by ':=')", .{vd.name}))
                 else
                     try std.fmt.allocPrint(a, "{s}: {s}", .{ vd.name, try typeExprToString(a, vd.type_expr) });
                 try syms.put(a, vd.name, .{ .name = vd.name, .kind = .local_var, .detail = detail, .span = s.span });

@@ -597,8 +597,13 @@ pub const RuntimeState = struct {
 /// YÜZDEN `MAX_POOL_WORKERS - 1` (slot 1..MAX_POOL_WORKERS-1, `[i]`
 /// aslında slot `i+1`i temsil eder, bkz. `poolFreeListsRow`/
 /// `globalsBlockSlot`).
+pub const PendingSlot = struct { obj: ?*anyopaque = null, line: i64 = 0 };
+
 pub const PoolExtension = struct {
     pool_free_lists: [MAX_POOL_WORKERS - 1]PoolFreeListRow = @splat(.{}),
+    /// GPT-6 P0.1: fiber DIŞINDA (işçinin yerel bağlamında, ör. `serve_multicore` fabrika çağrısı) çalışan işçi slotlarının bekleyen-istisna deposu. Paylaşılan `HotState.pending_exception`
+    /// tek bir değer olduğundan iki işçi aynı anda `raise`/`except` yapınca birbirinin istisnasını alıyordu (başlangıçta nadir SIGSEGV). `[i]` slot `i+1`i temsil eder (slot 0 `HotState`i kullanır).
+    pending_exceptions: [MAX_POOL_WORKERS - 1]PendingSlot = @splat(.{}),
     globals_blocks: [MAX_POOL_WORKERS - 1]?*anyopaque = @splat(null),
     /// GG.24: `release_state_slot0` İLE AYNI gerekçe — slot 1..MAX_POOL_
     /// WORKERS-1 İçİn (bkz. `releaseStateFor`).

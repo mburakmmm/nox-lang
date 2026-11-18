@@ -524,6 +524,27 @@ pub const Parser = struct {
             star_idx = i;
         };
         const n = targets.len;
+        if (star_idx != null) {
+            // Python: `a, *b, c = [1]` -> ValueError. En az `n - 1` öğe gerekir; yoksa sessizce yanlış okumak yerine açıkça fırlat.
+            const need: i64 = @intCast(n - 1);
+            const msg = try self.box(.{ .binary = .{
+                .op = .add,
+                .left = try self.box(.{ .string_lit = try std.fmt.allocPrint(self.allocator, "not enough values to unpack (expected at least {d}, got ", .{need}) }),
+                .right = try self.box(.{ .binary = .{
+                    .op = .add,
+                    .left = try self.box(try self.callE(identE("str"), &.{try self.callE(identE("len"), &.{identE(tmp)})})),
+                    .right = try self.box(.{ .string_lit = ")" }),
+                } }),
+            } });
+            const then_body = try self.allocator.alloc(ast.Stmt, 1);
+            then_body[0] = mkStmt(.{ .raise_stmt = try self.callE(identE("ValueError"), &.{msg.*}) }, line);
+            const cond: ast.Expr = .{ .binary = .{
+                .op = .lt,
+                .left = try self.box(try self.callE(identE("len"), &.{identE(tmp)})),
+                .right = try self.box(.{ .int_lit = need }),
+            } };
+            try self.extra_stmts.append(self.allocator, .{ .kind = .{ .if_stmt = .{ .cond = cond, .then_body = then_body, .elif_clauses = &.{}, .else_body = null } }, .line = line });
+        }
         for (targets, 0..) |t, i| {
             const tmp_ref = try self.box(.{ .identifier = tmp });
             var read: ast.Expr = undefined;

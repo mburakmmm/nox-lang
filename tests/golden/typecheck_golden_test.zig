@@ -2691,6 +2691,20 @@ test "golden(typecheck): dil yüzeyi 2 (v2.2.22) — takma ad döngüsü reddedi
     );
 }
 
+test "golden(typecheck): GPT-6 P2.1 — özyinelemeli takma ad (type A = list[A]) gerçek döngü olarak reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_type_alias_self.nox"),
+        @embedFile("typecheck_cases/err_type_alias_self.expected"),
+    );
+}
+
+test "golden(typecheck): GPT-6 P2.1 — 40 halkalı DÖNGÜSÜZ takma ad zinciri meşrudur (eski 24 derinlik sınırı yanlış hata veriyordu)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_type_alias_long_chain.nox"),
+        @embedFile("typecheck_cases/ok_type_alias_long_chain.expected"),
+    );
+}
+
 test "golden(typecheck): dil yüzeyi 2 (v2.2.22) — aynı takma ad iki kez tanımlanamaz" {
     try expectGolden(
         @embedFile("typecheck_cases/err_type_alias_duplicate.nox"),

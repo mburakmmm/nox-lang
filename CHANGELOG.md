@@ -11,6 +11,22 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.25]
+
+GPT-6 bootstrap-öncesi sağlamlaştırma denetimi: 4 doğrulanmış hata + 1 yapılmayan/ölçülen tasarım kalemi (ayrıntı: `project/gpt6-sertlestirme-2026-11-18.md`).
+
+- **Düzeltme (P0.1, çalışma zamanı):** `serve_multicore` işçilerinin fabrika çağrısında (fiber dışı) `raise`/`except` paylaşılan bekleyen-istisna alanını kullanıyordu; iki işçi birbirinin istisnasını alıp `except` gövdesinde null okuyordu (Aether başlangıcında 60 denemenin 42'si çöküyordu, düzeltmeyle 210'da 0). Slot başına depo (`PoolExtension.pending_exceptions`) + havuz açılınca satır içi yolun kapanması. Birim testi: dört işçi × 20 000 raise/take, düzeltmesiz 29 843 karışma.
+- **Düzeltme (P0.2, döngü toplayıcı):** işaretleme/tarama iş listesi büyütülemezse düğüm sessizce atlanıyor, sayaçlar tutarsız (özellikle `scanBlack`te canlı çocukların erken serbest bırakılması) kalıyordu. Artık hata yayılır ve toplama kesin bir `OOM: dongu cozucu` paniğiyle sonlanır (sıralı + paralel); hata enjeksiyonu testleri.
+- **Düzeltme (P2.6 taramasında bulundu, `nox.random`):** otomatik tohum macOS'ta mikrosaniye çözünürlüklü saatten geliyordu; aynı anda başlayan iki işçi (`serve_multicore` fabrikası) aynı tohumu alıp aynı "rastgele" kimliği üretiyordu (`http_factory_probe` ara sıra kırmızıydı). Tohuma durumun (iş parçacığı/fiber) adresi karıştırılıyor; 8 iş parçacığı × 200 tur testi düzeltmesiz kırmızı.
+- **Test (P1.2):** paralel/sıralı toplayıcı farkı artık yalnızca sayıyı değil serbest bırakılan düğümlerin KİMLİK kümesini de karşılaştırır.
+- **Güvenlik (P1.1, `nox.safehttp`):** yönlendirmede `Authorization`/`Cookie`/`Proxy-Authorization` artık KÖKEN (şema+ana makine+port) değişince atılır (önceden yalnızca ana makine adı: aynı ana makinenin başka portuna sızıyordu); https→http düşürme yönlendirmesi varsayılan reddedilir (`allow_downgrade=True` ile açılır).
+- **Düzeltme (P1.8, dil):** `a, *b, c = xs` kısa listede sessizce yanlış değer okuyordu; artık Python gibi `ValueError`.
+- **Düzeltme (P1.9/P2.1, dil):** `type` takma adları modül kapsamlı (iki modülde aynı ad çakışmaz; `m.Ad`, `import m as x`, `from m import Ad`, `__all__`); 24'ten uzun meşru takma ad zincirleri artık "kendine başvuruyor" hatası vermez, gerçek döngüler zincir adlarıyla bildirilir.
+- **LSP (P2.2):** `x := 5` hover'ı `x: int  (inferred)`.
+- **Belge (P1.3/P2.7):** kernel allocator iş parçacığı sözleşmesi; GC "arka plan" yanlış ifadesi düzeltildi (dünyayı durduran); takma ad kapsamı; `VERSIONING.md` 2.2 serisi PATCH notu.
+- **Testler:** `star_unpack_min_len` ve `ctor_consume_stress` fixture'ları (iki backend), alias zinciri/döngü/modül kapsamı testleri, SafeHTTP origin testleri, IR anlık görüntüleri yenilendi.
+- **Ölçüldü, değişiklik yapılmadı:** bayt baskılı döngüsel çöpte tepe RSS ~600 MB (3000 × 1,6 MB; eşik düğüm sayısıyla işliyor, bayt farkında değil) — tetikleyici tasarımı kullanıcı kararı bekliyor; `_c` klonları Aether'de 1292 tanımın 12'si (yalnız `__init__`); işçi başına iş parçacığı oluşturma 16 µs.
+
 ## [2.2.24]
 
 Bootstrap öncesi performans turu (2/2): sözlük işlemleri, kernel idiomları ve ölçüm kanıtları.

@@ -23,6 +23,8 @@ Nox, standart [Semantic Versioning 2.0.0](https://semver.org/lang/tr/)
   dokümantasyon güncellemesi — DOĞRU (tanımsız davranışa dayanmayan)
   hiçbir programın GÖZLEMLENEBİLİR davranışını DEĞİŞTİRMEZ.
 
+> **2.2 serisi notu (kullanıcı kararı, 2026-11):** 2.2 yol haritası boyunca geriye dönük UYUMLU dil yüzeyi eklemeleri (`:=`, `;`, `for … else`, `raise … from`, yıldızlı açma, `type` takma adı vb.) MINOR değil **PATCH** artışıyla yayımlanır (`v2.2.20`–`v2.2.2x`); bu, yukarıdaki "yeni sözdizimi ⇒ MINOR" kuralından bilinçli ve geçici bir sapmadır. Garanti ters yönde bozulmaz: daha önce geçerli olan hiçbir program reddedilmez.
+
 ## 2. Dil/Stdlib Kaynak Uyumluluğu Garantisi
 
 **Aynı MAJOR sürüm İÇİNDE:** `vX.0.0` altında DERLENEN/ÇALIŞAN geçerli

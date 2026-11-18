@@ -25,9 +25,9 @@ For every request **and every redirect hop** it:
 
 | Call | Description |
 |---|---|
-| `request(method, url, body, headers, timeout_ms=10000, max_redirects=5, allow_private=False, allow_hosts="") -> HttpResponse` | the safe request; raises `SafeHttpBlockedError` (a `SafeHttpError`) when an address is not allowed, `SafeHttpError` for a bad URL, an unresolvable host, too many redirects or no reachable address, `HttpTimeoutError` on a timeout |
+| `request(method, url, body, headers, timeout_ms=10000, max_redirects=5, allow_private=False, allow_hosts="", allow_downgrade=False) -> HttpResponse` | the safe request; raises `SafeHttpBlockedError` (a `SafeHttpError`) when an address is not allowed, `SafeHttpError` for a bad URL, an unresolvable host, too many redirects or no reachable address, `HttpTimeoutError` on a timeout |
 
-- Redirects (`301/302/303/307/308`) are followed by hand and each new location is checked like the first request. `303` (and `301`/`302` after a `POST`) become `GET` without a body. When the host changes, `Authorization`, `Cookie` and `Proxy-Authorization` headers are dropped.
+- Redirects (`301/302/303/307/308`) are followed by hand and each new location is checked like the first request. `303` (and `301`/`302` after a `POST`) become `GET` without a body. When the **origin** (scheme + host + port) changes — even to another port of the same host — `Authorization`, `Cookie` and `Proxy-Authorization` headers are dropped. A redirect from `https` to `http` is refused (`SafeHttpBlockedError`) unless `allow_downgrade=True`.
 - `allow_hosts` is a comma-separated list of host names or IP literals you **do** want to reach even though they are internal (`"db.internal,127.0.0.1"`); the address check is skipped for those names only, on every hop.
 - `allow_private=True` switches the address check off (local development and tests only).
 - It does not use the connection pool, HTTP/3 or `HTTP_PROXY`/`HTTPS_PROXY` (a proxy would resolve the name for you), and it does not read the response body before the headers have been checked — but it does not limit the body size either; set limits in your own code when fetching untrusted content.

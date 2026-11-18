@@ -1720,6 +1720,11 @@ pub const Checker = struct {
                 }
                 const mangled = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ dotted_to_us, n });
                 if (self.functions.contains(mangled) or self.classes.contains(mangled) or self.generic_classes.contains(mangled) or self.generic_functions.contains(mangled)) continue;
+                var is_alias = false;
+                for (module.body) |st| if (st.kind == .type_alias and std.mem.eql(u8, st.kind.type_alias.name, mangled)) {
+                    is_alias = true;
+                };
+                if (is_alias) continue;
                 return self.fail(error.UndefinedFunction, "__all__ of module '{s}' lists '{s}', which is not a function or class defined there", .{ ex.module, n });
             }
         }
@@ -4215,7 +4220,7 @@ pub const Checker = struct {
             try self.module_exports.put(self.allocator, ex.module, set);
         }
         // Dil yüzeyi 2 (v2.2.22): `type Ad = Tip` takma adları, diğer tüm geçişlerden ÖNCE tip ifadelerinde açılır.
-        if (try type_alias.run(self.allocator, module.body)) |d| {
+        if (try type_alias.run(self.allocator, module.body, module.exports)) |d| {
             self.current_line = d.line;
             return self.fail(error.TypeMismatch, "{s}", .{d.message});
         }

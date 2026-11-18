@@ -32,6 +32,8 @@ plugin. Every exposure would become a compatibility burden.
 A freestanding runtime requires a kernel-provided allocator registered with `nox_allocator_install` ([Freestanding](../tools/freestanding.md)). That function pair
 is a small, documented ABI of its own, and it is part of the same **trust boundary** as `extern def`: a wrong allocator corrupts the whole program.
 
+**Threading contract.** The freestanding runtime is single-threaded (no scheduler pool, no OS threads), so the registered `kernel_alloc`/`kernel_free` are called from one thread at a time and need not be thread-safe, but they **must not be called re-entrantly from an interrupt handler** while the runtime is inside an allocation, and they must return memory aligned to at least 8 bytes (the ARC header assumes it). A kernel that runs Nox code on several cores must give each core its own runtime state and allocator, or serialise them itself; the runtime does no locking around these two hooks. Hosted builds never use this hook (they use the platform allocator, which is thread-safe).
+
 ## For contributors
 
 The rules for changing this layer are in [Contributing](../internals/contributing.md) and [Runtime](../internals/runtime.md): every code-generation change must be

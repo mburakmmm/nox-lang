@@ -2,7 +2,7 @@
 #
 # Her adımda (ilk istek VE her yönlendirme): URL şeması http/https mi, ana makine adı çözülür (`nox.dns.resolve`), çözülen HER adres `nox.ip` ile denetlenir (hepsi genel ağ adresi olmalı; biri özel/loopback/
 # link-local/metadata ise istek ENGELLENİR), sonra bağlantı doğrulanmış IP'ye kurulur (`connect_ip`: ad bir daha çözülmez, DNS rebinding penceresi yok; TLS adı/sertifikası yine orijinal ana makineye karşı doğrulanır).
-# Yönlendirmeler (`301/302/303/307/308`) elle izlenir ve her yeni konum aynı denetimden geçer; ana makine değişirse `Authorization`/`Cookie`/`Proxy-Authorization` başlıkları atılır.
+# Yönlendirmeler (`301/302/303/307/308`) elle izlenir ve her yeni konum aynı denetimden geçer; KÖKEN (şema+ana makine+port) değişirse `Authorization`/`Cookie`/`Proxy-Authorization` başlıkları atılır; https→http düşürme yönlendirmesi varsayılan olarak ENGELLENİR (`allow_downgrade=True` ile açılır).
 #
 #     import nox.safehttp
 #     r: nox_http_HttpResponse = nox.safehttp.request("GET", "https://api.example.com/x", "", {})
@@ -61,10 +61,19 @@ def _resolve_checked(host: str, timeout_ms: int, allow_private: bool, allow_host
             raise SafeHttpBlockedError("blocked: host " + host + " resolves to a non-public address " + ip)
     return ips
 
+# Köken (origin) = şema + ana makine + etkin port (RFC 6454). Başlık sızıntısı kararı ana makine adına DEĞİL köküne göredir:
+# aynı ana makinenin başka portu/şeması başka bir hizmettir (ör. :8080 geliştirme sunucusu, http:// düz metin).
+def _origin(u: nox.url.URL) -> str:
+    return _lower(u.scheme) + "://" + _lower(u.host) + ":" + str(u.port)
+
+# https -> http düşürmesi mi? (saf karar; testlenebilir)
+def _downgrade(from_url: str, to_url: str) -> bool:
+    return _lower(nox.url.parse(from_url).scheme) == "https" and _lower(nox.url.parse(to_url).scheme) == "http"
+
 def _is_redirect(status: int) -> bool:
     return status == 301 or status == 302 or status == 303 or status == 307 or status == 308
 
-def request(method: str, url: str, body: str, headers: dict[str, str], timeout_ms: int = 10000, max_redirects: int = 5, allow_private: bool = False, allow_hosts: str = "") -> nox.http.HttpResponse:
+def request(method: str, url: str, body: str, headers: dict[str, str], timeout_ms: int = 10000, max_redirects: int = 5, allow_private: bool = False, allow_hosts: str = "", allow_downgrade: bool = False) -> nox.http.HttpResponse:
     cur_method: str = method
     cur_url: str = url
     cur_body: str = body
@@ -105,8 +114,10 @@ def request(method: str, url: str, body: str, headers: dict[str, str], timeout_m
             raise SafeHttpError("too many redirects (more than " + str(max_redirects) + ")")
         hops = hops + 1
         next_url: str = nox.url.join(cur_url, loc)
-        next_host: str = nox.url.parse(next_url).host
-        if _lower(next_host) != _lower(u.host):
+        nu: nox.url.URL = nox.url.parse(next_url)
+        if not allow_downgrade and _downgrade(cur_url, next_url):
+            raise SafeHttpBlockedError("blocked: redirect from https to http (downgrade): " + next_url)
+        if _origin(nu) != _origin(u):
             cur_headers = _strip_sensitive(cur_headers)
         if resp.status == 303 or ((resp.status == 301 or resp.status == 302) and cur_method == "POST"):
             cur_method = "GET"

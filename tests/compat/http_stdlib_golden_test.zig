@@ -1220,6 +1220,82 @@ test "nox.dns.resolve + nox.http.request(connect_ip): ad çözümlenmeden doğru
     try expectGolden(source, "['127.0.0.1']\n['2001:db8::1']\ndns error\nbad ip rejected\n200 pinned\n");
 }
 
+/// Bir bağlantı kabul eder, isteği okur ve İSTEK METNİNİ yanıt gövdesi olarak geri yollar
+/// (başlık sızıntısı testlerinde "Authorization gitti mi" kontrolü için).
+fn testServeOnceEcho(listen_fd: sys.fd_t) void {
+    const conn = acceptWithTimeout(listen_fd, 120_000);
+    if (sys.badFd(conn)) return;
+    defer _ = sys.close(conn);
+
+    var req_buf: [4096]u8 = undefined;
+    var total: usize = 0;
+    while (total < req_buf.len) {
+        const n = sys.read(conn, req_buf[total..].ptr, req_buf.len - total);
+        if (n <= 0) break;
+        total += @intCast(n);
+        if (std.mem.indexOf(u8, req_buf[0..total], "\r\n\r\n") != null) break;
+    }
+    var head_buf: [128]u8 = undefined;
+    const head = std.fmt.bufPrint(&head_buf, "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{total}) catch return;
+    var written: usize = 0;
+    while (written < head.len) {
+        const n = sys.write(conn, head[written..].ptr, head.len - written);
+        if (n <= 0) return;
+        written += @intCast(n);
+    }
+    written = 0;
+    while (written < total) {
+        const n = sys.write(conn, req_buf[written..].ptr, total - written);
+        if (n <= 0) return;
+        written += @intCast(n);
+    }
+}
+
+test "nox.safehttp.request: ayni ana makinenin FARKLI portuna yonlendirmede Authorization/Cookie atilir, diger basliklar korunur (GPT-6 P1.1)" {
+    const allocator = std.testing.allocator;
+
+    var port_a: u16 = 0;
+    const fd_a = try testListenerOn127001(&port_a);
+    defer _ = sys.close(fd_a);
+    var port_b: u16 = 0;
+    const fd_b = try testListenerOn127001(&port_b);
+    defer _ = sys.close(fd_b);
+
+    // A (port_a) -> B (port_b, AYNI ana makine, FARKLI port) -> echo. Sızıntı varsa "secret" yanıtta görünür.
+    const resp_a = try std.fmt.allocPrint(allocator, "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{d}/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", .{port_b});
+    defer allocator.free(resp_a);
+    const server_a = try std.Thread.spawn(.{}, testServeOnceRaw, .{ fd_a, resp_a, "" });
+    defer server_a.join();
+    const server_b = try std.Thread.spawn(.{}, testServeOnceEcho, .{fd_b});
+    defer server_b.join();
+
+    const source = try std.fmt.allocPrint(allocator,
+        \\import nox.http
+        \\import nox.safehttp
+        \\
+        \\r: nox_http_HttpResponse = nox.safehttp.request("GET", "http://127.0.0.1:{d}/", "", {{"Authorization": "secret", "Cookie": "sid=1", "X-Keep": "yes"}}, 3000, 5, False, "127.0.0.1")
+        \\print("secret" in r.body, "sid=1" in r.body, "X-Keep" in r.body)
+        \\
+    , .{port_a});
+    defer allocator.free(source);
+
+    try expectGolden(source, "False False True\n");
+}
+
+test "nox.safehttp.request: https -> http dusurme yonlendirmesi varsayilan reddedilir (GPT-6 P1.1)" {
+    // https hedefi gerekmeden dogrulanir: yonlendirme karari TLS'ten ONCE verilemez; bu yuzden
+    // dusurme kurali yalnizca KARAR fonksiyonunda saf olarak sinanir.
+    const source =
+        \\import nox.safehttp
+        \\
+        \\print(nox.safehttp._downgrade("https://a.example/x", "http://a.example/x"))
+        \\print(nox.safehttp._downgrade("http://a.example/x", "https://a.example/x"))
+        \\print(nox.safehttp._downgrade("https://a.example/x", "https://b.example/x"))
+        \\
+    ;
+    try expectGolden(source, "True\nFalse\nFalse\n");
+}
+
 test "nox.safehttp.request: genel olmayan adres engellenir, allow_hosts ile açılan ana makineden metadata adresine yönlendirme engellenir, izinli yönlendirme izlenir ve Authorization ana makine değişince atılır (v2.2.1)" {
     const allocator = std.testing.allocator;
 

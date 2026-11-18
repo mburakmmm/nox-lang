@@ -199,6 +199,9 @@ pub const WorkerPool = struct {
         // ÇÜNKÜ bir havuz `main`in BAŞINDAN SONRA, program ÇALIŞIRKEN de
         // yaratılabilir (`pool_run`/`serve_multicore`).
         state.pool_ever_active.store(true, .monotonic);
+        // GPT-6 P0.1: satır içi "bekleyen istisna" kontrolü (`fiber_ever_active == 0` ⇒ paylaşılan HotState alanını doğrudan okur) havuz açıkken güvenli DEĞİL; işçiler fiber dışında da
+        // `raise`/`except` yapabilir ve her biri kendi slotunun deposunu kullanır (`handle.zig` `pendingException`). Bayrak, işçiler başlamadan ÖNCE kurulur.
+        @atomicStore(u8, &state.hot().fiber_ever_active, 1, .monotonic);
         asap.refreshFastAlloc(state);
         return self;
     }

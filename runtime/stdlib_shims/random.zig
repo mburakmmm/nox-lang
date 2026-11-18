@@ -109,7 +109,9 @@ fn ensureSeeded() void {
         }
         var ts: std.c.timespec = undefined;
         _ = std.c.clock_gettime(.REALTIME, &ts);
-        const seed: u64 = @bitCast(@as(i64, ts.sec) *% 1_000_000_000 +% ts.nsec);
+        // GPT-6 turu: macOS'ta `REALTIME` saati mikrosaniye çözünürlüklüdür; aynı anda başlayan iki işçi (`serve_multicore` fabrikası) AYNI tohumu alıp aynı "rastgele" kimliği üretiyordu.
+        // Tohuma durumun kendi adresi (iş parçacığına/fiber'a özgü) karıştırılır.
+        const seed: u64 = @as(u64, @bitCast(@as(i64, ts.sec) *% 1_000_000_000 +% ts.nsec)) ^ (@as(u64, @intFromPtr(prng)) *% 0x9E3779B97F4A7C15);
         prng.* = std.Random.DefaultPrng.init(seed);
         seeded.* = true;
     }
@@ -209,4 +211,29 @@ test "g_prng threadlocal: iki gerçek OS iş parçacığı bağımsız/tekrarlan
     try std.testing.expectEqualSlices(i64, &expected_b, &result_b);
     // İki farklı tohumun AYNI diziyi üretmediğini de doğrula (sağlamlık).
     try std.testing.expect(!std.mem.eql(i64, &result_a, &result_b));
+}
+
+test "GPT-6: aynı anda başlayan iş parçacıkları aynı otomatik tohumu almaz" {
+    if (comptime builtin.single_threaded or builtin.os.tag == .windows or is_freestanding or builtin.cpu.arch.isWasm()) return error.SkipZigTest;
+    const N = 8;
+    const Ctx = struct {
+        ready: std.atomic.Value(usize) = .init(0),
+        go: std.atomic.Value(bool) = .init(false),
+        out: [N]i64 = @splat(0),
+        fn run(self: *@This(), i: usize) void {
+            _ = self.ready.fetchAdd(1, .monotonic);
+            while (!self.go.load(.acquire)) {}
+            self.out[i] = nox_random_randint_raw(1, 1_000_000_000);
+        }
+    };
+    var round: usize = 0;
+    while (round < 200) : (round += 1) {
+        var ctx: Ctx = .{};
+        var threads: [N]std.Thread = undefined;
+        for (&threads, 0..) |*t, i| t.* = try std.Thread.spawn(.{}, Ctx.run, .{ &ctx, i });
+        while (ctx.ready.load(.monotonic) < N) {}
+        ctx.go.store(true, .release);
+        for (threads) |t| t.join();
+        for (0..N) |i| for (i + 1..N) |j| try std.testing.expect(ctx.out[i] != ctx.out[j]);
+    }
 }

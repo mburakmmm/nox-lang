@@ -264,6 +264,53 @@ test "uctan uca: hover/definition/completion ayni-dosya sembolleri gercekten coz
     try std.testing.expect(term == .exited and term.exited == 0);
 }
 
+test "uctan uca (GPT-6 P2.2): ':=' ile bildirilen yerelin hover'i sabit sagdan tipi gosterir" {
+    const io = std.testing.io;
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{noxlspPath()},
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .inherit,
+    });
+    var lsp_watchdog: LspWatchdog = .{};
+    try lsp_watchdog.arm(&child, 45_000);
+    defer lsp_watchdog.disarm();
+
+    var stdin_buf: [4096]u8 = undefined;
+    var stdin_writer = child.stdin.?.writer(io, &stdin_buf);
+    const w = &stdin_writer.interface;
+    var stdout_buf: [1 << 16]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const r = &stdout_reader.interface;
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+    const init_resp = try readMessage(std.testing.allocator, r);
+    std.testing.allocator.free(init_resp);
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+
+    const uri = "file:///tmp/noxlsp_infer_test.nox";
+    // satir0="def f() -> None:", satir1="    n := 5", satir2="    print(n)"
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\",\"languageId\":\"nox\",\"version\":1," ++
+        "\"text\":\"def f() -> None:\\n    n := 5\\n    print(n)\\n\"}}}");
+    const diag = try readMessage(std.testing.allocator, r);
+    defer std.testing.allocator.free(diag);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/hover\",\"params\":" ++
+        "{\"textDocument\":{\"uri\":\"" ++ uri ++ "\"},\"position\":{\"line\":2,\"character\":10}}}");
+    const hover_resp = try readMessage(std.testing.allocator, r);
+    defer std.testing.allocator.free(hover_resp);
+    try std.testing.expect(std.mem.indexOf(u8, hover_resp, "n: int  (inferred)") != null);
+
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"shutdown\",\"params\":null}");
+    const shutdown_resp = try readMessage(std.testing.allocator, r);
+    std.testing.allocator.free(shutdown_resp);
+    try writeMessage(w, "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+    const term = try child.wait(io);
+    try std.testing.expect(term == .exited and term.exited == 0);
+}
+
 // Faz ÜH.1: `textDocument/formatting` — `compiler/main.zig`nin `cmdFmt`ıyla
 // AYNI zincirin (`formatter.formatModule`) beklendiği gibi TEK bir tam-
 // belge `TextEdit` olarak dönüp döndürmediğini doğrular. Beklenen çıktı

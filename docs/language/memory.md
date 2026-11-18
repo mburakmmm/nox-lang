@@ -10,7 +10,7 @@ and falls back to a more general one — silently, never with an error — whene
 |---|---|---|
 | 1 | **Stack / ASAP destructors** | ownership and lifetime are statically provable. Small fixed-size values live on the stack; others are freed at the exact point of last use, with no reference count at all |
 | 2 | **ARC** (automatic reference counting) | the compiler cannot prove ownership. Retain/release are O(1); values are never deep-copied |
-| 3 | **Cycle collector** | reference cycles among ARC-managed class instances (a background trial-deletion scan in the spirit of Nim's ORC), triggered by allocation pressure and at program exit |
+| 3 | **Cycle collector** | reference cycles among ARC-managed class instances (a stop-the-world trial-deletion scan in the spirit of Nim's ORC; large scans use several threads, see below), triggered by allocation pressure and at program exit |
 | 4 | **`lowlevel` blocks** | you opt in to arena allocation (below) |
 
 Promotion from layer 1 to layer 2 is silent and is an internal compiler decision, not part of the language semantics: the observable
