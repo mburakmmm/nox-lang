@@ -10,11 +10,19 @@ Durum: `[x]` kapandı (sürüm) · `[ ]` açık · `[K]` kullanıcı kararı bek
 |---|---|---|---|---|
 | D1.1 | Z | Zig lexer trivia kipi CRLF'te yorum metnine `\r` taşıyor ve CRLF boş satırı iki kez sayıyor → `noxc fmt` CRLF dosyada karışık satır sonu (`\r\n` + `\n`) üretiyor | `printf 'x = 1\r\n\r\n# c1\r\n' \| noxc fmt` | [x] v2.2.36 (Zig + Nox portu; `tests/cli/tokens_ast_test.zig` CRLF testi) |
 | D1.2 | D | Liste büyürken yeniden tahsis edilir; `ys = xs; xs.append(v)` büyümede `ys` eski bloğu görür (spesifikasyon "bilinçli v1 sınırlaması" 1; öğretici "aynı listeye bakar" diyor) | `ys=[]; zs=ys; zs.append(..)` → `len(ys)=0` (Python: 50) | [K] düzeltme çift dolaylı "handle" yeniden tasarımı (mimari); şimdilik selfhost stil kuralı: token arabelleğine yalnızca alan üzerinden ekle (`selfhost/README.md`) |
-| D1.3 | P | Enum varyantları öbek nesnesi (retain/release, atomik): 68 kollu `match` ~20 ns/dağıtım | plan 0.11 | [ ] aday: yüklü olmayan varyantları sabit/ölümsüz tekil nesne yap (dil değişmez); Aşama 2 kapanışında ölç |
-| D1.4 | P | Yoğun `if k == C1 / elif k == C2 …` zincirleri doğrusal (68 kol ~20 ns) | plan 0.11 | [ ] aday: LLVM `switch`e indirgeme (codegen, dil değişmez); Aşama 2 kapanışında parser dağıtım ölçümüyle |
-| D1.5 | L | `match` üst düzey tamsayı sabit deseni kabul etmiyor (`case 0:`; yalnız enum/iç desenlerde) | `m2.nox` sözdizimi hatası | [K] dil kararı |
-| D1.6 | L | Özellik üzerinde Optional daraltma yok (`if n.l is None` sonrası `n.l` daralmaz) | compiler_bench bulgusu | [K] dil kararı (checker kuralı) |
+| D1.3 | P | Enum varyantları öbek nesnesi (retain/release, atomik): yüklü olmayan varyantlar her kullanımda tahsis/serbest bırakma maliyeti taşır | süreç-içi ölçüm: 68 varyantlı `match` 2–4 ns/dağıtım (ilk "~20 ns" ölçümü soğuk-başlangıç hatasıydı) | [ ] **YENİDEN AÇIK (kullanıcı kuralı):** "kazancı küçük" diye atlanmaz; yüklü olmayan varyantlar ölümsüz tekil nesne olarak uygulanacak, ölçülüp kalıcı bırakılacak |
+| D1.4 | P | Yoğun `if k == C1 / elif k == C2 …` zincirleri doğrusal karşılaştırma | süreç-içi: 68 kollu zincir ~1 ns/iter (LLVM sabit-dönüş durumunu katlıyor); gerçek gövdeli kollarda ölçülmedi | [ ] **YENİDEN AÇIK:** gerçek (yan etkili gövdeli) kollarla yeniden ölçülecek; sıçrama tablosu (LLVM `switch`) indirgemesi uygulanıp ölçülecek |
+| D1.5 | L | `match` üst düzey tamsayı sabit deseni yoktu | `case 0:` sözdizimi hatası | [x] v2.2.37 (kullanıcı onayı 2026-11-18): skaler `match` (int/float/str/bool literal, `\|` alternatifleri, yakalama, koruma, `case _`; kapsamlılık zorunlu değil; enum ile karışmaz). Parser indirgemesi + formatter; fixture `match_scalar`, `tests/cli/match_scalar_test.zig`, docs/language/enums.md |
+| D1.6 | L | Özellik üzerinde Optional daraltma yoktu | compiler_bench bulgusu | [x] v2.2.37 (kullanıcı onayı): `a.b`/`a.b.c` yolları (yalnızca sınıf/list/dict/str; if/while/and/or/not + koruma biçimi); atamada, kullanıcı koduna giden çağrıda ve `await`te düşer (sağlamlık); fixture `optional_attr_narrowing`, 3 typecheck hata golden'ı, docs/language/types.md |
 | D1.7 | D | `lowlevel` içinde sınıf kurma/`list[Sınıf].append` yok | compiler_bench | [-] bayt okuma ayrı işlevde (selfhost stil kuralı) |
 | D1.8 | P | Lexer: bayt başına `at()` çağrısı + token başına 5 `append` + Token dönüşümü (2,2×/2,35×) | `lex-bench` | [ ] bütçe içinde; uçtan uca profilde ele alınır |
 
 ## Aşama 2 (parser/AST) — bulgular buraya eklenecek
+
+## Süreç kuralı: performans maddeleri "kazancı küçük" diye KAPATILMAZ (kullanıcı, 2026-11-18)
+
+Mikro ölçümde küçük görünen bir maliyet, tam derleme hattı çalışınca darboğaz çıkabilir. Bu yüzden her performans adayı (a) gerçekçi bir iş yüküyle (yan etkili gövdeler, tam hat) ölçülür, (b) zararsızsa (davranış aynı, bütçe kötüleşmiyor) **uygulanır ve kalıcı bırakılır**, (c) uygulanmadıysa **açık madde olarak kalır** ve bir CI kapısıyla (`lex-bench --max-ratio`, `compiler_bench`) izlenir. "İş yok" sonucu yalnızca madde fiilen uygulanıp ölçüldükten sonra yazılır.
+
+## Ölçüm uyarısı (v2.2.37)
+
+Yeni derlenmiş bir ikili macOS'ta ilk çalıştırmada ~0,2 s soğuk-başlangıç yükü taşır. Mikro ölçümler **süreç içinden** (`nox.time.monotonic_ns`) ve en az iki koşuyla alınmalıdır; dışarıdan `time` ile ölçülen ilk koşu kullanılmaz. (D1.3/D1.4'ün yanlış bulguları buradan çıktı; `compiler_bench`/`lex-bench` zaten süreç içi ve en-iyi-N ölçer, etkilenmedi.)

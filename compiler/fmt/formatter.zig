@@ -307,6 +307,17 @@ const Printer = struct {
             try self.writer.writeAll("_");
             return;
         }
+        if (c.capture) |cap| {
+            try self.writer.writeAll(cap);
+            return;
+        }
+        if (c.scalars.len > 0) {
+            for (c.scalars, 0..) |lit, i| {
+                if (i > 0) try self.writer.writeAll(" | ");
+                try self.printExpr(lit);
+            }
+            return;
+        }
         for (c.path, 0..) |seg, i| {
             if (i > 0) try self.writer.writeAll(".");
             try self.writer.writeAll(seg);

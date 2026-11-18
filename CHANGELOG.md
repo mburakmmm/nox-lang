@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.37]
+
+Selfhost dogfood defteri (Aşama 1 kapanışı) — kullanıcı onaylı dil maddeleri ve ölçüm düzeltmesi.
+
+- **Skaler `match` (D1.5):** `match k:` artık `int`/`float`/`str`/`bool` değerlerinde de çalışır: `case 0:`, `case 1 | 2 | 3:`, `case -1:`, `case "a" | "b":`, `case n if n > 100:` (yakalama + koruma), `case _:`. Parser `konu == literal` zincirine indirger (enum yolu değişmedi); kapsamlılık zorunlu değil (eşleşme yoksa akış match'ten sonra sürer); enum ve literal desenleri karışamaz (açık hata). Formatter yüzeyi korur. Fixture `match_scalar` (iki backend), `tests/cli/match_scalar_test.zig`, `docs/language/enums.md`.
+- **Özellik yolu Optional daraltması (D1.6):** `if n.l != None:` / `while cur.next != None:` / `a.b.c is None` gövdesinde ve koruma biçiminde (`if n.l is None: return`) `n.l` artık `T`. Yalnızca işaretçi tabanlı Optional'lar (sınıf/list/dict/str; temsil aynı); skaler `int | None` alanlar daraltılmaz. Sağlamlık: yola/önekine atama, kullanıcı işlevi/metoduna çağrı (`len`/`str`/`print` gibi yerleşikler hariç) ve `await` daraltmayı düşürür. Fixture `optional_attr_narrowing` (iki backend), 3 typecheck hata golden'ı, `docs/language/types.md`.
+- **Ölçüm düzeltmesi (D1.3/D1.4):** plan 0.11'deki "~20 ns/dağıtım" bulgusu, yeni derlenmiş ikilinin ilk çalıştırmasındaki ~0,2 s soğuk-başlangıç yükünün ölçüme karışmasıydı (süreç-içi: enum `match` 2–4 ns, 68 kollu zincir ~1 ns). Kullanıcı kuralı gereği bu maddeler "iş yok" diye KAPATILMADI: yeniden açık, gerçekçi yüklerle ölçülüp uygulanacak (deftere "performans maddeleri kazancı küçük diye kapatılmaz" kuralı yazıldı).
+- **Açık:** D1.2 (liste takma adı büyümede bayatlar; mimari karar) sıradaki.
+
 ## [2.2.36]
 
 noxc-nightly: dogfood süreci ve Aşama 1 dogfood kapanışı.

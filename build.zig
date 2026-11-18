@@ -1645,6 +1645,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/http_multicore_factory_test.zig",
         "tests/cli/selfhost_obj_test.zig",
         "tests/cli/tokens_ast_test.zig",
+        "tests/cli/match_scalar_test.zig",
         "tests/cli/run_script_args_test.zig",
         "tests/cli/extern_path_test.zig",
         "tests/cli/path_confine_test.zig",

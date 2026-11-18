@@ -1,0 +1,64 @@
+# D1.5: skaler match (int/float/str/bool literal, `|` alternatifleri, yakalama, koruma, `case _`, eşleşmeyen konu).
+def kind(k: int) -> str:
+    match k:
+        case 0:
+            return "zero"
+        case 1 | 2 | 3:
+            return "small"
+        case -1:
+            return "neg"
+        case n if n > 100:
+            return "big " + str(n)
+        case _:
+            return "other"
+
+def word(s: str) -> int:
+    match s:
+        case "a" | "b":
+            return 1
+        case "c":
+            return 2
+    return 0
+
+def flag(b: bool) -> str:
+    match b:
+        case True:
+            return "yes"
+        case False:
+            return "no"
+    return "?"
+
+def ratio(x: float) -> str:
+    match x:
+        case 0.5:
+            return "half"
+        case 1.5 | 2.5:
+            return "x.5"
+        case _:
+            return "?"
+
+def with_guard(k: int, limit: int) -> str:
+    match k:
+        case 1 if limit > 5:
+            return "one-big-limit"
+        case 1:
+            return "one"
+        case _:
+            return "none"
+
+def count(xs: list[int]) -> int:
+    total: int = 0
+    for x in xs:
+        match x:
+            case 0:
+                total = total + 100
+            case 1 | 2:
+                total = total + 10
+            case _:
+                total = total + 1
+    return total
+
+print(kind(0), kind(2), kind(-1), kind(500), kind(42))
+print(word("a"), word("b"), word("c"), word("z"), flag(True), flag(False))
+print(ratio(0.5), ratio(2.5), ratio(9.0), with_guard(1, 9), with_guard(1, 1), with_guard(7, 9))
+print(count([0, 1, 2, 3, 0, 5]))

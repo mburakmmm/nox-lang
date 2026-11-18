@@ -6360,8 +6360,8 @@ pub const Checker = struct {
                 // `x != None` yaprağı, ELSE dalında `A or B`nin her `x == None` yaprağı daraltılır. `elif` dalları HÂLÂ daraltılmaz.
                 var then_n: NarrowList = .{};
                 var else_n: NarrowList = .{};
-                collectNarrows(f.cond, ctx.scope, true, &then_n);
-                collectNarrows(f.cond, ctx.scope, false, &else_n);
+                self.collectNarrows(ctx, f.cond, true, &then_n);
+                self.collectNarrows(ctx, f.cond, false, &else_n);
                 try self.checkNarrowedBlock(ctx, &then_n, f.then_body);
                 for (f.elif_clauses) |ec| {
                     const ect = try self.checkExpr(ctx, ec.cond);
@@ -6386,7 +6386,7 @@ pub const Checker = struct {
                 // bu yüzden döngü SONRASI daraltılmış SAYILAMAZ — güvenli/
                 // tutucu tercih).
                 var wn: NarrowList = .{};
-                collectNarrows(w.cond, ctx.scope, true, &wn);
+                self.collectNarrows(ctx, w.cond, true, &wn);
                 try self.checkNarrowedBlock(ctx, &wn, w.body);
             },
             .for_stmt => |f| {
@@ -6740,6 +6740,8 @@ pub const Checker = struct {
     }
 
     fn checkAssign(self: *Checker, ctx: *FnCtx, a: *const ast.Assign) TypeError!void {
+        // D1.6: hedefin yolunu (ve öneki taşıyan tüm özellik yollarını) atamadan SONRA daraltmadan düşür (sağ taraf eski daraltmayla denetlenir).
+        defer if (self.pathKey(a.target, 0)) |k| self.invalidateNarrowPrefix(ctx, k);
         switch (a.target) {
             .identifier => |name| {
                 const existing = ctx.scope.lookupLocal(name) orelse blk: {
@@ -7196,8 +7198,8 @@ pub const Checker = struct {
         var else_t: Type = undefined;
         var then_n: NarrowList = .{};
         var else_n: NarrowList = .{};
-        collectNarrows(t.cond.*, ctx.scope, true, &then_n);
-        collectNarrows(t.cond.*, ctx.scope, false, &else_n);
+        self.collectNarrows(ctx, t.cond.*, true, &then_n);
+        self.collectNarrows(ctx, t.cond.*, false, &else_n);
         {
             const saved = try self.applyNarrows(ctx, &then_n);
             defer self.restoreNarrows(ctx, &then_n, saved);
@@ -7626,6 +7628,7 @@ pub const Checker = struct {
                 defer self.awaited_callee = saved_awaited;
                 self.awaited_callee = if (operand == .call) @intFromPtr(operand.call.callee) else 0;
                 const t = try self.checkExpr(ctx, operand);
+                self.dropPathNarrows(ctx); // D1.6: başka fiber/iş parçacığı alanı değiştirmiş olabilir
                 if (t == .task) break :blk t.task.*;
                 // Task DEĞİLSE, yalnızca bir Channel.send/recv YA DA (Faz
                 // BB.3) bir ThreadHandle.join() çağrısı olabilir — bu
@@ -7979,7 +7982,7 @@ pub const Checker = struct {
         // Kısa devre: `x != None and <sağ>` ile `x == None or <sağ>` ifadelerinde sağ operand,
         // sol operandın kanıtladığı daraltmayla denetlenir (aynı `collectNarrows` kuralları `if` koşuluyla ortaktır).
         var right_n: NarrowList = .{};
-        if (b.op == .and_ or b.op == .or_) collectNarrows(b.left.*, ctx.scope, b.op == .and_, &right_n);
+        if (b.op == .and_ or b.op == .or_) self.collectNarrows(ctx, b.left.*, b.op == .and_, &right_n);
         const right_saved = try self.applyNarrows(ctx, &right_n);
         // `xs + [[]]` / `xs += [[]]`: sağdaki liste literali sol operandın tipini beklenen tip olarak alır (boş/iç içe boş literaller için).
         const r_res = if (b.op == .add and l == .list and b.right.* == .list_lit) self.checkExprExpected(ctx, b.right.*, l) else self.checkExpr(ctx, b.right.*);
@@ -8182,25 +8185,85 @@ pub const Checker = struct {
 
     /// `cond` `positive` (doğru: THEN, yanlış: ELSE) ise kesin olarak None-dışı olan yerel Optional'ları toplar: `x != None` (then), `x == None` (else),
     /// `A and B` (then: iki yaprak), `A or B` (else: iki yaprak), `not A` (ters). Başka hiçbir bileşik biçim daraltmaz.
-    fn collectNarrows(cond: ast.Expr, scope: *Scope, positive: bool, out: *NarrowList) void {
+    fn collectNarrows(self: *Checker, ctx: *FnCtx, cond: ast.Expr, positive: bool, out: *NarrowList) void {
         switch (cond) {
             .binary => |b| switch (b.op) {
                 .and_ => if (positive) {
-                    collectNarrows(b.left.*, scope, true, out);
-                    collectNarrows(b.right.*, scope, true, out);
+                    self.collectNarrows(ctx, b.left.*, true, out);
+                    self.collectNarrows(ctx, b.right.*, true, out);
                 },
                 .or_ => if (!positive) {
-                    collectNarrows(b.left.*, scope, false, out);
-                    collectNarrows(b.right.*, scope, false, out);
+                    self.collectNarrows(ctx, b.left.*, false, out);
+                    self.collectNarrows(ctx, b.right.*, false, out);
                 },
-                .eq, .ne => if (detectNarrowing(cond, scope)) |n| {
+                .eq, .ne => if (self.detectNarrowing(ctx, cond)) |n| {
                     if (positive == n.narrows_then) out.add(n);
                 },
                 else => {},
             },
-            .unary => |u| if (u.op == .not_) collectNarrows(u.operand.*, scope, !positive, out),
+            .unary => |u| if (u.op == .not_) self.collectNarrows(ctx, u.operand.*, !positive, out),
             else => {},
         }
+    }
+
+    /// D1.6 (selfhost dogfood): `a.b`/`a.b.c` biçimli özellik yolunun anahtarı (`"a.b"`); kök bir tanımlayıcı, adımlar düz özellik olmalı (en çok 4 adım). Tanımlayıcı için ad kendisidir.
+    fn pathKey(self: *Checker, e: ast.Expr, depth: usize) ?[]const u8 {
+        switch (e) {
+            .identifier => |n| return n,
+            .attribute => |a| {
+                if (depth >= 4) return null;
+                const base = self.pathKey(a.obj.*, depth + 1) orelse return null;
+                return std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ base, a.attr }) catch null;
+            },
+            else => return null,
+        }
+    }
+
+    /// Yoldaki (varsa daraltılmış) tip: kök yerel/parametre, adımlar sınıf alanları. Yol bir alan zinciri değilse `null`.
+    fn pathType(self: *Checker, ctx: *FnCtx, e: ast.Expr) ?Type {
+        const key = self.pathKey(e, 0) orelse return null;
+        if (ctx.narrowed.get(key)) |t| return t;
+        switch (e) {
+            .identifier => |n| return ctx.scope.lookupLocal(n),
+            .attribute => |a| {
+                const ot = self.pathType(ctx, a.obj.*) orelse return null;
+                if (ot != .class) return null;
+                const info = self.classes.get(ot.class) orelse return null;
+                return info.fields.get(a.attr);
+            },
+            else => return null,
+        }
+    }
+
+    /// Yolun anahtarını ya da önekini taşıyan tüm daraltmaları siler (atama sonrası): `n = ...` `n` ve `n.*`; `n.l = ...` `n.l` ve `n.l.*`.
+    fn invalidateNarrowPrefix(self: *Checker, ctx: *FnCtx, key: []const u8) void {
+        if (ctx.narrowed.count() == 0) return;
+        var doomed: std.ArrayListUnmanaged([]const u8) = .empty;
+        var it = ctx.narrowed.iterator();
+        while (it.next()) |e| {
+            const k = e.key_ptr.*;
+            if (std.mem.eql(u8, k, key) or (k.len > key.len and std.mem.startsWith(u8, k, key) and k[key.len] == '.')) doomed.append(self.allocator, k) catch {};
+        }
+        for (doomed.items) |k| _ = ctx.narrowed.remove(k);
+    }
+
+    /// Kullanıcı koduna giden çağrı/`await` sonrası: özellik yolu daraltmaları (anahtarında `.` olanlar) düşer (çağrı bir alanı `None` yapabilir). Düz yerel daraltmalar etkilenmez.
+    fn dropPathNarrows(self: *Checker, ctx: *FnCtx) void {
+        if (ctx.narrowed.count() == 0) return;
+        var doomed: std.ArrayListUnmanaged([]const u8) = .empty;
+        var it = ctx.narrowed.iterator();
+        while (it.next()) |e| {
+            if (std.mem.indexOfScalar(u8, e.key_ptr.*, '.') != null) doomed.append(self.allocator, e.key_ptr.*) catch {};
+        }
+        for (doomed.items) |k| _ = ctx.narrowed.remove(k);
+    }
+
+    /// Yan etkisiz yerleşik çağrılar daraltmayı düşürmez (`len(x)`, `str(x)`, `print(...)` …); diğer her çağrı (kullanıcı işlevi/metodu) düşürür.
+    fn callKeepsNarrows(c: ast.Call) bool {
+        if (c.callee.* != .identifier) return false;
+        const pure = [_][]const u8{ "len", "str", "int", "float", "bool", "print", "abs", "min", "max", "round", "sum", "repr", "ord", "chr", "range" };
+        for (pure) |n| if (std.mem.eql(u8, n, c.callee.identifier)) return true;
+        return false;
     }
 
     const NarrowSaved = [8]?Type;
@@ -8236,19 +8299,27 @@ pub const Checker = struct {
     /// Başka HİÇBİR koşul biçimi (ör. `if x:`, `if x.field != None:`,
     /// birleşik `and`/`or` koşulları) TANINMAZ — genel bir kontrol-akışı
     /// analizi DEĞİL, BİLİNÇLİ dar bir v1 kapsamıdır.
-    fn detectNarrowing(cond: ast.Expr, scope: *Scope) ?Narrow {
+    fn detectNarrowing(self: *Checker, ctx: *FnCtx, cond: ast.Expr) ?Narrow {
         if (cond != .binary) return null;
         const b = cond.binary;
         if (b.op != .eq and b.op != .ne) return null;
-        const name: []const u8 = if (b.left.* == .identifier and b.right.* == .none_lit)
-            b.left.identifier
-        else if (b.right.* == .identifier and b.left.* == .none_lit)
-            b.right.identifier
-        else
-            return null;
-        const t = scope.lookupLocal(name) orelse return null;
+        const scope = ctx.scope;
+        if ((b.left.* == .identifier and b.right.* == .none_lit) or (b.right.* == .identifier and b.left.* == .none_lit)) {
+            const name: []const u8 = if (b.left.* == .identifier) b.left.identifier else b.right.identifier;
+            const t = scope.lookupLocal(name) orelse return null;
+            if (t != .optional) return null;
+            return .{ .name = name, .base = t.optional.*, .narrows_then = (b.op == .ne) };
+        }
+        // D1.6: `a.b != None` / `a.b.c == None` — özellik yolu; yalnızca işaretçi tabanlı Optional'lar (sınıf/list/dict/str: temsil aynı, codegen'de kutu açma yok).
+        const path_e: ast.Expr = if (b.left.* == .attribute and b.right.* == .none_lit) b.left.* else if (b.right.* == .attribute and b.left.* == .none_lit) b.right.* else return null;
+        const key = self.pathKey(path_e, 0) orelse return null;
+        const t = self.pathType(ctx, path_e) orelse return null;
         if (t != .optional) return null;
-        return .{ .name = name, .base = t.optional.*, .narrows_then = (b.op == .ne) };
+        switch (t.optional.*) {
+            .class, .list, .dict, .str => {},
+            else => return null,
+        }
+        return .{ .name = key, .base = t.optional.*, .narrows_then = (b.op == .ne) };
     }
 
     /// v2.0 madde 4 (§5): sabit-genişlikli tamsayı ailesinin "aynı-kind-
@@ -8362,7 +8433,15 @@ pub const Checker = struct {
         };
         const info = self.classes.get(class_name) orelse
             return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
-        if (info.fields.get(a.attr)) |ft| return ft;
+        if (info.fields.get(a.attr)) |ft| {
+            // D1.6: daraltılmış özellik yolu (`if n.l != None:` gövdesinde `n.l`).
+            if (ctx.narrowed.count() > 0) {
+                if (self.pathKey(.{ .attribute = a }, 0)) |key| {
+                    if (ctx.narrowed.get(key)) |nt| return nt;
+                }
+            }
+            return ft;
+        }
         // `@property`: `nesne.ad` → `nesne.ad()` (okuyucu metodu).
         if (self.properties.count() > 0 and self.findProperty(class_name, a.attr) != null) {
             return self.rewriteExprTo(ctx, @intFromPtr(a.obj), try self.mkDunderCall(a.obj.*, a.attr, &.{}));
@@ -9160,6 +9239,12 @@ pub const Checker = struct {
     }
 
     fn checkCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!Type {
+        const t = try self.checkCallInner(ctx, c);
+        if (!callKeepsNarrows(c)) self.dropPathNarrows(ctx); // D1.6
+        return t;
+    }
+
+    fn checkCallInner(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!Type {
         if (c.callee.* == .identifier and ctx.async_locals.contains(c.callee.identifier) and (try ctx.scope.lookup(self.allocator, c.callee.identifier)) == null) {
             return self.fail(error.TypeMismatch, "'{s}' is a nested 'async def': start it with 'spawn {s}(...)' (an async function is never called directly)", .{ c.callee.identifier, c.callee.identifier });
         }

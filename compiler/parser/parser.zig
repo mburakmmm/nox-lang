@@ -1081,6 +1081,26 @@ pub const Parser = struct {
         return arg;
     }
 
+    /// Skaler desen literali: int/float/str/bool (negatif sayı dahil). `parseMatchPatternArg`in iç literal kuralıyla aynı.
+    fn isScalarPatternStart(self: *Parser) bool {
+        const k = self.curKind();
+        return k == .int_lit or k == .float_lit or k == .string_lit or k == .kw_true or k == .kw_false or k == .minus;
+    }
+
+    fn parseScalarLiteral(self: *Parser) ParseError!ast.Expr {
+        const e = try self.parseUnary();
+        const ok = switch (e) {
+            .int_lit, .float_lit, .bool_lit, .string_lit => true,
+            .unary => |u| u.op == .neg and (u.operand.* == .int_lit or u.operand.* == .float_lit),
+            else => false,
+        };
+        if (!ok) {
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "a literal pattern must be an int, float, str or bool literal" };
+            return error.UnexpectedToken;
+        }
+        return e;
+    }
+
     /// `Yol.Varyant` ya da `Yol.Varyant(arg, ...)` (en az iki parçalı nitelikli yol).
     fn parseEnumPattern(self: *Parser) ParseError!ast.MatchCase {
         const line = self.cur().line;
@@ -1111,7 +1131,19 @@ pub const Parser = struct {
             _ = self.advance();
             return .{ .wildcard = true, .line = line };
         }
-        var pat = try self.parseEnumPattern();
+        var pat: ast.MatchCase = undefined;
+        if (self.check(.identifier) and (self.pos + 1 >= self.tokens.len or (self.tokens[self.pos + 1].kind != .dot and self.tokens[self.pos + 1].kind != .l_paren))) {
+            // Yakalama deseni: `case n:` (skaler `match`; konuyu `n`ye bağlar).
+            pat = .{ .capture = self.advance().lexeme, .line = line };
+        } else if (self.isScalarPatternStart()) {
+            // Skaler desen: `case 1 | 2 | 3:` / `case "a":` (D1.5).
+            var lits = std.ArrayList(ast.Expr).empty;
+            try lits.append(self.allocator, try self.parseScalarLiteral());
+            while (self.match(.pipe)) try lits.append(self.allocator, try self.parseScalarLiteral());
+            pat = .{ .scalars = try lits.toOwnedSlice(self.allocator), .line = line };
+        } else {
+            pat = try self.parseEnumPattern();
+        }
         if (self.match(.kw_if)) pat.guard = try self.parseExpr();
         return pat;
     }
@@ -1268,6 +1300,17 @@ pub const Parser = struct {
             return error.UnexpectedToken;
         };
 
+        // Skaler ve enum desenleri bir `match`te karışamaz.
+        var n_scalar: usize = 0;
+        var n_enum: usize = 0;
+        for (cases.items) |c| {
+            if (c.wildcard) continue;
+            if (c.scalars.len > 0 or c.capture != null) n_scalar += 1 else n_enum += 1;
+        }
+        if (n_scalar > 0 and n_enum > 0) {
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(start_tok), .note = "a match cannot mix literal cases and enum-variant cases" };
+            return error.UnexpectedToken;
+        }
         self.match_counter += 1;
         const tmp = try std.fmt.allocPrint(self.allocator, "__match_{d}", .{self.match_counter});
         const line = start_tok.line;
@@ -1281,6 +1324,38 @@ pub const Parser = struct {
         var conds = std.ArrayList(ast.Expr).empty;
         for (cases.items, 0..) |*c, i| {
             if (c.wildcard) {
+                c.prefix = 0;
+                try branches.append(self.allocator, bodies.items[i]);
+                continue;
+            }
+            if (c.capture) |cap| {
+                // Yakalama: koşul = koruma (bağlama adı konuyla değiştirilir) ya da `True`; `cap = konu` gövdenin başına eklenir.
+                var binds1 = [_]Bind{.{ .name = cap, .value = subj_ref }};
+                const cond: ast.Expr = if (c.guard) |g| try self.substituteBinds(g, &binds1) else .{ .bool_lit = true };
+                try conds.append(self.allocator, cond);
+                const full = try self.allocator.alloc(ast.Stmt, 1 + bodies.items[i].len);
+                full[0] = mkStmt(.{ .var_decl = .{ .name = cap, .type_expr = .{ .simple = "__infer" }, .value = subj_ref } }, c.line);
+                @memcpy(full[1..], bodies.items[i]);
+                c.prefix = 1;
+                try branches.append(self.allocator, full);
+                continue;
+            }
+            if (c.scalars.len > 0) {
+                // `konu == a or konu == b` (+ koruma); bağlama/kimlik denetimi yok.
+                var alts = std.ArrayList(ast.Expr).empty;
+                for (c.scalars) |lit| try alts.append(self.allocator, .{ .binary = .{ .op = .eq, .left = try self.box(subj_ref), .right = try self.box(lit) } });
+                var cond = alts.items[0];
+                for (alts.items[1..]) |alt| {
+                    const lhs = try self.box(cond);
+                    const rhs = try self.box(alt);
+                    cond = .{ .binary = .{ .op = .or_, .left = lhs, .right = rhs } };
+                }
+                if (c.guard) |g| {
+                    const lhs = try self.box(cond);
+                    const rhs = try self.box(try self.substituteBinds(g, &.{}));
+                    cond = .{ .binary = .{ .op = .and_, .left = lhs, .right = rhs } };
+                }
+                try conds.append(self.allocator, cond);
                 c.prefix = 0;
                 try branches.append(self.allocator, bodies.items[i]);
                 continue;
@@ -1322,7 +1397,7 @@ pub const Parser = struct {
         const n_cond = conds.items.len;
         if (n_cond == 0) {
             // Yalnızca `case _:`: konu değerlendirilir, gövde koşulsuz çalışır.
-            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(start_tok), .note = "a match needs at least one enum variant case" };
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(start_tok), .note = "a match needs at least one enum variant or literal case" };
             return error.UnexpectedToken;
         }
         const origin = try self.allocator.create(ast.MatchOrigin);

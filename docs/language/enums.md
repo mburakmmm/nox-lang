@@ -123,6 +123,36 @@ some some 4 the end word zero large num 7 other
 - **Guard.** `case P if condition:` runs only when the pattern matches *and* the condition is true; otherwise the next case is tried. The condition can use the names the pattern binds.
 - **Exhaustiveness.** A guarded case or a case with a literal can fail, so it does not cover its variant. Nested patterns do count when, together, they cover every variant of the inner enum: `Option.Some(Option.Some(v))`, `Option.Some(Option.Nothing)` and `Option.Nothing` is exhaustive. Otherwise finish the `match` with `case _:` (or a plain case for the variant); the error says the variant is "only partly covered".
 
+### Matching plain values
+
+`match` also works on an `int`, `float`, `str` or `bool`. A pattern is a literal, several literals joined with `|`, a name that captures the value, or `_`:
+
+```nox
+def describe(code: int) -> str:
+    match code:
+        case 0:
+            return "ok"
+        case 1 | 2 | 3:
+            return "minor"
+        case -1:
+            return "unknown"
+        case n if n > 100:
+            return "major " + str(n)
+        case _:
+            return "other"
+
+print(describe(0), describe(2), describe(-1), describe(404), describe(42))
+```
+
+```output
+ok minor unknown major 404 other
+```
+
+- A literal case compares with `==`; the cases are tried from top to bottom and the first match runs.
+- `case name:` binds the value and matches anything (add `if` to limit it); `case _:` matches anything without binding.
+- Unlike enum matches there is no exhaustiveness check: if no case fits and there is no `case _:`, execution continues after the `match`.
+- Literal cases and enum-variant cases cannot be mixed in one `match`.
+
 ### Exhaustiveness
 
 Without a `case _:`, every variant has to appear in some case, otherwise the program does not compile:

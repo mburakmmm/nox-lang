@@ -2705,6 +2705,27 @@ test "golden(typecheck): GPT-6 P2.1 — 40 halkalı DÖNGÜSÜZ takma ad zinciri
     );
 }
 
+test "golden(typecheck): selfhost dogfood D1.6 — çağrı sonrası özellik daraltması düşer" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_optional_attr_bad_call.nox"),
+        @embedFile("typecheck_cases/err_optional_attr_bad_call.expected"),
+    );
+}
+
+test "golden(typecheck): selfhost dogfood D1.6 — özelliğe atama daraltmayı düşürür" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_optional_attr_bad_assign.nox"),
+        @embedFile("typecheck_cases/err_optional_attr_bad_assign.expected"),
+    );
+}
+
+test "golden(typecheck): selfhost dogfood D1.6 — skaler Optional özellik daraltılmaz (kutulu temsil)" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_optional_attr_bad_scalar.nox"),
+        @embedFile("typecheck_cases/err_optional_attr_bad_scalar.expected"),
+    );
+}
+
 test "golden(typecheck): dil yüzeyi 2 (v2.2.22) — aynı takma ad iki kez tanımlanamaz" {
     try expectGolden(
         @embedFile("typecheck_cases/err_type_alias_duplicate.nox"),

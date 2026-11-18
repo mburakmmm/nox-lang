@@ -242,6 +242,11 @@ pub const MatchCase = struct {
     /// Desen `(...)` içeriyor mu (birim varyant `Enum.V` ile `Enum.V()` ayrımı formatter için).
     has_parens: bool = false,
     wildcard: bool = false,
+    /// Skaler `match` (D1.5): `case 0:` / `case "a" | "b":` / `case -1 | 1:` — boş değilse bu bir tamsayı/ondalık/dize/bool literal deseni (alternatifler `|` ile); konu bir enum DEĞİL, sıradan bir değerdir.
+    /// Parser `konu == literal` karşılaştırmalarının `or` zincirine indirger (eşleşme yoksa akış `case _:`e ya da match'ten sonrasına düşer; kapsamlılık zorunlu değildir).
+    scalars: []const Expr = &.{},
+    /// Yakalama deseni (`case n:` / `case n if n > 100:`): konuyu `n`ye bağlar; korumasızsa her değerle eşleşir (yalnızca skaler `match`te).
+    capture: ?[]const u8 = null,
     /// `case P if koşul:` koruması (desen eşleşse bile koşul yanlışsa zincir sonraki kola düşer).
     guard: ?Expr = null,
     /// Bu dalın gövdesinin başındaki, parser'ın eklediği deyim sayısı (bağlama bildirimleri + kapsamlılık denetimi); formatter bunları yazmaz.

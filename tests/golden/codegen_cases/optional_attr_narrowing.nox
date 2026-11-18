@@ -1,0 +1,75 @@
+class Node:
+    v: int
+    l: Node | None
+    r: Node | None
+    name: str | None
+
+    def __init__(self, v: int) -> None:
+        self.v = v
+        self.l = None
+        self.r = None
+        self.name = None
+
+    def depth(self) -> int:
+        d: int = 0
+        if self.l != None:
+            d = self.l.depth() + 1
+        if self.r != None and self.r.depth() + 1 > d:
+            d = self.r.depth() + 1
+        return d
+
+def sum_chain(n: Node) -> int:
+    t: int = n.v
+    cur: Node = n
+    while cur.l != None:
+        t = t + cur.l.v
+        cur = cur.l
+    return t
+
+def label(n: Node) -> str:
+    if n.name is not None:
+        return n.name + "!"
+    return "anon"
+
+root: Node = Node(1)
+child: Node = Node(2)
+child.l = Node(3)
+root.l = child
+root.r = Node(10)
+root.name = "root"
+print(root.depth(), sum_chain(root), label(root), label(Node(0)))
+
+
+# koruma biçimi (erken çıkış) ve özelliğe atama sonrası yeniden daraltma
+class Link:
+    nxt: Link | None
+    v: int
+
+    def __init__(self, v: int) -> None:
+        self.nxt = None
+        self.v = v
+
+def head_value(n: Link) -> int:
+    if n.nxt is None:
+        return 0
+    return n.nxt.v
+
+def guarded(n: Link) -> int:
+    t: int = 0
+    if n.nxt is None:
+        return -1
+    t = n.nxt.v
+    return t + 1
+
+def relink(n: Link, m: Link | None) -> int:
+    if n.nxt != None:
+        n.nxt = m
+        if n.nxt != None:
+            return n.nxt.v
+        return -2
+    return -3
+
+a: Link = Link(1)
+b: Link = Link(41)
+a.nxt = b
+print(head_value(a), head_value(b), guarded(a), guarded(b), relink(a, Link(7)), relink(a, None), relink(b, a))

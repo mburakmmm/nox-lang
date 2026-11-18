@@ -21,7 +21,7 @@ pub fn run(a: std.mem.Allocator, body: []ast.Stmt) std.mem.Allocator.Error!void 
 fn hasNoneCheckLeaf(cond: ast.Expr) bool {
     return switch (cond) {
         .binary => |b| switch (b.op) {
-            .eq => (b.left.* == .identifier and b.right.* == .none_lit) or (b.right.* == .identifier and b.left.* == .none_lit),
+            .eq => ((b.left.* == .identifier or b.left.* == .attribute) and b.right.* == .none_lit) or ((b.right.* == .identifier or b.right.* == .attribute) and b.left.* == .none_lit), // D1.6: özellik yolları da (`if n.l is None: return`)
             .or_ => hasNoneCheckLeaf(b.left.*) or hasNoneCheckLeaf(b.right.*),
             else => false,
         },
