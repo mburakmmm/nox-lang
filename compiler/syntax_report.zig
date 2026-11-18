@@ -97,51 +97,60 @@ pub fn parseSourceTo(sink: report_sink.Sink, a: std.mem.Allocator, source: []con
     const tokens = lexed.tokens orelse {
         const err = lexed.err.?;
         if (err == error.OutOfMemory) return error.OutOfMemory;
-        const msg: []const u8 = switch (err) {
-            error.UnexpectedCharacter => "unexpected character",
-            error.UnterminatedString => "unterminated string",
-            error.InconsistentIndentation => "inconsistent indentation",
-            error.TabsNotAllowed => "tab used in indentation — use spaces",
-            error.OutOfMemory => unreachable,
-        };
-        report(sink, source, label, lexed.err_span.start_line, lexed.err_span.start_col, "{s}", .{msg});
+        reportLexFailure(sink, source, label, err, lexed.err_span.start_line, lexed.err_span.start_col);
         return error.SyntaxError;
     };
     var p = parser.Parser.init(a, tokens);
     return p.parseModule() catch |e| {
         if (e == error.OutOfMemory) return error.OutOfMemory;
-        // `last_diagnostic` geri-izlemeli (backtracking) bir denemeden kalma BAYAT bir konum taşıyabilir: gerçek hata konumu hata anındaki
-        // geçerli simgedir; yalnızca tanılama o simgeyle tutarlıysa onun `expected` bilgisi kullanılır.
-        var diag: ?parser.ParserDiagnostic = p.last_diagnostic;
-        if (e == error.UnexpectedToken) {
-            const cur = p.tokens[@min(p.pos, p.tokens.len - 1)];
-            if (diag == null or diag.?.span.start_byte != cur.start_byte) {
-                diag = .{ .found = cur.kind, .span = span_mod.fromToken(cur), .note = if (diag) |old| old.note else null };
-            }
-        }
-        if (diag) |d| {
-            const found: []const u8 = switch (d.found) {
-                .newline, .indent, .dedent, .eof => kindName(d.found),
-                else => if (d.span.end_byte <= source.len and d.span.start_byte < d.span.end_byte) source[d.span.start_byte..d.span.end_byte] else kindName(d.found),
-            };
-            const quote: []const u8 = switch (d.found) {
-                .newline, .indent, .dedent, .eof => "",
-                else => "'",
-            };
-            if (d.note) |note| {
-                report(sink, source, label, d.span.start_line, d.span.start_col, "{s}", .{note});
-            } else if (d.expected) |exp| {
-                report(sink, source, label, d.span.start_line, d.span.start_col, "unexpected {s}{s}{s} (expected {s})", .{ quote, found, quote, kindName(exp) });
-            } else {
-                report(sink, source, label, d.span.start_line, d.span.start_col, "unexpected {s}{s}{s}", .{ quote, found, quote });
-            }
-        } else switch (e) {
-            error.InvalidNumberLiteral => report(sink, source, label, 0, 0, "invalid number literal", .{}),
-            error.RecursionLimitExceeded => report(sink, source, label, 0, 0, "expression nested too deeply", .{}),
-            else => report(sink, source, label, 0, 0, "parse error ({t})", .{e}),
-        }
+        reportParseFailure(sink, source, label, e, p.last_diagnostic, p.tokens[@min(p.pos, p.tokens.len - 1)]);
         return error.SyntaxError;
     };
+}
+
+/// Sözcük hatası tanılaması (Zig lexer ve Nox lexer/parser'ı ortak kullanır).
+pub fn reportLexFailure(sink: report_sink.Sink, source: []const u8, label: []const u8, err: lexer.LexError, line: u32, col: u32) void {
+    const msg: []const u8 = switch (err) {
+        error.UnexpectedCharacter => "unexpected character",
+        error.UnterminatedString => "unterminated string",
+        error.InconsistentIndentation => "inconsistent indentation",
+        error.TabsNotAllowed => "tab used in indentation — use spaces",
+        error.OutOfMemory => unreachable,
+    };
+    report(sink, source, label, line, col, "{s}", .{msg});
+}
+
+/// Sözdizimi hatası tanılaması: `e` ayrıştırıcı hatası, `last_diagnostic` ayrıştırıcının son tanılaması, `cur` hata anındaki geçerli simge (Zig parser ve Nox parser'ı ortak kullanır).
+pub fn reportParseFailure(sink: report_sink.Sink, source: []const u8, label: []const u8, e: parser.ParseError, last_diagnostic: ?parser.ParserDiagnostic, cur: token_mod.Token) void {
+    // `last_diagnostic` geri-izlemeli (backtracking) bir denemeden kalma BAYAT bir konum taşıyabilir: gerçek hata konumu hata anındaki
+    // geçerli simgedir; yalnızca tanılama o simgeyle tutarlıysa onun `expected` bilgisi kullanılır.
+    var diag: ?parser.ParserDiagnostic = last_diagnostic;
+    if (e == error.UnexpectedToken) {
+        if (diag == null or diag.?.span.start_byte != cur.start_byte) {
+            diag = .{ .found = cur.kind, .span = span_mod.fromToken(cur), .note = if (diag) |old| old.note else null };
+        }
+    }
+    if (diag) |d| {
+        const found: []const u8 = switch (d.found) {
+            .newline, .indent, .dedent, .eof => kindName(d.found),
+            else => if (d.span.end_byte <= source.len and d.span.start_byte < d.span.end_byte) source[d.span.start_byte..d.span.end_byte] else kindName(d.found),
+        };
+        const quote: []const u8 = switch (d.found) {
+            .newline, .indent, .dedent, .eof => "",
+            else => "'",
+        };
+        if (d.note) |note| {
+            report(sink, source, label, d.span.start_line, d.span.start_col, "{s}", .{note});
+        } else if (d.expected) |exp| {
+            report(sink, source, label, d.span.start_line, d.span.start_col, "unexpected {s}{s}{s} (expected {s})", .{ quote, found, quote, kindName(exp) });
+        } else {
+            report(sink, source, label, d.span.start_line, d.span.start_col, "unexpected {s}{s}{s}", .{ quote, found, quote });
+        }
+    } else switch (e) {
+        error.InvalidNumberLiteral => report(sink, source, label, 0, 0, "invalid number literal", .{}),
+        error.RecursionLimitExceeded => report(sink, source, label, 0, 0, "expression nested too deeply", .{}),
+        else => report(sink, source, label, 0, 0, "parse error ({t})", .{e}),
+    }
 }
 
 test "parseSource geçerli kaynağı ayrıştırır, bozukta SyntaxError döner" {

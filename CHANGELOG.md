@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.42]
+
+noxc-nightly Aşama 2.C: parser Nox'a taşındı (tam yüzey).
+
+- **`selfhost/parser.nox` (üretilmiş) ← `selfhost/parser.nox.in` + `scripts/gen_selfhost_parser.py`:** `compiler/parser/parser.zig`'in birebir portu (~3 500 satır): ifade önceliği, tüm deyimler, tip ifadeleri, dekoratör/`class`/`protocol`/`enum` (parser-içi sentez), `match` (enum + skaler) indirgemesi, tuple/yıldızlı/iç içe açma, `for/while/try else`, çok-öğeli `with`, `raise from`, f-string bölme (iç ifade için lexer'ı yeniden çağırır), `str.format` indirgemesi, kaçış çözme, `normalizeStatementTokens`, `injectClassAttrStorage`, ifade span sistemi, `last_diagnostic` notları. Token türü/birleşim etiketi/alan ofseti/enum sırası/yapı boyutu `token.zig` + `noxc ast --schema`dan üretilir (`--check` precheck/CI'da).
+- **Doğrulama:** `noxc-nightly parse-nox` (Nox parser'ı + Nox yazıcısı) ↔ `noxc ast --full`: depodaki 1 266 dosya, 3 766 mutasyonlu girdi ve `tests/fixtures/parser_edge/` (58 kenar-durum/hata dosyası) çıkış kodu + döküm + **sözdizimi hata iletisi (stderr)** bayt-bayt aynı (`frontend_diff.py --component parser --stderr`; `zig build frontend-diff-test`e eklendi). Hata iletisi biçimlendirme kodu paylaşılır: `syntax_report.reportParseFailure/reportLexFailure` (Zig ve Nox yolu aynı işlev).
+- **Bütçe:** `noxc-nightly parse-bench` (ReleaseFast): süre 1,6–1,7× Zig (bütçe 3×), canlı bellek 0,31× (bütçe 2×); sızıntı/çifte serbest bırakma testi `tests/cli/selfhost_obj_test.zig` (Debug çalışma zamanı, başarı + hata yolları + döküm).
+- **Dogfood (defter D2.1/D2.2):** indeksli atamada kapsayıcı sağ taraftan ÖNCE değerlendiriliyor (`a.n[i] = f()`, `f` listeyi büyütürse bellek bozulması); D1.2 (kararlı liste başlığı) ile giderilecek.
+- **Açık:** 2.12'nin `noxc fmt` eşitliği ve 2.13 (Nox AST → Zig AST çözücüsü gerekir).
+
 ## [2.2.41]
 
 noxc-nightly Aşama 2.A + 2.B: AST şeması üretici ve Nox yazıcısının Zig dökümüne karşı doğrulanması (parser henüz yok).

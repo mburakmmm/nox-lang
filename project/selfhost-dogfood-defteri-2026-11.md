@@ -17,7 +17,12 @@ Durum: `[x]` kapandı (sürüm) · `[ ]` açık · `[K]` kullanıcı kararı bek
 | D1.7 | D | `lowlevel` içinde sınıf kurma/`list[Sınıf].append` yok | compiler_bench | [-] bayt okuma ayrı işlevde (selfhost stil kuralı) |
 | D1.8 | P | Lexer: bayt başına `at()` çağrısı + token başına 5 `append` + Token dönüşümü (2,2×/2,35×) | `lex-bench` | [ ] bütçe içinde; uçtan uca profilde ele alınır |
 
-## Aşama 2 (parser/AST) — bulgular buraya eklenecek
+## Aşama 2 (parser/AST) bulguları
+
+| # | Tür | Bulgu | Kanıt | Durum |
+|---|---|---|---|---|
+| D2.1 | D (hata) | **İndeksli atamada kapsayıcı, sağ taraftan ÖNCE değerlendiriliyor** (`a.n[i] = f()`; `f` aynı alanı `append` ile büyütürse yazma serbest bırakılmış eski tampona gider → bellek bozulması/SIGSEGV). Python: sağ taraf önce. D1.2 ile (kararlı başlık) bu risk ortadan kalkar; o zamana dek geçici değişken zorunlu | `selfhost/parser.nox.in` `substitute_binds`: `a.n[nb + O] = substitute_binds(...)` 4+ düğümlü `match` gövdesinde çöktü (`match_scalar.nox`); geçici değişkenle düzeltildi | [ ] kapanışta: D1.2 sonrası regresyon fixture'ı + (D1.2 gecikirse) değerlendirme sırasını düzeltme kararı |
+| D2.2 | D | Çağrı sırasında alıcı parametre listesine `append` (`conds.append` kalleesinde) yine eski-tampon tuzağı (D1.2 ailesi) — parser tasarımında liste biriktiren yardımcılar `P` alanı üzerinden (`p.lp_conds`) yazıldı | `lower_pattern`, `p.cov` | [-] D1.2'ye bağlı |
 
 ## Süreç kuralı: performans maddeleri "kazancı küçük" diye KAPATILMAZ (kullanıcı, 2026-11-18)
 

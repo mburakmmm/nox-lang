@@ -827,7 +827,12 @@ pub fn build(b: *std.Build) void {
     // Aşama 2.B: Zig `ast --full` ↔ (Zig AST → düz diziler → Nox yazıcısı) bayt-bayt aynı (depo + mutasyonlu girdiler).
     const frontend_diff_astdump = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "astdump", "--fuzz", "800", "--seed", "4" });
     frontend_diff_astdump.step.dependOn(&frontend_diff_nox_json.step);
+    // Aşama 2.C: Zig `ast --full` ↔ Nox parser'ı (`noxc-nightly parse-nox`): depo + mutasyonlu girdiler; çıkış kodu, döküm VE sözdizimi hata iletisi (stderr) bayt-bayt aynı.
+    const frontend_diff_parser = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "parser", "--stderr", "--fuzz", "1500", "--seed", "5" });
+    frontend_diff_parser.step.dependOn(&frontend_diff_astdump.step);
+    frontend_diff_parser.step.dependOn(&install_nightly.step);
     const frontend_diff_check = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "check" });
+    frontend_diff_check.step.dependOn(&frontend_diff_parser.step);
     frontend_diff_check.step.dependOn(&frontend_diff_astdump.step);
     frontend_diff_check.step.dependOn(&frontend_diff_nox_json.step);
     const frontend_diff_step = b.step("frontend-diff-test", "noxc-nightly farksal test koşucusu: kendi sağlamlık denetimi + Zig↔Zig özdeşliği + Zig↔Nox lexer farkı (opt-in; `zig build nightly` gerekir)");

@@ -25,6 +25,14 @@ extern fn ast_schema_nox_ast_push_sp(rt: ?*anyopaque, id: i64, span: i64) i64;
 extern fn ast_schema_nox_ast_dump(rt: ?*anyopaque, body_start: i64, body_len: i64, exp_start: i64, exp_len: i64) i64;
 extern fn ast_schema_nox_ast_out_buffer(rt: ?*anyopaque) i64;
 
+extern fn parser_nox_parse_run(rt: ?*anyopaque, base: i64, n: i64) i64;
+extern fn parser_nox_parse_dump(rt: ?*anyopaque) i64;
+extern fn parser_nox_parse_out_buffer(rt: ?*anyopaque) i64;
+extern fn parser_nox_parse_mem(rt: ?*anyopaque) i64;
+extern fn parser_nox_parse_dg(rt: ?*anyopaque, i: i64) i64;
+extern fn parser_nox_parse_dg_note_len(rt: ?*anyopaque) i64;
+extern fn parser_nox_parse_dg_note_byte(rt: ?*anyopaque, i: i64) i64;
+
 pub const LexOut = lexer.HookResult;
 
 /// Bir Nox çalışma zamanı bağlamı: `start` ... `stop`. Bileşen çağrıları arasında paylaşılır; iş parçacıkları arası kullanım yok (derleyici tek iş parçacıklıdır).
@@ -54,6 +62,83 @@ pub const Runtime = struct {
         const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(ast_schema_nox_ast_out_buffer(self.rt))));
         const out = try a.alloc(u8, len);
         for (out, 0..) |*b, k| b.* = @intCast(buf[k]);
+        return out;
+    }
+
+    /// Aşama 2.C: Nox parser'ı (`selfhost/parser.nox`) kaynağı ayrıştırır; başarıda `noxc ast --full` biçiminde döküm baytları, hatada `error.ParseFailed` ve `code` (1..4 sözcük, 10 UnexpectedToken, 11 InvalidNumberLiteral, 12 RecursionLimitExceeded).
+    pub fn parseDump(self: Runtime, a: std.mem.Allocator, src: []const u8, code: *i64) ![]u8 {
+        code.* = parser_nox_parse_run(self.rt, @intCast(@intFromPtr(src.ptr)), @intCast(src.len));
+        if (code.* != 0) return error.ParseFailed;
+        const len: usize = @intCast(parser_nox_parse_dump(self.rt));
+        const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(parser_nox_parse_out_buffer(self.rt))));
+        const out = try a.alloc(u8, len);
+        for (out, 0..) |*b, k| b.* = @intCast(buf[k]);
+        return out;
+    }
+
+    /// Yalnızca ayrıştırma (döküm yok): Nox parser'ını çalıştırır; 0 ya da hata kodu.
+    pub fn parseRaw(self: Runtime, src: []const u8) i64 {
+        return parser_nox_parse_run(self.rt, @intCast(@intFromPtr(src.ptr)), @intCast(src.len));
+    }
+
+    /// Son ayrıştırmanın canlı Nox verisi (bayt).
+    pub fn parseMem(self: Runtime) i64 {
+        return parser_nox_parse_mem(self.rt);
+    }
+
+    /// Son `parseDump` hatasının tanılaması (`i`: 0 var mı, 1 beklenen tür (-1 yok), 2 bulunan tür, 3..8 span, 9..13 geçerli simge).
+    pub fn parseDiag(self: Runtime, i: i64) i64 {
+        return parser_nox_parse_dg(self.rt, i);
+    }
+
+    /// Son `parseDump` hatasını `syntax_report` ile (Zig parser'ıyla aynı işlevler) `sink`e yazar; tanılama alanları Nox parser'ından gelir.
+    pub fn reportParseError(self: Runtime, a: std.mem.Allocator, sink: @import("report_sink.zig").Sink, source: []const u8, label: []const u8, code: i64) !void {
+        const syntax_report = @import("syntax_report.zig");
+        const parser_mod = @import("parser/parser.zig");
+        if (code >= 1 and code <= 4) {
+            const err: lexer.LexError = switch (code) {
+                1 => error.UnexpectedCharacter,
+                2 => error.UnterminatedString,
+                3 => error.InconsistentIndentation,
+                else => error.TabsNotAllowed,
+            };
+            syntax_report.reportLexFailure(sink, source, label, err, @intCast(self.parseDiag(5)), @intCast(self.parseDiag(6)));
+            return;
+        }
+        const e: parser_mod.ParseError = switch (code) {
+            10 => error.UnexpectedToken,
+            11 => error.InvalidNumberLiteral,
+            else => error.RecursionLimitExceeded,
+        };
+        var diag: ?parser_mod.ParserDiagnostic = null;
+        if (self.parseDiag(0) != 0) {
+            const note = try self.parseDiagNote(a);
+            diag = .{
+                .expected = if (self.parseDiag(1) < 0) null else @enumFromInt(self.parseDiag(1)),
+                .found = @enumFromInt(self.parseDiag(2)),
+                .span = .{ .start_byte = @intCast(self.parseDiag(3)), .end_byte = @intCast(self.parseDiag(4)), .start_line = @intCast(self.parseDiag(5)), .start_col = @intCast(self.parseDiag(6)), .end_line = @intCast(self.parseDiag(7)), .end_col = @intCast(self.parseDiag(8)) },
+                .note = if (note.len == 0) null else note,
+            };
+        }
+        const lo: usize = @intCast(self.parseDiag(12));
+        const hi: usize = @intCast(self.parseDiag(13));
+        const cur: token_mod.Token = .{
+            .kind = @enumFromInt(self.parseDiag(9)),
+            .lexeme = if (hi <= source.len and lo <= hi) source[lo..hi] else "",
+            .line = @intCast(self.parseDiag(10)),
+            .col = @intCast(self.parseDiag(11)),
+            .start_byte = lo,
+            .end_byte = hi,
+            .end_line = @intCast(self.parseDiag(10)),
+            .end_col = @intCast(self.parseDiag(11) + @as(i64, @intCast(hi - lo))),
+        };
+        syntax_report.reportParseFailure(sink, source, label, e, diag, cur);
+    }
+
+    pub fn parseDiagNote(self: Runtime, a: std.mem.Allocator) ![]u8 {
+        const n: usize = @intCast(parser_nox_parse_dg_note_len(self.rt));
+        const out = try a.alloc(u8, n);
+        for (out, 0..) |*b, k| b.* = @intCast(parser_nox_parse_dg_note_byte(self.rt, @intCast(k)));
         return out;
     }
 

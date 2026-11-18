@@ -164,7 +164,6 @@ test "selfhost lexer: uretilmis dosya guncel ve --selfhost-obj ile derlenir" {
     }
 }
 
-
 // noxc-nightly değişmez kuralı: Nox bileşenleri bellek-uyumlu olmalı. Lexer'ı çok kez (düz/trivia/hata yolları) çalıştırıp çalışma zamanını yıkar; Debug çalışma zamanının sızıntı raporu (stderr) boş olmalı.
 test "selfhost lexer: tekrarli calistirma sizinti/cifte serbest birakma uretmez (Debug calisma zamani)" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
@@ -187,6 +186,51 @@ test "selfhost lexer: tekrarli calistirma sizinti/cifte serbest birakma uretmez 
     const exe = try std.fmt.allocPrint(a, "{s}/h", .{dir});
     const femit = try std.fmt.allocPrint(a, "-femit-bin={s}", .{exe});
     const r2 = std.process.run(std.testing.allocator, io, .{ .argv = &.{ "zig", "build-exe", "selfhost/tests/lexer_leak_harness.zig", obj, "zig-out/lib/noxrt.o", "-lc", "-OReleaseSafe", femit } }) catch return error.SkipZigTest;
+    defer std.testing.allocator.free(r2.stdout);
+    defer std.testing.allocator.free(r2.stderr);
+    if (r2.term != .exited or r2.term.exited != 0) {
+        std.debug.print("harness derlenemedi: {s}\n", .{r2.stderr});
+        return error.TestUnexpectedResult;
+    }
+    const r3 = try std.process.run(std.testing.allocator, io, .{ .argv = &.{ exe, "selfhost/lexer.nox" } });
+    defer std.testing.allocator.free(r3.stdout);
+    defer std.testing.allocator.free(r3.stderr);
+    if (r3.term != .exited or r3.term.exited != 0 or r3.stderr.len != 0) {
+        std.debug.print("sizinti/hata raporu:\n{s}\n", .{r3.stderr});
+        return error.TestUnexpectedResult;
+    }
+}
+
+// noxc-nightly Aşama 2.C değişmez kural (bellek-uyumlu): Nox parser'ı (başarı + hata yolları + döküm) çok kez çalışıp çalışma zamanı yıkılır; Debug çalışma zamanının sızıntı raporu boş olmalı.
+test "selfhost parser: tekrarli calistirma sizinti/cifte serbest birakma uretmez (Debug calisma zamani)" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const gen = std.process.run(std.testing.allocator, io, .{ .argv = &.{ "python3", "scripts/gen_selfhost_parser.py", "--check" } }) catch return error.SkipZigTest;
+    defer std.testing.allocator.free(gen.stdout);
+    defer std.testing.allocator.free(gen.stderr);
+    if (gen.term != .exited or gen.term.exited != 0) {
+        std.debug.print("parser.nox guncel degil: {s}{s}\n", .{ gen.stdout, gen.stderr });
+        return error.TestUnexpectedResult;
+    }
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const dir = buf[0..try tmp.dir.realPath(io, &buf)];
+    const obj = try std.fmt.allocPrint(a, "{s}/parser.o", .{dir});
+    const r1 = std.process.run(std.testing.allocator, io, .{ .argv = &.{ "zig-out/bin/noxc", "build", "--selfhost-obj", "-o", obj, "selfhost/selfhost.nox" } }) catch return error.SkipZigTest;
+    defer std.testing.allocator.free(r1.stdout);
+    defer std.testing.allocator.free(r1.stderr);
+    if (r1.term != .exited or r1.term.exited != 0) {
+        if (std.mem.indexOf(u8, r1.stderr, "needs the native LLVM backend") != null) return error.SkipZigTest;
+        std.debug.print("selfhost.nox derlenemedi: {s}\n", .{r1.stderr});
+        return error.TestUnexpectedResult;
+    }
+    const exe = try std.fmt.allocPrint(a, "{s}/h", .{dir});
+    const femit = try std.fmt.allocPrint(a, "-femit-bin={s}", .{exe});
+    const r2 = std.process.run(std.testing.allocator, io, .{ .argv = &.{ "zig", "build-exe", "selfhost/tests/parser_leak_harness.zig", obj, "zig-out/lib/noxrt.o", "-lc", "-OReleaseSafe", femit } }) catch return error.SkipZigTest;
     defer std.testing.allocator.free(r2.stdout);
     defer std.testing.allocator.free(r2.stderr);
     if (r2.term != .exited or r2.term.exited != 0) {
@@ -228,4 +272,3 @@ test "selfhost ast_schema: uretilmis dosya guncel ve birlesik giris derlenir" {
         return error.TestUnexpectedResult;
     }
 }
-

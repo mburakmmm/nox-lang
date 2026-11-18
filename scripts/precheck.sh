@@ -15,6 +15,7 @@ step "ayrılmış semboller";                              "$PY" scripts/check_r
 step "fixture kaydı (yeni codegen_cases fixture'ı bir test dosyasında anılmalı)"; "$PY" scripts/check_fixture_registration.py
 step "selfhost/lexer.nox güncel mi (token türleri, anahtar sözcükler, Unicode tabloları)"; "$PY" scripts/gen_selfhost_lexer.py --check
 step "selfhost/ast_schema.nox güncel mi (ast.zig yansımasından)"; "$PY" scripts/gen_selfhost_ast.py --check
+step "selfhost/parser.nox güncel mi (parser.nox.in + token/AST şeması)"; "$PY" scripts/gen_selfhost_parser.py --check
 step "WASM http stub uyumu";                            "$PY" scripts/check_wasm_http_stubs.py
 step "WASM ABI tablosu eksiksizliği";                    "$PY" scripts/check_wasm_abi_table.py
 step "SBOM üreteci";                                    "$PY" scripts/gen_sbom.py --check v0.0.0-ci

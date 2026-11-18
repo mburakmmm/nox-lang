@@ -1,0 +1,3530 @@
+# noxc-nightly Aşama 2: Nox parser'ı (compiler/parser/parser.zig'in birebir portu). Bu dosya ŞABLONDUR: `scripts/gen_selfhost_parser.py`
+# K/T/O/E/SZ yer tutucularını (token türü, birleşim etiketi, alan ofseti, enum sırası, yapı boyutu) doldurup
+# `selfhost/parser.nox`u yazar (elle düzenlenen kaynak BU dosyadır).
+#
+# Temsil (docs: project/selfhost-ast-tasarimi-2026-11.md): AST düz dizilerdedir (`Ast`: n/l/sb/sp). Dize = (x, y) çifti, burada tek `int`e paketlenir:
+# `pk(x, y) = x * 2^32 + y` (x >= 0: kaynak [x, y); x < 0: `sb[-x-1 : -x-1+y]`); -1 = yok. Düğüm başvurusu = `n` indeksi (-1 = null).
+# Hata: istisna (`ErrUnexpected`/`ErrNumber`/`ErrRecursion`); tanılama (`last_diagnostic`) `P.dg_*` alanlarındadır.
+{{FROM_AST}}
+from lexer import Lx, lex
+
+class ParseError(Exception):
+    pass
+
+class ErrUnexpected(ParseError):
+    pass
+
+class ErrNumber(ParseError):
+    pass
+
+class ErrRecursion(ParseError):
+    pass
+
+class P:
+    a: Ast
+    tk: list[int]
+    pos: int
+    ntk: int
+    depth: int
+    dg_on: int
+    dg_exp: int
+    dg_found: int
+    dg_sb: int
+    dg_eb: int
+    dg_sl: int
+    dg_sc: int
+    dg_el: int
+    dg_ec: int
+    dg_note: str
+    match_counter: int
+    else_counter: int
+    with_counter: int
+    tuple_counter: int
+    extra: list[int]
+    nonl: list[int]
+    has_nonl: bool
+    glob: list[int]
+    has_glob: bool
+    ex_on: bool
+    ex_bind: int
+    ex_synth: bool
+    lp_conds: list[int]
+    lp_pre: list[int]
+    lp_bn: list[int]
+    lp_bv: list[int]
+    cov: list[int]
+
+    def __init__(self, a: Ast, tk: list[int]) -> None:
+        self.a = a
+        self.tk = tk
+        self.pos = 0
+        self.ntk = len(tk) // 5
+        self.depth = 0
+        self.dg_on = 0
+        self.dg_exp = -1
+        self.dg_found = 0
+        self.dg_sb = 0
+        self.dg_eb = 0
+        self.dg_sl = 0
+        self.dg_sc = 0
+        self.dg_el = 0
+        self.dg_ec = 0
+        self.dg_note = ""
+        self.match_counter = 0
+        self.else_counter = 0
+        self.with_counter = 0
+        self.tuple_counter = 0
+        self.extra = []
+        self.nonl = []
+        self.has_nonl = False
+        self.glob = []
+        self.has_glob = False
+        self.ex_on = False
+        self.ex_bind = -1
+        self.ex_synth = False
+        self.lp_conds = []
+        self.lp_pre = []
+        self.lp_bn = []
+        self.lp_bv = []
+        self.cov = []
+
+# --- dize başvurusu (paketli çift) ---
+def pk(x: int, y: int) -> int:
+    return x * 4294967296 + y
+
+def pkx(v: int) -> int:
+    return v >> 32
+
+def pky(v: int) -> int:
+    return v & 4294967295
+
+# Sentezlenmiş dize: baytları `sb`ye yazar.
+def syn(a: Ast, s: str) -> int:
+    off: int = len(a.sb)
+    for i in range(len(s)):
+        a.sb.append(ord(s[i]))
+    return pk(0 - off - 1, len(s))
+
+def sref_len(v: int) -> int:
+    x: int = pkx(v)
+    if x >= 0:
+        return pky(v) - x
+    return pky(v)
+
+def sref_byte(a: Ast, v: int, i: int) -> int:
+    x: int = pkx(v)
+    if x >= 0:
+        return at(a.src, x + i)
+    return a.sb[0 - x - 1 + i]
+
+def sref_eq(a: Ast, v: int, s: str) -> bool:
+    n: int = sref_len(v)
+    if n != len(s):
+        return False
+    for i in range(n):
+        if sref_byte(a, v, i) != ord(s[i]):
+            return False
+    return True
+
+def sref_eq2(a: Ast, u: int, v: int) -> bool:
+    n: int = sref_len(u)
+    if n != sref_len(v):
+        return False
+    for i in range(n):
+        if sref_byte(a, u, i) != sref_byte(a, v, i):
+            return False
+    return True
+
+# `xs` içindeki düğüm kimliklerini (ya da iki sözcüklü dize çiftlerini) ortak liste tablosuna yazar; başlangıç indeksini döner.
+def sl(a: Ast, xs: list[int]) -> int:
+    st: int = len(a.l)
+    for v in xs:
+        a.l.append(v)
+    return st
+
+# --- belirteç erişimi (belirteç başına 5 tamsayı: tür, satır, sütun, başlangıç, bitiş) ---
+def kd(p: P) -> int:
+    return p.tk[p.pos * 5]
+
+def kd_at(p: P, i: int) -> int:
+    return p.tk[i * 5]
+
+def t_s(p: P, i: int) -> int:
+    return p.tk[i * 5 + 3]
+
+def t_e(p: P, i: int) -> int:
+    return p.tk[i * 5 + 4]
+
+def tstr(p: P, i: int) -> int:
+    return pk(p.tk[i * 5 + 3], p.tk[i * 5 + 4])
+
+def tok_is(p: P, i: int, s: str) -> bool:
+    return sref_eq(p.a, tstr(p, i), s)
+
+def adv(p: P) -> int:
+    i: int = p.pos
+    if p.pos + 1 < p.ntk:
+        p.pos = p.pos + 1
+    return i
+
+def chk(p: P, k: int) -> bool:
+    return p.tk[p.pos * 5] == k
+
+def mtc(p: P, k: int) -> bool:
+    if p.tk[p.pos * 5] == k:
+        adv(p)
+        return True
+    return False
+
+def nxt_kind(p: P) -> int:
+    return p.tk[(p.pos + 1) * 5]
+
+# `tokens[pos + 1]` var mı (`pos + 1 < len`).
+def has_nxt(p: P) -> bool:
+    return p.pos + 1 < p.ntk
+
+# Tanılama (Zig `last_diagnostic`): bulunan tür, `ti` belirtecinin span'i; beklenen tür (-1: yok) ve not isteğe bağlı.
+def set_diag(p: P, expected: int, found: int, ti: int, note: str) -> None:
+    b: int = ti * 5
+    p.dg_on = 1
+    p.dg_exp = expected
+    p.dg_found = found
+    p.dg_sb = p.tk[b + 3]
+    p.dg_eb = p.tk[b + 4]
+    p.dg_sl = p.tk[b + 1]
+    p.dg_sc = p.tk[b + 2]
+    p.dg_el = p.tk[b + 1]
+    p.dg_ec = p.tk[b + 2] + (p.tk[b + 4] - p.tk[b + 3])
+    p.dg_note = note
+
+def fail_cur(p: P, note: str) -> int:
+    set_diag(p, -1, kd(p), p.pos, note)
+    raise ErrUnexpected("")
+    return 0
+
+def expect(p: P, k: int) -> int:
+    if p.tk[p.pos * 5] == k:
+        return adv(p)
+    set_diag(p, k, kd(p), p.pos, "")
+    raise ErrUnexpected("")
+    return 0
+
+def enter_rec(p: P) -> None:
+    p.depth = p.depth + 1
+    if p.depth > 200:
+        set_diag(p, -1, kd(p), p.pos, "")
+        raise ErrRecursion("")
+
+def exit_rec(p: P) -> None:
+    p.depth = p.depth - 1
+
+# --- span (belirteç aralığı -> Span düğümü) ---
+def span_tok(p: P, i: int) -> int:
+    t: list[int] = p.tk
+    b: int = i * 5
+    return mk_Span(p.a, t[b + 3], t[b + 4], t[b + 1], t[b + 2], t[b + 1], t[b + 2] + (t[b + 4] - t[b + 3]))
+
+def span_toks(p: P, i: int, j: int) -> int:
+    t: list[int] = p.tk
+    b: int = i * 5
+    c: int = j * 5
+    return mk_Span(p.a, t[b + 3], t[c + 4], t[b + 1], t[b + 2], t[c + 1], t[c + 2] + (t[c + 4] - t[c + 3]))
+
+def reg_span(p: P, id: int, sp: int) -> None:
+    p.a.sp_ids.append(id)
+    p.a.sp_vals.append(sp)
+
+# --- ifade düğümü yardımcıları ---
+def ex_ident(a: Ast, s: int) -> int:
+    return mk_Expr_identifier(a, pkx(s), pky(s))
+
+def ex_ident_lit(a: Ast, s: str) -> int:
+    v: int = syn(a, s)
+    return mk_Expr_identifier(a, pkx(v), pky(v))
+
+def ex_str(a: Ast, s: int) -> int:
+    return mk_Expr_string_lit(a, pkx(s), pky(s))
+
+def ex_str_lit(a: Ast, s: str) -> int:
+    v: int = syn(a, s)
+    return mk_Expr_string_lit(a, pkx(v), pky(v))
+
+def ex_bin(a: Ast, op: int, l: int, r: int) -> int:
+    return mk_Expr_binary(a, mk_Binary(a, op, l, r, 0, 0, 0, 0))
+
+def ex_bin_f(a: Ast, op: int, l: int, r: int, is_form: int, fstring: int, spread: int) -> int:
+    return mk_Expr_binary(a, mk_Binary(a, op, l, r, is_form, fstring, 0, spread))
+
+def ex_un(a: Ast, op: int, operand: int) -> int:
+    return mk_Expr_unary(a, mk_Unary(a, op, operand))
+
+def ex_attr(a: Ast, obj: int, attr: int) -> int:
+    return mk_Expr_attribute(a, mk_Attribute(a, obj, pkx(attr), pky(attr)))
+
+def ex_index(a: Ast, obj: int, idx: int) -> int:
+    return mk_Expr_index(a, mk_Index(a, obj, idx))
+
+# `callee(args...)`; args = düğüm kimlikleri.
+def ex_call(a: Ast, callee: int, args: list[int], fstring: int, set_lit: int, spread_lit: int) -> int:
+    st: int = sl(a, args)
+    return mk_Expr_call(a, mk_Call(a, callee, st, len(args), fstring, set_lit, {{NONE}}, 0, 0, spread_lit))
+
+def ex_call1(a: Ast, callee_name: str, arg: int, fstring: int) -> int:
+    args: list[int] = [arg]
+    return ex_call(a, ex_ident_lit(a, callee_name), args, fstring, 0, 0)
+
+def e_tag(a: Ast, e: int) -> int:
+    return a.n[e]
+
+def e_pay(a: Ast, e: int) -> int:
+    return a.n[e + 1]
+
+def is_pure(a: Ast, e: int) -> bool:
+    t: int = a.n[e]
+    if t == {{T:Expr.identifier}} or t == {{T:Expr.int_lit}} or t == {{T:Expr.float_lit}} or t == {{T:Expr.bool_lit}} or t == {{T:Expr.string_lit}} or t == {{T:Expr.none_lit}}:
+        return True
+    pay: int = a.n[e + 1]
+    if t == {{T:Expr.attribute}}:
+        return is_pure(a, a.n[pay + {{O:Attribute.obj}}])
+    if t == {{T:Expr.index}}:
+        return is_pure(a, a.n[pay + {{O:Index.obj}}]) and is_pure(a, a.n[pay + {{O:Index.index}}])
+    if t == {{T:Expr.unary}}:
+        return is_pure(a, a.n[pay + {{O:Unary.operand}}])
+    if t == {{T:Expr.binary}}:
+        return is_pure(a, a.n[pay + {{O:Binary.left}}]) and is_pure(a, a.n[pay + {{O:Binary.right}}])
+    return False
+
+# Zig `dupPure`: saf ifadenin yapısal kopyası (yapraklar paylaşılır; düğüm kimliği değişmez, span taşımazlar).
+def dup_pure(a: Ast, e: int) -> int:
+    t: int = a.n[e]
+    pay: int = a.n[e + 1]
+    if t == {{T:Expr.attribute}}:
+        o: int = dup_pure(a, a.n[pay + {{O:Attribute.obj}}])
+        return mk_Expr_attribute(a, mk_Attribute(a, o, a.n[pay + {{O:Attribute.attr}}], a.n[pay + {{O:Attribute.attr}} + 1]))
+    if t == {{T:Expr.index}}:
+        o2: int = dup_pure(a, a.n[pay + {{O:Index.obj}}])
+        i2: int = dup_pure(a, a.n[pay + {{O:Index.index}}])
+        return mk_Expr_index(a, mk_Index(a, o2, i2))
+    if t == {{T:Expr.unary}}:
+        u: int = dup_pure(a, a.n[pay + {{O:Unary.operand}}])
+        return mk_Expr_unary(a, mk_Unary(a, a.n[pay + {{O:Unary.op}}], u))
+    if t == {{T:Expr.binary}}:
+        l2: int = dup_pure(a, a.n[pay + {{O:Binary.left}}])
+        r2: int = dup_pure(a, a.n[pay + {{O:Binary.right}}])
+        return mk_Expr_binary(a, mk_Binary(a, a.n[pay + {{O:Binary.op}}], l2, r2, a.n[pay + {{O:Binary.is_form}}], 0, 0, 0))
+    return e
+
+# Bir ifade düğümünün (span'siz) yüzeysel kopyası: Zig'de bir dilim yuvasından değer kopyalamanın karşılığı (span kimliğe bağlı olduğundan kopya span taşımaz).
+def clone_expr(a: Ast, e: int) -> int:
+    t: int = a.n[e]
+    id: int = len(a.n)
+    a.n.append(t)
+    if t == {{T:Expr.none_lit}}:
+        return id
+    a.n.append(a.n[e + 1])
+    if t == {{T:Expr.string_lit}} or t == {{T:Expr.identifier}} or t == {{T:Expr.list_lit}} or t == {{T:Expr.dict_lit}} or t == {{T:Expr.tuple_lit}}:
+        a.n.append(a.n[e + 2])
+    return id
+
+# --- ifade ayrıştırma ---
+def parse_expr_or_tuple(p: P) -> int:
+    first: int = parse_expr(p)
+    if not chk(p, {{K:comma}}):
+        return first
+    elems: list[int] = [first]
+    while mtc(p, {{K:comma}}):
+        if chk(p, {{K:newline}}):
+            break
+        elems.append(parse_expr(p))
+    a: Ast = p.a
+    st: int = sl(a, elems)
+    return mk_Expr_tuple_lit(a, st, len(elems))
+
+def parse_expr(p: P) -> int:
+    enter_rec(p)
+    a: Ast = p.a
+    if chk(p, {{K:identifier}}) and tok_is(p, p.pos, "yield") and p.pos + 1 < p.ntk:
+        nk: int = nxt_kind(p)
+        if nk != {{K:assign}} and nk != {{K:dot}} and nk != {{K:colon}}:
+            adv(p)
+            bare: bool = nk == {{K:newline}} or nk == {{K:r_paren}} or nk == {{K:comma}} or nk == {{K:r_bracket}}
+            arg: int = 0
+            if bare:
+                arg = mk_Expr_none_lit(a)
+            else:
+                arg = parse_expr(p)
+            exit_rec(p)
+            return ex_call1(a, "__nox_yield_expr", arg, 0)
+    if mtc(p, {{K:kw_lambda}}):
+        params: list[int] = []
+        if not chk(p, {{K:colon}}):
+            t0: int = expect(p, {{K:identifier}})
+            params.append(t_s(p, t0))
+            params.append(t_e(p, t0))
+            while mtc(p, {{K:comma}}):
+                t1: int = expect(p, {{K:identifier}})
+                params.append(t_s(p, t1))
+                params.append(t_e(p, t1))
+        expect(p, {{K:colon}})
+        body: int = parse_expr(p)
+        pst: int = sl(a, params)
+        exit_rec(p)
+        return mk_Expr_lambda(a, mk_Lambda(a, pst, len(params) // 2, body))
+    value: int = parse_or(p)
+    if mtc(p, {{K:kw_if}}):
+        cond: int = parse_or(p)
+        expect(p, {{K:kw_else}})
+        else_e: int = parse_expr(p)
+        exit_rec(p)
+        return mk_Expr_ternary(a, mk_Ternary(a, cond, value, else_e))
+    exit_rec(p)
+    return value
+
+def parse_or(p: P) -> int:
+    left: int = parse_and(p)
+    while mtc(p, {{K:kw_or}}):
+        right: int = parse_and(p)
+        left = ex_bin(p.a, {{E:BinaryOp.or_}}, left, right)
+    return left
+
+def parse_and(p: P) -> int:
+    left: int = parse_not(p)
+    while mtc(p, {{K:kw_and}}):
+        right: int = parse_not(p)
+        left = ex_bin(p.a, {{E:BinaryOp.and_}}, left, right)
+    return left
+
+def parse_not(p: P) -> int:
+    if mtc(p, {{K:kw_not}}):
+        enter_rec(p)
+        operand: int = parse_not(p)
+        exit_rec(p)
+        return ex_un(p.a, {{E:UnaryOp.not_}}, operand)
+    return parse_comparison(p)
+
+def parse_comparison(p: P) -> int:
+    a: Ast = p.a
+    left: int = parse_bit_or(p)
+    last_right: int = -1
+    while True:
+        if chk(p, {{K:kw_is}}):
+            adv(p)
+            negated: bool = mtc(p, {{K:kw_not}})
+            if not chk(p, {{K:kw_none}}):
+                set_diag(p, -1, kd(p), p.pos, "'is' can only be used with 'None' (x is None / x is not None)")
+                raise ErrUnexpected("")
+            adv(p)
+            none_box: int = mk_Expr_none_lit(a)
+            op0: int = {{E:BinaryOp.eq}}
+            if negated:
+                op0 = {{E:BinaryOp.ne}}
+            left = ex_bin_f(a, op0, left, none_box, 1, 0, 0)
+            continue
+        k: int = kd(p)
+        op: int = -1
+        if k == {{K:eq_eq}}:
+            op = {{E:BinaryOp.eq}}
+        elif k == {{K:not_eq}}:
+            op = {{E:BinaryOp.ne}}
+        elif k == {{K:lt}}:
+            op = {{E:BinaryOp.lt}}
+        elif k == {{K:lt_eq}}:
+            op = {{E:BinaryOp.le}}
+        elif k == {{K:gt}}:
+            op = {{E:BinaryOp.gt}}
+        elif k == {{K:gt_eq}}:
+            op = {{E:BinaryOp.ge}}
+        elif k == {{K:kw_in}}:
+            op = {{E:BinaryOp.in_}}
+        elif k == {{K:kw_not}}:
+            if p.pos + 1 < p.ntk and nxt_kind(p) == {{K:kw_in}}:
+                adv(p)
+                op = {{E:BinaryOp.not_in}}
+        if op < 0:
+            break
+        op_tok: int = adv(p)
+        right_box: int = parse_bit_or(p)
+        if last_right >= 0:
+            if not is_pure(a, last_right):
+                set_diag(p, -1, kd_at(p, op_tok), op_tok, "")
+                raise ErrUnexpected("")
+            cmp: int = ex_bin(a, op, dup_pure(a, last_right), right_box)
+            left = ex_bin_f(a, {{E:BinaryOp.and_}}, left, cmp, 1, 0, 0)
+        else:
+            left = ex_bin(a, op, left, right_box)
+        last_right = right_box
+    return left
+
+def parse_bit_or(p: P) -> int:
+    left: int = parse_bit_xor(p)
+    while mtc(p, {{K:pipe}}):
+        right: int = parse_bit_xor(p)
+        left = ex_bin(p.a, {{E:BinaryOp.bit_or}}, left, right)
+    return left
+
+def parse_bit_xor(p: P) -> int:
+    left: int = parse_bit_and(p)
+    while mtc(p, {{K:caret}}):
+        right: int = parse_bit_and(p)
+        left = ex_bin(p.a, {{E:BinaryOp.bit_xor}}, left, right)
+    return left
+
+def parse_bit_and(p: P) -> int:
+    left: int = parse_shift(p)
+    while mtc(p, {{K:amp}}):
+        right: int = parse_shift(p)
+        left = ex_bin(p.a, {{E:BinaryOp.bit_and}}, left, right)
+    return left
+
+def parse_shift(p: P) -> int:
+    left: int = parse_add_sub(p)
+    while True:
+        k: int = kd(p)
+        op: int = -1
+        if k == {{K:lt_lt}}:
+            op = {{E:BinaryOp.shl}}
+        elif k == {{K:gt_gt}}:
+            op = {{E:BinaryOp.shr}}
+        if op < 0:
+            break
+        adv(p)
+        right: int = parse_add_sub(p)
+        left = ex_bin(p.a, op, left, right)
+    return left
+
+def parse_add_sub(p: P) -> int:
+    left: int = parse_mul_div(p)
+    while True:
+        k: int = kd(p)
+        op: int = -1
+        if k == {{K:plus}}:
+            op = {{E:BinaryOp.add}}
+        elif k == {{K:minus}}:
+            op = {{E:BinaryOp.sub}}
+        if op < 0:
+            break
+        adv(p)
+        right: int = parse_mul_div(p)
+        left = ex_bin(p.a, op, left, right)
+    return left
+
+def parse_mul_div(p: P) -> int:
+    left: int = parse_unary(p)
+    while True:
+        k: int = kd(p)
+        op: int = -1
+        if k == {{K:star}}:
+            op = {{E:BinaryOp.mul}}
+        elif k == {{K:slash}}:
+            op = {{E:BinaryOp.div}}
+        elif k == {{K:slash_slash}}:
+            op = {{E:BinaryOp.floordiv}}
+        elif k == {{K:percent}}:
+            op = {{E:BinaryOp.mod}}
+        if op < 0:
+            break
+        adv(p)
+        right: int = parse_unary(p)
+        left = ex_bin(p.a, op, left, right)
+    return left
+
+def parse_unary(p: P) -> int:
+    a: Ast = p.a
+    if mtc(p, {{K:minus}}):
+        if kd(p) == {{K:int_lit}} and tok_is(p, p.pos, "9223372036854775808"):
+            nk: int = {{K:eof}}
+            if p.pos + 1 < p.ntk:
+                nk = nxt_kind(p)
+            if nk != {{K:star_star}} and nk != {{K:dot}} and nk != {{K:l_paren}} and nk != {{K:l_bracket}}:
+                adv(p)
+                return mk_Expr_int_lit(a, -9223372036854775807 - 1)
+        enter_rec(p)
+        operand: int = parse_unary(p)
+        exit_rec(p)
+        return ex_un(a, {{E:UnaryOp.neg}}, operand)
+    if mtc(p, {{K:tilde}}):
+        enter_rec(p)
+        operand2: int = parse_unary(p)
+        exit_rec(p)
+        return ex_un(a, {{E:UnaryOp.invert}}, operand2)
+    if mtc(p, {{K:kw_await}}):
+        enter_rec(p)
+        operand3: int = parse_unary(p)
+        exit_rec(p)
+        return mk_Expr_await_expr(a, operand3)
+    if mtc(p, {{K:kw_spawn}}):
+        enter_rec(p)
+        operand4: int = parse_unary(p)
+        exit_rec(p)
+        return mk_Expr_spawn_expr(a, operand4)
+    return parse_power(p)
+
+def parse_power(p: P) -> int:
+    base: int = parse_postfix(p)
+    if mtc(p, {{K:star_star}}):
+        exponent: int = parse_unary(p)
+        return ex_bin(p.a, {{E:BinaryOp.pow}}, base, exponent)
+    return base
+
+# --- tip ifadeleri ---
+def parse_type_expr(p: P) -> int:
+    a: Ast = p.a
+    base: int = parse_base_type_expr(p)
+    if mtc(p, {{K:pipe}}):
+        expect(p, {{K:kw_none}})
+        return mk_TypeExpr_optional(a, base)
+    return base
+
+def type_args_tail(p: P) -> list[int]:
+    args: list[int] = [parse_type_expr(p)]
+    while mtc(p, {{K:comma}}):
+        args.append(parse_type_expr(p))
+    expect(p, {{K:r_bracket}})
+    return args
+
+def parse_base_type_expr(p: P) -> int:
+    a: Ast = p.a
+    if chk(p, {{K:kw_none}}):
+        adv(p)
+        v: int = syn(a, "None")
+        return mk_TypeExpr_simple(a, pkx(v), pky(v))
+    if mtc(p, {{K:l_paren}}):
+        params: list[int] = []
+        if not chk(p, {{K:r_paren}}):
+            params.append(parse_type_expr(p))
+            while mtc(p, {{K:comma}}):
+                params.append(parse_type_expr(p))
+        expect(p, {{K:r_paren}})
+        expect(p, {{K:arrow}})
+        ret: int = parse_type_expr(p)
+        pst: int = sl(a, params)
+        return mk_TypeExpr_func_type(a, mk_FuncTypeExpr(a, pst, len(params), ret))
+    nt: int = expect(p, {{K:identifier}})
+    name: int = tstr(p, nt)
+    if mtc(p, {{K:l_bracket}}):
+        args: list[int] = type_args_tail(p)
+        n: int = len(args)
+        gname: int = name
+        if sref_eq(a, name, "set") and n == 1:
+            gname = syn(a, "__nox_Set")
+        if n == 1 and sref_eq(a, name, "Iterable"):
+            gname = syn(a, "list")
+        if n == 1 and (sref_eq(a, name, "Iterator") or sref_eq(a, name, "Generator") or sref_eq(a, name, "AsyncIterator") or sref_eq(a, name, "AsyncGenerator")):
+            gname = syn(a, "__nox_Gen")
+        if (n == 2 or n == 3) and (sref_eq(a, name, "Generator") or sref_eq(a, name, "AsyncGenerator")):
+            gname = syn(a, "__nox_GenS")
+            n = 2
+        ast_: int = sl(a, args)
+        return mk_TypeExpr_generic(a, mk_Generic(a, pkx(gname), pky(gname), ast_, n))
+    if chk(p, {{K:dot}}):
+        segs: list[int] = [pkx(name), pky(name)]
+        while mtc(p, {{K:dot}}):
+            sg: int = expect(p, {{K:identifier}})
+            segs.append(t_s(p, sg))
+            segs.append(t_e(p, sg))
+        if mtc(p, {{K:l_bracket}}):
+            args2: list[int] = type_args_tail(p)
+            # `a.b.c` ad olarak birleştirilir (sentezlenmiş).
+            off: int = len(a.sb)
+            nseg: int = len(segs) // 2
+            for si in range(nseg):
+                if si != 0:
+                    a.sb.append(46)
+                s0: int = segs[si * 2]
+                s1: int = segs[si * 2 + 1]
+                for bi in range(s0, s1):
+                    a.sb.append(at(a.src, bi))
+            jl: int = len(a.sb) - off
+            ast2: int = sl(a, args2)
+            return mk_TypeExpr_generic(a, mk_Generic(a, 0 - off - 1, jl, ast2, len(args2)))
+        sst: int = sl(a, segs)
+        return mk_TypeExpr_qualified(a, sst, len(segs) // 2)
+    return mk_TypeExpr_simple(a, pkx(name), pky(name))
+
+# --- çağrı argümanı / alt dizin / sonek ---
+# `sw[0]` Zig'deki `saw_kw: *bool`.
+def parse_call_arg(p: P, sw: list[int]) -> int:
+    a: Ast = p.a
+    if chk(p, {{K:star}}):
+        if sw[0] != 0:
+            set_diag(p, -1, kd(p), p.pos, "")
+            raise ErrUnexpected("")
+        adv(p)
+        inner: int = parse_expr(p)
+        nm: int = syn(a, "*")
+        return mk_Expr_kwarg(a, mk_Kwarg(a, pkx(nm), pky(nm), inner))
+    if chk(p, {{K:star_star}}):
+        adv(p)
+        inner2: int = parse_expr(p)
+        sw[0] = 1
+        nm2: int = syn(a, "**")
+        return mk_Expr_kwarg(a, mk_Kwarg(a, pkx(nm2), pky(nm2), inner2))
+    if chk(p, {{K:identifier}}) and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:assign}}:
+        nti: int = adv(p)
+        adv(p)
+        value: int = parse_expr(p)
+        sw[0] = 1
+        return mk_Expr_kwarg(a, mk_Kwarg(a, t_s(p, nti), t_e(p, nti), value))
+    if sw[0] != 0:
+        set_diag(p, -1, kd(p), p.pos, "")
+        raise ErrUnexpected("")
+    return parse_expr(p)
+
+def parse_comp_clauses(p: P) -> list[int]:
+    a: Ast = p.a
+    out: list[int] = []
+    while True:
+        if mtc(p, {{K:kw_for}}):
+            nt: int = expect(p, {{K:identifier}})
+            expect(p, {{K:kw_in}})
+            it: int = parse_or(p)
+            out.append(mk_CompClause_for_clause(a, mk_CompForClause(a, t_s(p, nt), t_e(p, nt), it)))
+        elif mtc(p, {{K:kw_if}}):
+            out.append(mk_CompClause_if_clause(a, parse_or(p)))
+        else:
+            break
+    return out
+
+def parse_subscript_tail(p: P, obj: int) -> int:
+    a: Ast = p.a
+    lo: int = -1
+    if not chk(p, {{K:colon}}):
+        first: int = parse_expr(p)
+        if not chk(p, {{K:colon}}):
+            expect(p, {{K:r_bracket}})
+            return ex_index(a, obj, first)
+        lo = first
+    expect(p, {{K:colon}})
+    hi: int = -1
+    step: int = -1
+    if not chk(p, {{K:colon}}) and not chk(p, {{K:r_bracket}}):
+        hi = parse_expr(p)
+    if mtc(p, {{K:colon}}):
+        if not chk(p, {{K:r_bracket}}):
+            step = parse_expr(p)
+    expect(p, {{K:r_bracket}})
+    return mk_Expr_slice(a, mk_Slice(a, obj, lo, hi, step))
+
+# `Name[T1, T2](args)` jenerik kurucu ayrıştırması; deneme başarısızsa -1 ve konum geri sarılır.
+def try_generic_tail(p: P, name: int) -> int:
+    a: Ast = p.a
+    checkpoint: int = p.pos
+    saved_depth: int = p.depth
+    expect(p, {{K:l_bracket}})
+    targs: list[int] = []
+    ok: bool = True
+    try:
+        targs.append(parse_type_expr(p))
+    except ErrUnexpected:
+        ok = False
+    except ErrNumber:
+        ok = False
+    if not ok:
+        p.pos = checkpoint
+        p.depth = saved_depth
+        return -1
+    committed: bool = False
+    while mtc(p, {{K:comma}}):
+        committed = True
+        targs.append(parse_type_expr(p))
+    if not chk(p, {{K:r_bracket}}):
+        if committed:
+            raise ErrUnexpected("")
+        p.pos = checkpoint
+        return -1
+    adv(p)
+    if not chk(p, {{K:l_paren}}):
+        if committed:
+            raise ErrUnexpected("")
+        p.pos = checkpoint
+        return -1
+    expect(p, {{K:l_paren}})
+    args: list[int] = []
+    sw: list[int] = [0]
+    if not chk(p, {{K:r_paren}}):
+        args.append(parse_call_arg(p, sw))
+        while mtc(p, {{K:comma}}):
+            args.append(parse_call_arg(p, sw))
+    expect(p, {{K:r_paren}})
+    tst: int = sl(a, targs)
+    ast_: int = sl(a, args)
+    return mk_Expr_generic_construct(a, mk_GenericConstruct(a, pkx(name), pky(name), tst, len(targs), ast_, len(args), {{NONE}}, 0))
+
+def parse_postfix(p: P) -> int:
+    a: Ast = p.a
+    expr: int = parse_primary(p)
+    while True:
+        if mtc(p, {{K:dot}}):
+            at_: int = expect(p, {{K:identifier}})
+            expr = ex_attr(a, expr, tstr(p, at_))
+        elif mtc(p, {{K:l_paren}}):
+            args: list[int] = []
+            arg_first: list[int] = []
+            arg_last: list[int] = []
+            sw: list[int] = [0]
+            if not chk(p, {{K:r_paren}}):
+                st0: int = p.pos
+                args.append(parse_call_arg(p, sw))
+                if chk(p, {{K:kw_for}}) and sw[0] == 0:
+                    clauses: list[int] = parse_comp_clauses(p)
+                    cst: int = sl(a, clauses)
+                    args[0] = mk_Expr_list_comp(a, mk_ListComp(a, args[0], cst, len(clauses), -1, 1))
+                arg_first.append(st0)
+                arg_last.append(p.pos - 1)
+                while mtc(p, {{K:comma}}):
+                    st1: int = p.pos
+                    args.append(parse_call_arg(p, sw))
+                    arg_first.append(st1)
+                    arg_last.append(p.pos - 1)
+            expect(p, {{K:r_paren}})
+            for ai in range(len(args)):
+                reg_span(p, args[ai], span_toks(p, arg_first[ai], arg_last[ai]))
+            et: int = a.n[expr]
+            is_fmt: bool = False
+            if et == {{T:Expr.attribute}}:
+                apay: int = a.n[expr + 1]
+                aobj: int = a.n[apay + {{O:Attribute.obj}}]
+                if a.n[aobj] == {{T:Expr.string_lit}} and sref_eq(a, pk(a.n[apay + {{O:Attribute.attr}}], a.n[apay + {{O:Attribute.attr}} + 1]), "format"):
+                    is_fmt = True
+                    expr = desugar_str_format(p, pk(a.n[aobj + 1], a.n[aobj + 2]), args)
+            if not is_fmt:
+                expr = ex_call(a, expr, args, 0, 0, 0)
+        elif chk(p, {{K:l_bracket}}) and a.n[expr] == {{T:Expr.identifier}}:
+            cname: int = pk(a.n[expr + 1], a.n[expr + 2])
+            ge: int = try_generic_tail(p, cname)
+            if ge >= 0:
+                expr = ge
+            else:
+                expect(p, {{K:l_bracket}})
+                expr = parse_subscript_tail(p, expr)
+        elif mtc(p, {{K:l_bracket}}):
+            expr = parse_subscript_tail(p, expr)
+        else:
+            break
+    return expr
+
+# `[ ... *x ... ]` -> `list + list ...` / `x.copy()` (Zig `buildSpreadList`).
+def build_spread_list(p: P, elems: list[int], stars: list[int]) -> int:
+    a: Ast = p.a
+    operands: list[int] = []
+    run: list[int] = []
+    for i in range(len(elems)):
+        if stars[i] != 0:
+            if len(run) > 0:
+                rst: int = sl(a, run)
+                operands.append(mk_Expr_list_lit(a, rst, len(run)))
+                run = []
+            operands.append(elems[i])
+        else:
+            run.append(elems[i])
+    if len(run) > 0:
+        rst2: int = sl(a, run)
+        operands.append(mk_Expr_list_lit(a, rst2, len(run)))
+    if len(operands) == 1:
+        callee: int = ex_attr(a, operands[0], syn(a, "copy"))
+        empty: list[int] = []
+        return ex_call(a, callee, empty, 0, 0, 1)
+    acc: int = operands[0]
+    for k in range(1, len(operands)):
+        acc = ex_bin_f(a, {{E:BinaryOp.add}}, acc, operands[k], 0, 0, 1)
+    return acc
+
+# `{k: v, **m, ...}` -> `__nox_dict_merge(...)`; `existing_*` önceden ayrıştırılmış çiftler (anahtar, değer ardışık).
+def parse_dict_with_spread(p: P, existing: list[int], has_existing: bool) -> int:
+    a: Ast = p.a
+    operands: list[int] = []
+    run: list[int] = []
+    if has_existing:
+        for v in existing:
+            run.append(v)
+        expect(p, {{K:comma}})
+    while not chk(p, {{K:r_brace}}):
+        if mtc(p, {{K:star_star}}):
+            if len(run) > 0:
+                operands.append(dict_lit_of(a, run))
+                run = []
+            operands.append(parse_expr(p))
+        else:
+            key: int = parse_expr(p)
+            expect(p, {{K:colon}})
+            value: int = parse_expr(p)
+            run.append(mk_DictPair(a, key, value))
+        if not mtc(p, {{K:comma}}):
+            break
+    expect(p, {{K:r_brace}})
+    if len(run) > 0:
+        operands.append(dict_lit_of(a, run))
+    callee: int = ex_ident_lit(a, "__nox_dict_merge")
+    return ex_call(a, callee, operands, 0, 0, 1)
+
+# `pairs`: DictPair düğüm kimlikleri.
+def dict_lit_of(a: Ast, pairs: list[int]) -> int:
+    st: int = sl(a, pairs)
+    return mk_Expr_dict_lit(a, st, len(pairs))
+
+# --- sayı değişmezleri (Zig `std.fmt.parseInt(i64, lexeme, 0)` / `parseFloat`) ---
+def digit_val(c: int) -> int:
+    if c >= 48 and c <= 57:
+        return c - 48
+    if c >= 97 and c <= 122:
+        return c - 97 + 10
+    if c >= 65 and c <= 90:
+        return c - 65 + 10
+    return 99
+
+# Geçersizse (ya da i64 taşarsa) -9223372036854775807 - 1 değil, `ok[0] = 0` döner.
+def parse_int_lexeme(a: Ast, s: int, e: int, ok: list[int]) -> int:
+    ok[0] = 0
+    n: int = e - s
+    if n == 0:
+        return 0
+    base: int = 10
+    st: int = s
+    if n > 2 and at(a.src, s) == 48:
+        c1: int = at(a.src, s + 1)
+        if c1 == 98 or c1 == 66:
+            base = 2
+            st = s + 2
+        elif c1 == 111 or c1 == 79:
+            base = 8
+            st = s + 2
+        elif c1 == 120 or c1 == 88:
+            base = 16
+            st = s + 2
+    if st >= e:
+        return 0
+    if at(a.src, st) == 95 or at(a.src, e - 1) == 95:
+        return 0
+    acc: int = 0
+    for i in range(st, e):
+        c: int = at(a.src, i)
+        if c == 95:
+            continue
+        d: int = digit_val(c)
+        if d >= base:
+            return 0
+        if acc > (9223372036854775807 - d) // base:
+            return 0
+        acc = acc * base + d
+    ok[0] = 1
+    return acc
+
+# Kaynak [s, e) aralığını `str`e çevirir (yalnızca kayan noktalı değişmezler için; kısa).
+def src_text(a: Ast, s: int, e: int) -> str:
+    out: str = ""
+    for i in range(s, e):
+        out = out + chr(at(a.src, i))
+    return out
+
+def float_bits(x: float) -> int:
+    tmp: list[int] = [0]
+    lowlevel:
+        pp: ptr[float] = ptr[float](ptr_to_int(ptr_of(tmp)))
+        ptr_write(pp, x)
+    return tmp[0]
+
+def parse_primary(p: P) -> int:
+    a: Ast = p.a
+    k: int = kd(p)
+    if k == {{K:int_lit}}:
+        t: int = adv(p)
+        ok: list[int] = [0]
+        v: int = parse_int_lexeme(a, t_s(p, t), t_e(p, t), ok)
+        if ok[0] == 0:
+            set_diag(p, -1, kd_at(p, t), t, "")
+            raise ErrNumber("")
+        return mk_Expr_int_lit(a, v)
+    if k == {{K:float_lit}}:
+        t2: int = adv(p)
+        fv: float = 0.0
+        try:
+            fv = float(src_text(a, t_s(p, t2), t_e(p, t2)))
+        except ValueError:
+            set_diag(p, -1, kd_at(p, t2), t2, "")
+            raise ErrNumber("")
+        return mk_Expr_float_lit(a, float_bits(fv))
+    if k == {{K:kw_true}}:
+        adv(p)
+        return mk_Expr_bool_lit(a, 1)
+    if k == {{K:kw_false}}:
+        adv(p)
+        return mk_Expr_bool_lit(a, 0)
+    if k == {{K:kw_none}}:
+        adv(p)
+        return mk_Expr_none_lit(a)
+    if k == {{K:string_lit}} or k == {{K:fstring_lit}}:
+        return parse_string_atoms(p)
+    if k == {{K:identifier}}:
+        t3: int = adv(p)
+        return ex_ident(a, tstr(p, t3))
+    if k == {{K:l_paren}}:
+        adv(p)
+        inner: int = parse_expr(p)
+        if chk(p, {{K:comma}}):
+            elems: list[int] = [inner]
+            while mtc(p, {{K:comma}}):
+                if chk(p, {{K:r_paren}}):
+                    break
+                elems.append(parse_expr(p))
+            expect(p, {{K:r_paren}})
+            est: int = sl(a, elems)
+            return mk_Expr_tuple_lit(a, est, len(elems))
+        expect(p, {{K:r_paren}})
+        return inner
+    if k == {{K:l_bracket}}:
+        adv(p)
+        elems2: list[int] = []
+        stars: list[int] = []
+        has_star: bool = False
+        if not chk(p, {{K:r_bracket}}):
+            first_star: bool = mtc(p, {{K:star}})
+            elems2.append(parse_expr(p))
+            stars.append(1 if first_star else 0)
+            has_star = first_star
+            if not first_star and chk(p, {{K:kw_for}}):
+                clauses: list[int] = parse_comp_clauses(p)
+                expect(p, {{K:r_bracket}})
+                cst: int = sl(a, clauses)
+                return mk_Expr_list_comp(a, mk_ListComp(a, elems2[0], cst, len(clauses), -1, 0))
+            while mtc(p, {{K:comma}}):
+                if chk(p, {{K:r_bracket}}):
+                    break
+                st2: bool = mtc(p, {{K:star}})
+                has_star = has_star or st2
+                elems2.append(parse_expr(p))
+                stars.append(1 if st2 else 0)
+        expect(p, {{K:r_bracket}})
+        if has_star:
+            return build_spread_list(p, elems2, stars)
+        lst: int = sl(a, elems2)
+        return mk_Expr_list_lit(a, lst, len(elems2))
+    if k == {{K:l_brace}}:
+        return parse_brace(p)
+    set_diag(p, -1, k, p.pos, "")
+    raise ErrUnexpected("")
+    return 0
+
+def parse_brace(p: P) -> int:
+    a: Ast = p.a
+    adv(p)
+    pairs: list[int] = []
+    if chk(p, {{K:star_star}}):
+        return parse_dict_with_spread(p, pairs, False)
+    if not chk(p, {{K:r_brace}}):
+        first_key: int = parse_expr(p)
+        if chk(p, {{K:comma}}) or chk(p, {{K:r_brace}}) or chk(p, {{K:kw_for}}):
+            lst: int = 0
+            if chk(p, {{K:kw_for}}):
+                clauses: list[int] = parse_comp_clauses(p)
+                cst: int = sl(a, clauses)
+                lst = mk_Expr_list_comp(a, mk_ListComp(a, first_key, cst, len(clauses), -1, 0))
+            else:
+                elems: list[int] = [first_key]
+                while mtc(p, {{K:comma}}):
+                    if chk(p, {{K:r_brace}}):
+                        break
+                    elems.append(parse_expr(p))
+                est: int = sl(a, elems)
+                lst = mk_Expr_list_lit(a, est, len(elems))
+            expect(p, {{K:r_brace}})
+            sargs: list[int] = [lst]
+            scallee: int = ex_ident_lit(a, "__nox_set_from_list")
+            return ex_call(a, scallee, sargs, 0, 1, 0)
+        expect(p, {{K:colon}})
+        first_value: int = parse_expr(p)
+        if chk(p, {{K:kw_for}}):
+            clauses2: list[int] = parse_comp_clauses(p)
+            expect(p, {{K:r_brace}})
+            cst2: int = sl(a, clauses2)
+            return mk_Expr_dict_comp(a, mk_DictComp(a, first_key, first_value, cst2, len(clauses2), -1))
+        pairs.append(mk_DictPair(a, first_key, first_value))
+        if chk(p, {{K:comma}}) and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:star_star}}:
+            return parse_dict_with_spread(p, pairs, True)
+        while mtc(p, {{K:comma}}):
+            if chk(p, {{K:r_brace}}):
+                break
+            if chk(p, {{K:star_star}}):
+                set_diag(p, -1, kd(p), p.pos, "")
+                raise ErrUnexpected("")
+            key: int = parse_expr(p)
+            expect(p, {{K:colon}})
+            value: int = parse_expr(p)
+            pairs.append(mk_DictPair(a, key, value))
+    expect(p, {{K:r_brace}})
+    return dict_lit_of(a, pairs)
+
+# --- dize değişmezleri ---
+# `v` dizesinin [s, e) göreli alt aralığı (Zig'de dilim alma).
+def sref_sub(v: int, s: int, e: int) -> int:
+    x: int = pkx(v)
+    if x >= 0:
+        return pk(x + s, x + e)
+    return pk(x - s, e - s)
+
+def bad_str(p: P, found: int, note: str) -> None:
+    set_diag(p, -1, found, p.pos - 1, note)
+    raise ErrUnexpected("")
+
+def hex_digit(c: int) -> int:
+    d: int = digit_val(c)
+    if d < 16:
+        return d
+    return -1
+
+# `\` kaçışı: `i` kaçışın başlangıcı (src mutlak indeksi), `[s, e)` iç aralık; çözülen baytları `a.sb`ye ekler, tüketilen bayt sayısını döner.
+def decode_escape_at(p: P, e: int, i: int) -> int:
+    a: Ast = p.a
+    esc: int = at(a.src, i + 1)
+    if esc == 120:
+        hi: int = -1
+        lo: int = -1
+        if i + 2 < e:
+            hi = hex_digit(at(a.src, i + 2))
+        if i + 3 < e:
+            lo = hex_digit(at(a.src, i + 3))
+        if hi < 0 or lo < 0:
+            bad_str(p, {{K:string_lit}}, "invalid '\\x' escape: it needs exactly two hexadecimal digits (for example \\x41)")
+        value: int = hi * 16 + lo
+        if value > 127:
+            bad_str(p, {{K:string_lit}}, "'\\x80'-'\\xFF' escapes are not supported: a str holds valid UTF-8, so write the character itself (for example \"é\")")
+        a.sb.append(value)
+        return 4
+    if esc == 117 or esc == 85:
+        digits: int = 4
+        if esc == 85:
+            digits = 8
+        cp: int = 0
+        ok: bool = i + 2 + digits <= e
+        if ok:
+            for k in range(digits):
+                d: int = hex_digit(at(a.src, i + 2 + k))
+                if d < 0:
+                    ok = False
+                    break
+                cp = cp * 16 + d
+        if (not ok) or cp > 1114111 or (cp >= 55296 and cp <= 57343):
+            bad_str(p, {{K:string_lit}}, "invalid '\\u'/'\\U' escape: it needs exactly 4 (\\u) or 8 (\\U) hexadecimal digits naming a Unicode scalar value (not a surrogate, at most 10FFFF)")
+        if cp < 128:
+            a.sb.append(cp)
+        elif cp < 2048:
+            a.sb.append(192 | (cp >> 6))
+            a.sb.append(128 | (cp & 63))
+        elif cp < 65536:
+            a.sb.append(224 | (cp >> 12))
+            a.sb.append(128 | ((cp >> 6) & 63))
+            a.sb.append(128 | (cp & 63))
+        else:
+            a.sb.append(240 | (cp >> 18))
+            a.sb.append(128 | ((cp >> 12) & 63))
+            a.sb.append(128 | ((cp >> 6) & 63))
+            a.sb.append(128 | (cp & 63))
+        return 2 + digits
+    dec: int = esc
+    if esc == 110:
+        dec = 10
+    elif esc == 116:
+        dec = 9
+    elif esc == 114:
+        dec = 13
+    a.sb.append(dec)
+    return 2
+
+# Kaçışlı dize gövdesi [s, e): kaçış yoksa kaynağa başvuru (sıfır kopya), varsa `sb`ye çözülmüş kopya.
+def decode_escapes(p: P, s: int, e: int) -> int:
+    a: Ast = p.a
+    has_bs: bool = False
+    for k in range(s, e - 1):
+        if at(a.src, k) == 92:
+            has_bs = True
+            break
+    if not has_bs:
+        return pk(s, e)
+    off: int = len(a.sb)
+    i: int = s
+    while i < e:
+        if at(a.src, i) == 92 and i + 1 < e:
+            i = i + decode_escape_at(p, e, i)
+        else:
+            a.sb.append(at(a.src, i))
+            i = i + 1
+    return pk(0 - off - 1, len(a.sb) - off)
+
+def decode_string(p: P, ti: int) -> int:
+    a: Ast = p.a
+    s: int = t_s(p, ti)
+    e: int = t_e(p, ti)
+    n: int = e - s
+    c0: int = at(a.src, s)
+    if n >= 3 and (c0 == 114 or c0 == 82):
+        qs: int = s + 1
+        qn: int = e - qs
+        if qn >= 6 and at(a.src, qs) == at(a.src, qs + 1) and at(a.src, qs + 1) == at(a.src, qs + 2):
+            return pk(qs + 3, e - 3)
+        return pk(qs + 1, e - 1)
+    if n >= 6 and c0 == at(a.src, s + 1) and at(a.src, s + 1) == at(a.src, s + 2):
+        return decode_escapes(p, s + 3, e - 3)
+    return decode_escapes(p, s + 1, e - 1)
+
+def concat_sref(a: Ast, u: int, v: int) -> int:
+    off: int = len(a.sb)
+    nu: int = sref_len(u)
+    nv: int = sref_len(v)
+    for i in range(nu):
+        a.sb.append(sref_byte(a, u, i))
+    for j in range(nv):
+        a.sb.append(sref_byte(a, v, j))
+    return pk(0 - off - 1, nu + nv)
+
+def parse_string_atoms(p: P) -> int:
+    a: Ast = p.a
+    acc: int = -1
+    while chk(p, {{K:string_lit}}) or chk(p, {{K:fstring_lit}}):
+        t: int = adv(p)
+        piece: int = 0
+        if kd_at(p, t) == {{K:string_lit}}:
+            piece = ex_str(a, decode_string(p, t))
+        else:
+            piece = parse_fstring_lit(p, t_s(p, t), t_e(p, t))
+        if acc >= 0:
+            if a.n[acc] == {{T:Expr.string_lit}} and a.n[piece] == {{T:Expr.string_lit}}:
+                cat: int = concat_sref(a, pk(a.n[acc + 1], a.n[acc + 2]), pk(a.n[piece + 1], a.n[piece + 2]))
+                acc = ex_str(a, cat)
+            else:
+                acc = ex_bin(a, {{E:BinaryOp.add}}, acc, piece)
+        else:
+            acc = piece
+    return acc
+
+# --- str.format ---
+def find_byte(a: Ast, v: int, c: int, from_i: int, to_i: int) -> int:
+    i: int = from_i
+    while i < to_i:
+        if sref_byte(a, v, i) == c:
+            return i
+        i = i + 1
+    return -1
+
+# Ondalık kısım (alt çizgiler atlanır); geçersizse -1; i64'ü aşarsa büyük bir değer (Zig `usize` taşmasız ayrıştırır).
+def parse_usize_dec(a: Ast, v: int, s: int, e: int) -> int:
+    if e <= s:
+        return -1
+    if sref_byte(a, v, s) == 95 or sref_byte(a, v, e - 1) == 95:
+        return -1
+    acc: int = 0
+    big: bool = False
+    for i in range(s, e):
+        c: int = sref_byte(a, v, i)
+        if c == 95:
+            continue
+        if c < 48 or c > 57:
+            return -1
+        d: int = c - 48
+        if acc > (9223372036854775807 - d) // 10:
+            big = True
+        else:
+            acc = acc * 10 + d
+    if big:
+        return 9223372036854775807
+    return acc
+
+def desugar_str_format(p: P, lit: int, args: list[int]) -> int:
+    a: Ast = p.a
+    positional: list[int] = []
+    kw_names: list[int] = []
+    kw_vals: list[int] = []
+    for ar in args:
+        if a.n[ar] == {{T:Expr.kwarg}}:
+            kp: int = a.n[ar + 1]
+            kw_names.append(pk(a.n[kp + {{O:Kwarg.name}}], a.n[kp + {{O:Kwarg.name}} + 1]))
+            kw_vals.append(a.n[kp + {{O:Kwarg.value}}])
+        else:
+            positional.append(ar)
+    uses_pos: list[int] = []
+    for _i in range(len(positional)):
+        uses_pos.append(0)
+    uses_kw: list[int] = []
+    for _j in range(len(kw_names)):
+        uses_kw.append(0)
+    pieces: list[int] = []
+    next_auto: int = 0
+    n: int = sref_len(lit)
+    lit_off: int = len(a.sb)
+    i: int = 0
+    while i < n:
+        ch: int = sref_byte(a, lit, i)
+        if ch == 123:
+            if i + 1 < n and sref_byte(a, lit, i + 1) == 123:
+                a.sb.append(123)
+                i = i + 2
+                continue
+            close: int = find_byte(a, lit, 125, i + 1, n)
+            if close < 0:
+                bad_str(p, {{K:string_lit}}, "str.format: unclosed '{' field")
+            fs: int = i + 1
+            if find_byte(a, lit, 123, fs, close) >= 0:
+                bad_str(p, {{K:string_lit}}, "str.format: nested '{}' fields are not supported")
+            name_end: int = close
+            spec_s: int = close
+            spec_e: int = close
+            ci: int = find_byte(a, lit, 58, fs, close)
+            if ci >= 0:
+                name_end = ci
+                spec_s = ci + 1
+            ns: int = fs
+            ne: int = name_end
+            bi: int = find_byte(a, lit, 33, ns, ne)
+            if bi >= 0:
+                if not (ne - (bi + 1) == 1 and sref_byte(a, lit, bi + 1) == 115):
+                    bad_str(p, {{K:string_lit}}, "str.format: the '!r'/'!a' conversion is not supported")
+                ne = bi
+            if find_byte(a, lit, 46, ns, ne) >= 0 or find_byte(a, lit, 91, ns, ne) >= 0:
+                bad_str(p, {{K:string_lit}}, "str.format: attribute/index fields are not supported — use an f-string")
+            arg_expr: int = 0
+            is_pos: bool = False
+            if ne == ns or (sref_byte(a, lit, ns) >= 48 and sref_byte(a, lit, ns) <= 57):
+                idx: int = 0
+                if ne == ns:
+                    idx = next_auto
+                    next_auto = next_auto + 1
+                else:
+                    idx = parse_usize_dec(a, lit, ns, ne)
+                    if idx < 0:
+                        bad_str(p, {{K:string_lit}}, "str.format: invalid field index")
+                if idx >= len(positional):
+                    bad_str(p, {{K:string_lit}}, "str.format: not enough positional arguments")
+                uses_pos[idx] = uses_pos[idx] + 1
+                arg_expr = positional[idx]
+                is_pos = True
+                if uses_pos[idx] > 1 and not is_pure(a, arg_expr):
+                    bad_str(p, {{K:string_lit}}, "str.format: an argument used by several fields must be free of side effects")
+            else:
+                found: int = -1
+                nm: int = sref_sub(lit, ns, ne)
+                for ki in range(len(kw_names)):
+                    if sref_eq2(a, kw_names[ki], nm):
+                        found = ki
+                if found < 0:
+                    bad_str(p, {{K:string_lit}}, "str.format: unknown named field")
+                uses_kw[found] = uses_kw[found] + 1
+                arg_expr = kw_vals[found]
+                if uses_kw[found] > 1 and not is_pure(a, arg_expr):
+                    bad_str(p, {{K:string_lit}}, "str.format: an argument used by several fields must be free of side effects")
+            if len(a.sb) > lit_off:
+                pieces.append(ex_str(a, pk(0 - lit_off - 1, len(a.sb) - lit_off)))
+            has_spec: bool = spec_s < close
+            spec_s = spec_s
+            spec_e = close
+            fe: int = arg_expr
+            if len(positional) > 0 or len(kw_names) > 0:
+                if is_pure(a, arg_expr):
+                    fe = dup_pure(a, arg_expr)
+            if is_pos and fe == arg_expr:
+                fe = clone_expr(a, fe)
+            fargs: list[int] = [fe]
+            fname: str = "str"
+            if has_spec:
+                fargs.append(ex_str(a, sref_sub(lit, spec_s, spec_e)))
+                fname = "format"
+            pieces.append(ex_call(a, ex_ident_lit(a, fname), fargs, 1, 0, 0))
+            lit_off = len(a.sb)
+            i = close + 1
+            continue
+        if ch == 125:
+            if i + 1 < n and sref_byte(a, lit, i + 1) == 125:
+                a.sb.append(125)
+                i = i + 2
+                continue
+            bad_str(p, {{K:string_lit}}, "str.format: unmatched '}'")
+        a.sb.append(ch)
+        i = i + 1
+    if len(a.sb) > lit_off:
+        pieces.append(ex_str(a, pk(0 - lit_off - 1, len(a.sb) - lit_off)))
+    if len(pieces) == 0:
+        return ex_str_lit(a, "")
+    acc: int = pieces[0]
+    for k in range(1, len(pieces)):
+        acc = ex_bin_f(a, {{E:BinaryOp.add}}, acc, pieces[k], 0, 1, 0)
+    return acc
+
+# --- f-string ---
+# `[s, e)` f-string belirtecinin ham metni (önek + tırnak dahil).
+def parse_fstring_lit(p: P, s: int, e: int) -> int:
+    a: Ast = p.a
+    inner_s: int = s + 2
+    inner_e: int = e - 1
+    seg_k: list[int] = []
+    seg_v: list[int] = []
+    lit_off: int = len(a.sb)
+    i: int = inner_s
+    while i < inner_e:
+        ch: int = at(a.src, i)
+        if ch == 92 and i + 1 < inner_e:
+            i = i + decode_escape_at(p, inner_e, i)
+            continue
+        if ch == 123:
+            if i + 1 < inner_e and at(a.src, i + 1) == 123:
+                a.sb.append(123)
+                i = i + 2
+                continue
+            if len(a.sb) > lit_off:
+                seg_k.append(0)
+                seg_v.append(pk(0 - lit_off - 1, len(a.sb) - lit_off))
+            expr_start: int = i + 1
+            depth: int = 1
+            nested_quote: int = 0
+            j: int = expr_start
+            while j < inner_e and depth > 0:
+                cj: int = at(a.src, j)
+                if nested_quote != 0:
+                    if cj == 92 and j + 1 < inner_e:
+                        j = j + 2
+                        continue
+                    if cj == nested_quote:
+                        nested_quote = 0
+                    j = j + 1
+                    continue
+                if cj == 39 or cj == 34:
+                    nested_quote = cj
+                    j = j + 1
+                    continue
+                if cj == 123:
+                    depth = depth + 1
+                    j = j + 1
+                    continue
+                if cj == 125:
+                    depth = depth - 1
+                    j = j + 1
+                    continue
+                j = j + 1
+            fe0: int = expr_start
+            fe1: int = j - 1
+            if fe1 < fe0:
+                fe1 = fe0
+            ex_s: int = fe0
+            ex_e: int = fe1
+            has_spec: bool = False
+            fm_s: int = 0
+            fm_e: int = 0
+            d: int = 0
+            q: int = 0
+            k: int = fe0
+            while k < fe1:
+                fc: int = at(a.src, k)
+                if q != 0:
+                    if fc == 92:
+                        k = k + 1
+                    elif fc == q:
+                        q = 0
+                    k = k + 1
+                    continue
+                if fc == 39 or fc == 34:
+                    q = fc
+                elif fc == 40 or fc == 91 or fc == 123:
+                    d = d + 1
+                elif fc == 41 or fc == 93 or fc == 125:
+                    if d > 0:
+                        d = d - 1
+                elif fc == 58:
+                    if d == 0:
+                        ex_e = k
+                        has_spec = True
+                        fm_s = k + 1
+                        fm_e = fe1
+                        break
+                k = k + 1
+            want_repr: bool = False
+            if ex_e - ex_s >= 2 and at(a.src, ex_e - 2) == 33:
+                conv: int = at(a.src, ex_e - 1)
+                if conv == 115:
+                    ex_e = ex_e - 2
+                elif conv == 114:
+                    ex_e = ex_e - 2
+                    want_repr = True
+                elif conv == 97:
+                    bad_str(p, {{K:fstring_lit}}, "f-string '!r'/'!a' conversion is not supported — use str() or explicit formatting")
+            if has_spec:
+                for b in range(fm_s, fm_e):
+                    if at(a.src, b) == 123:
+                        bad_str(p, {{K:fstring_lit}}, "nested `{}` fields are not supported in an f-string format spec")
+                if fm_e == fm_s:
+                    has_spec = False
+            lx: Lx = Lx(a.src + ex_s, ex_e - ex_s, False)
+            code: int = lex(lx)
+            if code != 0:
+                bad_str(p, {{K:fstring_lit}}, "")
+            toks: list[int] = lx.out
+            for ti in range(len(toks) // 5):
+                toks[ti * 5 + 3] = toks[ti * 5 + 3] + ex_s
+                toks[ti * 5 + 4] = toks[ti * 5 + 4] + ex_s
+            sub: P = P(a, toks)
+            sp_n: int = len(a.sp_ids)
+            sub_expr: int = parse_expr(sub)
+            while len(a.sp_ids) > sp_n:
+                a.sp_ids.pop()
+                a.sp_vals.pop()
+            if want_repr:
+                sub_expr = ex_call1(a, "repr", sub_expr, 0)
+            if has_spec:
+                fargs: list[int] = [sub_expr, ex_str(a, pk(fm_s, fm_e))]
+                seg_k.append(2)
+                seg_v.append(ex_call(a, ex_ident_lit(a, "format"), fargs, 1, 0, 0))
+            else:
+                seg_k.append(1)
+                seg_v.append(sub_expr)
+            i = j
+            lit_off = len(a.sb)
+            continue
+        if ch == 125:
+            a.sb.append(125)
+            i = i + 2
+            continue
+        a.sb.append(ch)
+        i = i + 1
+    if len(a.sb) > lit_off:
+        seg_k.append(0)
+        seg_v.append(pk(0 - lit_off - 1, len(a.sb) - lit_off))
+    if len(seg_k) == 0:
+        return ex_str_lit(a, "")
+    if len(seg_k) == 1 and seg_k[0] == 0:
+        return ex_str(a, seg_v[0])
+    acc: int = -1
+    for si in range(len(seg_k)):
+        piece: int = 0
+        if seg_k[si] == 0:
+            piece = ex_str(a, seg_v[si])
+        elif seg_k[si] == 2:
+            piece = seg_v[si]
+        else:
+            piece = ex_call1(a, "str", seg_v[si], 1)
+        if acc >= 0:
+            acc = ex_bin_f(a, {{E:BinaryOp.add}}, acc, piece, 0, 1, 0)
+        else:
+            acc = piece
+    return acc
+
+# --- düğüm yardımcıları (deyim düzeyi) ---
+def zero_span(a: Ast) -> int:
+    return mk_Span(a, 0, 0, 0, 0, 0, 0)
+
+def stmt0(a: Ast, kind: int, line: int) -> int:
+    return mk_Stmt(a, kind, line, zero_span(a))
+
+def te_simple(a: Ast, v: int) -> int:
+    return mk_TypeExpr_simple(a, pkx(v), pky(v))
+
+def te_lit(a: Ast, s: str) -> int:
+    return te_simple(a, syn(a, s))
+
+def sk_var(a: Ast, name: int, type_expr: int, value: int, class_attr: int, is_match_temp: int, unpack_origin: int, infer_assign: int) -> int:
+    return mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(name), pky(name), type_expr, value, class_attr, is_match_temp, unpack_origin, infer_assign))
+
+# `name: __infer = value` (çıkarımlı yerel; Zig `.type_expr = .{ .simple = "__infer" }`).
+def sk_var_infer(a: Ast, name: int, value: int) -> int:
+    return sk_var(a, name, te_lit(a, "__infer"), value, -1, 0, -1, 0)
+
+def sk_assign(a: Ast, target: int, value: int, ann: int) -> int:
+    return mk_StmtKind_assign(a, mk_Assign(a, target, value, ann))
+
+def sk_if(a: Ast, cond: int, then_body: int, elifs: int, else_body: int, is_assert: int, is_else_tail: int) -> int:
+    return mk_StmtKind_if_stmt(a, mk_IfStmt(a, cond, pkx(then_body), pky(then_body), pkx(elifs), pky(elifs), opt_sl_x(else_body), opt_sl_y(else_body), is_assert, -1, is_else_tail))
+
+# Boş dilim / yok işaretleri.
+def sl_empty(a: Ast) -> int:
+    return pk(len(a.l), 0)
+
+def sl_none() -> int:
+    return -1
+
+def opt_sl_x(v: int) -> int:
+    if v == -1:
+        return {{NONE}}
+    return pkx(v)
+
+def opt_sl_y(v: int) -> int:
+    if v == -1:
+        return 0
+    return pky(v)
+
+def sl_of(a: Ast, xs: list[int]) -> int:
+    return pk(sl(a, xs), len(xs))
+
+def sl2_of(a: Ast, xs: list[int]) -> int:
+    return pk(sl(a, xs), len(xs) // 2)
+
+# Ayrıştırıcı durumunda ortak yardımcılar.
+def push_extra(p: P, stmt: int) -> None:
+    p.extra.append(stmt)
+
+def drain_extra(p: P, stmts: list[int]) -> None:
+    for s in p.extra:
+        stmts.append(s)
+    p.extra = []
+
+def num_str(a: Ast, prefix: str, c: int, n: int) -> int:
+    return syn(a, prefix + str(c) + "_" + str(n))
+
+# --- modül ve blok ---
+def parse_module_body(p: P) -> int:
+    a: Ast = p.a
+    p.tk = normalize_tokens(p)
+    p.ntk = len(p.tk) // 5
+    p.pos = 0
+    stmts: list[int] = []
+    while not chk(p, {{K:eof}}):
+        stmts.append(parse_stmt(p))
+        drain_extra(p, stmts)
+    return inject_class_attr_storage(p, stmts)
+
+def inject_class_attr_storage(p: P, body: list[int]) -> int:
+    a: Ast = p.a
+    need: bool = False
+    for st in body:
+        kd_: int = a.n[st + {{O:Stmt.kind}}]
+        if a.n[kd_] == {{T:StmtKind.class_def}}:
+            cd: int = a.n[kd_ + 1]
+            if a.n[cd + {{O:ClassDef.consts}} + 1] > 0:
+                need = True
+                break
+    if not need:
+        return sl_of(a, body)
+    out: list[int] = []
+    for st2 in body:
+        kd2: int = a.n[st2 + {{O:Stmt.kind}}]
+        if a.n[kd2] == {{T:StmtKind.class_def}}:
+            cd2: int = a.n[kd2 + 1]
+            cstart: int = a.n[cd2 + {{O:ClassDef.consts}}]
+            ccount: int = a.n[cd2 + {{O:ClassDef.consts}} + 1]
+            cname: int = pk(a.n[cd2 + {{O:ClassDef.name}}], a.n[cd2 + {{O:ClassDef.name}} + 1])
+            for ci in range(ccount):
+                kdn: int = a.l[cstart + ci]
+                v: int = a.n[kdn + {{O:ConstDecl.value}}]
+                vt: int = a.n[v]
+                lit_ok: bool = vt == {{T:Expr.int_lit}} or vt == {{T:Expr.float_lit}} or vt == {{T:Expr.bool_lit}} or vt == {{T:Expr.string_lit}}
+                if vt == {{T:Expr.unary}}:
+                    up: int = a.n[v + 1]
+                    if a.n[up + {{O:Unary.op}}] == {{E:UnaryOp.neg}}:
+                        ot: int = a.n[a.n[up + {{O:Unary.operand}}]]
+                        lit_ok = ot == {{T:Expr.int_lit}} or ot == {{T:Expr.float_lit}}
+                if not lit_ok:
+                    continue
+                kname: int = pk(a.n[kdn + {{O:ConstDecl.name}}], a.n[kdn + {{O:ConstDecl.name}} + 1])
+                off: int = len(a.sb)
+                pre: str = "__nox_cls_"
+                for bi in range(len(pre)):
+                    a.sb.append(ord(pre[bi]))
+                for bj in range(sref_len(cname)):
+                    a.sb.append(sref_byte(a, cname, bj))
+                a.sb.append(95)
+                for bk in range(sref_len(kname)):
+                    a.sb.append(sref_byte(a, kname, bk))
+                nm: int = pk(0 - off - 1, len(a.sb) - off)
+                cref: int = mk_ClassAttrRef(a, pkx(cname), pky(cname), pkx(kname), pky(kname))
+                vk: int = sk_var(a, nm, a.n[kdn + {{O:ConstDecl.type_expr}}], v, cref, 0, -1, 0)
+                out.append(mk_Stmt(a, vk, a.n[st2 + {{O:Stmt.line}}], a.n[st2 + {{O:Stmt.span}}]))
+        out.append(st2)
+    return sl_of(a, out)
+
+def parse_block(p: P) -> int:
+    expect(p, {{K:newline}})
+    expect(p, {{K:indent}})
+    stmts: list[int] = []
+    while not chk(p, {{K:dedent}}):
+        if try_nonlocal(p):
+            continue
+        if try_global(p):
+            continue
+        stmts.append(parse_stmt(p))
+        drain_extra(p, stmts)
+    expect(p, {{K:dedent}})
+    return sl_of(p.a, stmts)
+
+def try_nonlocal(p: P) -> bool:
+    if not (chk(p, {{K:identifier}}) and tok_is(p, p.pos, "nonlocal") and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:identifier}}):
+        return False
+    if not p.has_nonl:
+        fail_cur(p, "'nonlocal' can only be used inside a function")
+    adv(p)
+    t0: int = expect(p, {{K:identifier}})
+    p.nonl.append(t_s(p, t0))
+    p.nonl.append(t_e(p, t0))
+    while mtc(p, {{K:comma}}):
+        t1: int = expect(p, {{K:identifier}})
+        p.nonl.append(t_s(p, t1))
+        p.nonl.append(t_e(p, t1))
+    expect(p, {{K:newline}})
+    return True
+
+def try_global(p: P) -> bool:
+    if not (chk(p, {{K:identifier}}) and tok_is(p, p.pos, "global") and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:identifier}}):
+        return False
+    if not p.has_glob:
+        fail_cur(p, "'global' can only be used inside a function")
+    adv(p)
+    t0: int = expect(p, {{K:identifier}})
+    p.glob.append(t_s(p, t0))
+    p.glob.append(t_e(p, t0))
+    while mtc(p, {{K:comma}}):
+        t1: int = expect(p, {{K:identifier}})
+        p.glob.append(t_s(p, t1))
+        p.glob.append(t_e(p, t1))
+    expect(p, {{K:newline}})
+    return True
+
+def expect_nl_kind(p: P, kind: int) -> int:
+    adv(p)
+    expect(p, {{K:newline}})
+    return kind
+
+def parse_stmt(p: P) -> int:
+    a: Ast = p.a
+    line: int = p.tk[p.pos * 5 + 1]
+    start_tok: int = p.pos
+    kind: int = 0
+    k: int = kd(p)
+    if is_enum_start(p):
+        kind = parse_enum_def(p)
+    elif is_match_start(p):
+        kind = parse_match(p, start_tok)
+    elif k == {{K:kw_if}}:
+        kind = parse_if(p)
+    elif k == {{K:kw_while}}:
+        kind = parse_while(p)
+    elif k == {{K:kw_for}}:
+        kind = parse_for(p, False)
+    elif k == {{K:kw_def}}:
+        kind = mk_StmtKind_func_def(a, parse_func_def(p, -1))
+    elif k == {{K:kw_async}}:
+        if p.pos + 1 < p.ntk and nxt_kind(p) == {{K:kw_for}}:
+            adv(p)
+            kind = parse_for(p, True)
+        elif p.pos + 1 < p.ntk and nxt_kind(p) == {{K:kw_with}}:
+            adv(p)
+            kind = parse_with(p, True)
+        else:
+            kind = mk_StmtKind_func_def(a, parse_func_def(p, -1))
+    elif k == {{K:kw_extern}}:
+        kind = parse_extern_def(p)
+    elif k == {{K:kw_class}}:
+        kind = parse_class_def(p)
+    elif k == {{K:at_sign}}:
+        kind = parse_decorated_def(p)
+    elif k == {{K:kw_protocol}}:
+        kind = parse_protocol_def(p)
+    elif k == {{K:kw_return}}:
+        kind = parse_return(p)
+    elif k == {{K:kw_raise}}:
+        kind = parse_raise(p)
+    elif k == {{K:kw_try}}:
+        kind = parse_try(p)
+    elif k == {{K:kw_with}}:
+        kind = parse_with(p, False)
+    elif k == {{K:kw_defer}}:
+        kind = parse_defer(p)
+    elif k == {{K:kw_lowlevel}}:
+        kind = parse_lowlevel(p)
+    elif k == {{K:kw_import}}:
+        kind = parse_import(p)
+    elif k == {{K:kw_from}}:
+        kind = parse_from_import(p)
+    elif k == {{K:kw_pass}} or k == {{K:ellipsis}}:
+        adv(p)
+        expect(p, {{K:newline}})
+        kind = mk_StmtKind_pass_stmt(a)
+    elif k == {{K:kw_break}}:
+        adv(p)
+        expect(p, {{K:newline}})
+        kind = mk_StmtKind_break_stmt(a)
+    elif k == {{K:kw_del}}:
+        adv(p)
+        target: int = parse_expr(p)
+        expect(p, {{K:newline}})
+        kind = mk_StmtKind_del_stmt(a, target)
+    elif k == {{K:kw_continue}}:
+        adv(p)
+        expect(p, {{K:newline}})
+        kind = mk_StmtKind_continue_stmt(a)
+    else:
+        kind = parse_simple_stmt(p)
+    return mk_Stmt(a, kind, line, span_toks(p, start_tok, p.pos - 1))
+
+def parse_simple_stmt(p: P) -> int:
+    a: Ast = p.a
+    if chk(p, {{K:identifier}}) and tok_is(p, p.pos, "type") and p.pos + 2 < p.ntk and nxt_kind(p) == {{K:identifier}} and p.tk[(p.pos + 2) * 5] == {{K:assign}}:
+        if p.has_nonl:
+            fail_cur(p, "a 'type' alias can only be declared at module level")
+        adv(p)
+        nt: int = adv(p)
+        expect(p, {{K:assign}})
+        target: int = parse_type_expr(p)
+        expect(p, {{K:newline}})
+        nm: int = tstr(p, nt)
+        return mk_StmtKind_type_alias(a, mk_TypeAliasStmt(a, pkx(nm), pky(nm), target))
+    if chk(p, {{K:identifier}}) and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:colon_assign}}:
+        nt2: int = adv(p)
+        expect(p, {{K:colon_assign}})
+        value: int = parse_expr_or_tuple(p)
+        expect(p, {{K:newline}})
+        return sk_var(a, tstr(p, nt2), te_lit(a, "__infer"), value, -1, 0, -1, 1)
+    if chk(p, {{K:identifier}}) and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:colon}}:
+        nt3: int = adv(p)
+        expect(p, {{K:colon}})
+        type_expr: int = parse_type_expr(p)
+        expect(p, {{K:assign}})
+        value2: int = parse_expr_or_tuple(p)
+        expect(p, {{K:newline}})
+        return sk_var(a, tstr(p, nt3), type_expr, value2, -1, 0, -1, 0)
+    if chk(p, {{K:identifier}}) and tok_is(p, p.pos, "yield") and p.pos + 1 < p.ntk:
+        nk: int = nxt_kind(p)
+        if nk != {{K:assign}} and nk != {{K:dot}} and nk != {{K:colon}} and nk != {{K:comma}} and nk != {{K:newline}} and nk != {{K:r_paren}}:
+            adv(p)
+            fname: str = "__nox_yield"
+            if chk(p, {{K:kw_from}}):
+                adv(p)
+                fname = "__nox_yield_from"
+            arg: int = parse_expr(p)
+            expect(p, {{K:newline}})
+            return mk_StmtKind_expr_stmt(a, ex_call1(a, fname, arg, 0))
+    if chk(p, {{K:identifier}}) and tok_is(p, p.pos, "assert") and p.pos + 1 < p.ntk:
+        nk2: int = nxt_kind(p)
+        if nk2 != {{K:assign}} and nk2 != {{K:dot}} and nk2 != {{K:colon}} and nk2 != {{K:comma}} and nk2 != {{K:newline}} and nk2 != {{K:l_bracket}}:
+            kw_tok: int = adv(p)
+            cond: int = parse_expr(p)
+            msg: int = ex_str_lit(a, "assertion failed")
+            if mtc(p, {{K:comma}}):
+                msg = parse_expr(p)
+            expect(p, {{K:newline}})
+            rcall: int = ex_call1(a, "AssertionError", msg, 0)
+            rs: int = stmt0(a, mk_StmtKind_raise_stmt(a, rcall), p.tk[kw_tok * 5 + 1])
+            then_body: list[int] = [rs]
+            return sk_if(a, ex_un(a, {{E:UnaryOp.not_}}, cond), sl_of(a, then_body), sl_empty(a), sl_none(), 1, 0)
+    if chk(p, {{K:star}}) and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:identifier}}:
+        return parse_unpack_stmt(p, -1)
+    expr: int = parse_expr(p)
+    if chk(p, {{K:comma}}):
+        return parse_unpack_stmt(p, expr)
+    if a.n[expr] == {{T:Expr.attribute}} and chk(p, {{K:colon}}):
+        adv(p)
+        ann: int = parse_type_expr(p)
+        expect(p, {{K:assign}})
+        value3: int = parse_expr_or_tuple(p)
+        expect(p, {{K:newline}})
+        return sk_assign(a, expr, value3, ann)
+    if mtc(p, {{K:assign}}):
+        value4: int = parse_expr_or_tuple(p)
+        expect(p, {{K:newline}})
+        return sk_assign(a, expr, value4, -1)
+    ck: int = kd(p)
+    aug: int = -1
+    if ck == {{K:plus_eq}}:
+        aug = {{E:BinaryOp.add}}
+    elif ck == {{K:minus_eq}}:
+        aug = {{E:BinaryOp.sub}}
+    elif ck == {{K:star_eq}}:
+        aug = {{E:BinaryOp.mul}}
+    elif ck == {{K:slash_eq}}:
+        aug = {{E:BinaryOp.div}}
+    elif ck == {{K:slash_slash_eq}}:
+        aug = {{E:BinaryOp.floordiv}}
+    elif ck == {{K:percent_eq}}:
+        aug = {{E:BinaryOp.mod}}
+    elif ck == {{K:star_star_eq}}:
+        aug = {{E:BinaryOp.pow}}
+    elif ck == {{K:amp_eq}}:
+        aug = {{E:BinaryOp.bit_and}}
+    elif ck == {{K:pipe_eq}}:
+        aug = {{E:BinaryOp.bit_or}}
+    elif ck == {{K:caret_eq}}:
+        aug = {{E:BinaryOp.bit_xor}}
+    elif ck == {{K:lt_lt_eq}}:
+        aug = {{E:BinaryOp.shl}}
+    elif ck == {{K:gt_gt_eq}}:
+        aug = {{E:BinaryOp.shr}}
+    if aug >= 0:
+        et: int = a.n[expr]
+        if et != {{T:Expr.identifier}} and not ((et == {{T:Expr.attribute}} or et == {{T:Expr.index}}) and is_pure(a, expr)):
+            set_diag(p, -1, kd(p), p.pos, "")
+            raise ErrUnexpected("")
+        adv(p)
+        value5: int = parse_expr(p)
+        expect(p, {{K:newline}})
+        left_copy: int = dup_pure(a, expr)
+        bv: int = ex_bin_f(a, aug, left_copy, value5, 1, 0, 0)
+        return sk_assign(a, expr, bv, -1)
+    expect(p, {{K:newline}})
+    return mk_StmtKind_expr_stmt(a, expr)
+
+def unpack_diag(p: P, note: str) -> None:
+    set_diag(p, -1, kd(p), p.pos, note)
+    raise ErrUnexpected("")
+
+# `x, (y, z) = ...` hedeflerini UnpackTarget düğümüne çevirir.
+def to_unpack_target(p: P, e: int) -> int:
+    a: Ast = p.a
+    t: int = a.n[e]
+    if t == {{T:Expr.identifier}} or t == {{T:Expr.attribute}} or t == {{T:Expr.index}}:
+        return mk_UnpackTarget(a, e, 0, {{NONE}}, 0)
+    if t == {{T:Expr.tuple_lit}}:
+        st: int = a.n[e + 1]
+        n: int = a.n[e + 2]
+        nested: list[int] = []
+        for i in range(n):
+            nested.append(to_unpack_target(p, a.l[st + i]))
+        nst: int = sl(a, nested)
+        return mk_UnpackTarget(a, -1, 0, nst, len(nested))
+    unpack_diag(p, "")
+    return 0
+
+def star_target(a: Ast, ti_s: int, ti_e: int) -> int:
+    return mk_UnpackTarget(a, mk_Expr_identifier(a, ti_s, ti_e), 1, {{NONE}}, 0)
+
+def parse_unpack_stmt(p: P, first: int) -> int:
+    a: Ast = p.a
+    targets: list[int] = []
+    star_count: int = 0
+    if first >= 0:
+        targets.append(to_unpack_target(p, first))
+    else:
+        adv(p)
+        nm: int = expect(p, {{K:identifier}})
+        targets.append(star_target(a, t_s(p, nm), t_e(p, nm)))
+        star_count = star_count + 1
+    while mtc(p, {{K:comma}}):
+        if chk(p, {{K:assign}}):
+            break
+        if mtc(p, {{K:star}}):
+            nm2: int = expect(p, {{K:identifier}})
+            targets.append(star_target(a, t_s(p, nm2), t_e(p, nm2)))
+            star_count = star_count + 1
+        else:
+            targets.append(to_unpack_target(p, parse_expr(p)))
+    expect(p, {{K:assign}})
+    if star_count > 1:
+        unpack_diag(p, "only one starred target ('*name') is allowed in an unpacking assignment")
+    rhs: int = parse_expr_or_tuple(p)
+    expect(p, {{K:newline}})
+    any_nested: bool = False
+    for t in targets:
+        if a.n[t + {{O:UnpackTarget.nested}}] != {{NONE}}:
+            any_nested = True
+    line: int = p.tk[(p.pos - 1) * 5 + 1]
+    p.tuple_counter = p.tuple_counter + 1
+    if star_count == 0 and not any_nested:
+        tmp_name: int = num_str(a, "__nox_tup_", p.tuple_counter, len(targets))
+        for i in range(len(targets)):
+            te: int = a.n[targets[i] + {{O:UnpackTarget.expr}}]
+            field_read: int = ex_attr(a, ex_ident(a, tmp_name), syn(a, "f" + str(i)))
+            kind: int = 0
+            if a.n[te] == {{T:Expr.identifier}}:
+                kind = sk_var_infer(a, pk(a.n[te + 1], a.n[te + 2]), field_read)
+            else:
+                kind = sk_assign(a, te, field_read, -1)
+            push_extra(p, stmt0(a, kind, line))
+        return sk_var_infer(a, tmp_name, rhs)
+    tmp2: int = 0
+    if star_count > 0:
+        tmp2 = syn(a, "__nox_star_" + str(p.tuple_counter))
+    else:
+        tmp2 = num_str(a, "__nox_tup_", p.tuple_counter, len(targets))
+    before: int = len(p.extra)
+    emit_unpack_reads(p, targets, tmp2, line)
+    tst: int = sl(a, targets)
+    origin: int = mk_UnpackOrigin(a, tst, len(targets), rhs, len(p.extra) - before)
+    return sk_var(a, tmp2, te_lit(a, "__infer"), rhs, -1, 0, origin, 0)
+
+def len_minus(a: Ast, tmp: int, k: int) -> int:
+    ln: int = ex_call1(a, "len", ex_ident(a, tmp), 0)
+    return ex_bin(a, {{E:BinaryOp.sub}}, ln, mk_Expr_int_lit(a, k))
+
+def emit_unpack_reads(p: P, targets: list[int], tmp: int, line: int) -> None:
+    a: Ast = p.a
+    star_idx: int = -1
+    for i in range(len(targets)):
+        if a.n[targets[i] + {{O:UnpackTarget.star}}] != 0:
+            star_idx = i
+    n: int = len(targets)
+    if star_idx >= 0:
+        need: int = n - 1
+        lenstr: int = ex_call1(a, "str", ex_call1(a, "len", ex_ident(a, tmp), 0), 0)
+        msg: int = ex_bin(a, {{E:BinaryOp.add}}, ex_str_lit(a, "not enough values to unpack (expected at least " + str(need) + ", got "), ex_bin(a, {{E:BinaryOp.add}}, lenstr, ex_str_lit(a, ")")))
+        rs: int = stmt0(a, mk_StmtKind_raise_stmt(a, ex_call1(a, "ValueError", msg, 0)), line)
+        then_body: list[int] = [rs]
+        cond: int = ex_bin(a, {{E:BinaryOp.lt}}, ex_call1(a, "len", ex_ident(a, tmp), 0), mk_Expr_int_lit(a, need))
+        push_extra(p, stmt0(a, sk_if(a, cond, sl_of(a, then_body), sl_empty(a), sl_none(), 0, 0), line))
+    for i2 in range(n):
+        t: int = targets[i2]
+        tmp_ref: int = ex_ident(a, tmp)
+        read: int = 0
+        if star_idx >= 0:
+            if i2 < star_idx:
+                read = ex_index(a, tmp_ref, mk_Expr_int_lit(a, i2))
+            elif i2 == star_idx:
+                after: int = n - star_idx - 1
+                hi: int = -1
+                if after > 0:
+                    hi = len_minus(a, tmp, after)
+                read = mk_Expr_slice(a, mk_Slice(a, tmp_ref, mk_Expr_int_lit(a, i2), hi, -1))
+            else:
+                read = ex_index(a, tmp_ref, len_minus(a, tmp, n - i2))
+        else:
+            read = ex_attr(a, tmp_ref, syn(a, "f" + str(i2)))
+        nx: int = a.n[t + {{O:UnpackTarget.nested}}]
+        if nx != {{NONE}}:
+            p.tuple_counter = p.tuple_counter + 1
+            nstart: int = nx
+            ncount: int = a.n[t + {{O:UnpackTarget.nested}} + 1]
+            inner: int = num_str(a, "__nox_tup_", p.tuple_counter, ncount)
+            push_extra(p, stmt0(a, sk_var_infer(a, inner, read), line))
+            nested_ts: list[int] = []
+            for ni in range(ncount):
+                nested_ts.append(a.l[nstart + ni])
+            emit_unpack_reads(p, nested_ts, inner, line)
+        else:
+            target: int = a.n[t + {{O:UnpackTarget.expr}}]
+            kind: int = 0
+            if a.n[target] == {{T:Expr.identifier}}:
+                kind = sk_var_infer(a, pk(a.n[target + 1], a.n[target + 2]), read)
+            else:
+                kind = sk_assign(a, target, read, -1)
+            push_extra(p, stmt0(a, kind, line))
+
+# --- if / while / for ---
+def parse_if(p: P) -> int:
+    a: Ast = p.a
+    expect(p, {{K:kw_if}})
+    cond: int = parse_expr(p)
+    expect(p, {{K:colon}})
+    then_body: int = parse_block(p)
+    elifs: list[int] = []
+    while chk(p, {{K:kw_elif}}):
+        adv(p)
+        econd: int = parse_expr(p)
+        expect(p, {{K:colon}})
+        ebody: int = parse_block(p)
+        elifs.append(mk_ElifClause(a, econd, pkx(ebody), pky(ebody)))
+    else_body: int = -1
+    if mtc(p, {{K:kw_else}}):
+        expect(p, {{K:colon}})
+        else_body = parse_block(p)
+    return sk_if(a, cond, then_body, sl_of(a, elifs), else_body, 0, 0)
+
+def parse_while(p: P) -> int:
+    a: Ast = p.a
+    start_tok: int = p.pos
+    expect(p, {{K:kw_while}})
+    cond: int = parse_expr(p)
+    expect(p, {{K:colon}})
+    body: int = parse_block(p)
+    if chk(p, {{K:kw_else}}):
+        adv(p)
+        expect(p, {{K:colon}})
+        else_body: int = parse_block(p)
+        return finish_loop_else(p, 0, cond, -1, 0, body, else_body, start_tok)
+    return mk_StmtKind_while_stmt(a, mk_WhileStmt(a, cond, pkx(body), pky(body), -1))
+
+# Zig `finishLoopElse`: `loop_kind` 0 = while (`cond`), 1 = for (`iter`, `var_name`, `is_async`).
+def finish_loop_else(p: P, loop_kind: int, cond_or_iter: int, var_name: int, is_async: int, orig_body: int, else_body: int, start_tok: int) -> int:
+    a: Ast = p.a
+    p.else_counter = p.else_counter + 1
+    flag: int = syn(a, "__nox_brk_" + str(p.else_counter))
+    origin: int = mk_LoopElseOrigin(a, pkx(orig_body), pky(orig_body), pkx(else_body), pky(else_body))
+    new_body: int = rewrite_breaks(p, orig_body, flag)
+    k: int = 0
+    if loop_kind == 0:
+        k = mk_StmtKind_while_stmt(a, mk_WhileStmt(a, cond_or_iter, pkx(new_body), pky(new_body), origin))
+    else:
+        k = mk_StmtKind_for_stmt(a, mk_ForStmt(a, pkx(var_name), pky(var_name), cond_or_iter, pkx(new_body), pky(new_body), -1, is_async, origin))
+    line: int = p.tk[start_tok * 5 + 1]
+    span: int = span_toks(p, start_tok, p.pos - 1)
+    push_extra(p, mk_Stmt(a, k, line, span))
+    tail: int = sk_if(a, ex_un(a, {{E:UnaryOp.not_}}, ex_ident(a, flag)), else_body, sl_empty(a), sl_none(), 0, 1)
+    push_extra(p, mk_Stmt(a, tail, line, span))
+    return sk_var(a, flag, te_lit(a, "bool"), mk_Expr_bool_lit(a, 0), -1, 1, -1, 0)
+
+# `copy_node`: yapı düğümünün (n içinde `size` sözcük) bir kopyasının kimliği.
+def copy_node(a: Ast, id: int, size: int) -> int:
+    nid: int = len(a.n)
+    for i in range(size):
+        a.n.append(a.n[id + i])
+    return nid
+
+def rewrite_breaks(p: P, stmts: int, flag: int) -> int:
+    a: Ast = p.a
+    st0: int = pkx(stmts)
+    cnt: int = pky(stmts)
+    out: list[int] = []
+    for i in range(cnt):
+        st: int = a.l[st0 + i]
+        kid: int = a.n[st + {{O:Stmt.kind}}]
+        tag: int = a.n[kid]
+        line: int = a.n[st + {{O:Stmt.line}}]
+        span: int = a.n[st + {{O:Stmt.span}}]
+        if tag == {{T:StmtKind.break_stmt}}:
+            asg: int = sk_assign(a, ex_ident(a, flag), mk_Expr_bool_lit(a, 1), -1)
+            out.append(mk_Stmt(a, asg, line, span))
+            out.append(st)
+        elif tag == {{T:StmtKind.if_stmt}}:
+            f: int = a.n[kid + 1]
+            nf: int = copy_node(a, f, {{SZ:IfStmt}})
+            tb: int = rewrite_breaks(p, pk(a.n[f + {{O:IfStmt.then_body}}], a.n[f + {{O:IfStmt.then_body}} + 1]), flag)
+            a.n[nf + {{O:IfStmt.then_body}}] = pkx(tb)
+            a.n[nf + {{O:IfStmt.then_body}} + 1] = pky(tb)
+            es: int = a.n[f + {{O:IfStmt.elif_clauses}}]
+            en: int = a.n[f + {{O:IfStmt.elif_clauses}} + 1]
+            elifs: list[int] = []
+            for ei in range(en):
+                ec: int = a.l[es + ei]
+                eb: int = rewrite_breaks(p, pk(a.n[ec + {{O:ElifClause.body}}], a.n[ec + {{O:ElifClause.body}} + 1]), flag)
+                elifs.append(mk_ElifClause(a, a.n[ec + {{O:ElifClause.cond}}], pkx(eb), pky(eb)))
+            ne: int = sl(a, elifs)
+            a.n[nf + {{O:IfStmt.elif_clauses}}] = ne
+            a.n[nf + {{O:IfStmt.elif_clauses}} + 1] = len(elifs)
+            if a.n[f + {{O:IfStmt.else_body}}] != {{NONE}}:
+                ebd: int = rewrite_breaks(p, pk(a.n[f + {{O:IfStmt.else_body}}], a.n[f + {{O:IfStmt.else_body}} + 1]), flag)
+                a.n[nf + {{O:IfStmt.else_body}}] = pkx(ebd)
+                a.n[nf + {{O:IfStmt.else_body}} + 1] = pky(ebd)
+            out.append(mk_Stmt(a, mk_StmtKind_if_stmt(a, nf), line, span))
+        elif tag == {{T:StmtKind.try_stmt}}:
+            t: int = a.n[kid + 1]
+            nt: int = copy_node(a, t, {{SZ:TryStmt}})
+            tb2: int = rewrite_breaks(p, pk(a.n[t + {{O:TryStmt.try_body}}], a.n[t + {{O:TryStmt.try_body}} + 1]), flag)
+            a.n[nt + {{O:TryStmt.try_body}}] = pkx(tb2)
+            a.n[nt + {{O:TryStmt.try_body}} + 1] = pky(tb2)
+            cs: int = a.n[t + {{O:TryStmt.except_clauses}}]
+            cn: int = a.n[t + {{O:TryStmt.except_clauses}} + 1]
+            ecs: list[int] = []
+            for ci in range(cn):
+                ec2: int = a.l[cs + ci]
+                nec: int = copy_node(a, ec2, {{SZ:ExceptClause}})
+                eb2: int = rewrite_breaks(p, pk(a.n[ec2 + {{O:ExceptClause.body}}], a.n[ec2 + {{O:ExceptClause.body}} + 1]), flag)
+                a.n[nec + {{O:ExceptClause.body}}] = pkx(eb2)
+                a.n[nec + {{O:ExceptClause.body}} + 1] = pky(eb2)
+                ecs.append(nec)
+            ncs: int = sl(a, ecs)
+            a.n[nt + {{O:TryStmt.except_clauses}}] = ncs
+            a.n[nt + {{O:TryStmt.except_clauses}} + 1] = len(ecs)
+            if a.n[t + {{O:TryStmt.finally_body}}] != {{NONE}}:
+                fb: int = rewrite_breaks(p, pk(a.n[t + {{O:TryStmt.finally_body}}], a.n[t + {{O:TryStmt.finally_body}} + 1]), flag)
+                a.n[nt + {{O:TryStmt.finally_body}}] = pkx(fb)
+                a.n[nt + {{O:TryStmt.finally_body}} + 1] = pky(fb)
+            out.append(mk_Stmt(a, mk_StmtKind_try_stmt(a, nt), line, span))
+        elif tag == {{T:StmtKind.with_stmt}}:
+            w: int = a.n[kid + 1]
+            nw: int = copy_node(a, w, {{SZ:WithStmt}})
+            wb: int = rewrite_breaks(p, pk(a.n[w + {{O:WithStmt.body}}], a.n[w + {{O:WithStmt.body}} + 1]), flag)
+            a.n[nw + {{O:WithStmt.body}}] = pkx(wb)
+            a.n[nw + {{O:WithStmt.body}} + 1] = pky(wb)
+            out.append(mk_Stmt(a, mk_StmtKind_with_stmt(a, nw), line, span))
+        elif tag == {{T:StmtKind.lowlevel_stmt}}:
+            ll: int = a.n[kid + 1]
+            lb: int = rewrite_breaks(p, pk(a.n[ll + {{O:LowLevelStmt.body}}], a.n[ll + {{O:LowLevelStmt.body}} + 1]), flag)
+            out.append(mk_Stmt(a, mk_StmtKind_lowlevel_stmt(a, mk_LowLevelStmt(a, pkx(lb), pky(lb))), line, span))
+        else:
+            out.append(st)
+    return sl_of(a, out)
+
+def parse_for(p: P, is_async: bool) -> int:
+    a: Ast = p.a
+    start_tok: int = p.pos
+    expect(p, {{K:kw_for}})
+    nt: int = expect(p, {{K:identifier}})
+    name: int = tstr(p, nt)
+    unpack_names: list[int] = []
+    if chk(p, {{K:comma}}):
+        unpack_names.append(name)
+        while mtc(p, {{K:comma}}):
+            u: int = expect(p, {{K:identifier}})
+            unpack_names.append(tstr(p, u))
+    expect(p, {{K:kw_in}})
+    iterable: int = parse_expr(p)
+    expect(p, {{K:colon}})
+    body: int = parse_block(p)
+    asy: int = 1 if is_async else 0
+    if len(unpack_names) > 1:
+        p.tuple_counter = p.tuple_counter + 1
+        tmp_name: int = num_str(a, "__nox_tup_", p.tuple_counter, len(unpack_names))
+        line: int = p.tk[(p.pos - 1) * 5 + 1]
+        nb: list[int] = []
+        for i in range(len(unpack_names)):
+            fr: int = ex_attr(a, ex_ident(a, tmp_name), syn(a, "f" + str(i)))
+            nb.append(stmt0(a, sk_var_infer(a, unpack_names[i], fr), line))
+        for bi in range(pky(body)):
+            nb.append(a.l[pkx(body) + bi])
+        new_body: int = sl_of(a, nb)
+        if chk(p, {{K:kw_else}}):
+            adv(p)
+            expect(p, {{K:colon}})
+            else_body: int = parse_block(p)
+            return finish_loop_else(p, 1, iterable, tmp_name, asy, new_body, else_body, start_tok)
+        return mk_StmtKind_for_stmt(a, mk_ForStmt(a, pkx(tmp_name), pky(tmp_name), iterable, pkx(new_body), pky(new_body), -1, asy, -1))
+    if chk(p, {{K:kw_else}}):
+        adv(p)
+        expect(p, {{K:colon}})
+        else_body2: int = parse_block(p)
+        return finish_loop_else(p, 1, iterable, name, asy, body, else_body2, start_tok)
+    return mk_StmtKind_for_stmt(a, mk_ForStmt(a, pkx(name), pky(name), iterable, pkx(body), pky(body), -1, asy, -1))
+
+def is_enum_start(p: P) -> bool:
+    if not (chk(p, {{K:identifier}}) and tok_is(p, p.pos, "enum")):
+        return False
+    if p.pos + 2 >= p.ntk:
+        return False
+    k1: int = p.tk[(p.pos + 1) * 5]
+    k2: int = p.tk[(p.pos + 2) * 5]
+    return k1 == {{K:identifier}} and (k2 == {{K:colon}} or k2 == {{K:l_bracket}})
+
+# --- FuncDef / Param / FieldDecl / Decorator yardımcıları ---
+# Varsayılanlı FuncDef: type_params=[], ret_omitted=false, is_async=false, decorators=[], link_name=null, nonlocals=[], globals=[], allow_await=false.
+def new_func(a: Ast, name: int, tparams: int, params: int, ret: int, body: int) -> int:
+    e: int = sl_empty(a)
+    return mk_FuncDef(a, pkx(name), pky(name), pkx(tparams), pky(tparams), pkx(params), pky(params), ret, 0, pkx(body), pky(body), 0, pkx(e), pky(e), {{NONE}}, 0, pkx(e), pky(e), pkx(e), pky(e), 0)
+
+def new_param(a: Ast, name: int, type_expr: int, self_inferred: int) -> int:
+    return mk_Param(a, pkx(name), pky(name), 0, 0, 0, 0, type_expr, self_inferred, -1)
+
+def new_field(a: Ast, name: int, type_expr: int, line: int) -> int:
+    return mk_FieldDecl(a, pkx(name), pky(name), type_expr, line)
+
+def new_const(a: Ast, name: int, type_expr: int, value: int, line: int) -> int:
+    return mk_ConstDecl(a, pkx(name), pky(name), type_expr, value, line, {{NONE}}, 0, 0)
+
+def cat2(a: Ast, pre: str, u: int, mid: str, v: int) -> int:
+    off: int = len(a.sb)
+    for i in range(len(pre)):
+        a.sb.append(ord(pre[i]))
+    for j in range(sref_len(u)):
+        a.sb.append(sref_byte(a, u, j))
+    for k in range(len(mid)):
+        a.sb.append(ord(mid[k]))
+    if v != -1:
+        for m in range(sref_len(v)):
+            a.sb.append(sref_byte(a, v, m))
+    return pk(0 - off - 1, len(a.sb) - off)
+
+def set_sl(a: Ast, node: int, off: int, v: int) -> None:
+    a.n[node + off] = pkx(v)
+    a.n[node + off + 1] = pky(v)
+
+def parse_enum_def(p: P) -> int:
+    a: Ast = p.a
+    enum_tok: int = adv(p)
+    nt: int = expect(p, {{K:identifier}})
+    name: int = tstr(p, nt)
+    tps: list[int] = []
+    if mtc(p, {{K:l_bracket}}):
+        t0: int = expect(p, {{K:identifier}})
+        tps.append(t_s(p, t0))
+        tps.append(t_e(p, t0))
+        while mtc(p, {{K:comma}}):
+            t1: int = expect(p, {{K:identifier}})
+            tps.append(t_s(p, t1))
+            tps.append(t_e(p, t1))
+        expect(p, {{K:r_bracket}})
+    is_generic: bool = len(tps) > 0
+    tp_sl: int = sl2_of(a, tps)
+    expect(p, {{K:colon}})
+    expect(p, {{K:newline}})
+    expect(p, {{K:indent}})
+    variants: list[int] = []
+    user_methods: list[int] = []
+    doc: int = -1
+    while not chk(p, {{K:dedent}}):
+        if chk(p, {{K:kw_pass}}):
+            adv(p)
+            expect(p, {{K:newline}})
+        elif chk(p, {{K:string_lit}}):
+            doc_tok: int = adv(p)
+            text: int = decode_string(p, doc_tok)
+            expect(p, {{K:newline}})
+            if doc == -1 and len(variants) == 0 and len(user_methods) == 0:
+                doc = text
+        elif chk(p, {{K:at_sign}}):
+            decos: int = parse_decorators(p)
+            fd: int = parse_func_def(p, name)
+            set_sl(a, fd, {{O:FuncDef.decorators}}, decos)
+            user_methods.append(fd)
+        elif chk(p, {{K:kw_def}}) or chk(p, {{K:kw_async}}):
+            user_methods.append(parse_func_def(p, name))
+        elif chk(p, {{K:identifier}}):
+            vline: int = p.tk[p.pos * 5 + 1]
+            vt: int = adv(p)
+            vname: int = tstr(p, vt)
+            for vv in variants:
+                if sref_eq2(a, pk(a.n[vv + {{O:EnumVariant.name}}], a.n[vv + {{O:EnumVariant.name}} + 1]), vname):
+                    set_diag(p, -1, kd(p), p.pos - 1, "duplicate enum variant")
+                    raise ErrUnexpected("")
+            fields: list[int] = []
+            has_parens: int = 0
+            if mtc(p, {{K:l_paren}}):
+                has_parens = 1
+                while not chk(p, {{K:r_paren}}):
+                    fline: int = p.tk[p.pos * 5 + 1]
+                    fnt: int = expect(p, {{K:identifier}})
+                    expect(p, {{K:colon}})
+                    fty: int = parse_type_expr(p)
+                    fields.append(new_field(a, tstr(p, fnt), fty, fline))
+                    if not mtc(p, {{K:comma}}):
+                        break
+                expect(p, {{K:r_paren}})
+            expect(p, {{K:newline}})
+            fsl: int = sl_of(a, fields)
+            variants.append(mk_EnumVariant(a, pkx(vname), pky(vname), len(variants), pkx(fsl), pky(fsl), has_parens, vline))
+        else:
+            fail_cur(p, "an enum body contains variants (`Name` or `Name(field: Type)`) and methods")
+    expect(p, {{K:dedent}})
+    if len(variants) == 0:
+        set_diag(p, -1, kd(p), enum_tok, "an enum needs at least one variant")
+        raise ErrUnexpected("")
+    line: int = p.tk[enum_tok * 5 + 1]
+    fields2: list[int] = []
+    consts: list[int] = []
+    methods: list[int] = []
+    fields2.append(new_field(a, syn(a, "_tag"), te_lit(a, "int"), line))
+    # __init__(self, tag)
+    ip: list[int] = [new_param(a, syn(a, "self"), te_simple(a, name), 1), new_param(a, syn(a, "tag"), te_lit(a, "int"), 0)]
+    ia: int = sk_assign(a, ex_attr(a, ex_ident_lit(a, "self"), syn(a, "_tag")), ex_ident_lit(a, "tag"), -1)
+    ibody: list[int] = [stmt0(a, ia, line)]
+    methods.append(new_func(a, syn(a, "__init__"), sl_empty(a), sl_of(a, ip), te_lit(a, "None"), sl_of(a, ibody)))
+    for vv2 in variants:
+        vn: int = pk(a.n[vv2 + {{O:EnumVariant.name}}], a.n[vv2 + {{O:EnumVariant.name}} + 1])
+        vtag: int = a.n[vv2 + {{O:EnumVariant.tag}}]
+        vline2: int = a.n[vv2 + {{O:EnumVariant.line}}]
+        vfs: int = a.n[vv2 + {{O:EnumVariant.fields}}]
+        vfn: int = a.n[vv2 + {{O:EnumVariant.fields}} + 1]
+        consts.append(new_const(a, cat2(a, "__tag_", vn, "", -1), te_lit(a, "int"), mk_Expr_int_lit(a, vtag), vline2))
+        params: list[int] = []
+        body: list[int] = []
+        fc_args: list[int] = [mk_Expr_int_lit(a, vtag)]
+        first_call: int = ex_call(a, ex_ident(a, name), fc_args, 0, 0, 0)
+        body.append(stmt0(a, sk_var(a, syn(a, "__enum_v"), te_simple(a, name), first_call, -1, 0, -1, 0), vline2))
+        for fi in range(vfn):
+            f: int = a.l[vfs + fi]
+            fnm: int = pk(a.n[f + {{O:FieldDecl.name}}], a.n[f + {{O:FieldDecl.name}} + 1])
+            slot: int = cat2(a, "_", vn, "_", fnm)
+            fte: int = a.n[f + {{O:FieldDecl.type_expr}}]
+            fields2.append(new_field(a, slot, fte, a.n[f + {{O:FieldDecl.line}}]))
+            params.append(new_param(a, fnm, fte, 0))
+            asg: int = sk_assign(a, ex_attr(a, ex_ident_lit(a, "__enum_v"), slot), ex_ident(a, fnm), -1)
+            body.append(stmt0(a, asg, vline2))
+        body.append(stmt0(a, mk_StmtKind_return_stmt(a, ex_ident_lit(a, "__enum_v")), vline2))
+        if is_generic:
+            targ_ids: list[int] = []
+            for ti in range(len(tps) // 2):
+                targ_ids.append(te_simple(a, pk(tps[ti * 2], tps[ti * 2 + 1])))
+            targs: int = sl_of(a, targ_ids)
+            self_ty: int = mk_TypeExpr_generic(a, mk_Generic(a, pkx(name), pky(name), pkx(targs), pky(targs)))
+            gargs: list[int] = [mk_Expr_int_lit(a, vtag)]
+            gast: int = sl(a, gargs)
+            gc: int = mk_Expr_generic_construct(a, mk_GenericConstruct(a, pkx(name), pky(name), pkx(targs), pky(targs), gast, 1, {{NONE}}, 0))
+            body[0] = stmt0(a, sk_var(a, syn(a, "__enum_v"), self_ty, gc, -1, 0, -1, 0), vline2)
+            fdn: int = cat2(a, "", name, "__", vn)
+            fdef: int = new_func(a, fdn, tp_sl, sl_of(a, params), self_ty, sl_of(a, body))
+            push_extra(p, stmt0(a, mk_StmtKind_func_def(a, fdef), vline2))
+            continue
+        sm: int = mk_Decorator(a, pkx(syn(a, "staticmethod")), pky(syn(a, "staticmethod")), len(a.l), 0, vline2)
+        fm: int = new_func(a, vn, sl_empty(a), sl_of(a, params), te_simple(a, name), sl_of(a, body))
+        dl: list[int] = [sm]
+        set_sl(a, fm, {{O:FuncDef.decorators}}, sl_of(a, dl))
+        methods.append(fm)
+    for um in user_methods:
+        methods.append(um)
+    e: int = sl_empty(a)
+    cd: int = new_class(a, name, sl_of(a, consts), doc, -1, e, e, e, tp_sl, sl_of(a, methods), sl_of(a, fields2), e, sl_of(a, variants))
+    return mk_StmtKind_class_def(a, cd)
+
+# ClassDef (tüm dilimler paketli (başlangıç, uzunluk); `doc`/`base` paketli dize ya da -1).
+def new_class(a: Ast, name: int, consts: int, doc: int, base: int, extra_bases: int, base_args: int, mixins: int, tparams: int, methods: int, fields: int, decorators: int, variants: int) -> int:
+    return mk_ClassDef(a, pkx(name), pky(name), pkx(consts), pky(consts), opt_sl_x(doc), opt_sl_y(doc), opt_sl_x(base), opt_sl_y(base), pkx(extra_bases), pky(extra_bases), pkx(base_args), pky(base_args), pkx(mixins), pky(mixins), pkx(tparams), pky(tparams), pkx(methods), pky(methods), pkx(fields), pky(fields), pkx(decorators), pky(decorators), pkx(variants), pky(variants))
+
+# --- match ---
+def is_match_start(p: P) -> bool:
+    if not (chk(p, {{K:identifier}}) and tok_is(p, p.pos, "match")):
+        return False
+    if p.pos + 1 >= p.ntk:
+        return False
+    nk: int = nxt_kind(p)
+    if nk == {{K:assign}} or nk == {{K:dot}} or nk == {{K:colon}} or nk == {{K:comma}} or nk == {{K:newline}} or nk == {{K:r_paren}}:
+        return False
+    j: int = p.pos + 1
+    while j < p.ntk and kd_at(p, j) != {{K:newline}} and kd_at(p, j) != {{K:eof}}:
+        j = j + 1
+    if j + 2 >= p.ntk or kd_at(p, j - 1) != {{K:colon}}:
+        return False
+    return kd_at(p, j + 1) == {{K:indent}} and kd_at(p, j + 2) == {{K:identifier}} and tok_is(p, j + 2, "case")
+
+# `_` ise -1 (bağlama yok), değilse adın paketli dizesi.
+def parse_pattern_bind_target(p: P) -> int:
+    t: int = expect(p, {{K:identifier}})
+    if tok_is(p, t, "_"):
+        return -1
+    return tstr(p, t)
+
+def literal_ok(a: Ast, e: int) -> bool:
+    t: int = a.n[e]
+    if t == {{T:Expr.int_lit}} or t == {{T:Expr.float_lit}} or t == {{T:Expr.bool_lit}} or t == {{T:Expr.string_lit}}:
+        return True
+    if t == {{T:Expr.unary}}:
+        u: int = a.n[e + 1]
+        if a.n[u + {{O:Unary.op}}] == {{E:UnaryOp.neg}}:
+            ot: int = a.n[a.n[u + {{O:Unary.operand}}]]
+            return ot == {{T:Expr.int_lit}} or ot == {{T:Expr.float_lit}}
+    return False
+
+def new_pattern_arg(a: Ast, keyword: int, bind: int, sub: int, literal: int) -> int:
+    return mk_MatchPatternArg(a, opt_sl_x(keyword), opt_sl_y(keyword), opt_sl_x(bind), opt_sl_y(bind), sub, literal)
+
+def new_case(a: Ast, path: int, args: int, has_parens: int, wildcard: int, scalars: int, capture: int, guard: int, prefix: int, line: int) -> int:
+    return mk_MatchCase(a, pkx(path), pky(path), pkx(args), pky(args), has_parens, wildcard, pkx(scalars), pky(scalars), opt_sl_x(capture), opt_sl_y(capture), guard, prefix, line)
+
+def parse_match_pattern_arg(p: P) -> int:
+    a: Ast = p.a
+    keyword: int = -1
+    if chk(p, {{K:identifier}}) and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:assign}}:
+        kt: int = adv(p)
+        keyword = tstr(p, kt)
+        adv(p)
+    k: int = kd(p)
+    if k == {{K:int_lit}} or k == {{K:float_lit}} or k == {{K:string_lit}} or k == {{K:kw_true}} or k == {{K:kw_false}} or k == {{K:minus}}:
+        e: int = parse_unary(p)
+        if not literal_ok(a, e):
+            set_diag(p, -1, kd(p), p.pos - 1, "a literal pattern must be an int, float, str or bool literal")
+            raise ErrUnexpected("")
+        return new_pattern_arg(a, keyword, -1, -1, e)
+    if chk(p, {{K:identifier}}) and p.pos + 1 < p.ntk and (nxt_kind(p) == {{K:dot}} or nxt_kind(p) == {{K:l_paren}}):
+        sub: int = parse_enum_pattern(p)
+        return new_pattern_arg(a, keyword, -1, sub, -1)
+    bind: int = parse_pattern_bind_target(p)
+    return new_pattern_arg(a, keyword, bind, -1, -1)
+
+def is_scalar_pattern_start(p: P) -> bool:
+    k: int = kd(p)
+    return k == {{K:int_lit}} or k == {{K:float_lit}} or k == {{K:string_lit}} or k == {{K:kw_true}} or k == {{K:kw_false}} or k == {{K:minus}}
+
+def parse_scalar_literal(p: P) -> int:
+    e: int = parse_unary(p)
+    if not literal_ok(p.a, e):
+        set_diag(p, -1, kd(p), p.pos - 1, "a literal pattern must be an int, float, str or bool literal")
+        raise ErrUnexpected("")
+    return e
+
+def parse_enum_pattern(p: P) -> int:
+    a: Ast = p.a
+    line: int = p.tk[p.pos * 5 + 1]
+    path: list[int] = []
+    t0: int = expect(p, {{K:identifier}})
+    path.append(t_s(p, t0))
+    path.append(t_e(p, t0))
+    while mtc(p, {{K:dot}}):
+        t1: int = expect(p, {{K:identifier}})
+        path.append(t_s(p, t1))
+        path.append(t_e(p, t1))
+    args: list[int] = []
+    has_parens: int = 0
+    if mtc(p, {{K:l_paren}}):
+        has_parens = 1
+        while not chk(p, {{K:r_paren}}):
+            args.append(parse_match_pattern_arg(p))
+            if not mtc(p, {{K:comma}}):
+                break
+        expect(p, {{K:r_paren}})
+    if len(path) // 2 < 2:
+        set_diag(p, -1, kd(p), p.pos - 1, "a case pattern must be qualified: `Enum.Variant` (or `_`)")
+        raise ErrUnexpected("")
+    return new_case(a, sl2_of(a, path), sl_of(a, args), has_parens, 0, sl_empty(a), -1, -1, 0, line)
+
+def parse_match_pattern(p: P) -> int:
+    a: Ast = p.a
+    line: int = p.tk[p.pos * 5 + 1]
+    if chk(p, {{K:identifier}}) and tok_is(p, p.pos, "_") and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:colon}}:
+        adv(p)
+        return new_case(a, sl_empty(a), sl_empty(a), 0, 1, sl_empty(a), -1, -1, 0, line)
+    pat: int = 0
+    if chk(p, {{K:identifier}}) and (p.pos + 1 >= p.ntk or (nxt_kind(p) != {{K:dot}} and nxt_kind(p) != {{K:l_paren}})):
+        ct: int = adv(p)
+        pat = new_case(a, sl_empty(a), sl_empty(a), 0, 0, sl_empty(a), tstr(p, ct), -1, 0, line)
+    elif is_scalar_pattern_start(p):
+        lits: list[int] = [parse_scalar_literal(p)]
+        while mtc(p, {{K:pipe}}):
+            lits.append(parse_scalar_literal(p))
+        pat = new_case(a, sl_empty(a), sl_empty(a), 0, 0, sl_of(a, lits), -1, -1, 0, line)
+    else:
+        pat = parse_enum_pattern(p)
+    if mtc(p, {{K:kw_if}}):
+        gx: int = parse_expr(p)
+        a.n[pat + {{O:MatchCase.guard}}] = gx
+    return pat
+
+def path_expr(a: Ast, path_st: int, count: int) -> int:
+    e: int = mk_Expr_identifier(a, a.l[path_st], a.l[path_st + 1])
+    for i in range(1, count):
+        e = ex_attr(a, e, pk(a.l[path_st + i * 2], a.l[path_st + i * 2 + 1]))
+    return e
+
+def payload_call(a: Ast, subject: int, enum_e: int, variant: int, idx: int, keyword: int) -> int:
+    kw: int = ex_str_lit(a, "")
+    if keyword != -1:
+        kw = ex_str(a, keyword)
+    args: list[int] = [subject, enum_e, ex_str(a, variant), mk_Expr_int_lit(a, idx), kw]
+    return ex_call(a, ex_ident_lit(a, "__nox_payload"), args, 0, 0, 0)
+
+def lower_pattern(p: P, subject: int, pat: int) -> None:
+    a: Ast = p.a
+    pst: int = a.n[pat + {{O:MatchCase.path}}]
+    pn: int = a.n[pat + {{O:MatchCase.path}} + 1]
+    variant: int = pk(a.l[pst + (pn - 1) * 2], a.l[pst + (pn - 1) * 2 + 1])
+    enum_e: int = path_expr(a, pst, pn - 1)
+    tag_const: int = cat2(a, "__tag_", variant, "", -1)
+    p.lp_conds.append(ex_bin(a, {{E:BinaryOp.eq}}, ex_attr(a, subject, syn(a, "_tag")), ex_attr(a, enum_e, tag_const)))
+    ast_: int = a.n[pat + {{O:MatchCase.args}}]
+    an: int = a.n[pat + {{O:MatchCase.args}} + 1]
+    any_kw: bool = False
+    for i in range(an):
+        if a.n[a.l[ast_ + i] + {{O:MatchPatternArg.keyword}}] != {{NONE}}:
+            any_kw = True
+    arity: int = 0
+    if a.n[pat + {{O:MatchCase.has_parens}}] == 0:
+        arity = -2
+    elif any_kw:
+        arity = -1
+    else:
+        arity = an
+    cargs: list[int] = [subject, enum_e, ex_str(a, variant), mk_Expr_int_lit(a, arity)]
+    chk_call: int = ex_call(a, ex_ident_lit(a, "__nox_match_check"), cargs, 0, 0, 0)
+    p.lp_pre.append(stmt0(a, mk_StmtKind_expr_stmt(a, chk_call), a.n[pat + {{O:MatchCase.line}}]))
+    for j in range(an):
+        arg: int = a.l[ast_ + j]
+        kwx: int = a.n[arg + {{O:MatchPatternArg.keyword}}]
+        kw: int = -1
+        idx: int = j
+        if kwx != {{NONE}}:
+            kw = pk(kwx, a.n[arg + {{O:MatchPatternArg.keyword}} + 1])
+            idx = -1
+        payload: int = payload_call(a, subject, enum_e, variant, idx, kw)
+        sub: int = a.n[arg + {{O:MatchPatternArg.sub}}]
+        lit: int = a.n[arg + {{O:MatchPatternArg.literal}}]
+        bx: int = a.n[arg + {{O:MatchPatternArg.bind}}]
+        if sub >= 0:
+            lower_pattern(p, payload, sub)
+        elif lit >= 0:
+            p.lp_conds.append(ex_bin(a, {{E:BinaryOp.eq}}, payload, lit))
+        elif bx != {{NONE}}:
+            p.lp_bn.append(bx)
+            p.lp_bn.append(a.n[arg + {{O:MatchPatternArg.bind}} + 1])
+            p.lp_bv.append(payload)
+
+def encode_coverage_pattern(p: P, pat: int) -> None:
+    a: Ast = p.a
+    pst: int = a.n[pat + {{O:MatchCase.path}}]
+    pn: int = a.n[pat + {{O:MatchCase.path}} + 1]
+    v: int = pk(a.l[pst + (pn - 1) * 2], a.l[pst + (pn - 1) * 2 + 1])
+    for i in range(sref_len(v)):
+        p.cov.append(sref_byte(a, v, i))
+    if a.n[pat + {{O:MatchCase.has_parens}}] == 0:
+        return
+    p.cov.append(40)
+    ast_: int = a.n[pat + {{O:MatchCase.args}}]
+    an: int = a.n[pat + {{O:MatchCase.args}} + 1]
+    for j in range(an):
+        if j > 0:
+            p.cov.append(44)
+        arg: int = a.l[ast_ + j]
+        kx: int = a.n[arg + {{O:MatchPatternArg.keyword}}]
+        if kx != {{NONE}}:
+            k: int = pk(kx, a.n[arg + {{O:MatchPatternArg.keyword}} + 1])
+            for b in range(sref_len(k)):
+                p.cov.append(sref_byte(a, k, b))
+            p.cov.append(61)
+        sub: int = a.n[arg + {{O:MatchPatternArg.sub}}]
+        if sub >= 0:
+            encode_coverage_pattern(p, sub)
+        elif a.n[arg + {{O:MatchPatternArg.literal}}] >= 0:
+            p.cov.append(35)
+        else:
+            p.cov.append(95)
+    p.cov.append(41)
+
+def and_all(a: Ast, items: list[int]) -> int:
+    acc: int = items[0]
+    for i in range(1, len(items)):
+        acc = ex_bin(a, {{E:BinaryOp.and_}}, acc, items[i])
+    return acc
+
+def subst_list(p: P, st: int, n: int, bn: list[int], bv: list[int]) -> list[int]:
+    a: Ast = p.a
+    out: list[int] = []
+    for i in range(n):
+        r: int = substitute_binds(p, a.l[st + i], bn, bv)
+        if r == a.l[st + i]:
+            r = clone_expr(a, r)
+        out.append(r)
+    return out
+
+# `bn`: ad çiftleri (stride 2), `bv`: karşılık gelen ifade kimlikleri.
+def substitute_binds(p: P, e: int, bn: list[int], bv: list[int]) -> int:
+    a: Ast = p.a
+    t: int = a.n[e]
+    if t == {{T:Expr.int_lit}} or t == {{T:Expr.float_lit}} or t == {{T:Expr.bool_lit}} or t == {{T:Expr.string_lit}} or t == {{T:Expr.none_lit}}:
+        return e
+    if t == {{T:Expr.identifier}}:
+        nm: int = pk(a.n[e + 1], a.n[e + 2])
+        for i in range(len(bv)):
+            if sref_eq2(a, pk(bn[i * 2], bn[i * 2 + 1]), nm):
+                return bv[i]
+        return e
+    pay: int = a.n[e + 1]
+    if t == {{T:Expr.unary}}:
+        return ex_un(a, a.n[pay + {{O:Unary.op}}], substitute_binds(p, a.n[pay + {{O:Unary.operand}}], bn, bv))
+    if t == {{T:Expr.binary}}:
+        nb: int = copy_node(a, pay, {{SZ:Binary}})
+        sl_l: int = substitute_binds(p, a.n[pay + {{O:Binary.left}}], bn, bv)
+        sl_r: int = substitute_binds(p, a.n[pay + {{O:Binary.right}}], bn, bv)
+        a.n[nb + {{O:Binary.left}}] = sl_l
+        a.n[nb + {{O:Binary.right}}] = sl_r
+        return mk_Expr_binary(a, nb)
+    if t == {{T:Expr.attribute}}:
+        return ex_attr(a, substitute_binds(p, a.n[pay + {{O:Attribute.obj}}], bn, bv), pk(a.n[pay + {{O:Attribute.attr}}], a.n[pay + {{O:Attribute.attr}} + 1]))
+    if t == {{T:Expr.index}}:
+        o: int = substitute_binds(p, a.n[pay + {{O:Index.obj}}], bn, bv)
+        ix: int = substitute_binds(p, a.n[pay + {{O:Index.index}}], bn, bv)
+        return ex_index(a, o, ix)
+    if t == {{T:Expr.call}}:
+        args: list[int] = subst_list(p, a.n[pay + {{O:Call.args}}], a.n[pay + {{O:Call.args}} + 1], bn, bv)
+        nc: int = copy_node(a, pay, {{SZ:Call}})
+        sc: int = substitute_binds(p, a.n[pay + {{O:Call.callee}}], bn, bv)
+        a.n[nc + {{O:Call.callee}}] = sc
+        a.n[nc + {{O:Call.args}}] = sl(a, args)
+        a.n[nc + {{O:Call.args}} + 1] = len(args)
+        return mk_Expr_call(a, nc)
+    if t == {{T:Expr.kwarg}}:
+        v: int = substitute_binds(p, a.n[pay + {{O:Kwarg.value}}], bn, bv)
+        return mk_Expr_kwarg(a, mk_Kwarg(a, a.n[pay + {{O:Kwarg.name}}], a.n[pay + {{O:Kwarg.name}} + 1], v))
+    if t == {{T:Expr.ternary}}:
+        c2: int = substitute_binds(p, a.n[pay + {{O:Ternary.cond}}], bn, bv)
+        t2: int = substitute_binds(p, a.n[pay + {{O:Ternary.then_expr}}], bn, bv)
+        e2: int = substitute_binds(p, a.n[pay + {{O:Ternary.else_expr}}], bn, bv)
+        return mk_Expr_ternary(a, mk_Ternary(a, c2, t2, e2))
+    if t == {{T:Expr.list_lit}}:
+        items: list[int] = subst_list(p, a.n[e + 1], a.n[e + 2], bn, bv)
+        return mk_Expr_list_lit(a, sl(a, items), len(items))
+    if t == {{T:Expr.tuple_lit}}:
+        items2: list[int] = subst_list(p, a.n[e + 1], a.n[e + 2], bn, bv)
+        return mk_Expr_tuple_lit(a, sl(a, items2), len(items2))
+    set_diag(p, -1, kd(p), p.pos - 1, "this expression form is not supported in a case guard; compute it in the case body")
+    raise ErrUnexpected("")
+    return 0
+
+# `case name [if guard]`: koşul ifadesi.
+def match_capture_cond(p: P, cap: int, guard: int, subj_ref: int) -> int:
+    if guard >= 0:
+        b1n: list[int] = [pkx(cap), pky(cap)]
+        b1v: list[int] = [subj_ref]
+        return substitute_binds(p, guard, b1n, b1v)
+    return mk_Expr_bool_lit(p.a, 1)
+
+# `name = konu` ile başlayan gövde dilimi.
+def match_capture_branch(p: P, c2: int, body2: int, subj_ref: int, cap: int) -> int:
+    a: Ast = p.a
+    full: list[int] = [stmt0(a, sk_var_infer(a, cap, subj_ref), a.n[c2 + {{O:MatchCase.line}}])]
+    for bi in range(pky(body2)):
+        full.append(a.l[pkx(body2) + bi])
+    a.n[c2 + {{O:MatchCase.prefix}}] = 1
+    return sl_of(a, full)
+
+def parse_match(p: P, start_tok: int) -> int:
+    a: Ast = p.a
+    adv(p)
+    subject: int = parse_expr(p)
+    expect(p, {{K:colon}})
+    expect(p, {{K:newline}})
+    expect(p, {{K:indent}})
+    cases: list[int] = []
+    bodies: list[int] = []
+    while chk(p, {{K:identifier}}) and tok_is(p, p.pos, "case"):
+        adv(p)
+        pat: int = parse_match_pattern(p)
+        expect(p, {{K:colon}})
+        body: int = parse_block(p)
+        cases.append(pat)
+        bodies.append(body)
+    expect(p, {{K:dedent}})
+    if len(cases) == 0:
+        set_diag(p, -1, kd(p), start_tok, "a match needs at least one case")
+        raise ErrUnexpected("")
+    for ci in range(len(cases)):
+        if a.n[cases[ci] + {{O:MatchCase.wildcard}}] != 0 and ci + 1 != len(cases):
+            set_diag(p, -1, kd(p), start_tok, "`case _:` must be the last case")
+            raise ErrUnexpected("")
+    n_scalar: int = 0
+    n_enum: int = 0
+    for c in cases:
+        if a.n[c + {{O:MatchCase.wildcard}}] != 0:
+            continue
+        if a.n[c + {{O:MatchCase.scalars}} + 1] > 0 or a.n[c + {{O:MatchCase.capture}}] != {{NONE}}:
+            n_scalar = n_scalar + 1
+        else:
+            n_enum = n_enum + 1
+    if n_scalar > 0 and n_enum > 0:
+        set_diag(p, -1, kd(p), start_tok, "a match cannot mix literal cases and enum-variant cases")
+        raise ErrUnexpected("")
+    p.match_counter = p.match_counter + 1
+    tmp: int = syn(a, "__match_" + str(p.match_counter))
+    line: int = p.tk[start_tok * 5 + 1]
+    has_wild: bool = a.n[cases[len(cases) - 1] + {{O:MatchCase.wildcard}}] != 0
+    subj_ref: int = ex_ident(a, tmp)
+    branches: list[int] = []
+    p.cov = []
+    first_enum: int = -1
+    conds: list[int] = []
+    no_bn: list[int] = []
+    no_bv: list[int] = []
+    for i in range(len(cases)):
+        c2: int = cases[i]
+        body2: int = bodies[i]
+        if a.n[c2 + {{O:MatchCase.wildcard}}] != 0:
+            a.n[c2 + {{O:MatchCase.prefix}}] = 0
+            branches.append(body2)
+            continue
+        capx: int = a.n[c2 + {{O:MatchCase.capture}}]
+        guard: int = a.n[c2 + {{O:MatchCase.guard}}]
+        if capx != {{NONE}}:
+            capn: int = pk(capx, a.n[c2 + {{O:MatchCase.capture}} + 1])
+            conds.append(match_capture_cond(p, capn, guard, subj_ref))
+            branches.append(match_capture_branch(p, c2, body2, subj_ref, capn))
+            continue
+        scs: int = a.n[c2 + {{O:MatchCase.scalars}}]
+        scn: int = a.n[c2 + {{O:MatchCase.scalars}} + 1]
+        if scn > 0:
+            cnd: int = ex_bin(a, {{E:BinaryOp.eq}}, subj_ref, a.l[scs])
+            for si in range(1, scn):
+                alt: int = ex_bin(a, {{E:BinaryOp.eq}}, subj_ref, a.l[scs + si])
+                cnd = ex_bin(a, {{E:BinaryOp.or_}}, cnd, alt)
+            if guard >= 0:
+                cnd = ex_bin(a, {{E:BinaryOp.and_}}, cnd, substitute_binds(p, guard, no_bn, no_bv))
+            conds.append(cnd)
+            a.n[c2 + {{O:MatchCase.prefix}}] = 0
+            branches.append(body2)
+            continue
+        pst: int = a.n[c2 + {{O:MatchCase.path}}]
+        pn: int = a.n[c2 + {{O:MatchCase.path}} + 1]
+        enum_e: int = path_expr(a, pst, pn - 1)
+        if first_enum < 0:
+            first_enum = enum_e
+        if guard < 0:
+            if len(p.cov) > 0:
+                p.cov.append(59)
+            encode_coverage_pattern(p, c2)
+        p.lp_conds = []
+        p.lp_pre = []
+        p.lp_bn = []
+        p.lp_bv = []
+        lower_pattern(p, subj_ref, c2)
+        if guard >= 0:
+            p.lp_conds.append(substitute_binds(p, guard, p.lp_bn, p.lp_bv))
+        conds.append(and_all(a, p.lp_conds))
+        for bj in range(len(p.lp_bv)):
+            p.lp_pre.append(stmt0(a, sk_var_infer(a, pk(p.lp_bn[bj * 2], p.lp_bn[bj * 2 + 1]), p.lp_bv[bj]), a.n[c2 + {{O:MatchCase.line}}]))
+        a.n[c2 + {{O:MatchCase.prefix}}] = len(p.lp_pre)
+        full2: list[int] = []
+        for pi in p.lp_pre:
+            full2.append(pi)
+        for bk in range(pky(body2)):
+            full2.append(a.l[pkx(body2) + bk])
+        branches.append(sl_of(a, full2))
+    else_body: int = -1
+    if has_wild:
+        else_body = branches[len(branches) - 1]
+    elif first_enum >= 0:
+        off: int = len(a.sb)
+        for cb in p.cov:
+            a.sb.append(cb)
+        covered: int = pk(0 - off - 1, len(p.cov))
+        uargs: list[int] = [subj_ref, first_enum, ex_str(a, covered)]
+        u1: int = stmt0(a, mk_StmtKind_expr_stmt(a, ex_call(a, ex_ident_lit(a, "__nox_match_unreachable"), uargs, 0, 0, 0)), line)
+        u2: int = stmt0(a, mk_StmtKind_raise_stmt(a, ex_call1(a, "RuntimeError", ex_str_lit(a, "no case matched"), 0)), line)
+        eb: list[int] = [u1, u2]
+        else_body = sl_of(a, eb)
+    n_cond: int = len(conds)
+    if n_cond == 0:
+        set_diag(p, -1, kd(p), start_tok, "a match needs at least one enum variant or literal case")
+        raise ErrUnexpected("")
+    cst: int = sl(a, cases)
+    origin: int = mk_MatchOrigin(a, subject, cst, len(cases))
+    elifs: list[int] = []
+    for ei in range(1, n_cond):
+        elifs.append(mk_ElifClause(a, conds[ei], pkx(branches[ei]), pky(branches[ei])))
+    tb: int = branches[0]
+    ifs: int = mk_IfStmt(a, conds[0], pkx(tb), pky(tb), pkx(sl_of(a, elifs)), len(elifs), opt_sl_x(else_body), opt_sl_y(else_body), 0, origin, 0)
+    push_extra(p, mk_Stmt(a, mk_StmtKind_if_stmt(a, ifs), line, span_toks(p, start_tok, p.pos - 1)))
+    return sk_var(a, tmp, te_lit(a, "__infer"), subject, -1, 1, -1, 0)
+
+# --- dekoratör / fonksiyon / extern ---
+def parse_decorator_arg(p: P) -> int:
+    a: Ast = p.a
+    if chk(p, {{K:identifier}}) and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:assign}}:
+        nt: int = adv(p)
+        adv(p)
+        value: int = parse_expr(p)
+        return mk_Expr_kwarg(a, mk_Kwarg(a, t_s(p, nt), t_e(p, nt), value))
+    return parse_expr(p)
+
+# Dekoratör satırları -> paketli (başlangıç, uzunluk) Decorator dilimi.
+def parse_decorators(p: P) -> int:
+    a: Ast = p.a
+    decorators: list[int] = []
+    while chk(p, {{K:at_sign}}):
+        line: int = p.tk[p.pos * 5 + 1]
+        adv(p)
+        nt: int = expect(p, {{K:identifier}})
+        name: int = tstr(p, nt)
+        while chk(p, {{K:dot}}):
+            adv(p)
+            sg: int = expect(p, {{K:identifier}})
+            name = cat2(a, "", name, ".", tstr(p, sg))
+        args: list[int] = []
+        if mtc(p, {{K:l_paren}}):
+            if not chk(p, {{K:r_paren}}):
+                args.append(parse_decorator_arg(p))
+                while mtc(p, {{K:comma}}):
+                    args.append(parse_decorator_arg(p))
+            expect(p, {{K:r_paren}})
+        expect(p, {{K:newline}})
+        ast_: int = sl(a, args)
+        decorators.append(mk_Decorator(a, pkx(name), pky(name), ast_, len(args), line))
+    return sl_of(a, decorators)
+
+def parse_decorated_def(p: P) -> int:
+    a: Ast = p.a
+    decorators: int = parse_decorators(p)
+    k: int = kd(p)
+    if k == {{K:kw_def}} or k == {{K:kw_async}}:
+        fd: int = parse_func_def(p, -1)
+        kept: list[int] = []
+        for i in range(pky(decorators)):
+            d: int = a.l[pkx(decorators) + i]
+            dname: int = pk(a.n[d + {{O:Decorator.name}}], a.n[d + {{O:Decorator.name}} + 1])
+            dargs_st: int = a.n[d + {{O:Decorator.args}}]
+            dargs_n: int = a.n[d + {{O:Decorator.args}} + 1]
+            if sref_eq(a, dname, "link_name") and dargs_n == 1 and a.n[a.l[dargs_st]] == {{T:Expr.string_lit}}:
+                a.n[fd + {{O:FuncDef.link_name}}] = a.n[a.l[dargs_st] + 1]
+                a.n[fd + {{O:FuncDef.link_name}} + 1] = a.n[a.l[dargs_st] + 2]
+            else:
+                kept.append(d)
+        set_sl(a, fd, {{O:FuncDef.decorators}}, sl_of(a, kept))
+        return mk_StmtKind_func_def(a, fd)
+    if k == {{K:kw_class}}:
+        kind: int = parse_class_def(p)
+        set_sl(a, a.n[kind + 1], {{O:ClassDef.decorators}}, decorators)
+        return kind
+    if k == {{K:kw_extern}}:
+        kind2: int = parse_extern_def(p)
+        set_sl(a, a.n[kind2 + 1], {{O:ExternDef.decorators}}, decorators)
+        return kind2
+    set_diag(p, -1, kd(p), p.pos, "")
+    raise ErrUnexpected("")
+    return 0
+
+def parse_param(p: P) -> int:
+    a: Ast = p.a
+    if mtc(p, {{K:star}}):
+        vt: int = expect(p, {{K:identifier}})
+        expect(p, {{K:colon}})
+        elem: int = parse_type_expr(p)
+        args: list[int] = [elem]
+        ln: int = syn(a, "list")
+        te: int = mk_TypeExpr_generic(a, mk_Generic(a, pkx(ln), pky(ln), sl(a, args), 1))
+        vn: int = tstr(p, vt)
+        return mk_Param(a, pkx(vn), pky(vn), 1, 0, 0, 0, te, 0, -1)
+    if mtc(p, {{K:star_star}}):
+        kt: int = expect(p, {{K:identifier}})
+        expect(p, {{K:colon}})
+        elem2: int = parse_type_expr(p)
+        kargs: list[int] = [te_lit(a, "str"), elem2]
+        dn: int = syn(a, "dict")
+        te2: int = mk_TypeExpr_generic(a, mk_Generic(a, pkx(dn), pky(dn), sl(a, kargs), 2))
+        kn: int = tstr(p, kt)
+        return mk_Param(a, pkx(kn), pky(kn), 0, 1, 0, 0, te2, 0, -1)
+    nt: int = expect(p, {{K:identifier}})
+    expect(p, {{K:colon}})
+    type_expr: int = parse_type_expr(p)
+    default: int = -1
+    if mtc(p, {{K:assign}}):
+        default = parse_expr(p)
+    nm: int = tstr(p, nt)
+    return mk_Param(a, pkx(nm), pky(nm), 0, 0, 0, 0, type_expr, 0, default)
+
+# `enclosing`: kapsayan sınıfın paketli adı ya da -1.
+def parse_first_param(p: P, enclosing: int) -> int:
+    a: Ast = p.a
+    if enclosing != -1:
+        first_is_self: bool = chk(p, {{K:identifier}}) and tok_is(p, p.pos, "self")
+        first_is_cls: bool = chk(p, {{K:identifier}}) and tok_is(p, p.pos, "cls")
+        if (first_is_self or first_is_cls) and p.tk[(p.pos + 1) * 5] != {{K:colon}}:
+            pn: int = tstr(p, p.pos)
+            adv(p)
+            return mk_Param(a, pkx(pn), pky(pn), 0, 0, 0, 0, te_simple(a, enclosing), 1, -1)
+    return parse_param(p)
+
+def parse_func_def(p: P, enclosing: int) -> int:
+    a: Ast = p.a
+    is_async: int = 1 if mtc(p, {{K:kw_async}}) else 0
+    expect(p, {{K:kw_def}})
+    nt: int = expect(p, {{K:identifier}})
+    name: int = tstr(p, nt)
+    type_params: list[int] = []
+    if mtc(p, {{K:l_bracket}}):
+        t0: int = expect(p, {{K:identifier}})
+        type_params.append(t_s(p, t0))
+        type_params.append(t_e(p, t0))
+        while mtc(p, {{K:comma}}):
+            t1: int = expect(p, {{K:identifier}})
+            type_params.append(t_s(p, t1))
+            type_params.append(t_e(p, t1))
+        expect(p, {{K:r_bracket}})
+    expect(p, {{K:l_paren}})
+    params: list[int] = []
+    kw_only_mode: bool = False
+    saw_slash: bool = False
+    if not chk(p, {{K:r_paren}}):
+        params.append(parse_first_param(p, enclosing))
+        if a.n[params[0] + {{O:Param.variadic}}] != 0:
+            kw_only_mode = True
+        while mtc(p, {{K:comma}}):
+            if chk(p, {{K:star}}) and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:comma}}:
+                adv(p)
+                kw_only_mode = True
+                continue
+            if chk(p, {{K:slash}}):
+                bad_note: str = ""
+                if kw_only_mode:
+                    bad_note = "'/' must come before '*' and '*args'"
+                elif saw_slash:
+                    bad_note = "only one '/' is allowed"
+                if len(bad_note) > 0:
+                    set_diag(p, -1, kd(p), p.pos, bad_note)
+                    raise ErrUnexpected("")
+                adv(p)
+                saw_slash = True
+                for pp in params:
+                    a.n[pp + {{O:Param.pos_only}}] = 1
+                continue
+            np: int = parse_param(p)
+            if kw_only_mode and a.n[np + {{O:Param.variadic}}] == 0 and a.n[np + {{O:Param.var_kw}}] == 0:
+                a.n[np + {{O:Param.kw_only}}] = 1
+            if a.n[np + {{O:Param.variadic}}] != 0:
+                kw_only_mode = True
+            params.append(np)
+    expect(p, {{K:r_paren}})
+    for pi in range(len(params)):
+        pp2: int = params[pi]
+        if a.n[pp2 + {{O:Param.var_kw}}] != 0 and pi + 1 != len(params):
+            set_diag(p, -1, kd(p), p.pos - 1, "a '**kwargs' parameter must be the last parameter")
+            raise ErrUnexpected("")
+        if a.n[pp2 + {{O:Param.variadic}}] != 0:
+            for ei in range(pi):
+                if a.n[params[ei] + {{O:Param.variadic}}] != 0:
+                    set_diag(p, -1, kd(p), p.pos - 1, "only one '*args' parameter is allowed")
+                    raise ErrUnexpected("")
+    ret_omitted: int = 0
+    return_type: int = 0
+    if chk(p, {{K:colon}}):
+        ret_omitted = 1
+        return_type = te_lit(a, "None")
+    else:
+        expect(p, {{K:arrow}})
+        return_type = parse_type_expr(p)
+    expect(p, {{K:colon}})
+    saved_nl: list[int] = p.nonl
+    saved_has_nl: bool = p.has_nonl
+    saved_gl: list[int] = p.glob
+    saved_has_gl: bool = p.has_glob
+    saved_on: bool = p.ex_on
+    saved_bind: int = p.ex_bind
+    saved_synth: bool = p.ex_synth
+    p.nonl = []
+    p.has_nonl = True
+    p.glob = []
+    p.has_glob = True
+    p.ex_on = False
+    body: int = parse_block(p)
+    nls: int = sl2_of(a, p.nonl)
+    gls: int = sl2_of(a, p.glob)
+    p.nonl = saved_nl
+    p.has_nonl = saved_has_nl
+    p.glob = saved_gl
+    p.has_glob = saved_has_gl
+    p.ex_on = saved_on
+    p.ex_bind = saved_bind
+    p.ex_synth = saved_synth
+    fd: int = new_func(a, name, sl2_of(a, type_params), sl_of(a, params), return_type, body)
+    a.n[fd + {{O:FuncDef.ret_omitted}}] = ret_omitted
+    a.n[fd + {{O:FuncDef.is_async}}] = is_async
+    set_sl(a, fd, {{O:FuncDef.nonlocals}}, nls)
+    set_sl(a, fd, {{O:FuncDef.globals}}, gls)
+    return fd
+
+def parse_extern_def(p: P) -> int:
+    a: Ast = p.a
+    expect(p, {{K:kw_extern}})
+    expect(p, {{K:kw_def}})
+    nt: int = expect(p, {{K:identifier}})
+    name: int = tstr(p, nt)
+    expect(p, {{K:l_paren}})
+    params: list[int] = []
+    if not chk(p, {{K:r_paren}}):
+        params.append(parse_param(p))
+        while mtc(p, {{K:comma}}):
+            params.append(parse_param(p))
+    expect(p, {{K:r_paren}})
+    expect(p, {{K:arrow}})
+    return_type: int = parse_type_expr(p)
+    expect(p, {{K:kw_from}})
+    ft: int = expect(p, {{K:string_lit}})
+    from_lib: int = decode_string(p, ft)
+    needs_rt: int = 1 if mtc(p, {{K:kw_with_rt}}) else 0
+    retl: list[int] = []
+    if mtc(p, {{K:kw_retains}}):
+        expect(p, {{K:l_paren}})
+        if not chk(p, {{K:r_paren}}):
+            r0: int = expect(p, {{K:identifier}})
+            retl.append(t_s(p, r0))
+            retl.append(t_e(p, r0))
+            while mtc(p, {{K:comma}}):
+                r1: int = expect(p, {{K:identifier}})
+                retl.append(t_s(p, r1))
+                retl.append(t_e(p, r1))
+        expect(p, {{K:r_paren}})
+    expect(p, {{K:newline}})
+    e: int = sl_empty(a)
+    pst: int = sl_of(a, params)
+    rst: int = sl2_of(a, retl)
+    return mk_StmtKind_extern_def(a, mk_ExternDef(a, pkx(name), pky(name), pkx(pst), pky(pst), return_type, pkx(from_lib), pky(from_lib), needs_rt, pkx(rst), pky(rst), pkx(e), pky(e)))
+
+# --- class / protocol / return ---
+def parse_class_def(p: P) -> int:
+    a: Ast = p.a
+    expect(p, {{K:kw_class}})
+    nt: int = expect(p, {{K:identifier}})
+    name: int = tstr(p, nt)
+    base: int = -1
+    base_args: list[int] = []
+    extra_bases: list[int] = []
+    if mtc(p, {{K:l_paren}}):
+        bt: int = expect(p, {{K:identifier}})
+        base = tstr(p, bt)
+        if mtc(p, {{K:l_bracket}}):
+            base_args.append(parse_type_expr(p))
+            while mtc(p, {{K:comma}}):
+                base_args.append(parse_type_expr(p))
+            expect(p, {{K:r_bracket}})
+        while mtc(p, {{K:comma}}):
+            eb: int = expect(p, {{K:identifier}})
+            extra_bases.append(t_s(p, eb))
+            extra_bases.append(t_e(p, eb))
+        expect(p, {{K:r_paren}})
+    type_params: list[int] = []
+    if mtc(p, {{K:l_bracket}}):
+        t0: int = expect(p, {{K:identifier}})
+        type_params.append(t_s(p, t0))
+        type_params.append(t_e(p, t0))
+        while mtc(p, {{K:comma}}):
+            t1: int = expect(p, {{K:identifier}})
+            type_params.append(t_s(p, t1))
+            type_params.append(t_e(p, t1))
+        expect(p, {{K:r_bracket}})
+    expect(p, {{K:colon}})
+    expect(p, {{K:newline}})
+    expect(p, {{K:indent}})
+    methods: list[int] = []
+    fields: list[int] = []
+    consts: list[int] = []
+    class_doc: int = -1
+    while not chk(p, {{K:dedent}}):
+        if chk(p, {{K:kw_pass}}):
+            adv(p)
+            expect(p, {{K:newline}})
+        elif chk(p, {{K:string_lit}}):
+            doc_tok: int = adv(p)
+            text: int = decode_string(p, doc_tok)
+            expect(p, {{K:newline}})
+            if class_doc == -1 and len(methods) == 0 and len(fields) == 0:
+                class_doc = text
+        elif chk(p, {{K:identifier}}) and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:colon}}:
+            line: int = p.tk[p.pos * 5 + 1]
+            mt: int = adv(p)
+            mname: int = tstr(p, mt)
+            expect(p, {{K:colon}})
+            type_expr: int = parse_type_expr(p)
+            if mtc(p, {{K:assign}}):
+                value: int = parse_expr(p)
+                expect(p, {{K:newline}})
+                consts.append(new_const(a, mname, type_expr, value, line))
+            else:
+                expect(p, {{K:newline}})
+                fields.append(new_field(a, mname, type_expr, line))
+        elif chk(p, {{K:at_sign}}):
+            decos: int = parse_decorators(p)
+            fd: int = parse_func_def(p, name)
+            set_sl(a, fd, {{O:FuncDef.decorators}}, decos)
+            methods.append(fd)
+        else:
+            methods.append(parse_func_def(p, name))
+    expect(p, {{K:dedent}})
+    e: int = sl_empty(a)
+    cd: int = new_class(a, name, sl_of(a, consts), class_doc, base, sl2_of(a, extra_bases), sl_of(a, base_args), e, sl2_of(a, type_params), sl_of(a, methods), sl_of(a, fields), e, e)
+    return mk_StmtKind_class_def(a, cd)
+
+def parse_protocol_def(p: P) -> int:
+    a: Ast = p.a
+    expect(p, {{K:kw_protocol}})
+    nt: int = expect(p, {{K:identifier}})
+    name: int = tstr(p, nt)
+    expect(p, {{K:colon}})
+    expect(p, {{K:newline}})
+    expect(p, {{K:indent}})
+    methods: list[int] = []
+    while not chk(p, {{K:dedent}}):
+        methods.append(parse_func_def(p, name))
+    expect(p, {{K:dedent}})
+    ms: int = sl_of(a, methods)
+    return mk_StmtKind_protocol_def(a, mk_ProtocolDef(a, pkx(name), pky(name), pkx(ms), pky(ms)))
+
+def parse_return(p: P) -> int:
+    a: Ast = p.a
+    expect(p, {{K:kw_return}})
+    if mtc(p, {{K:newline}}):
+        return mk_StmtKind_return_stmt(a, -1)
+    value: int = parse_expr_or_tuple(p)
+    expect(p, {{K:newline}})
+    return mk_StmtKind_return_stmt(a, value)
+
+# --- raise / try / with / defer / lowlevel / import ---
+def parse_raise(p: P) -> int:
+    a: Ast = p.a
+    expect(p, {{K:kw_raise}})
+    if chk(p, {{K:newline}}):
+        if not p.ex_on:
+            fail_cur(p, "a bare 'raise' is only valid inside an 'except' block (outside, write 'raise <exception>')")
+        if p.ex_bind == -1:
+            p.else_counter = p.else_counter + 1
+            p.ex_bind = syn(a, "__nox_exc_" + str(p.else_counter))
+            p.ex_synth = True
+        expect(p, {{K:newline}})
+        return mk_StmtKind_raise_stmt(a, ex_ident(a, p.ex_bind))
+    value: int = parse_expr(p)
+    if mtc(p, {{K:kw_from}}):
+        if mtc(p, {{K:kw_none}}):
+            expect(p, {{K:newline}})
+            return mk_StmtKind_raise_stmt(a, value)
+        cause: int = parse_expr(p)
+        expect(p, {{K:newline}})
+        args: list[int] = [value, cause]
+        call: int = ex_call(a, ex_ident_lit(a, "__nox_with_cause"), args, 0, 0, 0)
+        a.n[a.n[call + 1] + {{O:Call.raise_from}}] = 1
+        return mk_StmtKind_raise_stmt(a, call)
+    expect(p, {{K:newline}})
+    return mk_StmtKind_raise_stmt(a, value)
+
+def parse_except_class_name(p: P) -> int:
+    a: Ast = p.a
+    ft: int = expect(p, {{K:identifier}})
+    first: int = tstr(p, ft)
+    if not chk(p, {{K:dot}}):
+        return first
+    off: int = len(a.sb)
+    for i in range(sref_len(first)):
+        a.sb.append(sref_byte(a, first, i))
+    while mtc(p, {{K:dot}}):
+        a.sb.append(46)
+        st: int = expect(p, {{K:identifier}})
+        for k in range(t_s(p, st), t_e(p, st)):
+            a.sb.append(at(a.src, k))
+    return pk(0 - off - 1, len(a.sb) - off)
+
+def new_except(a: Ast, class_name: int, bind_name: int, body: int, synth_bind: int, synth_class: int) -> int:
+    return mk_ExceptClause(a, opt_sl_x(class_name), opt_sl_y(class_name), opt_sl_x(bind_name), opt_sl_y(bind_name), pkx(body), pky(body), synth_bind, synth_class)
+
+def parse_try(p: P) -> int:
+    a: Ast = p.a
+    start_tok: int = p.pos
+    expect(p, {{K:kw_try}})
+    expect(p, {{K:colon}})
+    try_body: int = parse_block(p)
+    clauses: list[int] = []
+    saw_bare: bool = False
+    while chk(p, {{K:kw_except}}):
+        if saw_bare:
+            raise ErrUnexpected("")
+        adv(p)
+        class_name: int = -1
+        bind_name: int = -1
+        multi: list[int] = []
+        if not chk(p, {{K:colon}}):
+            if mtc(p, {{K:l_paren}}):
+                multi.append(parse_except_class_name(p))
+                while mtc(p, {{K:comma}}):
+                    if chk(p, {{K:r_paren}}):
+                        break
+                    multi.append(parse_except_class_name(p))
+                expect(p, {{K:r_paren}})
+            else:
+                class_name = parse_except_class_name(p)
+            if mtc(p, {{K:kw_as}}):
+                bt: int = expect(p, {{K:identifier}})
+                bind_name = tstr(p, bt)
+        else:
+            saw_bare = True
+        expect(p, {{K:colon}})
+        saved_on: bool = p.ex_on
+        saved_bind: int = p.ex_bind
+        saved_synth: bool = p.ex_synth
+        p.ex_on = True
+        p.ex_bind = bind_name
+        p.ex_synth = False
+        body: int = parse_block(p)
+        synthesized: bool = p.ex_synth
+        cur_bind: int = p.ex_bind
+        p.ex_on = saved_on
+        p.ex_bind = saved_bind
+        p.ex_synth = saved_synth
+        synth_class: int = 0
+        if synthesized:
+            bind_name = cur_bind
+            if class_name == -1 and len(multi) == 0:
+                class_name = syn(a, "Exception")
+                synth_class = 1
+        sb_flag: int = 1 if synthesized else 0
+        if len(multi) > 0:
+            for cn in multi:
+                clauses.append(new_except(a, cn, bind_name, body, sb_flag, 0))
+        else:
+            clauses.append(new_except(a, class_name, bind_name, body, sb_flag, synth_class))
+    try_else: int = -1
+    if chk(p, {{K:kw_else}}):
+        if len(clauses) == 0:
+            fail_cur(p, "'else' on a 'try' needs at least one 'except' clause")
+        adv(p)
+        expect(p, {{K:colon}})
+        try_else = parse_block(p)
+    finally_body: int = -1
+    if mtc(p, {{K:kw_finally}}):
+        expect(p, {{K:colon}})
+        finally_body = parse_block(p)
+    excepts: int = sl_of(a, clauses)
+    if try_else != -1:
+        return finish_try_else(p, try_body, excepts, try_else, finally_body, start_tok)
+    return mk_StmtKind_try_stmt(a, mk_TryStmt(a, pkx(try_body), pky(try_body), pkx(excepts), pky(excepts), opt_sl_x(finally_body), opt_sl_y(finally_body), -1))
+
+def finish_try_else(p: P, try_body: int, excepts: int, else_body: int, finally_body: int, start_tok: int) -> int:
+    a: Ast = p.a
+    p.else_counter = p.else_counter + 1
+    flag: int = syn(a, "__nox_tryok_" + str(p.else_counter))
+    origin: int = mk_TryElseOrigin(a, pkx(try_body), pky(try_body), pkx(excepts), pky(excepts), pkx(else_body), pky(else_body), opt_sl_x(finally_body), opt_sl_y(finally_body))
+    line: int = p.tk[start_tok * 5 + 1]
+    span: int = span_toks(p, start_tok, p.pos - 1)
+    body2: list[int] = []
+    for i in range(pky(try_body)):
+        body2.append(a.l[pkx(try_body) + i])
+    body2.append(mk_Stmt(a, sk_assign(a, ex_ident(a, flag), mk_Expr_bool_lit(a, 1), -1), line, span))
+    b2: int = sl_of(a, body2)
+    tail: int = mk_Stmt(a, sk_if(a, ex_ident(a, flag), else_body, sl_empty(a), sl_none(), 0, 1), line, span)
+    if finally_body != -1:
+        inner_k: int = mk_StmtKind_try_stmt(a, mk_TryStmt(a, pkx(b2), pky(b2), pkx(excepts), pky(excepts), {{NONE}}, 0, -1))
+        inner: int = mk_Stmt(a, inner_k, line, span)
+        outer_body: list[int] = [inner, tail]
+        ob: int = sl_of(a, outer_body)
+        e: int = sl_empty(a)
+        push_extra(p, mk_Stmt(a, mk_StmtKind_try_stmt(a, mk_TryStmt(a, pkx(ob), pky(ob), pkx(e), pky(e), pkx(finally_body), pky(finally_body), origin)), line, span))
+    else:
+        push_extra(p, mk_Stmt(a, mk_StmtKind_try_stmt(a, mk_TryStmt(a, pkx(b2), pky(b2), pkx(excepts), pky(excepts), {{NONE}}, 0, origin)), line, span))
+        push_extra(p, tail)
+    return sk_var(a, flag, te_lit(a, "bool"), mk_Expr_bool_lit(a, 0), -1, 1, -1, 0)
+
+def parse_with(p: P, is_async: bool) -> int:
+    a: Ast = p.a
+    with_tok: int = p.pos
+    expect(p, {{K:kw_with}})
+    ctxs: list[int] = []
+    binds: list[int] = []
+    while True:
+        ctxs.append(parse_expr(p))
+        binding: int = -1
+        if mtc(p, {{K:kw_as}}):
+            bt: int = expect(p, {{K:identifier}})
+            binding = tstr(p, bt)
+        binds.append(binding)
+        if not mtc(p, {{K:comma}}):
+            break
+    expect(p, {{K:colon}})
+    body: int = parse_block(p)
+    asy: int = 1 if is_async else 0
+    idx: int = len(ctxs)
+    while idx > 1:
+        idx = idx - 1
+        p.with_counter = p.with_counter + 1
+        w: int = mk_WithStmt(a, ctxs[idx], opt_sl_x(binds[idx]), opt_sl_y(binds[idx]), pkx(body), pky(body), asy, p.with_counter)
+        inner: list[int] = [mk_Stmt(a, mk_StmtKind_with_stmt(a, w), p.tk[with_tok * 5 + 1], span_toks(p, with_tok, p.pos - 1))]
+        body = sl_of(a, inner)
+    p.with_counter = p.with_counter + 1
+    return mk_StmtKind_with_stmt(a, mk_WithStmt(a, ctxs[0], opt_sl_x(binds[0]), opt_sl_y(binds[0]), pkx(body), pky(body), asy, p.with_counter))
+
+def parse_defer(p: P) -> int:
+    a: Ast = p.a
+    expect(p, {{K:kw_defer}})
+    expr: int = parse_expr(p)
+    if a.n[expr] != {{T:Expr.call}}:
+        set_diag(p, -1, kd(p), p.pos, "")
+        raise ErrUnexpected("")
+    expect(p, {{K:newline}})
+    return mk_StmtKind_defer_stmt(a, mk_DeferStmt(a, a.n[expr + 1]))
+
+def parse_lowlevel(p: P) -> int:
+    a: Ast = p.a
+    expect(p, {{K:kw_lowlevel}})
+    expect(p, {{K:colon}})
+    body: int = parse_block(p)
+    return mk_StmtKind_lowlevel_stmt(a, mk_LowLevelStmt(a, pkx(body), pky(body)))
+
+def parse_import(p: P) -> int:
+    a: Ast = p.a
+    expect(p, {{K:kw_import}})
+    segs: list[int] = []
+    t0: int = expect(p, {{K:identifier}})
+    segs.append(t_s(p, t0))
+    segs.append(t_e(p, t0))
+    while mtc(p, {{K:dot}}):
+        t1: int = expect(p, {{K:identifier}})
+        segs.append(t_s(p, t1))
+        segs.append(t_e(p, t1))
+    alias: int = -1
+    if mtc(p, {{K:kw_as}}):
+        at_: int = expect(p, {{K:identifier}})
+        alias = tstr(p, at_)
+    expect(p, {{K:newline}})
+    return mk_StmtKind_import_stmt(a, mk_ImportStmt(a, sl(a, segs), len(segs) // 2, opt_sl_x(alias), opt_sl_y(alias)))
+
+def parse_from_import(p: P) -> int:
+    a: Ast = p.a
+    expect(p, {{K:kw_from}})
+    segs: list[int] = []
+    t0: int = expect(p, {{K:identifier}})
+    segs.append(t_s(p, t0))
+    segs.append(t_e(p, t0))
+    while mtc(p, {{K:dot}}):
+        t1: int = expect(p, {{K:identifier}})
+        segs.append(t_s(p, t1))
+        segs.append(t_e(p, t1))
+    expect(p, {{K:kw_import}})
+    parenthesized: bool = mtc(p, {{K:l_paren}})
+    names: list[int] = []
+    while True:
+        if parenthesized and chk(p, {{K:r_paren}}):
+            break
+        nt: int = expect(p, {{K:identifier}})
+        alias: int = -1
+        if mtc(p, {{K:kw_as}}):
+            at_: int = expect(p, {{K:identifier}})
+            alias = tstr(p, at_)
+        nm: int = tstr(p, nt)
+        names.append(mk_FromImportName(a, pkx(nm), pky(nm), opt_sl_x(alias), opt_sl_y(alias)))
+        if not mtc(p, {{K:comma}}):
+            break
+    if parenthesized:
+        if len(names) == 0:
+            raise ErrUnexpected("")
+        expect(p, {{K:r_paren}})
+    expect(p, {{K:newline}})
+    ss: int = sl2_of(a, segs)
+    ns: int = sl_of(a, names)
+    return mk_StmtKind_from_import_stmt(a, mk_FromImportStmt(a, pkx(ss), pky(ss), pkx(ns), pky(ns)))
+
+# --- ';' ve tek satırlı bileşik gövde normalleştirmesi (Zig `normalizeStatementTokens`) ---
+def is_compound_header_start(k: int) -> bool:
+    return k == {{K:kw_if}} or k == {{K:kw_elif}} or k == {{K:kw_else}} or k == {{K:kw_while}} or k == {{K:kw_for}} or k == {{K:kw_try}} or k == {{K:kw_except}} or k == {{K:kw_finally}} or k == {{K:kw_with}} or k == {{K:kw_def}} or k == {{K:kw_class}} or k == {{K:kw_lowlevel}} or k == {{K:kw_async}}
+
+# [from, to) aralığında üst düzey başlık `:` indeksi ya da -1.
+def header_colon(tk: list[int], from_i: int, to_i: int) -> int:
+    depth: int = 0
+    pending_lambda: int = 0
+    k: int = from_i
+    while k < to_i:
+        kk: int = tk[k * 5]
+        if kk == {{K:l_paren}} or kk == {{K:l_bracket}} or kk == {{K:l_brace}}:
+            depth = depth + 1
+        elif kk == {{K:r_paren}} or kk == {{K:r_bracket}} or kk == {{K:r_brace}}:
+            depth = depth - 1
+        elif kk == {{K:kw_lambda}}:
+            if depth == 0:
+                pending_lambda = pending_lambda + 1
+        elif kk == {{K:colon}}:
+            if depth == 0:
+                if pending_lambda > 0:
+                    pending_lambda = pending_lambda - 1
+                else:
+                    return k
+        k = k + 1
+    return -1
+
+def push_tok(out: list[int], tk: list[int], i: int, kind: int) -> None:
+    if kind < 0:
+        out.append(tk[i * 5])
+    else:
+        out.append(kind)
+    out.append(tk[i * 5 + 1])
+    out.append(tk[i * 5 + 2])
+    out.append(tk[i * 5 + 3])
+    out.append(tk[i * 5 + 4])
+
+def normalize_tokens(p: P) -> list[int]:
+    tk: list[int] = p.tk
+    n: int = p.ntk
+    any_semi: bool = False
+    for i in range(n):
+        if tk[i * 5] == {{K:semicolon}}:
+            any_semi = True
+            break
+    if not any_semi:
+        found: bool = False
+        i2: int = 0
+        while i2 < n:
+            k: int = tk[i2 * 5]
+            if k == {{K:newline}} or k == {{K:indent}} or k == {{K:dedent}} or k == {{K:eof}}:
+                i2 = i2 + 1
+                continue
+            le: int = i2
+            while le < n and tk[le * 5] != {{K:newline}} and tk[le * 5] != {{K:eof}}:
+                le = le + 1
+            if is_compound_header_start(k):
+                c: int = header_colon(tk, i2, le)
+                if c >= 0 and c + 1 < le:
+                    found = True
+                    break
+            i2 = le
+        if not found:
+            return tk
+    out: list[int] = []
+    i3: int = 0
+    while i3 < n:
+        k3: int = tk[i3 * 5]
+        if k3 == {{K:newline}} or k3 == {{K:indent}} or k3 == {{K:dedent}} or k3 == {{K:eof}}:
+            push_tok(out, tk, i3, -1)
+            i3 = i3 + 1
+            continue
+        le3: int = i3
+        while le3 < n and tk[le3 * 5] != {{K:newline}} and tk[le3 * 5] != {{K:eof}}:
+            le3 = le3 + 1
+        colon: int = -1
+        if is_compound_header_start(k3):
+            colon = header_colon(tk, i3, le3)
+        inline_body: bool = colon >= 0 and colon + 1 < le3
+        kk: int = i3
+        while kk < le3:
+            tkk: int = tk[kk * 5]
+            if tkk == {{K:semicolon}}:
+                if kk + 1 >= le3:
+                    kk = kk + 1
+                    continue
+                push_tok(out, tk, kk, {{K:newline}})
+                kk = kk + 1
+                continue
+            push_tok(out, tk, kk, -1)
+            if inline_body and kk == colon:
+                push_tok(out, tk, kk, {{K:newline}})
+                push_tok(out, tk, kk, {{K:indent}})
+            kk = kk + 1
+        if inline_body:
+            if le3 < n and tk[le3 * 5] == {{K:newline}}:
+                push_tok(out, tk, le3, -1)
+                push_tok(out, tk, le3, {{K:dedent}})
+                i3 = le3 + 1
+            else:
+                push_tok(out, tk, le3 - 1, {{K:newline}})
+                push_tok(out, tk, le3 - 1, {{K:dedent}})
+                i3 = le3
+        else:
+            i3 = le3
+    return out
+
+# --- giriş noktaları (Zig tarafına açılan C ABI) ---
+G_AST: Ast = Ast(0, 0)
+G_BODY_START: int = 0
+G_BODY_LEN: int = 0
+G_ERR_KIND: int = 0
+G_DG: list[int] = []
+G_DG_NOTE: str = ""
+G_NTOK: int = 0
+
+# `base`/`n`: kaynak baytları. Dönüş: 0 = tamam; 1..4 = sözcük hatası (lexer kodu); 10 = UnexpectedToken, 11 = InvalidNumberLiteral, 12 = RecursionLimitExceeded.
+def nox_parse_run(base: int, n: int) -> int:
+    global G_AST, G_BODY_START, G_BODY_LEN, G_ERR_KIND, G_DG, G_DG_NOTE, G_NTOK
+    lx: Lx = Lx(base, n, False)
+    code: int = lex(lx)
+    if code != 0:
+        G_DG = [0, -1, 0, 0, 0, lx.err_line, lx.err_col, lx.err_line, lx.err_col + 1, 0, 0, 0, lx.err_byte, lx.err_byte + 1]
+        G_DG_NOTE = ""
+        return code
+    a: Ast = Ast(base, n)
+    p: P = P(a, lx.out)
+    err: int = 0
+    body: int = 0
+    try:
+        body = parse_module_body(p)
+    except ErrUnexpected:
+        err = 10
+    except ErrNumber:
+        err = 11
+    except ErrRecursion:
+        err = 12
+    G_NTOK = p.ntk
+    G_AST = a
+    G_BODY_START = pkx(body)
+    G_BODY_LEN = pky(body)
+    G_ERR_KIND = err
+    cb: int = p.pos * 5
+    G_DG = [p.dg_on, p.dg_exp, p.dg_found, p.dg_sb, p.dg_eb, p.dg_sl, p.dg_sc, p.dg_el, p.dg_ec, p.tk[cb], p.tk[cb + 1], p.tk[cb + 2], p.tk[cb + 3], p.tk[cb + 4]]
+    G_DG_NOTE = p.dg_note
+    return err
+
+def nox_parse_dump() -> int:
+    dump_module(G_AST, G_BODY_START, G_BODY_LEN, 0, 0)
+    return len(G_AST.o)
+
+def nox_parse_out_buffer() -> int:
+    xs: list[int] = G_AST.o
+    q: int = 0
+    lowlevel:
+        q = ptr_to_int(ptr_of(xs))
+    return q
+
+# Tanılama (i = 0 on, 1 expected(-1 yok), 2 found, 3..8 span: start_byte, end_byte, start_line, start_col, end_line, end_col; 9..13 hata anındaki geçerli simge: tür, satır, sütun, başlangıç, bitiş).
+def nox_parse_dg(i: int) -> int:
+    return G_DG[i]
+
+# Not metni UTF-8 bayt olarak (ör. "—" üç bayt).
+def utf8_bytes(s: str) -> list[int]:
+    out: list[int] = []
+    for i in range(len(s)):
+        cp: int = ord(s[i])
+        if cp < 128:
+            out.append(cp)
+        elif cp < 2048:
+            out.append(192 | (cp >> 6))
+            out.append(128 | (cp & 63))
+        elif cp < 65536:
+            out.append(224 | (cp >> 12))
+            out.append(128 | ((cp >> 6) & 63))
+            out.append(128 | (cp & 63))
+        else:
+            out.append(240 | (cp >> 18))
+            out.append(128 | ((cp >> 12) & 63))
+            out.append(128 | ((cp >> 6) & 63))
+            out.append(128 | (cp & 63))
+    return out
+
+def nox_parse_dg_note_len() -> int:
+    return len(utf8_bytes(G_DG_NOTE))
+
+def nox_parse_dg_note_byte(i: int) -> int:
+    return utf8_bytes(G_DG_NOTE)[i]
+
+# Son ayrıştırmanın canlı veri boyutu (bayt): düğüm/liste/sb/span tabloları + token arabelleği (8 bayt/sözcük).
+def nox_parse_mem() -> int:
+    return (len(G_AST.n) + len(G_AST.l) + len(G_AST.sb) + len(G_AST.sp_ids) + len(G_AST.sp_vals) + G_NTOK * 5) * 8

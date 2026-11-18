@@ -114,21 +114,21 @@ Değişmez kurala (§0) göre Aşama 1 yeniden denetlendi: (1) **yüzey/çıktı
 Girdi: `parser.zig` (~3 000 satır) + `ast.zig` (~640) + `ast_dump.zig`. Çıkış ölçütü: `--dump` çıktısı depodaki tüm dosyalarda Zig ile özdeş (`tests/golden/cases/*.ast.expected` dahil); sözdizimi hata konum/mesajları aynı; desugarlar (tuple açma, `match`, `defer`, dekoratör, dict/list comprehension, f-string bölme, lambda) birebir.
 
 - [x] 2.1 (v2.2.40; tasarım: `project/selfhost-ast-tasarimi-2026-11.md` — düz-dizi temsil, ölçümlü karar) AST sınıf hiyerarşisi tasarımı (`selfhost/ast.nox`): ifade/deyim birleşim tipleri (sınıf hiyerarşisi + `kind` alanı; jenerik enum gerekirse dil işi `[K]`).
-- [ ] 2.2 Token akışı okuyucusu (Aşama 1 çıktısı ya da yerel lexer), `peek/advance/expect`, hata kurtarma kuralları (Zig ile aynı).
-- [ ] 2.3 İfade ayrıştırma: öncelik tırmanışı, üçlü, lambda, comprehension, `await/spawn`, çağrı/indeks/öznitelik, anahtar kelimeli argüman.
-- [ ] 2.4 Deyimler: atama/artırılmış/`:=`, `if/while/for/try/with/match`, `def/class/protocol/enum`, `import`, `defer`, `global/nonlocal`.
-- [ ] 2.5 Tip ifadeleri: basit, jenerik, `T | None`, fonksiyon tipleri.
-- [ ] 2.6 Parser içi desugarlar (tuple açma `__nox_tup_*`, `match` konu geçicisi, sınıf sabitleri, `__infer`).
-- [ ] 2.7 f-string bölme + iç ifade ayrıştırma.
-- [ ] 2.8 Span/konum sistemi (`Span`, deyim başlangıç/bitiş) birebir.
-- [~] 2.9 AST dökümü (`ast_dump` eşdeğeri) + `noxc ast` aracı.
-- [ ] 2.10 Hata iletileri ve `syntax_report`: konum + işaretçi gösterimi aynı.
+- [x] 2.2 (v2.2.42) Token akışı okuyucusu (Aşama 1 çıktısı ya da yerel lexer), `peek/advance/expect`, hata kurtarma kuralları (Zig ile aynı).
+- [x] 2.3 (v2.2.42) İfade ayrıştırma: öncelik tırmanışı, üçlü, lambda, comprehension, `await/spawn`, çağrı/indeks/öznitelik, anahtar kelimeli argüman.
+- [x] 2.4 (v2.2.42) Deyimler: atama/artırılmış/`:=`, `if/while/for/try/with/match`, `def/class/protocol/enum`, `import`, `defer`, `global/nonlocal`.
+- [x] 2.5 (v2.2.42) Tip ifadeleri: basit, jenerik, `T | None`, fonksiyon tipleri.
+- [x] 2.6 (v2.2.42) Parser içi desugarlar (tuple açma `__nox_tup_*`, `match` konu geçicisi, sınıf sabitleri, `__infer`).
+- [x] 2.7 (v2.2.42) f-string bölme + iç ifade ayrıştırma.
+- [x] 2.8 (v2.2.42) Span/konum sistemi (`Span`, deyim başlangıç/bitiş) birebir.
+- [x] 2.9 (v2.2.42) AST dökümü (`ast_dump` eşdeğeri; Nox yazıcısı `selfhost/ast_schema.nox`) + `noxc-nightly parse-nox` aracı (`noxc ast --full` ile bayt-bayt aynı).
+- [x] 2.10 (v2.2.42) Hata iletileri ve `syntax_report`: konum + işaretçi gösterimi aynı.
 - [x] 2.11 C ABI: AST'nin Zig tarafına geçişi — **karar noktası `[K]`:** (a) Nox'un AST'yi bayt tamponuna serileştirmesi + Zig'in okuması (parser sınırı), ya da (b) Aşama 3'e kadar yalnızca doğrulama aracı olarak kalması (Zig checker Zig AST'siyle çalışır). Önerilen: (b) ile başla, checker Nox'a geçerken (a).
   **KARAR (2026-11-18, kullanıcı "gerçek selfhost için hangisi" diye sordu; öneri + uygulama):** **(b)**. Self-hosting'in bitiş durumunda AST Zig'e hiç geçmez (Nox parser → Nox checker); (a) iki dilde 100+ düğüm türü için geçici serileştirme olurdu. Parser doğruluğu `noxc ast` dökümü farksal eşitliğiyle kanıtlanır; tek köprü checker sonrası tiplenmiş AST sınırında (3.14) kurulur.
-- [ ] 2.12 Farksal test: AST dökümü eşitliği (tüm depo), sözdizimi hata korpusu, `noxc fmt` (formatter Nox AST'siyle) çıktı eşitliği.
+- [~] 2.12 **(AST dökümü + hata korpusu + stderr iletileri v2.2.42'de TAMAM: depo 1 266 dosya + 3 766 mutasyonlu girdi + 58 kenar-durum fixture'ı `tests/fixtures/parser_edge/`; kalan: `noxc fmt` çıktı eşitliği — 2.13'e bağlı)** Farksal test: AST dökümü eşitliği (tüm depo), sözdizimi hata korpusu, `noxc fmt` (formatter Nox AST'siyle) çıktı eşitliği.
 - [ ] 2.13 İlk "Nox ile üretilen araç": `noxc fmt` Nox lexer+parser ile (düşük risk, görünür kazanım).
-- [ ] 2.14 Perf ≤ 3× Zig; bellek; derin ifade (10 bin iç içe) testi.
-- [ ] 2.15 Belge + CHANGELOG + spesifikasyon.
+- [x] 2.14 (v2.2.42) Perf ≤ 3× Zig (ölçülen 1,6–1,7× — `noxc-nightly parse-bench`, 0,96 MiB stdlib+selfhost, ReleaseFast); bellek ≤ 2× (0,31×: 16,1 MB canlı vs Zig arena 51,5 MB); sızıntı/çifte serbest bırakma testi (Debug çalışma zamanı, 30 tur + hata yolları); derin ifade: 10 bin iç içe `(` Zig ile aynı hata iletisi, 300 iç içe blok / 3 000 zincirli öznitelik+çağrı / 6 000 terimli toplam sorunsuz.
+- [x] 2.15 (v2.2.42) Belge + CHANGELOG + spesifikasyon §3.479.
 
 ### 5.1 Aşama 2 ilerleme notu (v2.2.41)
 
@@ -228,7 +228,7 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 |---|---|---|---|
 | 0 Altyapı | 11 | 11 | **bitti (v2.2.32)** — sıradaki Aşama 1 (lexer) |
 | 1 Lexer | 13 | 13 | **bitti (v2.2.33–35; tam-geçiş kuralına göre denetlendi)** — sıradaki Aşama 2 (parser/AST) |
-| 2 Parser/AST | 15 | 0 | açık |
+| 2 Parser/AST | 15 | 13 | **parser tam geçti (v2.2.42)** — açık: 2.12 (`noxc fmt` çıktı eşitliği) ve 2.13 (Nox ile `noxc fmt`; Nox AST → Zig AST kod çözücüsü gerektirir) |
 | 3 Tip denetleyici | 17 | 0 | açık |
 | 4 Sahiplik + codegen | 13 | 0 | açık |
 | 5 Sürücü | 5 | 0 | açık |
