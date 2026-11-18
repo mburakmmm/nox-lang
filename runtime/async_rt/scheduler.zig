@@ -575,7 +575,18 @@ pub const Scheduler = struct {
             reqp.store(false, .release);
             self.stw_sense.?.store(self.stw_local_sense, .release);
         } else {
-            while (self.stw_sense.?.load(.acquire) != self.stw_local_sense) sleepMs(1);
+            // K3 (2.3): 1 ms'lik yoklama her STW turuna ≤1 ms ek bariyer çıkış gecikmesi ekliyordu. Önce kısa bir yield döngüsü (lider çoğunlukla µs içinde biter), sonra 50 µs'lik uyku (Windows'ta `Sleep` zaten ≥1 ms).
+            var spins: u32 = 0;
+            while (self.stw_sense.?.load(.acquire) != self.stw_local_sense) {
+                if (comptime is_freestanding or builtin.cpu.arch.isWasm()) {
+                    sleepMs(1);
+                } else if (spins < 200) {
+                    spins += 1;
+                    std.Thread.yield() catch {};
+                } else {
+                    sleepMicros(50);
+                }
+            }
         }
     }
 
@@ -919,6 +930,13 @@ pub const Scheduler = struct {
 const WinSleep = if (builtin.os.tag == .windows) struct {
     extern "kernel32" fn Sleep(ms: u32) callconv(.c) void;
 } else struct {};
+/// `sleepMs`in mikro-saniye ikizi (posix'te `nanosleep`; diğer hedeflerde `sleepMs(1)`'e düşer).
+fn sleepMicros(us: i64) void {
+    if (comptime builtin.os.tag == .windows or builtin.cpu.arch.isWasm() or is_freestanding) return sleepMs(1);
+    const ts: std.c.timespec = .{ .sec = 0, .nsec = @intCast(us * std.time.ns_per_us) };
+    _ = std.c.nanosleep(&ts, null);
+}
+
 fn sleepMs(ms: i64) void {
     // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
     // freestanding'de `std.c.timespec`/`std.c.nanosleep` (libc'siz hedefte

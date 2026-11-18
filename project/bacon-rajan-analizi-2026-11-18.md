@@ -35,3 +35,10 @@ Bedel: çöp döngüler bir sonraki toplamaya kadar birikir (en çok eşik kadar
 1. Bariyerde `sleepMs(1)` yerine park/futex (uyanma gecikmesini ~µs'ye indirir).
 2. Duraklama uzunluğu için artımlı/eşzamanlı işaretleme (büyük mühendislik; döngüsel grafta duraklamayı dilimlere böler).
 3. Yield'siz uzun CPU döngülerinde güvenli nokta yoklaması (derleyici: döngü geri kenarında sayaçlı kontrol) — `6.2` kapsamı.
+
+## Değerlendirme güncellemesi (2026-11-18, A+C+B isteğinden sonra)
+
+- **A (park + paralel işaretleme):** park kısmı yapıldı (v2.2.17: yield + 50 µs; futex Zig 0.16'da `Io` gerektirir). Paralel işaretleme (A2) yapılmadı: renk geçişleri ve sayaç azaltmaları şu an dünya durmuşken düz (atomik değil); paralel için atomik CAS + paylaşılan iş kuyruğu + faz içi bariyerler gerekir; kazanç yalnızca havuzlu programda ve çok büyük canlı döngüsel grafta; yüksek hata riski.
+- **B (genç/yaşlı kökler):** önceki önerimde "10 ms → yüzlerce µs" demiştim, bu **abartıydı**. Kararlı (stable) düğümleri opak yaprak saymak yalnızca *genç* toplamaları küçültür; çöp döngülerin kararlı düğümlerden geçmesi ihtimali yüzünden periyodik TAM tarama şarttır ve en kötü duraklama (tam tarama) değişmez. Toplam GC maliyeti ise K3 eşik düzeltmesiyle zaten kayıt başına O(1)'e amortize edildi. Doğruluk için kararlı çocuğun sayacı yine azaltılmalı/geri yüklenmeli (aksi halde çöp düğümün serbest bırakılmasında kalıcı sızıntı). Net: karmaşıklık yüksek, ölçülebilir kazanç düşük → **yapılmadı**.
+- **C (güvenli nokta yoklaması):** döngü geri kenarında `stwParticipate` çağırmak ya da yield etmek (1) kooperatif atomiklik garantisini (await dışında fiber değişmez) kırar, (2) mid-ifade geçici değerler sayaçsız olabileceğinden ARC için güvenli nokta DEĞİLDİR. Bu aslında ön-kıtlama (6.2) tasarımının konusudur ve kapsam dışıdır.
+- **Gerçekten duraklamayı kısaltacak yol:** artımlı/eşzamanlı Bacon-Rajan (E, XL) ya da çok büyük döngüsel graflar için `weak`/açık kırılma API'si. Somut bir gecikme hedefi olursa E tasarlanır.

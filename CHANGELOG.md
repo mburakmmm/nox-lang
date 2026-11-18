@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.17]
+
+K3 devamı: dünyayı durdurma (STW) bariyerinde bekleme.
+
+- **Çalışma zamanı:** bariyerde bekleyen işçiler artık 1 ms'lik uyku döngüsü yerine önce kısa bir `yield` döngüsü (200 tur), sonra 50 µs'lik uyku ile yoklar (Windows/wasm/freestanding'de eski davranış): her STW turuna eklenen ≤1 ms çıkış gecikmesi ~onlarca µs'ye iner. Futex denendi, Zig 0.16'da `std.Thread.Futex` yok (yalnızca `Io` üzerinden) olduğundan platform başına yerel çağrı gerektirdi, bırakıldı.
+- Değerlendirme notu (`project/bacon-rajan-analizi-2026-11-18.md`): "genç/yaşlı kök" (B) toplama sıklığını/amortizasyonu değil, tek tam taramanın duraklamasını azaltmaz (K3 eşik düzeltmesi aynı kazancı verdi); döngü geri kenarlarında güvenli nokta yoklaması (C) kooperatif atomikliği ve ARC güvenliği (ara değerler) yüzünden ön-kıtlama (6.2) tasarımına bağlıdır.
+
 ## [2.2.16]
 
 Kullanıcı listesi (2026-11-17) belgeleri: O1 ve B3.
