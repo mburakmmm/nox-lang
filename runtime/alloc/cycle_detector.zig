@@ -508,7 +508,9 @@ fn collectLocked(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void 
         const by_visits = gc.visited_in_collect *| 2;
         gc.collect_threshold = @min(@max(gc.collect_threshold *| 2, by_visits), MAX_COLLECT_THRESHOLD);
     } else {
-        gc.collect_threshold = DEFAULT_COLLECT_THRESHOLD;
+        // K3 (2.3): verimli toplamada bile bir sonraki toplama, ziyaret edilen düğüm sayısının en az 1/4'ü kadar olası-kök kaydından SONRA yapılır: büyük, canlı, döngüsel bir graf (halka/ağaç+geri kenar)
+        // her 700 kayıtta baştan sona taranırsa program ~14x yavaşlıyordu (500 bin canlı düğümde yineleme başına 13,9 µs); eşik grafla orantılı olunca toplama maliyeti kayıt başına O(1)'e amortize olur.
+        gc.collect_threshold = @min(@max(DEFAULT_COLLECT_THRESHOLD, gc.visited_in_collect / 4), MAX_COLLECT_THRESHOLD);
     }
 }
 

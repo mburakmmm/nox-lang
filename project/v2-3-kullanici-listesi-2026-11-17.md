@@ -12,9 +12,9 @@ Kural (AGENTS §16): dil özelliği / bellek modeli / ABI etkili maddeler `[K]` 
   - Yapılan (kod yazıldı, doğrulanacak): `packages.version` + `updated_ms` kolonları (idempotent göç), onay ve sahibi-yeniden-yayınlama yolunda `ref`in kaydı, `index.json`da `version` alanı (eski istemciler yok sayar), `noxc search` çıktısında sürüm.
   - Yapıldı: kart rozeti, ayrıntı sayfasında sürüm satırı + "Releases" tablosu (imzalı bildirimlerden ref/commit/tarih/imzalayan), CSS, `docs/tools/noxpkg.md`; yerel noxpkg ile (örnek paket + bildirim tohumlayarak) doğrulandı. Kalan: CHANGELOG (toplu sürümde).
   - Canlıya alma: **M4 dağıtımı kullanıcı onayı ister** (`[K]`); mevcut canlı paketlerin sürümü yayıncı yeniden yayınlayana ya da yönetici geri doldurana kadar boş görünür.
-- [A] **K2 Bacon-Rajan döngü toplayıcımız eşzamanlı (concurrent) mı? Analiz.**
+- [x] **K2 Bacon-Rajan döngü toplayıcımız eşzamanlı (concurrent) mı? Analiz.** (bitti: `project/bacon-rajan-analizi-2026-11-18.md`)
   - Bulgu: HAYIR. Senkron "trial deletion" (modül başlığı bunu açıkça söyler); eşzamanlı Bacon-Rajan değil. Tek iş parçacıklı programda eşiği aşan `possible_root` çağrısı toplamayı satır içi çalıştırır; M:N havuzda dünyayı durdurma (STW) bariyeri kullanır. Çıktı: kısa rapor (aşağıdaki K3 ile birleşik).
-- [~] **K3 Bacon-Rajan ne kadar stop-the-world yapıyor? Ölçüm.**
+- [x] **K3 Bacon-Rajan ne kadar stop-the-world yapıyor? Ölçüm.** (bitti, v2.2.15: ölçüm + eşik düzeltmesi, 500 bin canlı düğümde yineleme başına 13,9 µs → 165 ns; rapor `project/bacon-rajan-analizi-2026-11-18.md`)
   - Bilinenler (kaynak okumasıyla): varsayılan eşik 700 olası kök, verimsiz toplamada ×2 ile 16M'ye kadar uyarlanır; her toplama ziyaret edilen alt-graf kadar sürer (öbek boyutu kadar değil); havuzda beklemeyen işçiler `sleep 1 ms` döngüsüyle bariyerde bekler ve en yavaş işçinin güvenli noktaya varışı kadar gecikir.
   - Kalan: gerçek duraklama süresi ölçümü (saf çöp döngüleri / büyük canlı graf / M:N 4 işçi), rapor `project/` altına, gerekirse iyileştirme önerisi (artımlı/eşzamanlı işaretleme, `sleep` yerine park).
 

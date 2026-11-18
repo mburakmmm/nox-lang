@@ -11,6 +11,12 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.15]
+
+K3: Bacon-Rajan döngü toplayıcısının duraklama ölçümü ve eşik düzeltmesi.
+
+- **Çalışma zamanı:** verimli bir toplamadan sonra bir sonraki toplama eşiği `max(700, ziyaret_edilen_düğüm / 4)` olur (üst sınır `MAX_COLLECT_THRESHOLD`). Önceden büyük, canlı, döngüsel bir graf (örn. 500 bin düğümlü halka) her 700 olası-kök kaydında baştan sona taranıyordu: yineleme başına 13,9 µs (≈90× yavaş); şimdi 165 ns. Tek duraklamanın uzunluğu değişmedi (~17 ns/düğüm). Ölçüm ve eşzamanlılık/STW analizi: `project/bacon-rajan-analizi-2026-11-18.md`, kıyas programı `benchmarks/cycle_gc_pause.nox`.
+
 ## [2.2.14]
 
 B1 (ARC/ASAP) devamı: genel işlevler/metodlar için tüketen parametre sözleşmesi.
