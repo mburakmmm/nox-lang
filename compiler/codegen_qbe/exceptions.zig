@@ -1086,6 +1086,7 @@ pub fn computeMustNotRaise(self: *Codegen, module: ast.Module, extra_functions: 
         if (stmt.kind == .class_def) try self.computeInitConsumed(stmt.kind.class_def);
     }
     for (extra_classes) |cd| try self.computeInitConsumed(cd);
+    try self.computeFuncConsumed(module, extra_functions, extra_classes);
 }
 
 // ---- Faz GG.2: seçici serbest-fonksiyon inlining'i (bkz. nox-teknik-

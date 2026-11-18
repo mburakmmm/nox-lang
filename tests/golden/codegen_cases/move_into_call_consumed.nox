@@ -1,0 +1,101 @@
+# 2.3 B1/I6 (genel): inline EDİLMEYEN işlev/metodlarda tüketen parametre sözleşmesi (`<sembol>_c` klonu): taze argüman devredilir, takma ad çağıranda retain edilir; tüketilmeyen yollarda (erken dönüş, istisna) klon parametreyi bırakır.
+import nox.mem
+
+class Leaf:
+    v: int
+    def __init__(self: Leaf, v: int) -> None:
+        self.v = v
+
+class Bag:
+    items: list[Leaf]
+    first: Leaf | None
+    count: int
+
+    def __init__(self: Bag) -> None:
+        self.items = []
+        self.first = None
+        self.count = 0
+
+    # döngü içerdiği için inline edilmez; param son kullanımda append'e gider, erken dönüşte saklanmaz
+    def add_checked(self: Bag, leaf: Leaf, limit: int) -> int:
+        i: int = 0
+        while i < limit:
+            self.count = self.count + 1
+            i = i + 1
+        if leaf.v < 0:
+            return -1
+        self.items.append(leaf)
+        return len(self.items)
+
+    # koşullu saklama
+    def add_or_first(self: Bag, leaf: Leaf, flag: bool) -> int:
+        n: int = 0
+        while n < 2:
+            n = n + 1
+        if flag:
+            self.items.append(leaf)
+        else:
+            self.first = leaf
+        return n
+
+    # istisna: saklamadan önce fırlayabilir
+    def add_or_raise(self: Bag, leaf: Leaf, bad: bool) -> int:
+        k: int = 0
+        while k < 1:
+            k = k + 1
+        if bad:
+            raise ValueError("bad")
+        self.items.append(leaf)
+        return len(self.items)
+
+    def total(self: Bag) -> int:
+        t: int = 0
+        for l in self.items:
+            t = t + l.v
+        f: Leaf | None = self.first
+        if f != None:
+            t = t + f.v
+        return t
+
+def attach(bag: Bag, leaf: Leaf, rounds: int) -> int:
+    r: int = 0
+    while r < rounds:
+        r = r + 1
+    bag.items.append(leaf)
+    return r
+
+def attach_read_first(bag: Bag, leaf: Leaf, rounds: int) -> int:
+    seen: int = leaf.v
+    r: int = 0
+    while r < rounds:
+        r = r + 1
+    bag.items.append(leaf)
+    return seen + r
+
+def run() -> int:
+    t: int = 0
+    b: Bag = Bag()
+    t = t + b.add_checked(Leaf(1), 2)
+    t = t + b.add_checked(Leaf(0 - 5), 1)
+    named: Leaf = Leaf(7)
+    t = t + b.add_checked(named, 1) + named.v
+    t = t + b.add_or_first(Leaf(3), True) + b.add_or_first(Leaf(4), False)
+    try:
+        t = t + b.add_or_raise(Leaf(9), True)
+    except ValueError:
+        t = t + 100
+    t = t + b.add_or_raise(Leaf(2), False)
+    t = t + attach(b, Leaf(11), 3) + attach_read_first(b, Leaf(6), 2)
+    alias: Leaf = Leaf(20)
+    t = t + attach(b, alias, 1) + alias.v
+    return t + b.total() + b.count
+
+print(run())
+nox.mem.stats()
+r0: int = run()
+m1: nox.mem.MemStats = nox.mem.stats()
+r1: int = run()
+r2: int = run()
+m2: nox.mem.MemStats = nox.mem.stats()
+print(r0 == r1 and r1 == r2)
+print(m2.live - m1.live)

@@ -139,3 +139,7 @@ Kalan ve sıradaki adaylar: I1'in genelleştirilmesi (salt-okunur olmayan işlev
 ## 11. Satır içi sınıf tahsisi/serbest bırakma (v2.2.13) — ölçüm turunun sonucu
 
 Önceki ölçümde `nox_rc_alloc` + `nox_rc_free_payload` AST profilinin ~%30'uydu; çağrı + sınıf indeksi + havuz satırı arama maliyeti. Slot 0 satırının adresi ve açık bayrağı sıcak bloğa (`rt-32`/`rt-24`) konarak sabit boyutlu sınıf tahsisi/serbest bırakması IR'da 8-10 komuta indi. AST 20,1 → 16,1 ms (−%20; bugünkü toplam 28,0 → 16,1, −%42). Kapsam dışı (hâlâ çalışma zamanı çağrısı): liste/str/dict blokları (değişken boyut), havuz etkin/`nox.mem.stats` açık programlar, Debug. Yan etki: eski bir `noxrt-*.o` ile yeni derleyiciyi karıştırmak güvenli (bayrak fail-closed).
+
+## 12. Genel tüketen sözleşme (v2.2.14)
+
+Önceki bölümde "ABI'yi her çağıranda değiştirir, `[K]`" diye ertelenen genel tüketen sözleşme, `___init___c` ile aynı klon yaklaşımıyla yapıldı: normal sembol hiç değişmediğinden işlev değerleri, bağlı metodlar, vtable ve `super()` çağrıları eski sözleşmeyle çalışır; yalnızca doğrudan, statik çağrı sitelerinde ve yalnızca taze argüman devredilebiliyorsa klon seçilir. Güvenlik gerekçesi: klon, tüketilen parametreyi sahipli yerel gibi ele aldığından erken çıkış/istisna için ayrı kısıt gerekmez (çıkışta kalan değer bırakılır). Kalan: vtable'lı sınıfların metodları (tüketim sözleşmesi override'larda uyumlu olmalı), genel (kalıtımlı) `__init__`, çağrı sitesinde son kullanımdaki adlandırılmış yerelin klona taşınması (`consumeCallArgs`te şimdi takma ad = retain).

@@ -759,6 +759,58 @@ pub fn computeInitConsumed(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
     try self.init_consumed.put(self.allocator, cd.name, .{ .consumed = consumed, .keys = try keys.toOwnedSlice(self.allocator) });
 }
 
+
+/// B1/I6 (genel işlevler/metodlar): serbest işlevlerin ve (kalıtıma katılmayan sınıfların, `__init__` dışı) metodlarının hangi heap parametrelerini SON kullanımda tükettiğini hesaplar (`Codegen.func_consumed`).
+/// `__init__` için `computeInitConsumed` ayrıdır. Klon, tüketilen parametreleri sahipli yerel gibi ele aldığından erken çıkış/istisna kısıtı yoktur (tüketilmeyen yollarda çıkışta bırakılır).
+fn consumedForParams(self: *Codegen, body: []const ast.Stmt, params: []const ast.Param, infos: []const types.TypeInfo, key: []const u8) CodegenError!void {
+    if (params.len != infos.len) return;
+    if (bodyHasNestedFuncDef(body)) return;
+    const consumed = try self.allocator.alloc(bool, params.len);
+    @memset(consumed, false);
+    var keys: std.ArrayListUnmanaged(usize) = .empty;
+    for (params, 0..) |p, k| {
+        const info = infos[k];
+        if (!abi.isHeapManaged(info.heap) or info.heap == .boxed_scalar) continue;
+        const site = findCtorMoveSite(self, body, p.name, true) orelse continue;
+        consumed[k] = true;
+        try keys.append(self.allocator, site);
+    }
+    if (keys.items.len == 0) return;
+    try self.func_consumed.put(self.allocator, key, .{ .consumed = consumed, .keys = try keys.toOwnedSlice(self.allocator) });
+}
+
+pub fn computeFuncConsumed(self: *Codegen, module: ast.Module, extra_functions: []const ast.FuncDef, extra_classes: []const ast.ClassDef) CodegenError!void {
+    for (module.body) |stmt| {
+        switch (stmt.kind) {
+            .func_def => |fd| try funcConsumedFor(self, fd),
+            .class_def => |cd| try classConsumedFor(self, cd),
+            else => {},
+        }
+    }
+    for (extra_functions) |fd| try funcConsumedFor(self, fd);
+    for (extra_classes) |cd| try classConsumedFor(self, cd);
+}
+
+fn funcConsumedFor(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
+    if (fd.is_async) return;
+    if (self.ref_params.contains(fd.name)) return;
+    const sig = self.functions.get(fd.name) orelse return;
+    try consumedForParams(self, fd.body, fd.params, sig.params, fd.name);
+}
+
+fn classConsumedFor(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
+    if (cd.type_params.len != 0) return;
+    const cinfo = self.classes.get(cd.name) orelse return;
+    if (cinfo.has_vtable) return;
+    for (cd.methods) |m| {
+        if (m.is_async or std.mem.eql(u8, m.name, "__init__") or m.params.len < 1) continue;
+        const minfo = cinfo.methods.get(m.name) orelse continue;
+        if (!std.mem.eql(u8, minfo.owner, cd.name)) continue;
+        const key = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ cd.name, m.name });
+        try consumedForParams(self, m.body, m.params[1..], minfo.sig.params, key);
+    }
+}
+
 /// Bir fonksiyon/metod gövdesindeki taze-bağlı yerellerin taşıma noktalarını `self.move_sites`e yazar (idempotent).
 pub fn markMoveSites(self: *Codegen, full_body: []const ast.Stmt) CodegenError!void {
     try markMoveSitesIn(self, full_body, full_body);

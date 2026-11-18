@@ -2325,7 +2325,7 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     try self.markBorrowedAliasLocals(&locals, fd.body, fd.name);
     try self.markMoveSites(fd.body);
 
-    const fn_sym = try self.userFnSym(fd.name);
+    const fn_sym = if (self.consuming_clone) try std.fmt.allocPrint(self.allocator, "{s}_c", .{try self.userFnSym(fd.name)}) else try self.userFnSym(fd.name);
     try self.qbeFuncHeaderStart(if (ret_info.qtype == .none) null else ret_info.qtype, fn_sym);
     try self.qbeFuncParam(.l, RT_PARAM, true);
     for (fd.params) |p| {
@@ -2350,6 +2350,16 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
         if (info.ref_param) continue; // v2.1.96: yuva zaten çağıranın adresi
         const param_text = try std.fmt.allocPrint(self.allocator, "%p_{s}", .{p.name});
         try self.qbeStore(info.qtype, param_text, info.slot);
+    }
+    if (self.consuming_clone) {
+        // B1/I6: tüketen klonda tüketilen parametreler SAHİPLİ yerel gibi: kapsam çıkışlarında (taşınmadıysa) bırakılır.
+        if (self.func_consumed.get(fd.name)) |fc| {
+            for (fd.params, 0..) |p, k| {
+                if (k < fc.consumed.len and fc.consumed[k]) if (self.vars.getPtr(p.name)) |vi| {
+                    vi.is_param = false;
+                };
+            }
+        }
     }
     try self.setupDeferListIfNeeded(fd.body);
 
@@ -2451,6 +2461,16 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
         const param_text = try std.fmt.allocPrint(self.allocator, "%p_{s}", .{p.name});
         try self.qbeStore(info.qtype, param_text, info.slot);
     }
+    if (self.consuming_clone and !std.mem.eql(u8, m.name, "__init__")) {
+        const mkey = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ class_name, m.name });
+        if (self.func_consumed.get(mkey)) |fc| {
+            for (m.params[1..], 0..) |p, k| {
+                if (k < fc.consumed.len and fc.consumed[k]) if (self.vars.getPtr(p.name)) |vi| {
+                    vi.is_param = false;
+                };
+            }
+        }
+    }
     try self.setupDeferListIfNeeded(m.body);
 
     try self.genStmts(m.body, ret_info.qtype);
@@ -2465,6 +2485,29 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     try self.qbeLabel(end_label);
     try self.emitDefaultReturn(ret_info.qtype);
     try self.qbeFuncEnd();
+}
+
+/// B1/I6 (genel): bkz. `Codegen.func_consumed`. Tüketen klon gövdesi (`<sembol>_c`).
+pub fn genFunctionConsuming(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
+    const fc = self.func_consumed.get(fd.name) orelse return;
+    for (fc.keys) |k| try self.active_param_moves.put(self.allocator, k, {});
+    self.consuming_clone = true;
+    defer {
+        self.consuming_clone = false;
+        for (fc.keys) |k| _ = self.active_param_moves.remove(k);
+    }
+    try genFunction(self, fd);
+}
+
+pub fn genMethodConsuming(self: *Codegen, class_name: []const u8, m: ast.FuncDef, key: []const u8) CodegenError!void {
+    const fc = self.func_consumed.get(key) orelse return;
+    for (fc.keys) |k| try self.active_param_moves.put(self.allocator, k, {});
+    self.consuming_clone = true;
+    defer {
+        self.consuming_clone = false;
+        for (fc.keys) |k| _ = self.active_param_moves.remove(k);
+    }
+    try genMethod(self, class_name, m);
 }
 
 /// B1/I6 (devam): bkz. `Codegen.init_consumed`. Uygun `__init__` için ikinci bir (`___init___c`) gövde üretir: tüketim noktaları retain yapmaz (argümanların +1'ini kurucu alana devralır).

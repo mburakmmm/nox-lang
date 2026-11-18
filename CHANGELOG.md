@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.14]
+
+B1 (ARC/ASAP) devamı: genel işlevler/metodlar için tüketen parametre sözleşmesi.
+
+- **Derleyici (B1/I6):** inline edilmeyen işlev ve (kalıtıma katılmayan sınıfların) metodlarında, bir heap parametresi gövdede son kullanımda başka bir sahibe saklanıyorsa (`self.f = p`, `xs.append(p)`, `xs[i] = p`, `d[k] = p`, basit-`__init__`li kurucu argümanı; ad sonra okunmaz, döngü içinde değil) ikinci bir `<sembol>_c` gövdesi üretilir (yalnızca bir çağrı sitesi seçerse, modül sonunda). Klonda tüketilen parametreler SAHİPLİ yerel gibi davranır: taşındıysa bırakılmaz, tüketilmeyen yollarda (erken dönüş, istisna, koşullu saklama) çıkışta bırakılır. Çağrı sitesi, taze bir argüman devredilebiliyorsa klonu çağırır: taze argüman retain/release çifti ve olası-kök kaydı olmadan alana taşınır, takma ad argüman çağıranda retain edilir. Normal sembol (işlev değeri, bağlı metod, `super()`, vtable çağrıları, yığın/arena argümanları) ödünç sözleşmesiyle aynen kalır. Golden: `move_into_call_consumed` (döngülü işlev/metodlar, erken dönüş, istisna, koşullu saklama, takma ad argüman; sızıntı yok). Aether (35/35) ve Nyx (72/72) test paketleri yeni derleyiciyle geçer.
+- 52 IR anlık görüntüsü yenilendi.
+
 ## [2.2.13]
 
 B1 (ARC/ASAP) devamı: sabit boyutlu sınıf örnekleri için satır içi havuz tahsisi/serbest bırakması.

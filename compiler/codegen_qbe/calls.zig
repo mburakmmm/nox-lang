@@ -1404,11 +1404,12 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             }
 
             const result_temp: ?[]const u8 = if (sig.ret.qtype == .none) null else try self.newTemp();
+            const consumed_flags: ?[]const bool = if (ref_flags == null) try self.consumeCallArgs(name, c.args, arg_values) else null;
             {
                 const fn_args = try self.allocator.alloc(codegen.QbeArg, 1 + arg_values.len);
                 fn_args[0] = .{ .ty = .l, .text = RT_PARAM };
                 for (arg_values, 0..) |v, i| fn_args[1 + i] = .{ .ty = v.qtype, .text = v.text };
-                const fn_sym = try self.userFnSym(name);
+                const fn_sym = if (consumed_flags != null) try std.fmt.allocPrint(self.allocator, "{s}_c", .{try self.userFnSym(name)}) else try self.userFnSym(name);
                 if (result_temp) |rt| {
                     try self.qbeCall(.{ .name = rt, .ty = sig.ret.qtype }, fn_sym, fn_args);
                 } else {
@@ -1432,7 +1433,7 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     try self.releaseValueIfSet(cur, .list, sig.params[i].elem_qtype, null, sig.params[i].elem_heap_info, null);
                 }
             }
-            try self.releaseTemporaryArgs(c.args, arg_values);
+            try releaseTemporaryArgsExcept(self, c.args, arg_values, consumed_flags);
             if (!self.must_not_raise.contains(name)) try self.emitExceptionCheck();
 
             if (result_temp) |rt| {
@@ -1666,6 +1667,42 @@ pub fn genExternCallEmit(self: *Codegen, name: []const u8, esig: types.FuncSig, 
     // geçmişinin AYNI notu).
     if (result_temp) |rt| return .{ .text = rt, .qtype = esig.ret.qtype, .heap = esig.ret.heap, .class_name = esig.ret.class_name, .elem_qtype = esig.ret.elem_qtype, .elem_heap_info = esig.ret.elem_heap_info, .elem_is_str = esig.ret.elem_is_str, .dict_info = esig.ret.dict_info, .fixed_int = esig.ret.fixed_int };
     return .{ .text = "0", .qtype = .w };
+}
+
+/// B1/I6 (genel): `key` (serbest işlevde ad, metodda `Sahip_metod`) için tüketen klon seçilir mi? Seçilirse tüketilen konumlardaki takma ad argümanlar çağıranda retain edilir (`arg_values` güncellenir),
+/// `func_clone_needed` işaretlenir ve tüketim bayrakları döner (aksi halde `null`, argümanlara dokunulmaz). Kazanç yoksa (taze argüman yok) ya da yığın-slotlu/arena argüman varsa klon seçilmez.
+pub fn consumeCallArgs(self: *Codegen, key: []const u8, exprs: []const ast.Expr, arg_values: []Value) CodegenError!?[]const bool {
+    const fc = self.func_consumed.get(key) orelse return null;
+    if (fc.consumed.len != arg_values.len) return null;
+    var any_fresh = false;
+    for (fc.consumed, 0..) |c_flag, i| {
+        if (!c_flag) continue;
+        const v = arg_values[i];
+        if (v.is_stack_slot or v.arena) return null;
+        if (!v.is_pinned and isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(exprs[i]))) any_fresh = true;
+    }
+    if (!any_fresh) return null;
+    for (fc.consumed, 0..) |c_flag, i| {
+        if (!c_flag) continue;
+        const v = arg_values[i];
+        const fresh = !v.is_pinned and isHeapManaged(v.heap) and (v.always_fresh or isTemporaryExpr(exprs[i]));
+        if (!fresh) arg_values[i] = try self.retainIfAliasing(exprs[i], v);
+    }
+    try self.func_clone_needed.put(self.allocator, key, {});
+    return fc.consumed;
+}
+
+/// Tüketilen argümanlar dışındaki geçici argümanları bırakır (`consumed == null` ise hepsi, eski davranış).
+fn releaseTemporaryArgsExcept(self: *Codegen, exprs: []const ast.Expr, values: []const Value, consumed: ?[]const bool) CodegenError!void {
+    const cf = consumed orelse return self.releaseTemporaryArgs(exprs, values);
+    var rel_exprs: std.ArrayListUnmanaged(ast.Expr) = .empty;
+    var rel_values: std.ArrayListUnmanaged(Value) = .empty;
+    for (exprs, 0..) |e, i| {
+        if (cf[i]) continue;
+        try rel_exprs.append(self.allocator, e);
+        try rel_values.append(self.allocator, values[i]);
+    }
+    try self.releaseTemporaryArgs(rel_exprs.items, rel_values.items);
 }
 
 pub fn releaseTemporaryArgs(self: *Codegen, exprs: []const ast.Expr, values: []const Value) CodegenError!void {
@@ -2275,6 +2312,8 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     }
 
     const result_temp: ?[]const u8 = if (msig.sig.ret.qtype == .none) null else try self.newTemp();
+    const method_key = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ msig.owner, a.attr });
+    const consumed_flags: ?[]const bool = if (!cinfo.has_vtable) try self.consumeCallArgs(method_key, args, arg_values) else null;
     // Faz 7: `cinfo.has_vtable` İSE metod çağrısı DOLAYLI (indirect) yapılır
     // — statik alıcı tipi (`obj.class_name.?`) ile ÇALIŞMA ZAMANI tipi
     // (Base-tipli bir değişken bir Derived örneği TUTABİLİR) FARKLI
@@ -2303,7 +2342,7 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
             try self.qbeLoadL(fn_ptr, slot_addr);
             try self.qbeCall(dst, fn_ptr, method_args);
         } else {
-            const method_sym = try std.fmt.allocPrint(self.allocator, "${s}_{s}", .{ msig.owner, a.attr });
+            const method_sym = try std.fmt.allocPrint(self.allocator, "${s}_{s}{s}", .{ msig.owner, a.attr, if (consumed_flags != null) "_c" else "" });
             try self.qbeCall(dst, method_sym, method_args);
         }
     }
@@ -2327,7 +2366,7 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     // İSTİSNALI), alıcı/argümanların SERBEST BIRAKILMASI çağrının
     // SONUCUNDAN BAĞIMSIZDIR — bu yüzden kontrolden ÖNCEYE taşındı.
     try self.releaseIfTemporary(a.obj.*, obj);
-    try self.releaseTemporaryArgs(args, arg_values);
+    try releaseTemporaryArgsExcept(self, args, arg_values, consumed_flags);
     if (cinfo.has_vtable) {
         try self.emitExceptionCheck();
     } else {

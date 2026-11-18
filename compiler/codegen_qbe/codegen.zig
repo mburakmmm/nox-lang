@@ -689,6 +689,10 @@ pub const Codegen = struct {
     pub const markBorrowedAliasLocals = optimizations.markBorrowedAliasLocals;
     pub const markMoveSites = optimizations.markMoveSites;
     pub const computeInitConsumed = optimizations.computeInitConsumed;
+    pub const computeFuncConsumed = optimizations.computeFuncConsumed;
+    pub const consumeCallArgs = calls.consumeCallArgs;
+    pub const genFunctionConsuming = registration.genFunctionConsuming;
+    pub const genMethodConsuming = registration.genMethodConsuming;
     pub const genConsumingInitClone = registration.genConsumingInitClone;
     pub const findCtorMoveSite = optimizations.findCtorMoveSite;
     pub const detectWhileBoundsElideCtx = optimizations.detectWhileBoundsElideCtx;
@@ -1647,6 +1651,10 @@ pub const Codegen = struct {
     /// Tüketen klonun (`___init___c`) en az bir çağrı sitesi üretilen sınıflar / klonu zaten üretilenler (klon sonda, yalnızca gerekirse üretilir).
     init_clone_needed: std.StringHashMapUnmanaged(void) = .empty,
     init_clone_emitted: std.StringHashMapUnmanaged(void) = .empty,
+    /// B1/I6 (genel işlevler/metodlar): `func_consumed[anahtar]` — anahtar serbest işlevde adı, metodda `Sahip_metod`. Tüketen klon (`<sembol>_c`) tüketilen parametreleri SAHİPLİ yerel gibi ele alır (çıkışlarda kalan değer bırakılır).
+    func_consumed: std.StringHashMapUnmanaged(InitConsume) = .empty,
+    func_clone_needed: std.StringHashMapUnmanaged(void) = .empty,
+    func_clone_emitted: std.StringHashMapUnmanaged(void) = .empty,
     /// Faz GG.2 (bkz. nox-teknik-spesifikasyon.md §3.67): "inline edilebilir"
     /// KANITLANMIŞ serbest fonksiyonların (isim → AST gövdesi) haritası —
     /// `computeInlinableFunctions` tarafından doldurulur, `prepareInlineSites`
@@ -2359,6 +2367,53 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
                     try gen.init_clone_emitted.put(allocator, cd.name, {});
                     try gen.genConsumingInitClone(cd);
                     progressed = true;
+                }
+            }
+        }
+    }
+
+    // B1/I6 (genel işlevler/metodlar): tüketen klonlar (`<sembol>_c`) — yalnızca bir çağrı sitesi seçtiyse, sabit noktaya kadar.
+    {
+        var progressed = true;
+        while (progressed) {
+            progressed = false;
+            for (module.body) |stmt| {
+                if (stmt.kind == .func_def) {
+                    const fd = stmt.kind.func_def;
+                    if (gen.func_clone_needed.contains(fd.name) and !gen.func_clone_emitted.contains(fd.name)) {
+                        try gen.func_clone_emitted.put(allocator, fd.name, {});
+                        try gen.genFunctionConsuming(fd);
+                        progressed = true;
+                    }
+                } else if (stmt.kind == .class_def and stmt.kind.class_def.type_params.len == 0 and !containsName(generic_class_template_names, stmt.kind.class_def.name)) {
+                    const cd = stmt.kind.class_def;
+                    for (cd.methods) |m| {
+                        if (std.mem.eql(u8, m.name, "__init__")) continue;
+                        const key = try std.fmt.allocPrint(allocator, "{s}_{s}", .{ cd.name, m.name });
+                        if (gen.func_clone_needed.contains(key) and !gen.func_clone_emitted.contains(key)) {
+                            try gen.func_clone_emitted.put(allocator, key, {});
+                            try gen.genMethodConsuming(cd.name, m, key);
+                            progressed = true;
+                        }
+                    }
+                }
+            }
+            for (extra_functions) |fd| {
+                if (gen.func_clone_needed.contains(fd.name) and !gen.func_clone_emitted.contains(fd.name)) {
+                    try gen.func_clone_emitted.put(allocator, fd.name, {});
+                    try gen.genFunctionConsuming(fd);
+                    progressed = true;
+                }
+            }
+            for (extra_classes) |cd| {
+                for (cd.methods) |m| {
+                    if (std.mem.eql(u8, m.name, "__init__")) continue;
+                    const key = try std.fmt.allocPrint(allocator, "{s}_{s}", .{ cd.name, m.name });
+                    if (gen.func_clone_needed.contains(key) and !gen.func_clone_emitted.contains(key)) {
+                        try gen.func_clone_emitted.put(allocator, key, {});
+                        try gen.genMethodConsuming(cd.name, m, key);
+                        progressed = true;
+                    }
                 }
             }
         }
