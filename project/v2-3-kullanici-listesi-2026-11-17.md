@@ -21,13 +21,13 @@ Kural (AGENTS §16): dil özelliği / bellek modeli / ABI etkili maddeler `[K]` 
 
 ## Orta işler
 
-- [K] **O1 Go gibi tip vermeden `:=` ile tanımlama getirelim mi? Kötü olur mu?** (analiz + öneri yazıldı: `project/o1-tip-cikarimi-analizi-2026-11-18.md`; öneri: kısıtlı v1 ile EVET; karar bekliyor)
+- [x] **O1 (v2.2.20, kısıtlı v1 uygulandı: lexer/parser/checker/fmt/LSP/editör gramerleri, AGENTS §5 üçüncü dar istisna) Go gibi tip vermeden `:=` ile tanımlama getirelim mi? Kötü olur mu?** (analiz + öneri yazıldı: `project/o1-tip-cikarimi-analizi-2026-11-18.md`; öneri: kısıtlı v1 ile EVET; karar bekliyor)
   - AGENTS §5: "Tüm parametre, değişken ve dönüş tipleri zorunludur… asla örtük düşüş yok." `:=` bu ilkenin yerel değişkenler için gevşetilmesidir (tip statik olarak çıkarılır, dinamik tipleme DEĞİL ama §5'in metnini değiştirir) → mimari karar, kullanıcı onayı gerekir.
   - Kalan: artı/eksi analizi + öneri (tip çıkarımının sınırları: `[]`/`{}`/`None`/Optional daraltma, `int` vs `float` literal, hata mesajı kalitesi, biçimlendirici/LSP/`noxc explain` etkisi, mevcut `x: T = v` ile birlikte yaşama) → karar → uygulama (lexer `:=`, parser, checker, golden).
 
 ## Büyük ve çok önemli işler
 
-- [~] **B1 ARC'ye düşen payı azaltıp ASAP'e gelen yüzdeyi artırmak (Gemini önerisi, `asap.md` 2026-11-17 geldi).**
+- [x] **B1 (kapandı v2.2.19, ölçümle: belge §13) ARC'ye düşen payı azaltıp ASAP'e gelen yüzdeyi artırmak (Gemini önerisi, `asap.md` 2026-11-17 geldi).**
   - Analiz bitti: `project/b1-arc-asap-analizi-2026-11-17.md`. Önermenin "%92 ARC" rakamı tanılama etiketlerinden (parametreler hep "ARC", `explain` skalerleri de "ARC" yazıyor) geliyor; öneri 1 (borrow) ve 4 (acyclic) zaten uygulanmış, öneri 3 (atomik olmayan sayaç) ölçüldü ≤%5, gerçek boşluk yığın/arena terfisi (heap-tipli yerellerin %0,6'sı) ve çağrıdan dönen değerler.
   - Gerçek-dünya ölçümü yapıldı (`NOX_RC_STATS=1` tanılaması eklendi; HTTP sunucusunda ARC darboğaz değil, ama sınıf-ağırlıklı AST iş yükünde süre %72 bellek yönetimi, %40 ARC/döngü-toplayıcı mekanizması). **İlk "ARC ucuz" yargım yanlış soruya cevaptı; düzeltildi.** Plan ve hesap: belge §6-§7 (I1 alan-okuması yerellerinde retain/release elemesi, I2 satır içi release hızlı yolu, I3 olası-kök ucuzlatma, I4 satır içi serbest-liste tahsisi, I5 str geçicileri, I6 move). Sıra: I2 → I4 → I3 → I1 `[K]` → I6/I5.
   - Kalan: B1-0 etiket düzeltmesi, I2/I4/I3 uygulaması (karar gerektirmeyen, yalnızca codegen/runtime), I1 tasarım onayı.

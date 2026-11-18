@@ -1,0 +1,107 @@
+# Dil yüzeyi 1 (v2.2.21): `;`, tek satır gövde, try/for/while else, çok-öğeli with, ham/bitişik dize, f-string !r/!s, `...`, `global`; iki backend.
+class Res:
+    n: int
+    def __init__(self, n: int) -> None:
+        self.n = n
+    def __enter__(self) -> Res:
+        print("enter", self.n)
+        return self
+    def __exit__(self) -> None:
+        print("exit", self.n)
+
+def risky(x: int) -> int:
+    if x < 0:
+        raise ValueError("neg")
+    return x * 2
+
+def first_neg(xs: list[int]) -> int:
+    for x in xs:
+        if x < 0:
+            break
+    else:
+        return -1
+    return x
+
+def count_to(n: int) -> int:
+    i: int = 0
+    while i < n:
+        i = i + 1
+        if i == 99:
+            break
+    else:
+        print("while-else ran")
+    return i
+
+def nested() -> None:
+    for a in [1, 2]:
+        for b in [10, 20]:
+            if b == 20:
+                break
+        else:
+            print("never")
+        print("a", a)
+    else:
+        print("outer else")
+
+def try_demo(x: int) -> None:
+    try:
+        v: int = risky(x)
+    except ValueError:
+        print("caught")
+    else:
+        print("else", v)
+    finally:
+        print("finally")
+
+def try_demo2(x: int) -> None:
+    try:
+        v: int = risky(x)
+    except ValueError:
+        print("caught2")
+    else:
+        print("else2", v)
+
+def semis() -> None:
+    a: int = 1; b: int = 2
+    print(a, b); print(a + b)
+
+def oneline(x: int) -> int:
+    if x > 1: return 10
+    elif x == 1: return 5
+    else: return 0
+
+def raws() -> None:
+    s: str = r"a\nb\t"
+    t: str = "x" "y" 'z'
+    n: int = 3
+    u: str = "n=" f"{n}" " done"
+    v: str = f"{t!r} {n!s} {n!r}"
+    print(s, len(s), t, u)
+    print(v)
+
+def multi() -> None:
+    with Res(1) as a, Res(2) as b:
+        print("body", a.n + b.n)
+
+def stub() -> None:
+    ...
+
+x: int = 7
+def setg() -> None:
+    global x
+    x = x + 1
+
+for k in [1, 2, 3]: print(k)
+print(first_neg([1, -2, 3]), first_neg([1, 2]), count_to(5))
+nested()
+try_demo(3); try_demo(-1)
+try_demo2(2); try_demo2(-5)
+semis()
+print(oneline(5), oneline(1), oneline(0))
+raws()
+multi()
+stub()
+setg()
+print(x)
+while x < 12: x = x + 2
+print(x)

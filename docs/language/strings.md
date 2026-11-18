@@ -167,8 +167,16 @@ print(format(3.14159, ".2f"), "{} scored {:.1f}".format("ada", 9.25), "{1}-{0}".
 3.14 ada scored 9.2 b-a
 ```
 
-Not supported: the `!r` and `!a` conversions, nested `{}` inside a specification, attribute or index fields in `str.format` (use an f-string
+`!r` converts with `repr` (`f"{name!r}"` is `f"{repr(name)}"`).
+
+Not supported: the `!a` conversion, nested `{}` inside a specification, attribute or index fields in `str.format` (use an f-string
 instead), and `%`-style formatting (`"%d" % x`).
+
+## Raw strings and adjacent literals
+
+A string prefixed with `r` (`r"C:\new\table"`, also `r'…'` and `r"""…"""`) keeps backslashes as written. A raw string cannot end in an odd number of backslashes.
+String literals written next to each other are joined at compile time (`"ab" "cd"` is `"abcd"`); this is handy inside parentheses to split a long text over lines.
+Raw and f-string prefixes cannot be combined (`rf"…"` is not supported).
 
 ## Multi-line strings
 

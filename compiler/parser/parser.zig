@@ -53,6 +53,10 @@ pub const Parser = struct {
     /// v1.157.0: tuple açma desugarının ek deyimleri ve gizli ad sayacı (bkz. `parseSimpleStmt`/`parseFor`).
     extra_stmts: std.ArrayList(ast.Stmt) = .empty,
     match_counter: u32 = 0,
+    /// Dil yüzeyi 1/2 (v2.2.21): `for/while/try … else` gizli bayrak sayacı; `global` adları.
+    else_counter: u32 = 0,
+    with_counter: u32 = 0,
+    cur_globals: ?*std.ArrayList([]const u8) = null,
     tuple_counter: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator, tokens: []const Token) Parser {
@@ -128,6 +132,9 @@ pub const Parser = struct {
 
     /// Bir modülü (dosyanın tamamını) ayrıştırır.
     pub fn parseModule(self: *Parser) ParseError!ast.Module {
+        // Dil yüzeyi 1 (v2.2.21): `;` ayırıcıları ve tek satırlık bileşik gövdeler (`if x: y()`) belirteç düzeyinde kanonik biçime (newline/indent/dedent) indirgenir.
+        self.tokens = try normalizeStatementTokens(self.allocator, self.tokens);
+        self.pos = 0;
         var stmts = std.ArrayList(ast.Stmt).empty;
         while (!self.check(.eof)) {
             try stmts.append(self.allocator, try self.parseStmt());
@@ -186,6 +193,7 @@ pub const Parser = struct {
         var stmts = std.ArrayList(ast.Stmt).empty;
         while (!self.check(.dedent)) {
             if (try self.tryParseNonlocal()) continue;
+            if (try self.tryParseGlobal()) continue;
             try stmts.append(self.allocator, try self.parseStmt());
             try self.drainExtraStmts(&stmts);
         }
@@ -207,6 +215,20 @@ pub const Parser = struct {
         return true;
     }
 
+    /// `global a, b` (bağlamsal anahtar kelime, dil yüzeyi 2): adlar `FuncDef.globals`a toplanır, AST'de deyim bırakılmaz; checker adların modül düzeyi değişken olduğunu doğrular.
+    fn tryParseGlobal(self: *Parser) ParseError!bool {
+        if (!(self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "global") and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .identifier)) return false;
+        const list = self.cur_globals orelse {
+            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "'global' can only be used inside a function" };
+            return error.UnexpectedToken;
+        };
+        _ = self.advance();
+        try list.append(self.allocator, (try self.expect(.identifier)).lexeme);
+        while (self.match(.comma)) try list.append(self.allocator, (try self.expect(.identifier)).lexeme);
+        _ = try self.expect(.newline);
+        return true;
+    }
+
     /// Faz T.1: TÜM deyim ayrıştırmasının TEK dağıtım noktası — `ast.Stmt`in
     /// belge notundaki SARMALAMA (`kind` + `line`) TAM OLARAK BURADA, bir
     /// KEZ yapılır (alt-ayrıştırıcıların (`parseIf` vb.) HİÇBİRİ kendi
@@ -219,21 +241,17 @@ pub const Parser = struct {
         const kind: ast.StmtKind = if (self.isEnumStart()) try self.parseEnumDef() else if (self.isMatchStart()) try self.parseMatch(start_tok) else switch (self.curKind()) {
             .kw_if => try self.parseIf(),
             .kw_while => try self.parseWhile(),
-            .kw_for => try self.parseFor(),
+            .kw_for => try self.parseFor(false),
             .kw_def => .{ .func_def = try self.parseFuncDef(null) },
             .kw_async => blk: {
                 // `async for x in agen:` (async jeneratör tüketimi) ya da `async def`
                 if (self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .kw_for) {
                     _ = self.advance();
-                    var k = try self.parseFor();
-                    k.for_stmt.is_async = true;
-                    break :blk k;
+                    break :blk try self.parseFor(true);
                 }
                 if (self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .kw_with) {
                     _ = self.advance();
-                    var k = try self.parseWith();
-                    k.with_stmt.is_async = true;
-                    break :blk k;
+                    break :blk try self.parseWith(true);
                 }
                 break :blk .{ .func_def = try self.parseFuncDef(null) };
             },
@@ -244,12 +262,18 @@ pub const Parser = struct {
             .kw_return => try self.parseReturn(),
             .kw_raise => try self.parseRaise(),
             .kw_try => try self.parseTry(),
-            .kw_with => try self.parseWith(),
+            .kw_with => try self.parseWith(false),
             .kw_defer => try self.parseDefer(),
             .kw_lowlevel => try self.parseLowLevel(),
             .kw_import => try self.parseImport(),
             .kw_from => try self.parseFromImport(),
             .kw_pass => blk: {
+                _ = self.advance();
+                _ = try self.expect(.newline);
+                break :blk .pass_stmt;
+            },
+            // Dil yüzeyi 1 (v2.2.21): `...` gövde yer tutucusu `pass` ile eşdeğerdir.
+            .ellipsis => blk: {
                 _ = self.advance();
                 _ = try self.expect(.newline);
                 break :blk .pass_stmt;
@@ -549,14 +573,100 @@ pub const Parser = struct {
     }
 
     fn parseWhile(self: *Parser) ParseError!ast.StmtKind {
+        const start_tok = self.cur();
         _ = try self.expect(.kw_while);
         const cond = try self.parseExpr();
         _ = try self.expect(.colon);
         const body = try self.parseBlock();
+        if (self.check(.kw_else)) {
+            _ = self.advance();
+            _ = try self.expect(.colon);
+            const else_body = try self.parseBlock();
+            return self.finishLoopElse(.{ .while_stmt = .{ .cond = cond, .body = body } }, body, else_body, start_tok);
+        }
         return .{ .while_stmt = .{ .cond = cond, .body = body } };
     }
 
-    fn parseFor(self: *Parser) ParseError!ast.StmtKind {
+    /// Dil yüzeyi 1 (v2.2.21): `for/while … else:` → [`__nox_brk_N: bool = False`, döngü (gövdede bu döngüye ait her `break` önce `__nox_brk_N = True` yapar), `if not __nox_brk_N: <else>`].
+    /// Döngü ve `if` deyimleri `extra_stmts`e eklenir; bayrak bildirimi (formatter'ın atladığı `is_match_temp`) ana deyim olarak döner.
+    fn finishLoopElse(self: *Parser, loop: ast.StmtKind, orig_body: []ast.Stmt, else_body: []ast.Stmt, start_tok: Token) ParseError!ast.StmtKind {
+        self.else_counter += 1;
+        const flag = try std.fmt.allocPrint(self.allocator, "__nox_brk_{d}", .{self.else_counter});
+        const origin = try self.allocator.create(ast.LoopElseOrigin);
+        origin.* = .{ .body = orig_body, .else_body = else_body };
+        const new_body = try self.rewriteBreaks(orig_body, flag);
+        var k = loop;
+        switch (k) {
+            .while_stmt => |*w| {
+                w.body = new_body;
+                w.else_origin = origin;
+            },
+            .for_stmt => |*f| {
+                f.body = new_body;
+                f.else_origin = origin;
+            },
+            else => unreachable,
+        }
+        const line = start_tok.line;
+        const span = span_mod.fromTokens(start_tok, self.tokens[self.pos - 1]);
+        try self.extra_stmts.append(self.allocator, .{ .kind = k, .line = line, .span = span });
+        const flag_ref = try self.box(.{ .identifier = flag });
+        try self.extra_stmts.append(self.allocator, .{ .kind = .{ .if_stmt = .{
+            .cond = .{ .unary = .{ .op = .not_, .operand = flag_ref } },
+            .then_body = else_body,
+            .elif_clauses = &.{},
+            .else_body = null,
+            .is_else_tail = true,
+        } }, .line = line, .span = span });
+        return .{ .var_decl = .{ .name = flag, .type_expr = .{ .simple = "bool" }, .value = .{ .bool_lit = false }, .is_match_temp = true } };
+    }
+
+    /// `stmts` içindeki, çevreleyen döngüye ait her `break`in önüne `flag = True` ekleyen yeni bir dilim döner (iç içe döngü/işlev/sınıf gövdelerine inilmez).
+    fn rewriteBreaks(self: *Parser, stmts: []const ast.Stmt, flag: []const u8) ParseError![]ast.Stmt {
+        var out = std.ArrayList(ast.Stmt).empty;
+        for (stmts) |st| {
+            switch (st.kind) {
+                .break_stmt => {
+                    try out.append(self.allocator, .{ .kind = .{ .assign = .{ .target = .{ .identifier = flag }, .value = .{ .bool_lit = true } } }, .line = st.line, .span = st.span });
+                    try out.append(self.allocator, st);
+                },
+                .if_stmt => |f| {
+                    var nf = f;
+                    nf.then_body = try self.rewriteBreaks(f.then_body, flag);
+                    const elifs = try self.allocator.alloc(ast.ElifClause, f.elif_clauses.len);
+                    for (f.elif_clauses, 0..) |ec, i| elifs[i] = .{ .cond = ec.cond, .body = try self.rewriteBreaks(ec.body, flag) };
+                    nf.elif_clauses = elifs;
+                    if (f.else_body) |eb| nf.else_body = try self.rewriteBreaks(eb, flag);
+                    try out.append(self.allocator, .{ .kind = .{ .if_stmt = nf }, .line = st.line, .span = st.span });
+                },
+                .try_stmt => |t| {
+                    var nt = t;
+                    nt.try_body = try self.rewriteBreaks(t.try_body, flag);
+                    const ecs = try self.allocator.alloc(ast.ExceptClause, t.except_clauses.len);
+                    for (t.except_clauses, 0..) |ec, i| {
+                        ecs[i] = ec;
+                        ecs[i].body = try self.rewriteBreaks(ec.body, flag);
+                    }
+                    nt.except_clauses = ecs;
+                    if (t.finally_body) |fb| nt.finally_body = try self.rewriteBreaks(fb, flag);
+                    try out.append(self.allocator, .{ .kind = .{ .try_stmt = nt }, .line = st.line, .span = st.span });
+                },
+                .with_stmt => |w| {
+                    var nw = w;
+                    nw.body = try self.rewriteBreaks(w.body, flag);
+                    try out.append(self.allocator, .{ .kind = .{ .with_stmt = nw }, .line = st.line, .span = st.span });
+                },
+                .lowlevel_stmt => |ll| {
+                    try out.append(self.allocator, .{ .kind = .{ .lowlevel_stmt = .{ .body = try self.rewriteBreaks(ll.body, flag) } }, .line = st.line, .span = st.span });
+                },
+                else => try out.append(self.allocator, st),
+            }
+        }
+        return out.toOwnedSlice(self.allocator);
+    }
+
+    fn parseFor(self: *Parser, is_async: bool) ParseError!ast.StmtKind {
+        const start_tok = self.cur();
         _ = try self.expect(.kw_for);
         const name = (try self.expect(.identifier)).lexeme;
         // v1.157.0: `for a, b in X:` — gizli bir tuple döngü değişkeni + gövde başında tip-çıkarımlı açma bildirimleri.
@@ -579,9 +689,21 @@ pub const Parser = struct {
                 new_body[i] = .{ .kind = .{ .var_decl = .{ .name = un, .type_expr = .{ .simple = "__infer" }, .value = .{ .attribute = .{ .obj = tmp_ref, .attr = try std.fmt.allocPrint(self.allocator, "f{d}", .{i}) } } } }, .line = line };
             }
             @memcpy(new_body[unpack_names.items.len..], body);
-            return .{ .for_stmt = .{ .var_name = tmp_name, .iterable = iterable, .body = new_body } };
+            if (self.check(.kw_else)) {
+                _ = self.advance();
+                _ = try self.expect(.colon);
+                const else_body = try self.parseBlock();
+                return self.finishLoopElse(.{ .for_stmt = .{ .var_name = tmp_name, .iterable = iterable, .body = new_body, .is_async = is_async } }, new_body, else_body, start_tok);
+            }
+            return .{ .for_stmt = .{ .var_name = tmp_name, .iterable = iterable, .body = new_body, .is_async = is_async } };
         }
-        return .{ .for_stmt = .{ .var_name = name, .iterable = iterable, .body = body } };
+        if (self.check(.kw_else)) {
+            _ = self.advance();
+            _ = try self.expect(.colon);
+            const else_body = try self.parseBlock();
+            return self.finishLoopElse(.{ .for_stmt = .{ .var_name = name, .iterable = iterable, .body = body, .is_async = is_async } }, body, else_body, start_tok);
+        }
+        return .{ .for_stmt = .{ .var_name = name, .iterable = iterable, .body = body, .is_async = is_async } };
     }
 
     /// Faz 1 decorator (bkz. nox-teknik-spesifikasyon.md decorator bölümü):
@@ -1249,6 +1371,10 @@ pub const Parser = struct {
         const saved_nonlocals = self.cur_nonlocals;
         self.cur_nonlocals = &nonlocals;
         defer self.cur_nonlocals = saved_nonlocals;
+        var globals = std.ArrayList([]const u8).empty;
+        const saved_globals = self.cur_globals;
+        self.cur_globals = &globals;
+        defer self.cur_globals = saved_globals;
         const body = try self.parseBlock();
 
         return .{
@@ -1260,6 +1386,7 @@ pub const Parser = struct {
             .body = body,
             .is_async = is_async,
             .nonlocals = try nonlocals.toOwnedSlice(self.allocator),
+            .globals = try globals.toOwnedSlice(self.allocator),
         };
     }
 
@@ -1574,6 +1701,7 @@ pub const Parser = struct {
     }
 
     fn parseTry(self: *Parser) ParseError!ast.StmtKind {
+        const start_tok = self.cur();
         _ = try self.expect(.kw_try);
         _ = try self.expect(.colon);
         const try_body = try self.parseBlock();
@@ -1622,12 +1750,25 @@ pub const Parser = struct {
             }
         }
 
+        // Dil yüzeyi 1 (v2.2.21): `try … except … else:` — gövde istisnasız tamamlanırsa çalışır, `finally`den önce, `except` kapsamı dışında.
+        var try_else: ?[]ast.Stmt = null;
+        if (self.check(.kw_else)) {
+            if (except_clauses.items.len == 0) {
+                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "'else' on a 'try' needs at least one 'except' clause" };
+                return error.UnexpectedToken;
+            }
+            _ = self.advance();
+            _ = try self.expect(.colon);
+            try_else = try self.parseBlock();
+        }
+
         var finally_body: ?[]ast.Stmt = null;
         if (self.match(.kw_finally)) {
             _ = try self.expect(.colon);
             finally_body = try self.parseBlock();
         }
 
+        if (try_else) |eb| return self.finishTryElse(try_body, try except_clauses.toOwnedSlice(self.allocator), eb, finally_body, start_tok);
         return .{ .try_stmt = .{
             .try_body = try_body,
             .except_clauses = try except_clauses.toOwnedSlice(self.allocator),
@@ -1635,19 +1776,66 @@ pub const Parser = struct {
         } };
     }
 
+    /// Dil yüzeyi 1 (v2.2.21): `try … else` indirgemesi. `finally` yoksa [`ok` bayrağı, `try` (gövde sonunda `ok = True`), `if ok: <else>`]; varsa dışta `try/finally`,
+    /// içinde [`try`, `if ok: <else>`] (else, finally'den önce ve except'lerin kapsamı dışında çalışır); bayrak bildirimi dışta kalır.
+    fn finishTryElse(self: *Parser, try_body: []ast.Stmt, excepts: []ast.ExceptClause, else_body: []ast.Stmt, finally_body: ?[]ast.Stmt, start_tok: Token) ParseError!ast.StmtKind {
+        self.else_counter += 1;
+        const flag = try std.fmt.allocPrint(self.allocator, "__nox_tryok_{d}", .{self.else_counter});
+        const origin = try self.allocator.create(ast.TryElseOrigin);
+        origin.* = .{ .try_body = try_body, .except_clauses = excepts, .else_body = else_body, .finally_body = finally_body };
+        const line = start_tok.line;
+        const span = span_mod.fromTokens(start_tok, self.tokens[self.pos - 1]);
+        const body2 = try self.allocator.alloc(ast.Stmt, try_body.len + 1);
+        @memcpy(body2[0..try_body.len], try_body);
+        body2[try_body.len] = .{ .kind = .{ .assign = .{ .target = .{ .identifier = flag }, .value = .{ .bool_lit = true } } }, .line = line, .span = span };
+        const flag_ref = try self.box(.{ .identifier = flag });
+        const tail: ast.Stmt = .{ .kind = .{ .if_stmt = .{ .cond = flag_ref.*, .then_body = else_body, .elif_clauses = &.{}, .else_body = null, .is_else_tail = true } }, .line = line, .span = span };
+        if (finally_body) |fb| {
+            const inner: ast.Stmt = .{ .kind = .{ .try_stmt = .{ .try_body = body2, .except_clauses = excepts, .finally_body = null } }, .line = line, .span = span };
+            const outer_body = try self.allocator.alloc(ast.Stmt, 2);
+            outer_body[0] = inner;
+            outer_body[1] = tail;
+            try self.extra_stmts.append(self.allocator, .{ .kind = .{ .try_stmt = .{ .try_body = outer_body, .except_clauses = &.{}, .finally_body = fb, .else_origin = origin } }, .line = line, .span = span });
+        } else {
+            try self.extra_stmts.append(self.allocator, .{ .kind = .{ .try_stmt = .{ .try_body = body2, .except_clauses = excepts, .finally_body = null, .else_origin = origin } }, .line = line, .span = span });
+            try self.extra_stmts.append(self.allocator, tail);
+        }
+        return .{ .var_decl = .{ .name = flag, .type_expr = .{ .simple = "bool" }, .value = .{ .bool_lit = false }, .is_match_temp = true } };
+    }
+
     /// `with EXPR as NAME:` / `with EXPR:` — Faz U.5 (bkz. `ast.WithStmt`in
     /// belge notu). `as NAME` isteğe bağlıdır (bağlama olmadan yalnızca
     /// `__enter__`/`__exit__` yan etkileri İÇİN kullanılabilir).
-    fn parseWith(self: *Parser) ParseError!ast.StmtKind {
+    fn nextWithUid(self: *Parser) ParseError!u32 {
+        self.with_counter += 1;
+        return self.with_counter;
+    }
+
+    fn parseWith(self: *Parser, is_async: bool) ParseError!ast.StmtKind {
+        const with_tok = self.cur();
         _ = try self.expect(.kw_with);
-        const ctx_expr = try self.parseExpr();
-        var binding: ?[]const u8 = null;
-        if (self.match(.kw_as)) {
-            binding = (try self.expect(.identifier)).lexeme;
+        // Dil yüzeyi 1 (v2.2.21): `with a as x, b as y:` iç içe `with`e indirgenir (soldaki en dış).
+        var ctxs = std.ArrayList(ast.Expr).empty;
+        var binds = std.ArrayList(?[]const u8).empty;
+        while (true) {
+            try ctxs.append(self.allocator, try self.parseExpr());
+            var binding: ?[]const u8 = null;
+            if (self.match(.kw_as)) {
+                binding = (try self.expect(.identifier)).lexeme;
+            }
+            try binds.append(self.allocator, binding);
+            if (!self.match(.comma)) break;
         }
         _ = try self.expect(.colon);
-        const body = try self.parseBlock();
-        return .{ .with_stmt = .{ .ctx_expr = ctx_expr, .binding = binding, .body = body } };
+        var body = try self.parseBlock();
+        var idx = ctxs.items.len;
+        while (idx > 1) {
+            idx -= 1;
+            const inner = try self.allocator.alloc(ast.Stmt, 1);
+            inner[0] = .{ .kind = .{ .with_stmt = .{ .ctx_expr = ctxs.items[idx], .binding = binds.items[idx], .body = body, .is_async = is_async, .uid = try self.nextWithUid() } }, .line = with_tok.line, .span = span_mod.fromTokens(with_tok, self.tokens[self.pos - 1]) };
+            body = inner;
+        }
+        return .{ .with_stmt = .{ .ctx_expr = ctxs.items[0], .binding = binds.items[0], .body = body, .is_async = is_async, .uid = try self.nextWithUid() } };
     }
 
     /// `defer CALL` — Go'nun AYNI sözdizimsel KISITI: `CALL` bir fonksiyon/
@@ -2280,14 +2468,7 @@ pub const Parser = struct {
                 _ = self.advance();
                 return .none_lit;
             },
-            .string_lit => {
-                const t = self.advance();
-                return .{ .string_lit = try self.decodeString(t.lexeme) };
-            },
-            .fstring_lit => {
-                const t = self.advance();
-                return self.parseFStringLit(t.lexeme);
-            },
+            .string_lit, .fstring_lit => return self.parseStringAtoms(),
             .identifier => {
                 const t = self.advance();
                 return .{ .identifier = t.lexeme };
@@ -2390,7 +2571,32 @@ pub const Parser = struct {
     /// DÜŞÜRÜLÜP `r` DÜZ karakter olarak KALIYORDU (`"\r"` → tek bayt
     /// `114`/'r', 13/CR DEĞİL). Mail header injection kontrolü GİBİ
     /// `\r`/`\n` ARAYAN kod bu YÜZDEN GERÇEK CR baytını hiç GÖRMÜYORDU.
+    /// Dil yüzeyi 1 (v2.2.21): bitişik dize birleştirme (`"a" "b"`, `"a" f"{x}"`): art arda gelen düz dizeler derleme zamanında tek literal olur, f-string içeren karışım `+` zincirine iner.
+    fn parseStringAtoms(self: *Parser) ParseError!ast.Expr {
+        var acc: ?ast.Expr = null;
+        while (self.check(.string_lit) or self.check(.fstring_lit)) {
+            const t = self.advance();
+            const piece: ast.Expr = if (t.kind == .string_lit) .{ .string_lit = try self.decodeString(t.lexeme) } else try self.parseFStringLit(t.lexeme);
+            if (acc) |a| {
+                if (a == .string_lit and piece == .string_lit) {
+                    acc = .{ .string_lit = try std.mem.concat(self.allocator, u8, &.{ a.string_lit, piece.string_lit }) };
+                } else {
+                    acc = .{ .binary = .{ .op = .add, .left = try self.box(a), .right = try self.box(piece) } };
+                }
+            } else {
+                acc = piece;
+            }
+        }
+        return acc.?;
+    }
+
     fn decodeString(self: *Parser, lexeme: []const u8) ParseError![]const u8 {
+        // Dil yüzeyi 1 (v2.2.21): ham dize `r"…"`/`R'…'` (üç tırnaklı dahil) — kaçışlar çözülmez.
+        if (lexeme.len >= 3 and (lexeme[0] == 'r' or lexeme[0] == 'R')) {
+            const q = lexeme[1..];
+            if (q.len >= 6 and q[0] == q[1] and q[1] == q[2]) return q[3 .. q.len - 3];
+            return q[1 .. q.len - 1];
+        }
         // v1.164.1: üç tırnaklı (`"""…"""`) dizeler.
         if (lexeme.len >= 6 and lexeme[0] == lexeme[1] and lexeme[1] == lexeme[2]) return self.decodeEscapes(lexeme[3 .. lexeme.len - 3]);
         return self.decodeEscapes(lexeme[1 .. lexeme.len - 1]);
@@ -2689,12 +2895,16 @@ pub const Parser = struct {
                         }
                     }
                 }
-                // Dönüşümler: `!s` ≡ str(); `!r`/`!a` desteklenmez.
+                // Dönüşümler: `!s` ≡ str(); `!r` ≡ repr() (dil yüzeyi 1, v2.2.21); `!a` desteklenmez (`ascii` yok).
+                var want_repr = false;
                 if (expr_text.len >= 2 and expr_text[expr_text.len - 2] == '!') {
                     const conv = expr_text[expr_text.len - 1];
                     if (conv == 's') {
                         expr_text = expr_text[0 .. expr_text.len - 2];
-                    } else if (conv == 'r' or conv == 'a') {
+                    } else if (conv == 'r') {
+                        expr_text = expr_text[0 .. expr_text.len - 2];
+                        want_repr = true;
+                    } else if (conv == 'a') {
                         self.last_diagnostic = .{ .found = .fstring_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "f-string '!r'/'!a' conversion is not supported — use str() or explicit formatting" };
                         return error.UnexpectedToken;
                     }
@@ -2711,7 +2921,14 @@ pub const Parser = struct {
                     return error.UnexpectedToken;
                 };
                 var sub_parser = Parser.init(self.allocator, sub_tokens);
-                const sub_expr = try sub_parser.parseExpr();
+                var sub_expr = try sub_parser.parseExpr();
+                if (want_repr) {
+                    const rargs = try self.allocator.alloc(ast.Expr, 1);
+                    rargs[0] = sub_expr;
+                    const rcallee = try self.allocator.create(ast.Expr);
+                    rcallee.* = .{ .identifier = "repr" };
+                    sub_expr = .{ .call = .{ .callee = rcallee, .args = rargs } };
+                }
                 if (fmt_spec) |fs| {
                     const fargs = try self.allocator.alloc(ast.Expr, 2);
                     fargs[0] = sub_expr;
@@ -2770,6 +2987,137 @@ pub const Parser = struct {
         return acc.?;
     }
 };
+
+fn isCompoundHeaderStart(k: TokenKind) bool {
+    return switch (k) {
+        .kw_if, .kw_elif, .kw_else, .kw_while, .kw_for, .kw_try, .kw_except, .kw_finally, .kw_with, .kw_def, .kw_class, .kw_lowlevel, .kw_async => true,
+        else => false,
+    };
+}
+
+/// Dil yüzeyi 1 (v2.2.21): parser öncesi belirteç geçişi. (1) Parantez dışındaki `;` bir `newline`a çevrilir (satır sonundaki `;` düşer). (2) Bileşik deyim başlığının
+/// (`if/elif/else/while/for/try/except/finally/with/def/class/lowlevel/async …:`) ilk üst-düzey `:` belirtecinden sonra AYNI satırda deyim varsa (`if x: y()`), gövde
+/// `newline indent <deyimler> newline dedent` biçimine indirgenir; böylece dilbilgisi ve AST değişmez. Konumlar özgün belirteçlerden kopyalanır (tanı konumları korunur).
+/// `match`/`enum`/`case` bağlamsal başlıkları kapsam dışıdır (tek satır gövde desteklenmez). Biçimlendirici bu kısayolları çok satırlı kanonik biçime açar.
+pub fn normalizeStatementTokens(allocator: std.mem.Allocator, tokens: []const Token) std.mem.Allocator.Error![]const Token {
+    var any = false;
+    for (tokens) |t| if (t.kind == .semicolon) {
+        any = true;
+        break;
+    };
+    if (!any) {
+        // Hızlı yol: `;` yok; yine de tek satır gövde olabilir — satır başlıklarını tara.
+        var found = false;
+        var i: usize = 0;
+        scan: while (i < tokens.len) {
+            const k = tokens[i].kind;
+            if (k == .newline or k == .indent or k == .dedent or k == .eof) {
+                i += 1;
+                continue;
+            }
+            var le = i;
+            while (le < tokens.len and tokens[le].kind != .newline and tokens[le].kind != .eof) le += 1;
+            if (isCompoundHeaderStart(k)) {
+                if (headerColon(tokens, i, le)) |c| if (c + 1 < le) {
+                    found = true;
+                    break :scan;
+                };
+            }
+            i = le;
+        }
+        if (!found) return tokens;
+    }
+    var out = std.ArrayList(Token).empty;
+    try out.ensureTotalCapacity(allocator, tokens.len + 8);
+    var i: usize = 0;
+    while (i < tokens.len) {
+        const t = tokens[i];
+        switch (t.kind) {
+            .newline, .indent, .dedent, .eof => {
+                try out.append(allocator, t);
+                i += 1;
+                continue;
+            },
+            else => {},
+        }
+        var le = i;
+        while (le < tokens.len and tokens[le].kind != .newline and tokens[le].kind != .eof) le += 1;
+        const colon: ?usize = if (isCompoundHeaderStart(t.kind)) headerColon(tokens, i, le) else null;
+        const inline_body = colon != null and colon.? + 1 < le;
+        var k = i;
+        while (k < le) : (k += 1) {
+            const tk = tokens[k];
+            if (tk.kind == .semicolon) {
+                if (k + 1 >= le) continue; // satır sonundaki `;` düşer
+                var nl = tk;
+                nl.kind = .newline;
+                nl.lexeme = "\n";
+                try out.append(allocator, nl);
+                continue;
+            }
+            try out.append(allocator, tk);
+            if (inline_body and k == colon.?) {
+                var nl = tk;
+                nl.kind = .newline;
+                nl.lexeme = "\n";
+                try out.append(allocator, nl);
+                var ind = tk;
+                ind.kind = .indent;
+                ind.lexeme = "";
+                try out.append(allocator, ind);
+            }
+        }
+        if (inline_body) {
+            if (le < tokens.len and tokens[le].kind == .newline) {
+                try out.append(allocator, tokens[le]);
+                var dd = tokens[le];
+                dd.kind = .dedent;
+                dd.lexeme = "";
+                try out.append(allocator, dd);
+                i = le + 1;
+            } else {
+                // Kaynak satır sonu olmadan bitti: sentetik newline + dedent.
+                var nl = tokens[le - 1];
+                nl.kind = .newline;
+                nl.lexeme = "\n";
+                try out.append(allocator, nl);
+                var dd = nl;
+                dd.kind = .dedent;
+                dd.lexeme = "";
+                try out.append(allocator, dd);
+                i = le;
+            }
+        } else {
+            i = le;
+        }
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+/// `[from, to)` mantıksal satırında başlık iki noktası: parantez derinliği 0'daki ilk `:` (her `lambda` bir `:` tüketir).
+fn headerColon(tokens: []const Token, from: usize, to: usize) ?usize {
+    var depth: i32 = 0;
+    var pending_lambda: u32 = 0;
+    var k = from;
+    while (k < to) : (k += 1) {
+        switch (tokens[k].kind) {
+            .l_paren, .l_bracket, .l_brace => depth += 1,
+            .r_paren, .r_bracket, .r_brace => depth -= 1,
+            .kw_lambda => if (depth == 0) {
+                pending_lambda += 1;
+            },
+            .colon => if (depth == 0) {
+                if (pending_lambda > 0) {
+                    pending_lambda -= 1;
+                } else {
+                    return k;
+                }
+            },
+            else => {},
+        }
+    }
+    return null;
+}
 
 /// `.nox` kaynağından zaten üretilmiş token dizisini bir modüle ayrıştırır.
 /// Sahiplik: dönen AST tamamen `allocator` üzerinde yaşar (öneri: bir arena).

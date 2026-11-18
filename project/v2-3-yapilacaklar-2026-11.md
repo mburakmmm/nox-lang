@@ -93,7 +93,7 @@ Evdeki PC: `ssh -i ~/.ssh/nox_win noxdev@100.97.244.106` (yönetici değil, Powe
 
 ## Dağıtım / kullanıcı eylemleri
 
-- [ ] **D.1 Site arka ucunun sürüm seçimi düzeltmesini M4'e canlıya alma** (`services/noxlang-site/main.nox`): canlı dağıtım kullanıcı onayı ister. `[K]`
+- [x] **D.1 (canlı: site imajı GHCR'den otomatik güncelleniyor; düzeltme v2.1.47'den beri imajda, konteyner 2026-11-18 08:50'de yenilendi; noxpkg K1 sürüm alanları 2026-11-18'de elle dağıtıldı) Site arka ucunun sürüm seçimi düzeltmesini M4'e canlıya alma** (`services/noxlang-site/main.nox`): canlı dağıtım kullanıcı onayı ister. `[K]`
 - [ ] **D.2 Temizlik:** PC'de WSL dağıtımı (`wsl --unregister nox-ubuntu`), `C:\nox-dev` (OpenSSL klasörleri), `noxdev` kullanıcısı; Mac scratchpad geçici dosyaları. `[K]`
 
 ## Bayat çıkanlar (yeniden açılmasın)

@@ -52,10 +52,16 @@ Augmented assignment accepts a variable, an attribute or a subscript whose subex
 rejected). Assigning to a slice, to a call result, or to a tuple element is not supported. For a class value `x += y` uses `__add__`
 (there is no separate in-place protocol).
 
-## `pass`
+## `pass` and `...`
 
-`pass` does nothing; it is the body of an empty block. (In a `protocol`, `pass` is the required body of each method — see
+`pass` does nothing; it is the body of an empty block. `...` (Ellipsis) is accepted as a statement with exactly the same meaning. (In a `protocol`, `pass` is the required body of each method — see
 [Protocols and generics](protocols-generics.md).)
+
+## One-line forms
+
+Statements on one line can be separated with `;` (`a: int = 1; b: int = 2`), and the body of a compound statement may follow its colon on the same
+line (`if x > 1: print(x)`, `else: return 0`, `while i < 3: i += 1`, `def f(): return 1`); several simple statements after the colon are separated with `;`
+and all belong to the body. A compound statement cannot be the one-line body of another. `noxc fmt` expands these forms to one statement per line.
 
 ## `if`, `elif`, `else`
 
@@ -120,7 +126,25 @@ b 2
 `range(stop)`, `range(start, stop)` and `range(start, stop, step)` take `int`s; a zero step is an error. Modifying a list while iterating
 over it is allowed but iterates over the live list; copy first (`for x in xs.copy():`) when you add or remove elements.
 
-There is no `else` clause on loops.
+### `else` on loops
+
+`while … else` and `for … else` run the `else:` block when the loop finishes without hitting `break` (also when the loop body never ran):
+
+```nox
+def find(xs: list[int], target: int) -> int:
+    for i in range(len(xs)):
+        if xs[i] == target:
+            break
+    else:
+        return -1
+    return i
+
+print(find([4, 5, 6], 5), find([4, 5, 6], 9))
+```
+
+```output
+1 -1
+```
 
 ### `break` and `continue`
 
@@ -186,7 +210,8 @@ Rules for names:
 - A name declared with an annotation inside a function is **local** to that function and may shadow a module-level name of the same
   name without affecting it.
 - An un-annotated assignment to a name that is declared at module level (`total += 1`, `total = 5`) from inside a function assigns the
-  **module-level variable**. There is no `global` keyword.
+  **module-level variable**; you may write `global total` inside the function to say so (it changes nothing, but the name must be a module-level
+  variable).
 - Reading an undeclared name is a compile error ("undefined variable").
 - Parameters are locals; assigning to a parameter changes only the local.
 - A nested `def` can read the enclosing function's variables (closure); assigning to them from the nested function is not supported.

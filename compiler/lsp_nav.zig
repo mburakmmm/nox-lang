@@ -223,6 +223,7 @@ fn collectScopeAt(a: std.mem.Allocator, body: []const ast.Stmt, line1: u32, syms
     for (body) |s| {
         switch (s.kind) {
             .var_decl => |vd| {
+                if (vd.is_match_temp) continue; // `match`/`else` indirgemelerinin gizli geçicileri kullanıcıya gösterilmez
                 // O1 (v2.2.20): `ad := ifade` — tip derleyici tarafından çıkarılır; ayrıştırıcı düzeyinde gösterilecek tip adı yok.
                 const detail = if (vd.infer_assign)
                     try std.fmt.allocPrint(a, "{s}  (type inferred by ':=')", .{vd.name})

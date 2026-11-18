@@ -246,6 +246,11 @@ const Printer = struct {
                 i += 1;
                 continue;
             }
+            // Dil yüzeyi 1 (v2.2.21): `for/while/try … else:` indirgemesinin sondaki `if not bayrak:` deyimi yüzey sözdiziminde yoktur.
+            if (stmt.kind == .if_stmt and stmt.kind.if_stmt.is_else_tail) {
+                i += 1;
+                continue;
+            }
             // Jenerik `enum`un parser'ın sınıfın ardına eklediği kurucu fonksiyonları (`Enum__Varyant`) yüzey sözdiziminde yoktur.
             if (stmt.kind == .func_def and isGenericEnumCtor(stmts[0..i], stmt.kind.func_def.name)) {
                 i += 1;
@@ -487,9 +492,21 @@ const Printer = struct {
                 try self.printExpr(w.cond);
                 try self.writer.writeAll(":");
                 try self.line(stmt.line);
-                try self.printStmts(w.body, depth + 1);
+                if (w.else_origin) |eo| {
+                    try self.printStmts(eo.body, depth + 1);
+                    try self.printLoopElse(eo.else_body, depth);
+                } else {
+                    try self.printStmts(w.body, depth + 1);
+                }
             },
-            .for_stmt => |f| {
+            .for_stmt => |f0| {
+                // Dil yüzeyi 1 (v2.2.21): `for … else:` — gövde `break` yeniden yazımından önceki özgün gövdedir.
+                var f = f0;
+                var loop_else: ?[]const ast.Stmt = null;
+                if (f0.else_origin) |eo| {
+                    f.body = eo.body;
+                    loop_else = eo.else_body;
+                }
                 try self.indentTo(depth);
                 // v1.157.0: `for a, b in X:` desugarı (gizli tuple değişkeni + gövde başında K tip-çıkarımlı bildirim) geri çevrilir.
                 if (forUnpackCount(f)) |k| {
@@ -504,6 +521,7 @@ const Printer = struct {
                     try self.writer.writeAll(":");
                     try self.line(stmt.line);
                     try self.printStmts(f.body[k..], depth + 1);
+                    if (loop_else) |le| try self.printLoopElse(le, depth);
                     return;
                 }
                 if (f.is_async) try self.writer.writeAll("async ");
@@ -512,6 +530,7 @@ const Printer = struct {
                 try self.writer.writeAll(":");
                 try self.line(stmt.line);
                 try self.printStmts(f.body, depth + 1);
+                if (loop_else) |le| try self.printLoopElse(le, depth);
             },
             .func_def => |fd| try self.printFuncDef(fd, depth, stmt.line),
             .class_def => |c| {
@@ -662,7 +681,16 @@ const Printer = struct {
                 try self.printExpr(e);
                 try self.line(stmt.line);
             },
-            .try_stmt => |t| {
+            .try_stmt => |t0| {
+                // Dil yüzeyi 1 (v2.2.21): `try … else:` — özgün gövde/except/else/finally yüzey biçimi `else_origin`den yazılır.
+                var t = t0;
+                var try_else: ?[]const ast.Stmt = null;
+                if (t0.else_origin) |eo| {
+                    t.try_body = eo.try_body;
+                    t.except_clauses = eo.except_clauses;
+                    t.finally_body = eo.finally_body;
+                    try_else = eo.else_body;
+                }
                 try self.indentTo(depth);
                 try self.writer.writeAll("try:");
                 try self.line(stmt.line);
@@ -702,6 +730,7 @@ const Printer = struct {
                     self.last_was_blank = false;
                     try self.printStmts(ec.body, depth + 1);
                 }
+                if (try_else) |te| try self.printLoopElse(te, depth);
                 if (t.finally_body) |fb| {
                     try self.indentTo(depth);
                     try self.writer.writeAll("finally:\n");
@@ -804,6 +833,7 @@ const Printer = struct {
         try self.printFuncHeader(fd);
         try self.line(source_line);
         try self.printNonlocals(fd, depth + 1);
+        try self.printGlobals(fd, depth + 1);
         try self.printStmts(fd.body, depth + 1);
     }
 
@@ -820,7 +850,28 @@ const Printer = struct {
         try self.writer.writeAll("\n");
         self.last_was_blank = false;
         try self.printNonlocals(fd, depth + 1);
+        try self.printGlobals(fd, depth + 1);
         try self.printStmts(fd.body, depth + 1);
+    }
+
+    /// `else:` bloğu (döngü/`try` yüzey biçimi, dil yüzeyi 1).
+    fn printLoopElse(self: *Printer, body: []const ast.Stmt, depth: usize) FormatError!void {
+        try self.indentTo(depth);
+        try self.writer.writeAll("else:\n");
+        self.last_was_blank = false;
+        try self.printStmts(body, depth + 1);
+    }
+
+    fn printGlobals(self: *Printer, fd: ast.FuncDef, depth: usize) FormatError!void {
+        if (fd.globals.len == 0) return;
+        try self.indentTo(depth);
+        try self.writer.writeAll("global ");
+        for (fd.globals, 0..) |n, i| {
+            if (i > 0) try self.writer.writeAll(", ");
+            try self.writer.writeAll(n);
+        }
+        try self.writer.writeAll("\n");
+        self.last_was_blank = false;
     }
 
     fn printNonlocals(self: *Printer, fd: ast.FuncDef, depth: usize) FormatError!void {

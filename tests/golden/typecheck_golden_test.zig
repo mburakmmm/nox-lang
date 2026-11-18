@@ -2669,3 +2669,17 @@ test "golden(typecheck): O1 (v2.2.20) — :=  çıkarımlı yerel bildirimler ti
         @embedFile("typecheck_cases/ok_infer_decl.expected"),
     );
 }
+
+test "golden(typecheck): dil yüzeyi (v2.2.21) — `global x` modül düzeyi olmayan ad reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_global_unknown.nox"),
+        @embedFile("typecheck_cases/err_global_unknown.expected"),
+    );
+}
+
+test "golden(typecheck): dil yüzeyi (v2.2.21) — dil yüzeyi 1 kısayolları tip denetiminden geçer" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_lang_surface_1.nox"),
+        @embedFile("typecheck_cases/ok_lang_surface_1.expected"),
+    );
+}

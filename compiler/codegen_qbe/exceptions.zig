@@ -408,7 +408,7 @@ pub fn genTry(self: *Codegen, t: ast.TryStmt, ret_qtype: QbeType) CodegenError!v
 /// (battle-tested, `raise`/`return`/normal tamamlanma DAHİL HER yolu
 /// zaten doğru işleyen) DEVREDER.
 pub fn genWith(self: *Codegen, w: ast.WithStmt, line: u32, ret_qtype: QbeType) CodegenError!void {
-    const hidden_name = try std.fmt.allocPrint(self.allocator, "__with_ctx_L{d}", .{line});
+    const hidden_name = try std.fmt.allocPrint(self.allocator, "__with_ctx_L{d}_{d}", .{ line, w.uid });
     const ctx_val = try self.genExpr(w.ctx_expr);
     if (ctx_val.heap != .class) return error.Unsupported;
     const hidden = self.vars.get(hidden_name).?;

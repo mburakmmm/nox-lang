@@ -5989,6 +5989,10 @@ pub const Checker = struct {
     }
 
     fn checkFunctionBody(self: *Checker, fd: ast.FuncDef) TypeError!void {
+        // Dil yüzeyi 2 (v2.2.21): `global x` davranışsızdır (modül değişkenine işlevden doğrudan atanır) ama ad bir modül düzeyi değişken olmalıdır.
+        for (fd.globals) |g| {
+            if (!self.module_globals.contains(g)) return self.fail(error.UndefinedVariable, "'global {s}': there is no module-level variable named '{s}' (declare it at module level with a type: '{s}: <type> = ...')", .{ g, g, g });
+        }
         var scope: Scope = .{};
         const is_spawn_target = self.spawn_target_functions.contains(fd.name);
         var shared_params: std.ArrayListUnmanaged(SharedParam) = .empty;

@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.21]
+
+Dil yüzeyi 1 (bootstrap öncesi Python-uyumlu sözdizimi tamamlaması; `project/dil-yuzeyi-acik-kalemler-2026-11-18.md`).
+
+- **Dil:** `;` deyim ayırıcı; tek satırlık bileşik gövde (`if x: y()`, `else: …`, `while …: …`, `def f(): return 1`); `try … else`; `for … else` ve `while … else`; çok-öğeli `with a as x, b as y:`; ham dize `r"…"`; bitişik dize birleştirme (`"a" "b"`, `"a" f"{x}"`); `...` gövde yer tutucusu; f-string `!r` (→ `repr`); `global x` (davranışsız, ad modül düzeyi değişken olmalı). Hepsi parse-zamanında mevcut AST düğümlerine indirgenir (yeni `StmtKind` yok); `else` indirgemeleri formatter için `else_origin` yüzey bilgisi taşır.
+- **Araçlar:** `noxc fmt` `else` bloklarını ve `global`i özgün biçimde yazar, `;`/tek satır gövdeyi açar, çok-öğeli `with`i iç içe yazar; tree-sitter ve VS Code dilbilgileri güncellendi; LSP gizli geçicileri göstermez.
+- **Düzeltme:** `with` gizli bağlam yerelinin adı satır numarasına bağlıydı; aynı satırdaki iki `with` (artık `with a, b:` ve `;` ile mümkün) çakışıyordu (`__exit__` yanlış nesnede çalışırdı). Ad artık parser'ın verdiği benzersiz kimliği de içerir.
+- **Belgeler:** `python-differences.md` bayat iddialardan arındırıldı (nonlocal, `match`, `@property`/`@staticmethod`/`@classmethod`, try/finally içinde yield, `async with`, `__all__`, `:=`), `statements`, `exceptions`, `strings`, `grammar` sayfaları; spesifikasyon §3.468.
+- **Testler:** `lang_surface_1` çalıştırma fixture'ı (iki backend), tip denetimi goldenları, fmt/lexer testleri, tree-sitter corpus.
+
 ## [2.2.20]
 
 O1: tip yazmadan yerel bildirimi `ad := ifade` (kullanıcı kararı 2026-11-18, kısıtlı v1) ve K1 paket sürümleri dağıtımı.

@@ -217,6 +217,8 @@ pub const IfStmt = struct {
     is_assert: bool = false,
     /// `match konu:` deyimi parse-zamanında bu `if/elif/else` zincirine indirgenir; formatter özgün `match/case` yüzeyini buradan yeniden üretir.
     match_origin: ?*const MatchOrigin = null,
+    /// Dil yüzeyi 1 (v2.2.21): `for/while/try … else:`ten türeyen sondaki `if not bayrak: <else>` deyimi; formatter yazmaz (yüzey biçimi döngü/try düğümünün `else_origin`inden gelir).
+    is_else_tail: bool = false,
 };
 
 /// `case` deseni: `Enum.Varyant(a, b)`, `Enum.Birim`, `Enum.Varyant(alan=a)` ya da `_`.
@@ -250,7 +252,18 @@ pub const MatchOrigin = struct {
     cases: []const MatchCase,
 };
 
-pub const WhileStmt = struct { cond: Expr, body: []Stmt };
+pub const WhileStmt = struct {
+    cond: Expr,
+    body: []Stmt,
+    /// Dil yüzeyi 1 (v2.2.21): `while … else:` parse-zamanında [bayrak bildirimi, döngü (`break` → `bayrak = True; break`), `if not bayrak: <else>`] dizisine indirgenir; yüzey biçimi (özgün gövde + else gövdesi) burada saklanır, formatter bunu yazar.
+    else_origin: ?*const LoopElseOrigin = null,
+};
+
+/// `for/while … else:` yüzey biçimi (bkz. `WhileStmt.else_origin`): `body` `break` yeniden yazımından ÖNCEKİ özgün gövdedir.
+pub const LoopElseOrigin = struct { body: []Stmt, else_body: []Stmt };
+
+/// `try … except … else: … [finally: …]` yüzey biçimi (bkz. `TryStmt.else_origin`).
+pub const TryElseOrigin = struct { try_body: []Stmt, except_clauses: []ExceptClause, else_body: []Stmt, finally_body: ?[]Stmt };
 
 /// v1.148.0: `for x in <herhangi bir liste ifadesi>` için checker'ın yazdığı bilgi — iterable bir adlandırılmış liste
 /// DEĞİLSE (çağrı, alan okuması, `d.keys()`...) codegen ifadeyi BİR KEZ gizli bir yerele (`name`: `type_expr` tipinde,
@@ -264,6 +277,8 @@ pub const ForStmt = struct {
     hoist: ?ForHoist = null,
     /// `async for x in agen:` (TODO 8.6): yalnızca async bağlamda ve bir `Iterator`/`AsyncIterator` (tembel jeneratör) üzerinde geçerlidir.
     is_async: bool = false,
+    /// Dil yüzeyi 1 (v2.2.21): `for … else:` yüzey biçimi (bkz. `WhileStmt.else_origin`).
+    else_origin: ?*const LoopElseOrigin = null,
 };
 
 /// `@isim` / `@isim(arg1, arg2, ...)` — Faz 1 decorator (bkz. nox-teknik-
@@ -302,6 +317,8 @@ pub const FuncDef = struct {
     /// İç içe `def` gövdesindeki `nonlocal a, b` bildirimi (kaynakta sıra serbest; AST'de gövde başına toplanır). Checker öncesi
     /// `nonlocal_desugar.zig` bu adları bir hücreye (tek elemanlı liste) çevirir.
     nonlocals: []const []const u8 = &.{},
+    /// Dil yüzeyi 2 (v2.2.21): `global a, b` bildirimi; davranışsız (modül değişkenine işlevden doğrudan atama zaten mümkün), checker adların modül düzeyi değişken olduğunu doğrular.
+    globals: []const []const u8 = &.{},
     /// `generator_desugar.zig`nin `async def` jeneratörü için ürettiği ADIM fonksiyonunda `await`e izin verir (adım, tüketicinin fiber'ında çalışır).
     allow_await: bool = false,
 };
@@ -483,6 +500,8 @@ pub const TryStmt = struct {
     try_body: []Stmt,
     except_clauses: []ExceptClause,
     finally_body: ?[]Stmt,
+    /// Dil yüzeyi 1 (v2.2.21): `try … else:` parse-zamanında [`ok` bayrağı bildirimi, `try` (gövde sonunda `ok = True`), `if ok: <else>`] dizisine (finally varsa dıştaki `try/finally` içine) indirgenir; yüzey biçimi burada saklanır.
+    else_origin: ?*const TryElseOrigin = null,
 };
 
 pub const LowLevelStmt = struct {
@@ -506,6 +525,8 @@ pub const WithStmt = struct {
     body: []Stmt,
     /// `async with m as b:` (TODO 8.6): `__aenter__()`/`__aexit__()` çağrılır (içlerinde `await` edebilirler); yalnızca async bağlamda geçerlidir.
     is_async: bool = false,
+    /// Dil yüzeyi 1 (v2.2.21): parser'ın verdiği benzersiz kimlik; codegen'in gizli bağlam yereli adı (`__with_ctx_L<satır>_<uid>`) aynı satırdaki birden çok `with` (`with a, b:`, `;`) için çakışmaz.
+    uid: u32 = 0,
 };
 
 /// Go-tarzı `defer CALL` — CALL fonksiyonun DÖNÜŞ ANINDA (hangi yoldan

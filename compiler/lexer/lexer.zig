@@ -331,7 +331,8 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
             continue;
         }
 
-        if (isIdentStart(c) or (c >= 0x80 and uniIdentLen(source, i, true) > 0)) {
+        const is_raw_prefix = (c == 'r' or c == 'R') and i + 1 < source.len and (source[i + 1] == '\'' or source[i + 1] == '"');
+        if (!is_raw_prefix and (isIdentStart(c) or (c >= 0x80 and uniIdentLen(source, i, true) > 0))) {
             const start = i;
             while (i < source.len) {
                 if (isIdentCont(source[i])) {
@@ -349,12 +350,15 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
         }
 
         // v1.164.1: üç tırnaklı dizeler (`"""..."""` / `'''...'''`, çok satırlı, docstring'ler) — satır sayacı içerideki `\n`lerle ilerler.
-        if ((c == '\'' or c == '"') and i + 2 < source.len and source[i + 1] == c and source[i + 2] == c) {
-            const quote = c;
+        // Dil yüzeyi 1 (v2.2.21): ham dize öneki `r"..."`/`R'...'` (üç tırnaklı dahil): önek tırnağın hemen önündeyse token önekle başlar; kaçış çözme parser'da atlanır.
+        const raw_off: usize = if ((c == 'r' or c == 'R') and i + 1 < source.len and (source[i + 1] == '\'' or source[i + 1] == '"')) 1 else 0;
+        const sc = source[i + raw_off];
+        if ((sc == '\'' or sc == '"') and i + raw_off + 2 < source.len and source[i + raw_off + 1] == sc and source[i + raw_off + 2] == sc) {
+            const quote = sc;
             const start = i;
             const start_line = line;
             const start_line_start = line_start;
-            i += 3;
+            i += raw_off + 3;
             var closed = false;
             while (i < source.len) {
                 if (source[i] == '\\' and i + 1 < source.len) {
@@ -386,10 +390,10 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
             continue;
         }
 
-        if (c == '\'' or c == '"') {
-            const quote = c;
+        if (sc == '\'' or sc == '"') {
+            const quote = sc;
             const start = i;
-            i += 1;
+            i += raw_off + 1;
             while (i < source.len and source[i] != quote) {
                 if (source[i] == '\\' and i + 1 < source.len) {
                     i += 2;
@@ -456,7 +460,19 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
                 i += 1;
             },
             '.' => {
-                try tokens.append(allocator, mkToken(.dot, ".", line, col, i));
+                // Dil yüzeyi 1 (v2.2.21): `...` (Ellipsis) tek belirteç; gövde yer tutucusu olarak `pass` gibi kullanılır.
+                if (i + 2 < source.len and source[i + 1] == '.' and source[i + 2] == '.') {
+                    try tokens.append(allocator, mkToken(.ellipsis, "...", line, col, i));
+                    i += 3;
+                } else {
+                    try tokens.append(allocator, mkToken(.dot, ".", line, col, i));
+                    i += 1;
+                }
+            },
+            ';' => {
+                // Dil yüzeyi 1 (v2.2.21): deyim ayırıcı; yalnızca parantez dışında. Parser öncesi `normalizeStatementTokens` geçişi bunu newline'a çevirir.
+                if (paren_depth != 0) return error.UnexpectedCharacter;
+                try tokens.append(allocator, mkToken(.semicolon, ";", line, col, i));
                 i += 1;
             },
             '+' => {
@@ -789,4 +805,25 @@ test "O1 (v2.2.20): `:=` deyim düzeyinde tek belirteç; parantez/köşeli/süsl
     }
     try std.testing.expectEqual(@as(usize, 1), found_walrus);
     try std.testing.expect(!found_colon_assign_in_brackets);
+}
+
+test "dil yüzeyi 1 (v2.2.21): `;`, `...` ve ham dize belirteçleri" {
+    const alloc = std.testing.allocator;
+    const toks = try tokenize(alloc, "a = 1; b = r\"x\\n\" ...\n");
+    defer alloc.free(toks);
+    var semi: usize = 0;
+    var ell: usize = 0;
+    var raw_ok = false;
+    for (toks) |t| {
+        switch (t.kind) {
+            .semicolon => semi += 1,
+            .ellipsis => ell += 1,
+            .string_lit => raw_ok = std.mem.eql(u8, t.lexeme, "r\"x\\n\""),
+            else => {},
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), semi);
+    try std.testing.expectEqual(@as(usize, 1), ell);
+    try std.testing.expect(raw_ok);
+    try std.testing.expectError(error.UnexpectedCharacter, tokenize(alloc, "x = [1; 2]\n"));
 }

@@ -631,3 +631,25 @@ test "fmt: O1 (v2.2.20) — `ad := ifade` yazılan biçimde korunur, anotasyonlu
     const twice = try formatSource(allocator, once);
     try std.testing.expectEqualStrings(once, twice);
 }
+
+test "fmt: dil yüzeyi 1 (v2.2.21) — for/while/try else yazılan biçimde korunur, `;` ve tek satır gövde açılır, çok-öğeli with iç içe yazılır, işlem idempotenttir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source =
+        "def f(xs: list[int]) -> None:\n" ++
+        "    for x in xs:\n        if x < 0: break\n    else: print(0)\n" ++
+        "    while len(xs) > 9: xs.append(1)\n    else:\n        pass\n" ++
+        "    try: print(1)\n    except ValueError: print(2)\n    else: print(3)\n    finally: print(4)\n" ++
+        "    a: int = 1; b: int = 2\n";
+    const once = try formatSource(allocator, source);
+    const want =
+        "def f(xs: list[int]) -> None:\n" ++
+        "    for x in xs:\n        if x < 0:\n            break\n    else:\n        print(0)\n" ++
+        "    while len(xs) > 9:\n        xs.append(1)\n    else:\n        pass\n" ++
+        "    try:\n        print(1)\n    except ValueError:\n        print(2)\n    else:\n        print(3)\n    finally:\n        print(4)\n" ++
+        "    a: int = 1\n    b: int = 2\n";
+    try std.testing.expectEqualStrings(want, once);
+    const twice = try formatSource(allocator, once);
+    try std.testing.expectEqualStrings(once, twice);
+}

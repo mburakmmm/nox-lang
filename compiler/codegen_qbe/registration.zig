@@ -2097,7 +2097,7 @@ pub fn collectLocals(self: *Codegen, locals: *std.ArrayListUnmanaged(LocalDecl),
             .with_stmt => |w| {
                 const class_name = try self.inferWithCtxClassName(w.ctx_expr, locals.items);
                 try locals.append(self.allocator, .{
-                    .name = try std.fmt.allocPrint(self.allocator, "__with_ctx_L{d}", .{stmt.line}),
+                    .name = try std.fmt.allocPrint(self.allocator, "__with_ctx_L{d}_{d}", .{ stmt.line, w.uid }),
                     .info = .{ .qtype = .l, .heap = .class, .class_name = class_name },
                     .arena = in_lowlevel,
                 });

@@ -60,6 +60,10 @@ pub const TokenKind = enum {
     colon,
     /// `:=` — tip yazmadan yerel bildirimi (O1, v2.2.20); yalnızca parantez dışında üretilir.
     colon_assign,
+    /// `;` deyim ayırıcı (dil yüzeyi 1, v2.2.21).
+    semicolon,
+    /// `...` (Ellipsis) — yalnızca gövde yer tutucusu (dil yüzeyi 1, v2.2.21).
+    ellipsis,
     comma,
     dot,
     l_paren,

@@ -8,12 +8,14 @@ quoted text is literal, `NEWLINE`, `INDENT`, `DEDENT` come from the lexer.
 
 ```text
 program        = { statement } ;
-block          = NEWLINE INDENT statement { statement } DEDENT ;
+block          = NEWLINE INDENT statement { statement } DEDENT
+               | simple_stmts NEWLINE ;                 (* one-line body: `if x: y(); z()` *)
 
-statement      = simple_stmt NEWLINE | compound_stmt ;
+statement      = simple_stmts NEWLINE | compound_stmt ;
+simple_stmts   = simple_stmt { ";" simple_stmt } [ ";" ] ;
 simple_stmt    = var_decl | infer_decl | assignment | aug_assignment | tuple_assignment
                | expr
-               | "pass" | "break" | "continue"
+               | "pass" | "..." | "global" NAME { "," NAME } | "break" | "continue"
                | "return" [ expr { "," expr } ]
                | "raise" expr
                | "del" target
@@ -38,12 +40,12 @@ compound_stmt  = if_stmt | while_stmt | for_stmt | try_stmt | with_stmt | lowlev
                | func_def | class_def | enum_def | protocol_def | extern_def ;
 
 if_stmt        = "if" expr ":" block { "elif" expr ":" block } [ "else" ":" block ] ;
-while_stmt     = "while" expr ":" block ;
-for_stmt       = "for" for_target "in" expr ":" block ;
+while_stmt     = "while" expr ":" block [ "else" ":" block ] ;
+for_stmt       = "for" for_target "in" expr ":" block [ "else" ":" block ] ;
 for_target     = NAME | NAME "," NAME ;
-try_stmt       = "try" ":" block { except_clause } [ "finally" ":" block ] ;
+try_stmt       = "try" ":" block { except_clause } [ "else" ":" block ] [ "finally" ":" block ] ;
 except_clause  = "except" [ ( dotted | "(" dotted { "," dotted } ")" ) [ "as" NAME ] ] ":" block ;
-with_stmt      = "with" expr [ "as" NAME ] ":" block ;
+with_stmt      = "with" expr [ "as" NAME ] { "," expr [ "as" NAME ] } ":" block ;
 lowlevel_stmt  = "lowlevel" ":" block ;
 match_stmt     = "match" expr ":" NEWLINE INDENT case_clause { case_clause } DEDENT ;
 case_clause    = "case" ( "_" | pattern ) ":" block ;

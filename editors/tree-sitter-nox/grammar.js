@@ -56,8 +56,15 @@ module.exports = grammar({
 
     _statement: $ => choice($._simple_statement, $._compound_statement),
 
+    // Dil yüzeyi 1 (v2.2.21): `a = 1; b = 2` — `;` ile ayrılmış basit deyimler tek satırda.
     _simple_statement: $ => seq(
-      choice(
+      $._simple_item,
+      repeat(seq(';', $._simple_item)),
+      optional(';'),
+      $._newline,
+    ),
+
+    _simple_item: $ => choice(
         $.import_statement,
         $.from_import_statement,
         $.var_declaration,
@@ -73,9 +80,15 @@ module.exports = grammar({
         $.break_statement,
         $.continue_statement,
         $.expression_statement,
-      ),
-      $._newline,
+        $.ellipsis_statement,
+        $.global_statement,
     ),
+
+    // `...` (v2.2.21): gövde yer tutucusu, `pass` ile eşdeğer.
+    ellipsis_statement: _$ => '...',
+
+    // `global a, b` (v2.2.21): davranışsız; adlar modül düzeyi değişken olmalıdır.
+    global_statement: $ => seq('global', commaSep1($.identifier)),
 
     _compound_statement: $ => choice(
       $.if_statement,
@@ -177,10 +190,11 @@ module.exports = grammar({
     elif_clause: $ => seq('elif', field('condition', $._expression), ':', field('body', $.block)),
     else_clause: $ => seq('else', ':', field('body', $.block)),
 
-    while_statement: $ => seq('while', field('condition', $._expression), ':', field('body', $.block)),
+    while_statement: $ => seq('while', field('condition', $._expression), ':', field('body', $.block), optional($.else_clause)),
 
     for_statement: $ => seq(
       'for', field('name', choice($.identifier, $.identifier_list)), 'in', field('iterable', $._expression), ':', field('body', $.block),
+      optional($.else_clause),
     ),
 
     // `def name[T](a: int) -> int:` — `[T]` isteğe bağlı generic tip
@@ -287,6 +301,7 @@ module.exports = grammar({
     try_statement: $ => seq(
       'try', ':', field('body', $.block),
       repeat($.except_clause),
+      optional($.else_clause),
       optional($.finally_clause),
     ),
     // `except:` (çıplak), `except E as e:`, `except (A, B) as e:` (v1.164.1)
@@ -300,14 +315,21 @@ module.exports = grammar({
 
     // `with EXPR as NAME:` / `with EXPR:` (bkz. Faz U.5).
     with_statement: $ => seq(
-      'with', field('value', $._expression), optional(seq('as', field('name', $.identifier))), ':', field('body', $.block),
+      'with', field('value', $._expression), optional(seq('as', field('name', $.identifier))),
+      repeat(seq(',', $.with_item)), ':', field('body', $.block),
     ),
+    // `with a as x, b as y:` (v2.2.21): ikinci ve sonraki öğeler.
+    with_item: $ => seq(field('value', $._expression), optional(seq('as', field('name', $.identifier)))),
 
     // `lowlevel:` bloğu — YALNIZCA tahsis stratejisini gevşetir, tip
     // disiplini AYNEN sürer (bkz. AGENTS.md §8, Katman 4).
     lowlevel_statement: $ => seq('lowlevel', ':', field('body', $.block)),
 
-    block: $ => seq($._newline, $._indent, repeat1($._statement), $._dedent),
+    // Çok satırlı girintili gövde ya da tek satırlık gövde (`if x: y(); z()`, v2.2.21).
+    block: $ => choice(
+      seq($._newline, $._indent, repeat1($._statement), $._dedent),
+      seq($._simple_item, repeat(seq(';', $._simple_item)), optional(';'), $._newline),
+    ),
 
     // ---- Tip ifadeleri ----
 
@@ -513,6 +535,9 @@ module.exports = grammar({
     // KENDİSİ de teknik olarak satır içi `\n`'i özel işlemez, ama pratikte
     // TEK satırlık kullanım BEKLENİR — bu gramer bunu KATI şekilde uygular).
     string: _$ => token(choice(
+      // ham dize `r"..."` / `r'...'` (v2.2.21)
+      seq(/[rR]/, '"', repeat(choice(/[^"\\\n]/, /\\./)), '"'),
+      seq(/[rR]/, "'", repeat(choice(/[^'\\\n]/, /\\./)), "'"),
       // üç tırnaklı (docstring / çok satırlı) — v1.164.1
       seq('"""', repeat(choice(/[^"\\]/, /\\./, /"[^"]/, /""[^"]/)), '"""'),
       seq("'''", repeat(choice(/[^'\\]/, /\\./, /'[^']/, /''[^']/)), "'''"),

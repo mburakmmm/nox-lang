@@ -115,6 +115,34 @@ message and cannot be caught.
 A `finally` body runs when the `try` body finishes normally, when it exits by `return`, `break` or `continue`, and when an exception
 propagates — exactly once. `try` may have `except` clauses, a `finally`, or both.
 
+### `try … else`
+
+An `else:` block after the `except` clauses runs only when the `try` body finished without an exception (and without `return`, `break` or
+`continue`). Exceptions raised inside the `else` block are *not* caught by the `except` clauses of the same `try`, and a `finally` body, if any,
+runs after the `else` block:
+
+```nox
+def parse(text: str) -> None:
+    try:
+        n: int = int(text)
+    except ValueError:
+        print("bad number")
+    else:
+        print("number", n)
+    finally:
+        print("done")
+
+parse("42")
+parse("x")
+```
+
+```output
+number 42
+done
+bad number
+done
+```
+
 ## `with`
 
 `with expr as name:` calls `expr.__enter__()` (its result is bound to `name`), runs the body, and calls `expr.__exit__()` on every way out
@@ -154,6 +182,9 @@ enter b
 exit b
 caught after exit
 ```
+
+A `with` statement can manage several resources: `with a as x, b as y:` is `with a as x:` containing `with b as y:` — `b` is entered after `a` and
+exited before it. `noxc fmt` writes the nested form.
 
 ## `defer`
 

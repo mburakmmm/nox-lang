@@ -865,60 +865,98 @@ def area(s: Shape) -> float:
       (enum_variant
         name: (identifier)
         fields: (enum_fields
-          (enum_field name: (identifier) type: (identifier))))
+          (enum_field
+            name: (identifier)
+            type: (identifier))))
       (enum_variant
         name: (identifier)
         fields: (enum_fields
-          (enum_field name: (identifier) type: (identifier))
-          (enum_field name: (identifier) type: (identifier))))
+          (enum_field
+            name: (identifier)
+            type: (identifier))
+          (enum_field
+            name: (identifier)
+            type: (identifier))))
       (enum_variant
         name: (identifier))))
   (enum_definition
     name: (identifier)
-    type_parameters: (type_parameters (identifier))
+    type_parameters: (type_parameters
+      (identifier))
     body: (enum_body
       (enum_variant
         name: (identifier)
         fields: (enum_fields
-          (enum_field name: (identifier) type: (identifier))))
+          (enum_field
+            name: (identifier)
+            type: (identifier))))
       (enum_variant
         name: (identifier))))
   (function_definition
     name: (identifier)
     parameters: (parameters
-      (parameter name: (identifier) type: (identifier)))
+      (parameter
+        name: (identifier)
+        type: (identifier)))
     return_type: (identifier)
     body: (block
       (match_statement
         subject: (identifier)
         (case_clause
           pattern: (variant_pattern
-            name: (pattern_path (identifier) (identifier))
-            arguments: (pattern_arguments (identifier)))
-          body: (block (return_statement value: (identifier))))
-        (case_clause
-          pattern: (variant_pattern
-            name: (pattern_path (identifier) (identifier))
+            name: (pattern_path
+              (identifier)
+              (identifier))
             arguments: (pattern_arguments
-              (keyword_pattern name: (identifier) value: (identifier))
-              (keyword_pattern name: (identifier) value: (identifier))))
-          body: (block (return_statement value: (identifier))))
+              (identifier)))
+          body: (block
+            (return_statement
+              value: (identifier))))
         (case_clause
           pattern: (variant_pattern
-            name: (pattern_path (identifier) (identifier))
+            name: (pattern_path
+              (identifier)
+              (identifier))
+            arguments: (pattern_arguments
+              (keyword_pattern
+                name: (identifier)
+                value: (identifier))
+              (keyword_pattern
+                name: (identifier)
+                value: (identifier))))
+          body: (block
+            (return_statement
+              value: (identifier))))
+        (case_clause
+          pattern: (variant_pattern
+            name: (pattern_path
+              (identifier)
+              (identifier))
             arguments: (pattern_arguments
               (variant_pattern
-                name: (pattern_path (identifier) (identifier))
-                arguments: (pattern_arguments (integer)))))
+                name: (pattern_path
+                  (identifier)
+                  (identifier))
+                arguments: (pattern_arguments
+                  (integer)))))
           guard: (true)
-          body: (block (return_statement value: (float))))
+          body: (block
+            (return_statement
+              value: (float))))
         (case_clause
           pattern: (variant_pattern
-            name: (pattern_path (identifier) (identifier)))
-          body: (block (return_statement value: (unary_expression operand: (float)))))
+            name: (pattern_path
+              (identifier)
+              (identifier)))
+          body: (block
+            (return_statement
+              value: (unary_expression
+                operand: (float)))))
         (case_clause
           pattern: (identifier)
-          body: (block (return_statement value: (float))))))))
+          body: (block
+            (return_statement
+              value: (float))))))))
 
 ==================
 dönüş tipi atlanan def (v2.1.170)
@@ -933,12 +971,15 @@ def greet(name: str):
   (function_definition
     name: (identifier)
     parameters: (parameters
-      (parameter name: (identifier) type: (identifier)))
+      (parameter
+        name: (identifier)
+        type: (identifier)))
     body: (block
       (expression_statement
         (call
           function: (identifier)
-          arguments: (argument_list (identifier)))))))
+          arguments: (argument_list
+            (identifier)))))))
 
 ==================
 tip yazmadan yerel bildirim (:=)
@@ -964,3 +1005,77 @@ def f() -> None:
         value: (binary_expression
           left: (string)
           right: (string))))))
+
+==================
+dil yüzeyi 1: ; tek satır gövde else çok-öğeli with raw global ...
+==================
+
+def f(xs: list[int]) -> None:
+    global g
+    a: int = 1; b: int = 2
+    if a > 1: print(a)
+    for x in xs:
+        pass
+    else:
+        ...
+    with open(1) as p, open(2) as q:
+        s: str = r"a\n"
+
+---
+
+(module
+  (function_definition
+    name: (identifier)
+    parameters: (parameters
+      (parameter
+        name: (identifier)
+        type: (generic_type
+          name: (identifier)
+          (identifier))))
+    return_type: (none_type)
+    body: (block
+      (global_statement
+        (identifier))
+      (var_declaration
+        name: (identifier)
+        type: (identifier)
+        value: (integer))
+      (var_declaration
+        name: (identifier)
+        type: (identifier)
+        value: (integer))
+      (if_statement
+        condition: (binary_expression
+          left: (identifier)
+          right: (integer))
+        body: (block
+          (expression_statement
+            (call
+              function: (identifier)
+              arguments: (argument_list
+                (identifier))))))
+      (for_statement
+        name: (identifier)
+        iterable: (identifier)
+        body: (block
+          (pass_statement))
+        (else_clause
+          body: (block
+            (ellipsis_statement))))
+      (with_statement
+        value: (call
+          function: (identifier)
+          arguments: (argument_list
+            (integer)))
+        name: (identifier)
+        (with_item
+          value: (call
+            function: (identifier)
+            arguments: (argument_list
+              (integer)))
+          name: (identifier))
+        body: (block
+          (var_declaration
+            name: (identifier)
+            type: (identifier)
+            value: (string)))))))

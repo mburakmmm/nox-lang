@@ -25,18 +25,21 @@ Integer `//` and `%` by zero raise `ZeroDivisionError`; float division never rai
 
 ## Syntax
 
-- No semicolons, no one-line compound statements (`if x: y()` must be two lines), no walrus `:=`, no `lambda` with statements.
+- No `lambda` with statements. Semicolons, one-line compound statements (`if x: y()`), `try … else`, `for/while … else`, `with a, b:`, raw strings
+  (`r"…"`), adjacent literal concatenation, `...` and `global x` are supported; `noxc fmt` writes the expanded canonical form.
+- No Python expression walrus (`(n := f())`); `x := value` is a *declaration* statement that infers the type (see [Types](types.md#inferred-local-declarations)).
 - `*args`, `**kwargs`, keyword-only (`*`), positional-only (`/`) and call-site unpacking (`f(*xs)`, `f(**d)`) are supported (see
   [Functions](functions.md)); `f(**d)` never binds a named parameter by key. There is no star-assignment (`a, *b = xs`). Default values must be
   constant literals.
-- `yield` generators are **lazy** state machines typed `Iterator[T]` (see [Functions](functions.md#generators-yield)); no `yield` inside `try`/`with`, no `send()`. Generator expressions are accepted only as a call argument and are evaluated eagerly into a list.
-- No `global`/`nonlocal`: module-level names are assigned directly from functions; a nested function may only **read** captured variables.
-- No raw strings (`r"…"`), no adjacent-literal concatenation, no `%` formatting, no `!r` in f-strings. `\xHH` is limited to ASCII; use `\uHHHH`/`\UHHHHHHHH` for other characters. Identifiers are compared by code point (no NFKC normalization; see [`nox.unicode`](../stdlib/unicode.md) for normalizing text).
-- No `try … else`, no `for … else`/`while … else`, no bare `raise` (use `raise e`), no `raise … from …`, no multi-item `with`.
-- No `async with`/`async for`/`await` on arbitrary expressions: `await` takes a `Task` or a channel operation.
-- No `del name` (only `del xs[i]` and `del d[k]`), no `pass`-only protocol bodies other than `pass` itself.
+- `yield` generators are **lazy** state machines typed `Iterator[T]` (see [Functions](functions.md#generators-yield)); `yield` inside `try … finally` is allowed, there is no `send()`. Generator expressions are accepted only as a call argument and are evaluated eagerly into a list.
+- `nonlocal` is supported (the variable needs an explicit type at its first declaration); `global x` is accepted and changes nothing, because module-level names are assigned directly from functions.
+- No `%` formatting and no `!a` in f-strings (`!r` and `!s` work). `\xHH` is limited to ASCII; use `\uHHHH`/`\UHHHHHHHH` for other characters. Identifiers are compared by code point (no NFKC normalization; see [`nox.unicode`](../stdlib/unicode.md) for normalizing text).
+- No bare `raise` (use `raise e`) and no `raise … from …`.
+- `async with` and `async for` exist; `await` takes a `Task`, a channel operation or an async-protocol call, not an arbitrary expression.
+- No `del name` (only `del xs[i]` and `del d[k]`).
 - `__name__ == "__main__"` does not exist: the top-level statements of the entry file are the program, and `main` is a reserved name.
-- Python's `match` statement, `type` aliases, decorators that wrap, `@property`, `@staticmethod` and `@classmethod` are not part of Nox.
+- Python's `type` aliases and decorators that wrap are not part of Nox. `match` (on `enum`s), `@property`, `@staticmethod` and `@classmethod` are.
+- Chained comparisons (`a < b < c`) work.
 
 ## Collections and iteration
 
@@ -70,7 +73,7 @@ Built-in error text is English; match the exception class, not the wording.
 
 ## Modules
 
-`import a.b` / `from a.b import x [as y]` only — no `import *`, no relative imports, no `__all__`, no dynamic import. All modules compile together;
+`import a.b` / `from a.b import x [as y]` only — no `import *`, no relative imports, no dynamic import; a module may restrict what others can use with an opt-in `__all__`. All modules compile together;
 module-level variables are read from other modules with `from m import name`, not as `m.name`. Third-party code arrives through `nox.json` and
 `noxc fetch`, not `pip`.
 
