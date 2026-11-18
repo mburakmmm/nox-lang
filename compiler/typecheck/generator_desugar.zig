@@ -539,7 +539,7 @@ const Pass = struct {
                 for (fd.params) |p| try self.bind(p.name, null);
                 fd.body = try self.plainBlock(fd.body, .{ .top = false });
             },
-            .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt => {},
+            .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .type_alias => {},
         }
         try out.append(self.a, st);
     }

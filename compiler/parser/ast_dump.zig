@@ -192,6 +192,7 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: ast.Stmt, depth: usize) std.Io.Writer.
             if (imp.alias) |alias| try writer.print(" as {s}", .{alias});
             try writer.writeAll(")\n");
         },
+        .type_alias => |ta| try writer.print("(type-alias {s})\n", .{ta.name}),
         .from_import_stmt => |fi| {
             try writer.writeAll("(from-import");
             for (fi.segments) |seg| try writer.print(" {s}", .{seg});

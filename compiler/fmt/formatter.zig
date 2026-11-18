@@ -257,6 +257,21 @@ const Printer = struct {
                 continue;
             }
             try self.emitLeadingTrivia(depth, stmt.line);
+            // Dil yüzeyi 2 (v2.2.22): yıldızlı/iç içe açma (`a, *b = xs`, `(a, b), c = t`) yüzey biçimi `unpack_origin`den yazılır; sentetik okumalar atlanır.
+            if (stmt.kind == .var_decl) if (stmt.kind.var_decl.unpack_origin) |uo| {
+                try self.indentTo(depth);
+                try self.printUnpackTargets(uo.targets);
+                try self.writer.writeAll(" = ");
+                if (uo.rhs == .tuple_lit and uo.rhs.tuple_lit.len > 1) {
+                    for (uo.rhs.tuple_lit, 0..) |el, j| {
+                        if (j > 0) try self.writer.writeAll(", ");
+                        try self.printExpr(el);
+                    }
+                } else try self.printExpr(uo.rhs);
+                try self.line(stmt.line);
+                i += 1 + uo.skip;
+                continue;
+            };
             // v1.157.0: tuple açma desugarı (`__nox_tup_N_K: __infer = <değer>` + K okuma) kullanıcının yazdığı `a, b = <değer>` biçimine geri çevrilir.
             if (tupleTempCount(stmt)) |k| {
                 if (i + k < stmts.len + 0 and isUnpackSequence(stmts[i + 1 ..], stmt.kind.var_decl.name, k)) {
@@ -677,8 +692,18 @@ const Printer = struct {
             },
             .raise_stmt => |e| {
                 try self.indentTo(depth);
-                try self.writer.writeAll("raise ");
-                try self.printExpr(e);
+                if (e == .identifier and std.mem.startsWith(u8, e.identifier, "__nox_exc_")) {
+                    // dil yüzeyi 2: çıplak `raise`
+                    try self.writer.writeAll("raise");
+                } else if (e == .call and e.call.raise_from and e.call.args.len == 2) {
+                    try self.writer.writeAll("raise ");
+                    try self.printExpr(e.call.args[0]);
+                    try self.writer.writeAll(" from ");
+                    try self.printExpr(e.call.args[1]);
+                } else {
+                    try self.writer.writeAll("raise ");
+                    try self.printExpr(e);
+                }
                 try self.line(stmt.line);
             },
             .try_stmt => |t0| {
@@ -712,12 +737,13 @@ const Printer = struct {
                             try self.writer.writeAll(t.except_clauses[gi].class_name.?);
                         }
                         try self.writer.writeAll(")");
-                        if (ec.bind_name) |bn| try self.writer.print(" as {s}", .{bn});
+                        if (ec.bind_name) |bn| if (!ec.synth_bind) try self.writer.print(" as {s}", .{bn});
                         try self.writer.writeAll(":\n");
                         ci = group_end - 1;
-                    } else if (ec.class_name) |cn| {
-                        if (ec.bind_name) |bn| {
-                            try self.writer.print("except {s} as {s}:\n", .{ cn, bn });
+                    } else if (ec.class_name != null and !ec.synth_class) {
+                        const cn = ec.class_name.?;
+                        if (ec.bind_name != null and !ec.synth_bind) {
+                            try self.writer.print("except {s} as {s}:\n", .{ cn, ec.bind_name.? });
                         } else {
                             try self.writer.print("except {s}:\n", .{cn});
                         }
@@ -767,6 +793,12 @@ const Printer = struct {
                     try self.writer.writeAll(nm.name);
                     if (nm.alias) |alias| try self.writer.print(" as {s}", .{alias});
                 }
+                try self.line(stmt.line);
+            },
+            .type_alias => |ta| {
+                try self.indentTo(depth);
+                try self.writer.print("type {s} = ", .{ta.name});
+                try self.printType(ta.target);
                 try self.line(stmt.line);
             },
             .pass_stmt => {
@@ -852,6 +884,70 @@ const Printer = struct {
         try self.printNonlocals(fd, depth + 1);
         try self.printGlobals(fd, depth + 1);
         try self.printStmts(fd.body, depth + 1);
+    }
+
+    fn printUnpackTargets(self: *Printer, targets: []const ast.UnpackTarget) FormatError!void {
+        for (targets, 0..) |t, j| {
+            if (j > 0) try self.writer.writeAll(", ");
+            if (t.nested) |nested| {
+                try self.writer.writeAll("(");
+                try self.printUnpackTargets(nested);
+                if (nested.len == 1) try self.writer.writeAll(",");
+                try self.writer.writeAll(")");
+            } else {
+                if (t.star) try self.writer.writeAll("*");
+                try self.printExpr(t.expr.?);
+            }
+        }
+    }
+
+    /// `[*a, 1, *b]` yüzey biçimi: `spread` bayraklı `+` zincirinin operandları soldan sağa yazılır.
+    fn printSpreadItems(self: *Printer, e: ast.Expr, first: *bool) FormatError!void {
+        if (e == .binary and e.binary.spread) {
+            try self.printSpreadItems(e.binary.left.*, first);
+            try self.printSpreadItems(e.binary.right.*, first);
+        } else if (e == .list_lit) {
+            for (e.list_lit) |el| {
+                if (!first.*) try self.writer.writeAll(", ");
+                first.* = false;
+                try self.printExpr(el);
+            }
+        } else {
+            if (!first.*) try self.writer.writeAll(", ");
+            first.* = false;
+            try self.writer.writeAll("*");
+            try self.printExpr(e);
+        }
+    }
+
+    fn printSpreadList(self: *Printer, e: ast.Expr) FormatError!void {
+        try self.writer.writeAll("[");
+        var first = true;
+        try self.printSpreadItems(e, &first);
+        try self.writer.writeAll("]");
+    }
+
+    /// `{**a, "k": v}` yüzey biçimi (`__nox_dict_merge(...)` çağrısından).
+    fn printSpreadDict(self: *Printer, args: []const ast.Expr) FormatError!void {
+        try self.writer.writeAll("{");
+        var first = true;
+        for (args) |op| {
+            if (op == .dict_lit) {
+                for (op.dict_lit) |p| {
+                    if (!first) try self.writer.writeAll(", ");
+                    first = false;
+                    try self.printExpr(p.key);
+                    try self.writer.writeAll(": ");
+                    try self.printExpr(p.value);
+                }
+            } else {
+                if (!first) try self.writer.writeAll(", ");
+                first = false;
+                try self.writer.writeAll("**");
+                try self.printExpr(op);
+            }
+        }
+        try self.writer.writeAll("}");
     }
 
     /// `else:` bloğu (döngü/`try` yüzey biçimi, dil yüzeyi 1).
@@ -1059,6 +1155,7 @@ const Printer = struct {
     fn printExprAt(self: *Printer, e: ast.Expr, ctx_prec: u8, side: Side) FormatError!void {
         switch (e) {
             .binary => |b| {
+                if (b.spread) return self.printSpreadList(e);
                 if (b.fstring) return self.printFString(e);
                 // v1.162.0: zincirleme karşılaştırma yüzey biçimi — `and_(…, cmp(mid', op, rhs))` → `… op rhs`.
                 if (b.is_form and b.op == .and_ and b.right.* == .binary) {
@@ -1143,6 +1240,18 @@ const Printer = struct {
                     return;
                 }
                 // v1.168.0: küme literali/comprehension'ı yüzey biçimi.
+                if (c.spread_lit) {
+                    if (c.callee.* == .attribute and std.mem.eql(u8, c.callee.attribute.attr, "copy")) {
+                        try self.writer.writeAll("[*");
+                        try self.printExpr(c.callee.attribute.obj.*);
+                        try self.writer.writeAll("]");
+                        return;
+                    }
+                    if (c.callee.* == .identifier) {
+                        try self.printSpreadDict(c.args);
+                        return;
+                    }
+                }
                 if (c.set_lit and c.args.len == 1) {
                     try self.writer.writeAll("{");
                     switch (c.args[0]) {

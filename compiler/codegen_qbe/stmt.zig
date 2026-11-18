@@ -223,7 +223,7 @@ pub fn genStmts(self: *Codegen, stmts: []const ast.Stmt, ret_qtype: QbeType) Cod
             .func_def => |fd| try self.genNestedFuncDef(fd),
             .with_stmt => |w| try self.genWith(w, stmt.line, ret_qtype),
             .defer_stmt => |d| try self.genDeferStmt(d, stmt.line),
-            .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => return error.Unsupported,
+            .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .type_alias => return error.Unsupported,
         }
     }
 }
@@ -983,7 +983,7 @@ pub fn collectIndexStrBasesStmts(self: *Codegen, body: []const ast.Stmt, candida
                 try self.collectIndexStrBasesStmts(s.body, candidates);
             },
             .defer_stmt => |d| try self.collectIndexStrBasesExpr(.{ .call = d.call }, candidates),
-            .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => {},
+            .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt, .type_alias => {},
         }
     }
 }

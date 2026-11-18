@@ -198,7 +198,7 @@ const Walker = struct {
             .class_def => |cd| for (cd.methods) |m| {
                 if (!self.funcSkipped(m)) self.stmts(m.body, false);
             },
-            .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => {},
+            .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt, .type_alias => {},
             .return_stmt => |r| if (r) |e| self.expr(e),
             .raise_stmt => |e| self.expr(e),
             .del_stmt => |e| {

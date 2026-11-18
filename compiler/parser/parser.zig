@@ -34,6 +34,8 @@ pub const ParseError = error{
     RecursionLimitExceeded,
 };
 
+const ExceptCtx = struct { bind: ?[]const u8, synthesized: bool = false };
+
 pub const Parser = struct {
     allocator: std.mem.Allocator,
     tokens: []const Token,
@@ -56,6 +58,8 @@ pub const Parser = struct {
     /// Dil yüzeyi 1/2 (v2.2.21): `for/while/try … else` gizli bayrak sayacı; `global` adları.
     else_counter: u32 = 0,
     with_counter: u32 = 0,
+    /// Dil yüzeyi 2 (v2.2.22): şu an ayrıştırılan `except` gövdesinin bağlaması (çıplak `raise` için).
+    cur_except: ?*ExceptCtx = null,
     cur_globals: ?*std.ArrayList([]const u8) = null,
     tuple_counter: u32 = 0,
 
@@ -305,6 +309,21 @@ pub const Parser = struct {
     }
 
     fn parseSimpleStmt(self: *Parser) ParseError!ast.StmtKind {
+        // Dil yüzeyi 2 (v2.2.22): `type Ad = Tip` — modül düzeyinde tip takma adı (`type_alias.zig` ön geçişi kullanımları açar).
+        if (self.check(.identifier) and std.mem.eql(u8, self.cur().lexeme, "type") and self.pos + 2 < self.tokens.len and
+            self.tokens[self.pos + 1].kind == .identifier and self.tokens[self.pos + 2].kind == .assign)
+        {
+            if (self.cur_nonlocals != null) {
+                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "a 'type' alias can only be declared at module level" };
+                return error.UnexpectedToken;
+            }
+            _ = self.advance();
+            const name = self.advance().lexeme;
+            _ = try self.expect(.assign);
+            const target = try self.parseTypeExpr();
+            _ = try self.expect(.newline);
+            return .{ .type_alias = .{ .name = name, .target = target } };
+        }
         // O1 (v2.2.20): `ad := ifade` — tip anotasyonu yok, tip değerden çıkarılır (checker `infer_assign` bildirimini `__infer` yoluyla denetler).
         if (self.check(.identifier) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .colon_assign) {
             const name = self.advance().lexeme;
@@ -359,40 +378,10 @@ pub const Parser = struct {
                 return .{ .if_stmt = .{ .cond = .{ .unary = .{ .op = .not_, .operand = try self.box(cond) } }, .then_body = then_body, .elif_clauses = &.{}, .else_body = null, .is_assert = true } };
             }
         }
+        // Dil yüzeyi 2 (v2.2.22): `*a, b = xs` — yıldızlı hedefle başlayan açma.
+        if (self.check(.star) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .identifier) return self.parseUnpackStmt(null);
         const expr = try self.parseExpr();
-        // v1.157.0: tuple açma — `a, b = f()` / `a, b = b, a` / `self.x, self.y = p`. Parse-zamanı desugar: gizli bir `__nox_tup_N_<hedef sayısı>`
-        // yerel (tipi checker çıkarır, `__infer`) değeri tutar, her hedef ondan `f<i>` alanını okur (isim hedefi: tip çıkarımlı bildirim; alan/indeks
-        // hedefi: atama). Hedef sayısı ismin sonuna kodlanır (checker arity doğrular).
-        if (self.check(.comma)) {
-            var targets = std.ArrayList(ast.Expr).empty;
-            try targets.append(self.allocator, expr);
-            while (self.match(.comma)) {
-                if (self.check(.assign)) break;
-                try targets.append(self.allocator, try self.parseExpr());
-            }
-            _ = try self.expect(.assign);
-            for (targets.items) |t| {
-                if (t != .identifier and t != .attribute and t != .index) {
-                    self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()) };
-                    return error.UnexpectedToken;
-                }
-            }
-            const rhs = try self.parseExprOrTuple();
-            _ = try self.expect(.newline);
-            self.tuple_counter += 1;
-            const tmp_name = try std.fmt.allocPrint(self.allocator, "__nox_tup_{d}_{d}", .{ self.tuple_counter, targets.items.len });
-            const line = self.tokens[self.pos - 1].line;
-            for (targets.items, 0..) |t, i| {
-                const tmp_ref = try self.box(.{ .identifier = tmp_name });
-                const field_read: ast.Expr = .{ .attribute = .{ .obj = tmp_ref, .attr = try std.fmt.allocPrint(self.allocator, "f{d}", .{i}) } };
-                const kind: ast.StmtKind = if (t == .identifier)
-                    .{ .var_decl = .{ .name = t.identifier, .type_expr = .{ .simple = "__infer" }, .value = field_read } }
-                else
-                    .{ .assign = .{ .target = t, .value = field_read } };
-                try self.extra_stmts.append(self.allocator, .{ .kind = kind, .line = line });
-            }
-            return .{ .var_decl = .{ .name = tmp_name, .type_expr = .{ .simple = "__infer" }, .value = rhs } };
-        }
+        if (self.check(.comma)) return self.parseUnpackStmt(expr);
         // `self.x: T = v` — açıklamalı alan atamasi (yalnızca `obj.alan` hedefi).
         if (expr == .attribute and self.check(.colon)) {
             _ = self.advance();
@@ -449,6 +438,130 @@ pub const Parser = struct {
         }
         _ = try self.expect(.newline);
         return .{ .expr_stmt = expr };
+    }
+
+    fn unpackDiag(self: *Parser, note: ?[]const u8) ParseError {
+        self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = note };
+        return error.UnexpectedToken;
+    }
+
+    /// Açma hedefi: ad/alan/indeks ya da iç içe `(a, b)`.
+    fn toUnpackTarget(self: *Parser, e: ast.Expr) ParseError!ast.UnpackTarget {
+        switch (e) {
+            .identifier, .attribute, .index => return .{ .expr = e },
+            .tuple_lit => |elems| {
+                const nested = try self.allocator.alloc(ast.UnpackTarget, elems.len);
+                for (elems, 0..) |el, i| nested[i] = try self.toUnpackTarget(el);
+                return .{ .nested = nested };
+            },
+            else => return self.unpackDiag(null),
+        }
+    }
+
+    /// `a, b = ...` / `a, *b = ...` / `(a, b), c = ...` (v1.157.0; yıldızlı ve iç içe açma dil yüzeyi 2, v2.2.22). Düz (yıldızsız, iç içe olmayan) hedefler eski biçimde `__nox_tup_N_K` + `f<i>` okumalarına inerken;
+    /// yıldızlı biçim `__nox_star_N` listesinden indeks/dilimle okur, iç içe hedef kendi `__nox_tup_M_K` geçicisini alır. Yüzey biçimi `unpack_origin`de saklanır.
+    fn parseUnpackStmt(self: *Parser, first: ?ast.Expr) ParseError!ast.StmtKind {
+        var targets = std.ArrayList(ast.UnpackTarget).empty;
+        var star_count: usize = 0;
+        if (first) |f| {
+            try targets.append(self.allocator, try self.toUnpackTarget(f));
+        } else {
+            _ = self.advance(); // `*`
+            const nm = try self.expect(.identifier);
+            try targets.append(self.allocator, .{ .expr = .{ .identifier = nm.lexeme }, .star = true });
+            star_count += 1;
+        }
+        while (self.match(.comma)) {
+            if (self.check(.assign)) break;
+            if (self.match(.star)) {
+                const nm = try self.expect(.identifier);
+                try targets.append(self.allocator, .{ .expr = .{ .identifier = nm.lexeme }, .star = true });
+                star_count += 1;
+            } else {
+                try targets.append(self.allocator, try self.toUnpackTarget(try self.parseExpr()));
+            }
+        }
+        _ = try self.expect(.assign);
+        if (star_count > 1) return self.unpackDiag("only one starred target ('*name') is allowed in an unpacking assignment");
+        const rhs = try self.parseExprOrTuple();
+        _ = try self.expect(.newline);
+        var any_nested = false;
+        for (targets.items) |t| if (t.nested != null) {
+            any_nested = true;
+        };
+        const line = self.tokens[self.pos - 1].line;
+        self.tuple_counter += 1;
+        if (star_count == 0 and !any_nested) {
+            // düz biçim: eski indirgeme (değişmedi)
+            const tmp_name = try std.fmt.allocPrint(self.allocator, "__nox_tup_{d}_{d}", .{ self.tuple_counter, targets.items.len });
+            for (targets.items, 0..) |tg, i| {
+                const t = tg.expr.?;
+                const tmp_ref = try self.box(.{ .identifier = tmp_name });
+                const field_read: ast.Expr = .{ .attribute = .{ .obj = tmp_ref, .attr = try std.fmt.allocPrint(self.allocator, "f{d}", .{i}) } };
+                const kind: ast.StmtKind = if (t == .identifier)
+                    .{ .var_decl = .{ .name = t.identifier, .type_expr = .{ .simple = "__infer" }, .value = field_read } }
+                else
+                    .{ .assign = .{ .target = t, .value = field_read } };
+                try self.extra_stmts.append(self.allocator, .{ .kind = kind, .line = line });
+            }
+            return .{ .var_decl = .{ .name = tmp_name, .type_expr = .{ .simple = "__infer" }, .value = rhs } };
+        }
+        const tmp_name = if (star_count > 0)
+            try std.fmt.allocPrint(self.allocator, "__nox_star_{d}", .{self.tuple_counter})
+        else
+            try std.fmt.allocPrint(self.allocator, "__nox_tup_{d}_{d}", .{ self.tuple_counter, targets.items.len });
+        const before = self.extra_stmts.items.len;
+        try self.emitUnpackReads(targets.items, tmp_name, line);
+        const origin = try self.allocator.create(ast.UnpackOrigin);
+        origin.* = .{ .targets = try self.allocator.dupe(ast.UnpackTarget, targets.items), .rhs = rhs, .skip = @intCast(self.extra_stmts.items.len - before) };
+        return .{ .var_decl = .{ .name = tmp_name, .type_expr = .{ .simple = "__infer" }, .value = rhs, .unpack_origin = origin } };
+    }
+
+    /// `targets`in her biri için `tmp`den okuma deyimini `extra_stmts`e ekler (yıldız varsa indeks/dilim, yoksa `f<i>` alanı; iç içe hedef kendi geçicisini alır).
+    fn emitUnpackReads(self: *Parser, targets: []const ast.UnpackTarget, tmp: []const u8, line: u32) ParseError!void {
+        var star_idx: ?usize = null;
+        for (targets, 0..) |t, i| if (t.star) {
+            star_idx = i;
+        };
+        const n = targets.len;
+        for (targets, 0..) |t, i| {
+            const tmp_ref = try self.box(.{ .identifier = tmp });
+            var read: ast.Expr = undefined;
+            if (star_idx) |si| {
+                if (i < si) {
+                    read = .{ .index = .{ .obj = tmp_ref, .index = try self.box(.{ .int_lit = @intCast(i) }) } };
+                } else if (i == si) {
+                    const after = n - si - 1;
+                    const hi: ?*ast.Expr = if (after > 0) try self.box(try self.lenMinus(tmp, @intCast(after))) else null;
+                    read = .{ .slice = .{ .obj = tmp_ref, .lo = try self.box(.{ .int_lit = @intCast(i) }), .hi = hi, .step = null } };
+                } else {
+                    read = .{ .index = .{ .obj = tmp_ref, .index = try self.box(try self.lenMinus(tmp, @intCast(n - i))) } };
+                }
+            } else {
+                read = .{ .attribute = .{ .obj = tmp_ref, .attr = try std.fmt.allocPrint(self.allocator, "f{d}", .{i}) } };
+            }
+            if (t.nested) |nested| {
+                self.tuple_counter += 1;
+                const inner = try std.fmt.allocPrint(self.allocator, "__nox_tup_{d}_{d}", .{ self.tuple_counter, nested.len });
+                try self.extra_stmts.append(self.allocator, .{ .kind = .{ .var_decl = .{ .name = inner, .type_expr = .{ .simple = "__infer" }, .value = read } }, .line = line });
+                try self.emitUnpackReads(nested, inner, line);
+            } else {
+                const target = t.expr.?;
+                const kind: ast.StmtKind = if (target == .identifier)
+                    .{ .var_decl = .{ .name = target.identifier, .type_expr = .{ .simple = "__infer" }, .value = read } }
+                else
+                    .{ .assign = .{ .target = target, .value = read } };
+                try self.extra_stmts.append(self.allocator, .{ .kind = kind, .line = line });
+            }
+        }
+    }
+
+    /// `len(tmp) - k`
+    fn lenMinus(self: *Parser, tmp: []const u8, k: i64) ParseError!ast.Expr {
+        const cargs = try self.allocator.alloc(ast.Expr, 1);
+        cargs[0] = .{ .identifier = tmp };
+        const callee = try self.box(.{ .identifier = "len" });
+        return .{ .binary = .{ .op = .sub, .left = try self.box(.{ .call = .{ .callee = callee, .args = cargs } }), .right = try self.box(.{ .int_lit = k }) } };
     }
 
     fn parseTypeExpr(self: *Parser) ParseError!ast.TypeExpr {
@@ -1375,6 +1488,9 @@ pub const Parser = struct {
         const saved_globals = self.cur_globals;
         self.cur_globals = &globals;
         defer self.cur_globals = saved_globals;
+        const saved_except_ctx = self.cur_except;
+        self.cur_except = null; // çıplak `raise` iç içe `def` gövdesine taşınmaz
+        defer self.cur_except = saved_except_ctx;
         const body = try self.parseBlock();
 
         return .{
@@ -1695,7 +1811,35 @@ pub const Parser = struct {
 
     fn parseRaise(self: *Parser) ParseError!ast.StmtKind {
         _ = try self.expect(.kw_raise);
+        // Dil yüzeyi 2 (v2.2.22): çıplak `raise` — çevreleyen `except` yan tümcesinin yakaladığı istisnayı yeniden fırlatır (`raise <bağlama>`; bağlama yoksa parser `__nox_exc_N` ekler).
+        if (self.check(.newline)) {
+            const ctx = self.cur_except orelse {
+                self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()), .note = "a bare 'raise' is only valid inside an 'except' block (outside, write 'raise <exception>')" };
+                return error.UnexpectedToken;
+            };
+            if (ctx.bind == null) {
+                self.else_counter += 1;
+                ctx.bind = try std.fmt.allocPrint(self.allocator, "__nox_exc_{d}", .{self.else_counter});
+                ctx.synthesized = true;
+            }
+            _ = try self.expect(.newline);
+            return .{ .raise_stmt = .{ .identifier = ctx.bind.? } };
+        }
         const value = try self.parseExpr();
+        // `raise X from Y` → `raise __nox_with_cause(X, Y)` (Y'nin mesajı X.cause olur); `from None` yalnızca `raise X`.
+        if (self.match(.kw_from)) {
+            if (self.match(.kw_none)) {
+                _ = try self.expect(.newline);
+                return .{ .raise_stmt = value };
+            }
+            const cause = try self.parseExpr();
+            _ = try self.expect(.newline);
+            const args = try self.allocator.alloc(ast.Expr, 2);
+            args[0] = value;
+            args[1] = cause;
+            const callee = try self.box(.{ .identifier = "__nox_with_cause" });
+            return .{ .raise_stmt = .{ .call = .{ .callee = callee, .args = args, .raise_from = true } } };
+        }
         _ = try self.expect(.newline);
         return .{ .raise_stmt = value };
     }
@@ -1742,11 +1886,26 @@ pub const Parser = struct {
                 saw_bare_except = true;
             }
             _ = try self.expect(.colon);
-            const body = try self.parseBlock();
+            var ectx: ExceptCtx = .{ .bind = bind_name };
+            const saved_except = self.cur_except;
+            self.cur_except = &ectx;
+            const body = self.parseBlock() catch |e| {
+                self.cur_except = saved_except;
+                return e;
+            };
+            self.cur_except = saved_except;
+            var synth_class = false;
+            if (ectx.synthesized) {
+                bind_name = ectx.bind;
+                if (class_name == null and multi.items.len == 0) {
+                    class_name = "Exception";
+                    synth_class = true;
+                }
+            }
             if (multi.items.len > 0) {
-                for (multi.items) |cn| try except_clauses.append(self.allocator, .{ .class_name = cn, .bind_name = bind_name, .body = body });
+                for (multi.items) |cn| try except_clauses.append(self.allocator, .{ .class_name = cn, .bind_name = bind_name, .body = body, .synth_bind = ectx.synthesized });
             } else {
-                try except_clauses.append(self.allocator, .{ .class_name = class_name, .bind_name = bind_name, .body = body });
+                try except_clauses.append(self.allocator, .{ .class_name = class_name, .bind_name = bind_name, .body = body, .synth_bind = ectx.synthesized, .synth_class = synth_class });
             }
         }
 
@@ -2493,19 +2652,29 @@ pub const Parser = struct {
             .l_bracket => {
                 _ = self.advance();
                 var elems = std.ArrayList(ast.Expr).empty;
+                // Dil yüzeyi 2 (v2.2.22): `[*a, 1, *b]` → `a + [1] + b` (liste birleştirme; operandlar liste olmalı).
+                var star_flags = std.ArrayList(bool).empty;
+                var has_star = false;
                 if (!self.check(.r_bracket)) {
+                    const first_star = self.match(.star);
                     try elems.append(self.allocator, try self.parseExpr());
-                    if (self.check(.kw_for)) {
+                    try star_flags.append(self.allocator, first_star);
+                    has_star = first_star;
+                    if (!first_star and self.check(.kw_for)) {
                         const clauses = try self.parseCompClauses();
                         _ = try self.expect(.r_bracket);
                         return .{ .list_comp = .{ .elem = try self.box(elems.items[0]), .clauses = clauses } };
                     }
                     while (self.match(.comma)) {
                         if (self.check(.r_bracket)) break;
+                        const st = self.match(.star);
+                        has_star = has_star or st;
                         try elems.append(self.allocator, try self.parseExpr());
+                        try star_flags.append(self.allocator, st);
                     }
                 }
                 _ = try self.expect(.r_bracket);
+                if (has_star) return self.buildSpreadList(elems.items, star_flags.items);
                 return .{ .list_lit = try elems.toOwnedSlice(self.allocator) };
             },
             .l_brace => {
@@ -2515,6 +2684,7 @@ pub const Parser = struct {
                 // dalı) AYNI "kapanışı hemen kontrol et" deseni. Checker'ın
                 // `checkExprExpected`i (bkz. o dosyanın belge notu) bunu YALNIZCA
                 // bir BEKLENEN `dict[K,V]` tipi biliniyorsa kabul eder.
+                if (self.check(.star_star)) return self.parseDictWithSpread(null);
                 if (!self.check(.r_brace)) {
                     const first_key = try self.parseExpr();
                     // v1.168.0: `{a, b}` / `{x for x in xs}` — küme literali/comprehension'ı (`__nox_set_from_list([...])`).
@@ -2546,7 +2716,13 @@ pub const Parser = struct {
                         return .{ .dict_comp = .{ .key = try self.box(first_key), .value = try self.box(first_value), .clauses = clauses } };
                     }
                     try pairs.append(self.allocator, .{ .key = first_key, .value = first_value });
+                    if (self.check(.comma) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .star_star) return self.parseDictWithSpread(&pairs);
                     while (self.match(.comma)) {
+                        if (self.check(.r_brace)) break;
+                        if (self.check(.star_star)) {
+                            self.last_diagnostic = .{ .found = self.curKind(), .span = span_mod.fromToken(self.cur()) };
+                            return error.UnexpectedToken;
+                        }
                         const key = try self.parseExpr();
                         _ = try self.expect(.colon);
                         const value = try self.parseExpr();
@@ -2561,6 +2737,65 @@ pub const Parser = struct {
                 return error.UnexpectedToken;
             },
         }
+    }
+
+    /// `[*a, 1, *b]` indirgemesi: ardışık düz öğeler tek liste literali olur, yıldızlı operandlar olduğu gibi kalır; soldan sağa `+` zinciri (`spread` bayraklı). Tek yıldızlı operand `a.copy()`.
+    fn buildSpreadList(self: *Parser, elems: []const ast.Expr, stars: []const bool) ParseError!ast.Expr {
+        var operands = std.ArrayList(ast.Expr).empty;
+        var run = std.ArrayList(ast.Expr).empty;
+        for (elems, stars) |el, st| {
+            if (st) {
+                if (run.items.len > 0) {
+                    try operands.append(self.allocator, .{ .list_lit = try run.toOwnedSlice(self.allocator) });
+                    run = .empty;
+                }
+                try operands.append(self.allocator, el);
+            } else {
+                try run.append(self.allocator, el);
+            }
+        }
+        if (run.items.len > 0) try operands.append(self.allocator, .{ .list_lit = try run.toOwnedSlice(self.allocator) });
+        if (operands.items.len == 1) {
+            const callee = try self.box(.{ .attribute = .{ .obj = try self.box(operands.items[0]), .attr = "copy" } });
+            return .{ .call = .{ .callee = callee, .args = &.{}, .spread_lit = true } };
+        }
+        var acc = operands.items[0];
+        for (operands.items[1..]) |op| {
+            // `acc`i hem okuyup hem yazan atama sonuç-konumu (result location) yüzünden bozulabilir: önce kopyala.
+            const prev = acc;
+            acc = .{ .binary = .{ .op = .add, .left = try self.box(prev), .right = try self.box(op), .spread = true } };
+        }
+        return acc;
+    }
+
+    /// `{**a, "k": v, **b}` — açılış `{` zaten tüketildi; `pairs` (boş değilse) `{k: v` ile başlayan ilk çiftleri taşır, ardından `, **…` gelir. Ardışık çiftler tek sözlük literali olur,
+    /// `**` operandları olduğu gibi kalır; hepsi `__nox_dict_merge(op1, op2, …)` çağrısına iner (`spread_lit` bayraklı).
+    fn parseDictWithSpread(self: *Parser, existing: ?*std.ArrayList(ast.DictPair)) ParseError!ast.Expr {
+        var operands = std.ArrayList(ast.Expr).empty;
+        var run = std.ArrayList(ast.DictPair).empty;
+        if (existing) |ex| {
+            for (ex.items) |p| try run.append(self.allocator, p);
+            _ = try self.expect(.comma);
+        }
+        while (!self.check(.r_brace)) {
+            if (self.match(.star_star)) {
+                if (run.items.len > 0) {
+                    try operands.append(self.allocator, .{ .dict_lit = try run.toOwnedSlice(self.allocator) });
+                    run = .empty;
+                }
+                try operands.append(self.allocator, try self.parseExpr());
+            } else {
+                const key = try self.parseExpr();
+                _ = try self.expect(.colon);
+                const value = try self.parseExpr();
+                try run.append(self.allocator, .{ .key = key, .value = value });
+            }
+            if (!self.match(.comma)) break;
+        }
+        _ = try self.expect(.r_brace);
+        if (run.items.len > 0) try operands.append(self.allocator, .{ .dict_lit = try run.toOwnedSlice(self.allocator) });
+        const callee = try self.box(.{ .identifier = "__nox_dict_merge" });
+        return .{ .call = .{ .callee = callee, .args = try operands.toOwnedSlice(self.allocator), .spread_lit = true } };
     }
 
     /// Tırnakları kaldırır ve temel kaçış dizilerini (\n \t \r \\ \' \") çözer.
@@ -3334,4 +3569,19 @@ test "\\uHHHH ve \\UHHHHHHHH kaçışları UTF-8'e çözülür; vekil/aralık d�
     try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(), "s: str = \"\\U00110000\"\n"));
     try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(), "s: str = \"\\u12\"\n"));
     try std.testing.expectError(error.UnexpectedToken, parseSource(arena.allocator(), "s: str = \"\\u12zz\"\n"));
+}
+
+test "dil yüzeyi 2 (v2.2.22): çıplak raise yalnızca except içinde; tek yıldızlı hedef; `[*a]` ve `{**d}` ayrıştırılır" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectError(error.UnexpectedToken, parseSource(a, "def f() -> None:\n    raise\n"));
+    try std.testing.expectError(error.UnexpectedToken, parseSource(a, "a, *b, *c = xs\n"));
+    const ok = try parseSource(a, "def f() -> None:\n    try:\n        pass\n    except ValueError:\n        raise\n    a: list[int] = [*xs, 1]\n    d: dict[str, int] = {**m, \"k\": 1}\n");
+    try std.testing.expect(ok.body.len == 1);
+    const body = ok.body[0].kind.func_def.body;
+    const clause = body[0].kind.try_stmt.except_clauses[0];
+    try std.testing.expect(clause.synth_bind and clause.bind_name != null);
+    try std.testing.expect(body[1].kind.var_decl.value == .binary and body[1].kind.var_decl.value.binary.spread);
+    try std.testing.expect(body[2].kind.var_decl.value == .call and body[2].kind.var_decl.value.call.spread_lit);
 }

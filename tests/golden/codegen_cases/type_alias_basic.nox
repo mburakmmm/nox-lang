@@ -1,0 +1,42 @@
+# Dil yüzeyi 2 (v2.2.22): `type Ad = Tip` takma adları (sınıf alanı, parametre, dönüş, sözlük değeri, fonksiyon tipi, Optional); iki backend.
+type IntList = list[int]
+type Id = int
+type Handler = (int) -> int
+type Lookup = dict[str, IntList]
+type MaybeId = Id | None
+
+class Box:
+    items: IntList
+    def __init__(self, items: IntList) -> None:
+        self.items = items
+    def total(self) -> Id:
+        t: Id = 0
+        for x in self.items:
+            t = t + x
+        return t
+
+def apply(h: Handler, v: Id) -> Id:
+    return h(v)
+
+def double(x: int) -> int:
+    return x * 2
+
+def find(m: Lookup, k: str) -> MaybeId:
+    if k in m:
+        return len(m[k])
+    return None
+
+def main_fn() -> None:
+    xs: IntList = [1, 2, 3]
+    b: Box = Box(xs)
+    print(b.total(), apply(double, 21))
+    m: Lookup = {"a": [1, 2]}
+    r: MaybeId = find(m, "a")
+    if r is not None:
+        print(r)
+    print(find(m, "zz") is None)
+    ys: IntList = []
+    ys.append(5)
+    print(ys)
+
+main_fn()

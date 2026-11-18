@@ -780,7 +780,7 @@ fn extendOverRouterRegistrations(module: ast.Module, last: usize, router_vars: *
     var i = last + 1;
     while (i < module.body.len) : (i += 1) {
         switch (module.body[i].kind) {
-            .func_def, .class_def, .import_stmt, .from_import_stmt, .pass_stmt => continue,
+            .func_def, .class_def, .import_stmt, .from_import_stmt, .type_alias, .pass_stmt => continue,
             .expr_stmt => |e| {
                 const root = exprIsRouterRegistration(e, router_vars) orelse break;
                 if (!promoted.contains(root)) break;
@@ -1705,7 +1705,7 @@ pub fn collectIdentifierNamesStmts(a: std.mem.Allocator, stmts: []const ast.Stmt
             },
             .func_def => |fd| try collectIdentifierNamesStmts(a, fd.body, out),
             .class_def => |cd| for (cd.methods) |m| try collectIdentifierNamesStmts(a, m.body, out),
-            .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => {},
+            .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt, .type_alias => {},
             .return_stmt => |r| if (r) |e| try collectIdentifierNamesExpr(a, e, out),
             .raise_stmt => |e| try collectIdentifierNamesExpr(a, e, out),
             .del_stmt => |e| try collectIdentifierNamesExpr(a, e, out),

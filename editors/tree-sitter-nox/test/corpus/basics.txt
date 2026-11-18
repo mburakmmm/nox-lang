@@ -1079,3 +1079,90 @@ def f(xs: list[int]) -> None:
             name: (identifier)
             type: (identifier)
             value: (string)))))))
+
+==================
+dil yüzeyi 2: çıplak raise, raise from, yıldızlı açma, yayılım
+==================
+
+def f(xs: list[int], m: dict[str, int]) -> None:
+    try:
+        pass
+    except ValueError:
+        raise
+    except KeyError as e:
+        raise RuntimeError("x") from e
+    a, *b = xs
+    c = [*a, 1]
+    d = {**m, "k": 1}
+
+---
+
+(module
+  (function_definition
+    (identifier)
+    (parameters
+      (parameter
+        (identifier)
+        (generic_type
+          (identifier)
+          (identifier)))
+      (parameter
+        (identifier)
+        (generic_type
+          (identifier)
+          (identifier)
+          (identifier))))
+    (none_type)
+    (block
+      (try_statement
+        (block
+          (pass_statement))
+        (except_clause
+          (identifier)
+          (block
+            (raise_statement)))
+        (except_clause
+          (identifier)
+          (identifier)
+          (block
+            (raise_statement
+              (call
+                (identifier)
+                (argument_list
+                  (string)))
+              (identifier)))))
+      (assignment
+        (expression_list
+          (identifier)
+          (list_splat
+            (identifier)))
+        (identifier))
+      (assignment
+        (identifier)
+        (list
+          (list_splat
+            (identifier))
+          (integer)))
+      (assignment
+        (identifier)
+        (dict
+          (dictionary_splat
+            (identifier))
+          (pair
+            (string)
+            (integer)))))))
+
+==================
+dil yüzeyi 2: type takma adı
+==================
+
+type IntList = list[int]
+
+---
+
+(module
+  (type_alias_statement
+    (identifier)
+    (generic_type
+      (identifier)
+      (identifier))))

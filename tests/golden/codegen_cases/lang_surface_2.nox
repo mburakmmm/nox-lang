@@ -1,0 +1,85 @@
+# Dil yüzeyi 2 (v2.2.22): çıplak raise, raise from, yıldızlı/iç içe açma, liste/sözlük yayılımı; iki backend.
+class Err1(Exception):
+    pass
+
+class Err2(Exception):
+    pass
+
+def risky(n: int) -> int:
+    if n == 1:
+        raise Err1("one")
+    if n == 2:
+        raise Err2("two")
+    return n
+
+def rethrow(n: int) -> None:
+    try:
+        risky(n)
+    except Err1:
+        print("cleanup 1")
+        raise
+    except Exception as e:
+        print("generic", e.message)
+        raise
+
+def chain() -> None:
+    try:
+        rethrow(2)
+    except Err2 as e:
+        raise Err1("wrapped") from e
+
+def bare_except() -> None:
+    try:
+        raise Err2("zz")
+    except:
+        print("bare cleanup")
+        raise
+
+def unpack() -> None:
+    xs: list[int] = [1, 2, 3, 4, 5]
+    a, *b = xs
+    *c, d = xs
+    e, *f, g = xs
+    print(a, b, c, d, e, f, g)
+    t: list[str] = ["x", "y"]
+    h, *i = t
+    print(h, i)
+    (p, q), r = (1, 2), 3
+    print(p, q, r)
+    (s1, s2), (s3, s4) = (1, "a"), (2, "b")
+    print(s1, s2, s3, s4)
+    m: list[int] = [9]
+    first, *rest = m
+    print(first, rest)
+
+def spreads() -> None:
+    a: list[int] = [1, 2]
+    b: list[int] = [*a, 3, *a]
+    c: list[int] = [*a]
+    c.append(7)
+    print(b, c, a)
+    d1: dict[str, int] = {"a": 1, "b": 2}
+    d2: dict[str, int] = {**d1, "b": 20, "c": 3}
+    d3: dict[str, int] = {"z": 0, **d1, **d2}
+    print(d2, d3)
+    d4: dict[str, int] = {**d1}
+    d4["a"] = 99
+    print(d1, d4)
+
+for k in [0, 1, 2]:
+    try:
+        rethrow(k)
+    except Err1 as e:
+        print("top1", e.message)
+    except Err2 as e:
+        print("top2", e.message)
+try:
+    chain()
+except Err1 as e:
+    print(e.message, "cause=", e.cause)
+try:
+    bare_except()
+except Err2 as e:
+    print("got", e.message)
+unpack()
+spreads()

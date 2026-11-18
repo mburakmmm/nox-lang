@@ -48,6 +48,7 @@ const index_call_fixup = @import("index_call_fixup.zig");
 const guard_normalize = @import("guard_normalize.zig");
 const nonlocal_desugar = @import("nonlocal_desugar.zig");
 const generator_desugar = @import("generator_desugar.zig");
+const type_alias = @import("type_alias.zig");
 const mixin_flatten = @import("mixin_flatten.zig");
 const class_attr_promote = @import("class_attr_promote.zig");
 const derive = @import("derive.zig");
@@ -4213,6 +4214,11 @@ pub const Checker = struct {
             for (ex.names) |n| try set.put(self.allocator, n, {});
             try self.module_exports.put(self.allocator, ex.module, set);
         }
+        // Dil yüzeyi 2 (v2.2.22): `type Ad = Tip` takma adları, diğer tüm geçişlerden ÖNCE tip ifadelerinde açılır.
+        if (try type_alias.run(self.allocator, module.body)) |d| {
+            self.current_line = d.line;
+            return self.fail(error.TypeMismatch, "{s}", .{d.message});
+        }
         // TODO 8.6: `yield` → liste biriktirme (eager jeneratör).
         if (try generator_desugar.run(self.allocator, module.body, &self.cleanup_generators)) |d| {
             self.current_line = d.line;
@@ -4464,7 +4470,7 @@ pub const Checker = struct {
                     try self.collectSpawnTargetsExpr(d.call.callee.*);
                     for (d.call.args) |a| try self.collectSpawnTargetsExpr(a);
                 },
-                .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => {},
+                .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .type_alias, .break_stmt, .continue_stmt => {},
             }
         }
     }
@@ -4924,7 +4930,7 @@ pub const Checker = struct {
                 // birimler — v1.30.0'ın "transitif takip yok" kararıyla
                 // TUTARLI (BU graf SADECE üst-düzey fonksiyon/metod
                 // ÇAĞRILARINI kapsar).
-                .func_def, .class_def, .defer_stmt, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => {},
+                .func_def, .class_def, .defer_stmt, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .type_alias, .break_stmt, .continue_stmt => {},
             }
         }
     }
@@ -6415,6 +6421,7 @@ pub const Checker = struct {
             .class_def => return self.fail(error.TypeMismatch, "a class definition is only allowed at module level", .{}),
             .protocol_def => return self.fail(error.TypeMismatch, "a protocol definition is only allowed at module level", .{}),
             .extern_def => return self.fail(error.TypeMismatch, "'extern def' is only allowed at module level", .{}),
+            .type_alias => {}, // dil yüzeyi 2: takma adlar `type_alias.zig` ön geçişinde çözülür
             .import_stmt => return self.fail(error.TypeMismatch, "'import' is only allowed at module level", .{}),
             .from_import_stmt => return self.fail(error.TypeMismatch, "'from ... import' is only allowed at module level", .{}),
             .return_stmt => |r| {

@@ -149,7 +149,7 @@ const Finder = struct {
             },
             .defer_stmt => |d| self.call(d.call),
             // İç içe tanımlar kendi kapsamlarında analiz edilir (kapanış yakalamaları referans parametre YAPMAZ).
-            .func_def, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => {},
+            .func_def, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .type_alias, .pass_stmt, .break_stmt, .continue_stmt => {},
         }
     }
 };

@@ -147,7 +147,7 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
                 expr(d.call.callee, map);
                 for (d.call.args) |*a| expr(a, map);
             },
-            .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => {},
+            .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .type_alias, .break_stmt, .continue_stmt => {},
         }
         // v1.155.0: bu deyimin başlığında yükseltilen lambda `def`leri (fonksiyon içinde) deyimden ÖNCE tanımlanır: deyim, `def`lerle birlikte
         // `if True:` bloğuna sarılır (Nox'ta blok kapsamı yoktur; değişkenler fonksiyon boyunca görünür kalır).

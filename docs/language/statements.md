@@ -23,6 +23,29 @@ Re-stating the same type on a later assignment in the same scope is allowed; re-
 compile error. A declaration without a value is not allowed for local variables (a class body may declare *fields* without a value —
 see [Classes](classes.md#fields)).
 
+### Unpacking with `*` and nested targets
+
+`a, *rest = xs` binds `a` to the first element and `rest` to a new list of the others; `*init, last = xs` and `first, *mid, last = xs` work too (one starred target at most). The right-hand side must be a `list` for a starred target (its length must cover the plain targets). Targets may nest tuples: `(a, b), c = (1, 2), 3`.
+
+List and dict displays can spread other lists and dicts: `[*xs, 0, *ys]` builds a new list and `{**defaults, "k": v}` a new dict where later entries win. Operands must be lists (for `[*…]`) or dicts of the same type (for `{**…}`).
+
+```nox
+xs: list[int] = [1, 2, 3, 4]
+head, *tail = xs
+print(head, tail)
+joined: list[int] = [*tail, 0, *tail]
+print(joined)
+base: dict[str, int] = {"a": 1, "b": 2}
+over: dict[str, int] = {**base, "b": 20}
+print(over)
+```
+
+```output
+1 [2, 3, 4]
+[2, 3, 4, 0, 2, 3, 4]
+{'a': 1, 'b': 20}
+```
+
 ### Plain, augmented and tuple assignment
 
 ```nox

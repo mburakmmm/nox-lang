@@ -36,14 +36,14 @@ Her satırın başındaki "p.." probe numarasıdır (bugün `noxc check` sonucu)
 - [x] B1.9 (S) f-string `!r` / `!s` / `!a` dönüşümleri (p14) — şu an özel hata veriyor; `repr()` ve `str()` mevcut (doğrulandı), `ascii()` yok: `!r`→`repr(x)`, `!s`→`str(x)` yapılır, `!a` açık hata olarak kalır.
 
 ### B2. Anlamsal karar gerektirenler (AGENTS §16: önce sor)
-- [ ] B2.1 `[K]` (M) Çıplak `raise` (p07): `except` gövdesinde mevcut istisnayı yeniden fırlat. Mevcut istisna tutamacı codegen'de var; checker kuralı ("yalnızca except içinde"). Python'da çok yaygın → önerilir.
-- [ ] B2.2 `[K]` (M) `raise X from Y` (p08): neden zinciri. Seçenekler: (a) `Y`yi değerlendirip `__cause__` alanına yaz (istisna sınıflarına alan), (b) kabul et ama yok say (sözdizimi uyumu, davranış kaybı). Öneri: (a) küçük sürümle, `e.cause` salt-okunur.
-- [ ] B2.3 `[K]` (M) Yıldızlı açma `a, *b = xs` (p03) ve iç içe açma `(a, b), c = ...` (p44).
-- [ ] B2.4 `[K]` (M) Literal yayılımı `[*a, 2]` (p49), `{**a, "k": v}` (p48).
-- [ ] B2.5 `[K]` (M) `type IntList = list[int]` tip takma adı (p16): ad çözümleme, monomorphization etkileşimi, generic takma ad (v1: yalnızca tam tip takma adı).
-- [ ] B2.6 `[K]` (S) `global x` (p32): şu an sözdizimi hatası. Modül düzeyi değişken işlevden doğrudan atanabildiği için `global` anlamsal olarak gereksiz; seçenek: kabul et (no-op + doğrulama) ya da açık hata mesajı ("gerek yok, doğrudan atayın"). Öneri: açık yönlendirici mesaj.
-- [ ] B2.7 `[K]` (S) Varsayılan parametre değerinde sabit katlanmış ifade (p27: `b: int = 1 + 1`) — checker; düşük değer, öneri: yalnız tamsayı/float/dize sabit katlama.
-- [ ] B2.8 `[K]` (M) `bytes` literali `b"ab"` (p25): `bytes` tipi yok; `nox.binary.Buffer` var. Öneri: şimdilik yapılmaz, yalnız net hata mesajı.
+- [x] B2.1 `[K]` (M) Çıplak `raise` (p07): `except` gövdesinde mevcut istisnayı yeniden fırlat. Mevcut istisna tutamacı codegen'de var; checker kuralı ("yalnızca except içinde"). Python'da çok yaygın → önerilir.
+- [x] B2.2 `[K]` (M) `raise X from Y` (p08): neden zinciri. Seçenekler: (a) `Y`yi değerlendirip `__cause__` alanına yaz (istisna sınıflarına alan), (b) kabul et ama yok say (sözdizimi uyumu, davranış kaybı). Öneri: (a) küçük sürümle, `e.cause` salt-okunur.
+- [x] B2.3 `[K]` (M) Yıldızlı açma `a, *b = xs` (p03) ve iç içe açma `(a, b), c = ...` (p44).
+- [x] B2.4 `[K]` (M) Literal yayılımı `[*a, 2]` (p49), `{**a, "k": v}` (p48).
+- [x] B2.5 `[K]` (M) `type IntList = list[int]` tip takma adı (p16): ad çözümleme, monomorphization etkileşimi, generic takma ad (v1: yalnızca tam tip takma adı).
+- [x] B2.6 `[K]` (S) `global x` (p32): şu an sözdizimi hatası. Modül düzeyi değişken işlevden doğrudan atanabildiği için `global` anlamsal olarak gereksiz; seçenek: kabul et (no-op + doğrulama) ya da açık hata mesajı ("gerek yok, doğrudan atayın"). Öneri: açık yönlendirici mesaj.
+- [-] B2.7 `[K]` (kullanıcı kararında seçilmedi → yapılmadı) (S) Varsayılan parametre değerinde sabit katlanmış ifade (p27: `b: int = 1 + 1`) — checker; düşük değer, öneri: yalnız tamsayı/float/dize sabit katlama.
+- [-] B2.8 `[K]` (kullanıcı kararında seçilmedi → yapılmadı) (M) `bytes` literali `b"ab"` (p25): `bytes` tipi yok; `nox.binary.Buffer` var. Öneri: şimdilik yapılmaz, yalnız net hata mesajı.
 
 ### B3. Tasarım gereği, yapılmaz (`[-]`) — yalnızca belgede açık dursun
 - [-] `%` biçimlendirme (p13), `import *` (p19), göreli içe aktarma (p20), dilim ataması/silme (p21), `del name` (p10), işlev içi `import` (p33), `g(*xs)` için `*args` parametresi şartı (p36), ifade-içi walrus (p22), `isinstance`/`weakref`, `list[Task[T]]`, çıplak `Callable[...]` yazımı (Nox'un fonksiyon tipi sözdizimi farklıdır).
@@ -71,6 +71,6 @@ Bunlar lexer/parser taşımasını etkilemez; **dondurma şartı değildir**, bi
 
 | Grup | Madde | Bitti |
 |---|---|---|
-| A belge | 7 | 0 |
-| B1 küçük/kesin | 9 | 0 |
-| B2 karar gerekir | 8 | 0 |
+| A belge | 7 | 7 |
+| B1 küçük/kesin | 9 | 9 |
+| B2 karar gerekir | 8 (6 yapıldı, 2 yapılmaz) | 6 |

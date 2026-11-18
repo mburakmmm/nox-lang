@@ -82,10 +82,14 @@ module.exports = grammar({
         $.expression_statement,
         $.ellipsis_statement,
         $.global_statement,
+        $.type_alias_statement,
     ),
 
     // `...` (v2.2.21): gövde yer tutucusu, `pass` ile eşdeğer.
     ellipsis_statement: _$ => '...',
+
+    // `type IntList = list[int]` (v2.2.22): modül düzeyinde tip takma adı.
+    type_alias_statement: $ => seq('type', field('name', $.identifier), '=', field('target', $._type_expression)),
 
     // `global a, b` (v2.2.21): davranışsız; adlar modül düzeyi değişken olmalıdır.
     global_statement: $ => seq('global', commaSep1($.identifier)),
@@ -168,11 +172,12 @@ module.exports = grammar({
     defer_statement: $ => seq('defer', field('call', $._expression)),
 
     // v1.157.0: çıplak tuple/açma — `a, b = b, a`, `return a, b`
-    expression_list: $ => seq($._expression, repeat1(seq(',', $._expression)), optional(',')),
+    expression_list: $ => seq(choice($._expression, $.list_splat), repeat1(seq(',', choice($._expression, $.list_splat))), optional(',')),
 
     return_statement: $ => seq('return', optional(field('value', choice($._expression, $.expression_list)))),
 
-    raise_statement: $ => seq('raise', field('value', $._expression)),
+    // `raise` (çıplak, yalnızca except içinde) ve `raise X from Y` (v2.2.22)
+    raise_statement: $ => seq('raise', optional(seq(field('value', $._expression), optional(seq('from', field('cause', $._expression)))))),
 
     pass_statement: _$ => 'pass',
 
@@ -517,8 +522,12 @@ module.exports = grammar({
     // Boş `[]` GEÇERLİDİR (tip çıkarımı checker'da reddedilir — bkz.
     // ast.zig'in list_lit notu), ama boş `{}` GEÇERSİZDİR (parser en az
     // bir çift BEKLER) — bkz. parser.zig'in parsePrimary'si.
-    list: $ => seq('[', commaSep($._expression), ']'),
-    dict: $ => seq('{', commaSep1($.pair), '}'),
+    list: $ => seq('[', commaSep(choice($._expression, $.list_splat)), ']'),
+    // `*a` (v2.2.22): liste literalinde yayılım ve `a, *b = xs` açma hedefi.
+    list_splat: $ => seq('*', $._expression),
+    dict: $ => seq('{', commaSep1(choice($.pair, $.dictionary_splat)), '}'),
+    // `**d` (v2.2.22): sözlük literalinde yayılım.
+    dictionary_splat: $ => seq('**', $._expression),
     // `{1, 2}` ve `{x for x in xs}` — küme (v1.168.0); boş `{}` sözlüktür, boş küme `set()`
     set: $ => seq('{', $._expression, repeat(seq(',', $._expression)), optional(','), '}'),
     set_comprehension: $ => seq('{', field('element', $._expression), repeat1($._comp_clause), '}'),

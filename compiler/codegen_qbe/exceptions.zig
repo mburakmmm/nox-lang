@@ -588,7 +588,7 @@ pub fn collectRaiseInfoStmt(self: *Codegen, stmt: ast.Stmt, info: *FuncSafetyInf
             try self.declareVarType(f.var_name, elem_cn, var_types, poisoned);
             try self.collectRaiseInfoStmts(f.body, info, class_ctx, var_types, poisoned, list_elem_types);
         },
-        .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt => {},
+        .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .import_stmt, .from_import_stmt, .type_alias => {},
         .return_stmt => |r| if (r) |e| try self.collectRaiseInfoExpr(e, info, class_ctx, var_types, poisoned),
         .raise_stmt => |e| {
             info.direct_unsafe = true;

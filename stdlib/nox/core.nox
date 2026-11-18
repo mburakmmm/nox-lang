@@ -26,10 +26,29 @@ class Exception:
         # e` deyiminin KENDİSİ FARKLI satırlarda OLABİLİR, bu YÜZDEN
         # satır bilgisi KONSTRÜKTÖRDE DEĞİL, raise ANINDA yazılmalıdır.
         self.line = 0
+        # Dil yüzeyi 2 (v2.2.22): `raise X from Y` — `Y`nin mesajı (`__nox_with_cause`); sıradan `raise`de boş. Nesne değil metin tutulur: `Exception | None` alanı Exception'ı
+        # döngüsel-olabilir yapar ve her istisna nesnesini döngü toplayıcıya bağlardı.
+        self.cause = ""
 
     # v1.164.0: `print(e)` / `str(e)` / f-string — Python gibi YALNIZCA mesajı yazar (`__str__` protokolü, bkz. spec §3.279).
     def __str__(self: Exception) -> str:
         return self.message
+
+# `raise X from Y` indirgemesi (parser): `X`in `cause` alanına `Y`nin mesajını yazıp `X`i döner.
+def __nox_with_cause[E](e: E, cause: Exception) -> E:
+    e.cause = cause.message
+    return e
+
+# `{**a, "k": v, **b}` indirgemesi (parser): sözlükleri soldan sağa birleştirir (sonraki değer öncekini ezer, ekleme sırası korunur).
+def __nox_dict_merge[K, V](*parts: dict[K, V]) -> dict[K, V]:
+    out: dict[K, V] = {}
+    i: int = 0
+    while i < len(parts):
+        p: dict[K, V] = parts[i]
+        for k in p.keys():
+            out[k] = p[k]
+        i = i + 1
+    return out
 
 class ValueError(Exception):
     pass

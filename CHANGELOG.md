@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.22]
+
+Dil yüzeyi 2 (bootstrap öncesi yüzey tamamlaması, kullanıcı kararları 2026-11-18).
+
+- **Dil:** çıplak `raise` (yalnızca `except` içinde; yeniden fırlatır) ve `raise X from Y` (`X.cause`ye `Y.message` yazılır; `from None` = `raise X`); yıldızlı açma `a, *b = xs` / `*a, b = xs` / `a, *m, z = xs` (liste) ve iç içe açma `(a, b), c = …`; liste yayılımı `[*a, 1, *b]` ve sözlük yayılımı `{**a, "k": v, **b}`; modül düzeyi tip takma adı `type Ad = Tip` (kullanımlar tip denetiminden önce açılır, jenerik takma ad yok). `Exception` sınıfına `cause: str` alanı eklendi (`core.nox`; döngüsel `Exception | None` yerine metin: her istisnayı döngü toplayıcıya bağlamamak için) — bu yüzden tüm IR anlık görüntüleri yenilendi.
+- **Uygulama:** yeni `StmtKind.type_alias` (+ `compiler/typecheck/type_alias.zig` ön geçişi); diğer her şey mevcut AST düğümlerine iner (`spread`/`raise_from`/`spread_lit` bayrakları ve `unpack_origin`/`synth_bind` yüzey bilgisi yalnızca formatter içindir). Prelude: `__nox_with_cause`, `__nox_dict_merge`.
+- **Araçlar:** `noxc fmt` çıplak `raise`i (bağlamasız yan tümcede), `raise … from …`, yıldızlı/iç içe açmayı, `[*a]`/`{**d}` ve `type` takma adlarını özgün biçimde yazar; tree-sitter dilbilgisi güncellendi.
+- **Belgeler:** `exceptions`, `statements`, `types`, `grammar`, `python-differences`; spesifikasyon §3.469.
+- **Testler:** `lang_surface_2` ve `type_alias_basic` çalıştırma fixture'ları (iki backend), tip denetimi goldenları, fmt/parser testleri, tree-sitter corpus.
+
 ## [2.2.21]
 
 Dil yüzeyi 1 (bootstrap öncesi Python-uyumlu sözdizimi tamamlaması; `project/dil-yuzeyi-acik-kalemler-2026-11-18.md`).

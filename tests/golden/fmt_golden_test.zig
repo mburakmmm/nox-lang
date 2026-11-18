@@ -653,3 +653,27 @@ test "fmt: dil yüzeyi 1 (v2.2.21) — for/while/try else yazılan biçimde koru
     const twice = try formatSource(allocator, once);
     try std.testing.expectEqualStrings(once, twice);
 }
+
+test "fmt: dil yüzeyi 2 (v2.2.22) — çıplak raise, raise from, yıldızlı/iç içe açma ve yayılım yazılan biçimde korunur" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source =
+        "def f(xs: list[int], m: dict[str, int]) -> None:\n" ++
+        "    try:\n        pass\n    except ValueError:\n        raise\n    except KeyError as e:\n        raise RuntimeError(\"x\") from e\n" ++
+        "    a, *b = xs\n    (p, q), *r = [(1, 2), (3, 4)]\n" ++
+        "    c: list[int] = [*a, 1, *b]\n    d: dict[str, int] = {**m, \"k\": 1, **m}\n";
+    const once = try formatSource(allocator, source);
+    try std.testing.expectEqualStrings(source, once);
+    const twice = try formatSource(allocator, once);
+    try std.testing.expectEqualStrings(once, twice);
+}
+
+test "fmt: dil yüzeyi 2 (v2.2.22) — `type Ad = Tip` yazılan biçimde korunur ve kullanımlar takma ad adıyla kalır" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = "type IntList = list[int]\n\ndef f(xs: IntList) -> IntList:\n    return xs\n";
+    const once = try formatSource(allocator, source);
+    try std.testing.expectEqualStrings(source, once);
+}

@@ -179,11 +179,13 @@ pub const Unary = struct { op: UnaryOp, operand: *Expr };
 /// v1.162.0: aritmetik işlemde birleşik atama (`x += 1`), `and_`te zincirleme karşılaştırma (`a < b < c`) yüzey biçimi.
 /// `opt_eq`: v2.1.111 — YALNIZCA checker doldurur: `==`/`!=` işlenenlerinden en az biri `T | None` (diğeri `T | None` ya da `T`).
 /// Codegen null-güvenli değer eşitliği üretir (None == None doğru, None ile değer eşitsiz, iki değer iç tipin eşitliğine devredilir).
-pub const Binary = struct { op: BinaryOp, left: *Expr, right: *Expr, is_form: bool = false, fstring: bool = false, opt_eq: bool = false };
+/// `spread`: dil yüzeyi 2 (v2.2.22) — `[*a, 1, *b]` literalinin indirgendiği `+` zincirinin düğümleri; yalnızca formatter yüzey yazımını korur.
+pub const Binary = struct { op: BinaryOp, left: *Expr, right: *Expr, is_form: bool = false, fstring: bool = false, opt_eq: bool = false, spread: bool = false };
 /// `fstring`: v1.164.0 — f-string / `"...".format(...)` parçası (`str(x)` / `format(x, spec)`) ya da zincir kökü; yalnızca formatter yazımı korur.
 /// `eval_order`: v1.169.0 — keyword argümanlar parametre sırasına çevrildiğinde, YAN ETKİLİ argümanların KAYNAK sırasıyla değerlendirilmesi için
 /// `args` indekslerinin değerlendirme sırası (yalnızca sıra gerçekten değiştiğinde dolu; `null` = `args` sırası).
-pub const Call = struct { callee: *Expr, args: []Expr, fstring: bool = false, set_lit: bool = false, eval_order: ?[]const u8 = null };
+/// `raise_from`: `raise X from Y` (`__nox_with_cause(X, Y)`); `spread_lit`: `[*a]` (`a.copy()`) ve `{**a, k: v}` (`__nox_dict_merge(...)`) — yalnızca formatter yüzey yazımını korur (dil yüzeyi 2, v2.2.22).
+pub const Call = struct { callee: *Expr, args: []Expr, fstring: bool = false, set_lit: bool = false, eval_order: ?[]const u8 = null, raise_from: bool = false, spread_lit: bool = false };
 pub const Attribute = struct { obj: *Expr, attr: []const u8 };
 pub const Index = struct { obj: *Expr, index: *Expr };
 
@@ -472,9 +474,17 @@ pub const VarDecl = struct {
     class_attr: ?ClassAttrRef = null,
     /// `match` deyiminin parser'ın eklediği gizli konu değişkeni (`__match_N: __infer = konu`): formatter bunu yazmaz (`match` kaynağı `IfStmt.match_origin`den yeniden üretilir).
     is_match_temp: bool = false,
+    /// Dil yüzeyi 2 (v2.2.22): yıldızlı/iç içe açma (`a, *b = xs`, `(a, b), c = t`) gizli geçici bildirimi; yüzey biçimi burada, formatter `skip` sonraki sentetik deyimi atlar.
+    unpack_origin: ?*const UnpackOrigin = null,
     /// O1 (v2.2.20): kullanıcının `ad := ifade` yazdığı bildirim (tip `__infer`, değerden çıkarılır). Formatter `:=` biçimini korur; checker boş kapsayıcı/`None`/modül düzeyini reddeder.
     infer_assign: bool = false,
 };
+
+/// Açma hedefi (dil yüzeyi 2): `expr` (ad/alan/indeks) ya da `nested` (iç içe `(a, b)`), `star` ise `*ad`.
+pub const UnpackTarget = struct { expr: ?Expr = null, star: bool = false, nested: ?[]const UnpackTarget = null };
+pub const UnpackOrigin = struct { targets: []const UnpackTarget, rhs: Expr, skip: u32 };
+
+pub const TypeAliasStmt = struct { name: []const u8, target: TypeExpr };
 
 pub const ClassAttrRef = struct { class: []const u8, name: []const u8 };
 
@@ -494,6 +504,9 @@ pub const ExceptClause = struct {
     class_name: ?[]const u8,
     bind_name: ?[]const u8,
     body: []Stmt,
+    /// Dil yüzeyi 2 (v2.2.22): gövdedeki çıplak `raise` için parser'ın eklediği ad (`bind_name`) / `Exception` sınıfı (`class_name`); formatter yüzey biçimini (bağlamasız `except:`/`except E:`) yazar.
+    synth_bind: bool = false,
+    synth_class: bool = false,
 };
 
 pub const TryStmt = struct {
@@ -590,6 +603,7 @@ pub const FromImportStmt = struct {
 pub const StmtKind = union(enum) {
     expr_stmt: Expr,
     var_decl: VarDecl,
+    type_alias: TypeAliasStmt,
     assign: Assign,
     if_stmt: IfStmt,
     while_stmt: WhileStmt,

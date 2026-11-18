@@ -376,7 +376,7 @@ pub const Analyzer = struct {
                 // dönüşüne kadar SAKLANDIĞINDAN GERÇEK bir kaçıştır) normal bir
                 // çağrı GİBİ taranır.
                 .defer_stmt => |d| self.scanExprEscapes(scope, index_of, ast.Expr{ .call = d.call }),
-                .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .lowlevel_stmt, .import_stmt, .from_import_stmt => {},
+                .func_def, .class_def, .protocol_def, .extern_def, .pass_stmt, .break_stmt, .continue_stmt, .lowlevel_stmt, .import_stmt, .from_import_stmt, .type_alias => {},
             }
         }
     }
@@ -705,7 +705,7 @@ pub const Analyzer = struct {
                 },
                 .defer_stmt => |d| if (self.nameEscapesExpr(.{ .call = d.call }, name)) return true,
                 .func_def => |fd| if (self.nameEscapesStmts(fd.body, name)) return true,
-                .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .lowlevel_stmt, .import_stmt, .from_import_stmt => {},
+                .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .lowlevel_stmt, .import_stmt, .from_import_stmt, .type_alias => {},
             }
         }
         return false;

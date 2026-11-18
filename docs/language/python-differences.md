@@ -29,16 +29,16 @@ Integer `//` and `%` by zero raise `ZeroDivisionError`; float division never rai
   (`r"…"`), adjacent literal concatenation, `...` and `global x` are supported; `noxc fmt` writes the expanded canonical form.
 - No Python expression walrus (`(n := f())`); `x := value` is a *declaration* statement that infers the type (see [Types](types.md#inferred-local-declarations)).
 - `*args`, `**kwargs`, keyword-only (`*`), positional-only (`/`) and call-site unpacking (`f(*xs)`, `f(**d)`) are supported (see
-  [Functions](functions.md)); `f(**d)` never binds a named parameter by key. There is no star-assignment (`a, *b = xs`). Default values must be
+  [Functions](functions.md)); `f(**d)` never binds a named parameter by key. Star-assignment (`a, *b = xs`, lists only), nested targets and `[*a]`/`{**d}` displays work. Default values must be
   constant literals.
 - `yield` generators are **lazy** state machines typed `Iterator[T]` (see [Functions](functions.md#generators-yield)); `yield` inside `try … finally` is allowed, there is no `send()`. Generator expressions are accepted only as a call argument and are evaluated eagerly into a list.
 - `nonlocal` is supported (the variable needs an explicit type at its first declaration); `global x` is accepted and changes nothing, because module-level names are assigned directly from functions.
 - No `%` formatting and no `!a` in f-strings (`!r` and `!s` work). `\xHH` is limited to ASCII; use `\uHHHH`/`\UHHHHHHHH` for other characters. Identifiers are compared by code point (no NFKC normalization; see [`nox.unicode`](../stdlib/unicode.md) for normalizing text).
-- No bare `raise` (use `raise e`) and no `raise … from …`.
+- Bare `raise` (inside `except`) and `raise X from Y` (the cause is stored as `X.cause`, the message text of `Y`) work.
 - `async with` and `async for` exist; `await` takes a `Task`, a channel operation or an async-protocol call, not an arbitrary expression.
 - No `del name` (only `del xs[i]` and `del d[k]`).
 - `__name__ == "__main__"` does not exist: the top-level statements of the entry file are the program, and `main` is a reserved name.
-- Python's `type` aliases and decorators that wrap are not part of Nox. `match` (on `enum`s), `@property`, `@staticmethod` and `@classmethod` are.
+- `type Name = T` aliases are supported (module level, no generic aliases); decorators that wrap are not part of Nox. `match` (on `enum`s), `@property`, `@staticmethod` and `@classmethod` are.
 - Chained comparisons (`a < b < c`) work.
 
 ## Collections and iteration

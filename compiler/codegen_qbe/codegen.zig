@@ -2237,7 +2237,7 @@ pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Modu
     defer plan.deinit(allocator);
     for (module.body, 0..) |stmt, i| {
         switch (stmt.kind) {
-            .func_def, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
+            .func_def, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .type_alias => {},
             else => if (gen.stmtRunsInGlobalInit(stmt, i)) {
                 try plan.append(allocator, .{ .init_stmt = stmt });
             } else {

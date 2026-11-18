@@ -149,7 +149,7 @@ const Pass = struct {
                 try self.walkExpr(d.call.callee);
                 for (d.call.args) |*x| try self.walkExpr(x);
             },
-            .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .break_stmt, .continue_stmt => {},
+            .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .type_alias, .break_stmt, .continue_stmt => {},
         }
     }
 

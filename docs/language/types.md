@@ -54,6 +54,30 @@ Assigning a value of the wrong type is a compile error. Re-declaring a name in t
 compile error too (this includes reusing a loop variable name for loops over different element types). The one implicit
 conversion is `int → float` on assignment and in mixed arithmetic.
 
+## Type aliases
+
+`type Name = <type>` gives a type a second name. It is a module-level statement; every use of the alias is replaced by the type it stands for before type checking, so an alias and its target are the same type:
+
+```nox
+type Scores = dict[str, list[int]]
+type Id = int
+
+def best(s: Scores, who: str) -> Id:
+    top: Id = 0
+    for v in s[who]:
+        if v > top:
+            top = v
+    return top
+
+print(best({"ann": [3, 9, 4]}, "ann"))
+```
+
+```output
+9
+```
+
+Aliases may refer to one another (a cycle is an error), may be used before their definition, and cannot share a name with a class or function. Generic aliases (`type Pair[T] = …`) and aliases inside functions are not supported, and an alias is not exported from its module (import the target type instead).
+
 ## The scalar types
 
 | Type | Values | Notes |

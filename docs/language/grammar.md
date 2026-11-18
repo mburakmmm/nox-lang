@@ -15,9 +15,9 @@ statement      = simple_stmts NEWLINE | compound_stmt ;
 simple_stmts   = simple_stmt { ";" simple_stmt } [ ";" ] ;
 simple_stmt    = var_decl | infer_decl | assignment | aug_assignment | tuple_assignment
                | expr
-               | "pass" | "..." | "global" NAME { "," NAME } | "break" | "continue"
+               | type_alias | unpack_assign | "pass" | "..." | "global" NAME { "," NAME } | "break" | "continue"
                | "return" [ expr { "," expr } ]
-               | "raise" expr
+               | "raise" [ expr [ "from" expr ] ]
                | "del" target
                | "assert" expr [ "," expr ]
                | "defer" call
@@ -29,6 +29,9 @@ assignment     = target "=" expr ;
 aug_assignment = target aug_op expr ;
 aug_op         = "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**=" | "&=" | "|=" | "^=" | "<<=" | ">>=" ;
 tuple_assignment = target "," target { "," target } "=" expr { "," expr } ;
+unpack_assign  = unpack_target { "," unpack_target } "=" expr ;   (* one "*name"; "(a, b)" nests *)
+unpack_target  = [ "*" ] target | "(" unpack_target { "," unpack_target } ")" ;
+type_alias     = "type" NAME "=" type ;               (* module level *)
 target         = NAME | target "." NAME | target "[" expr "]" ;
 
 import_stmt    = "import" dotted [ "as" NAME ]
@@ -119,8 +122,10 @@ atom           = NAME | NUMBER | STRING | FSTRING | "True" | "False" | "None"
                | "(" expr ")" | tuple | list | dict | set | comprehension
                | "spawn" call | "await" postfix ;
 tuple          = "(" expr "," [ expr { "," expr } ] ")" ;
-list           = "[" [ expr { "," expr } [ "," ] ] "]" ;
-dict           = "{" [ expr ":" expr { "," expr ":" expr } ] "}" ;
+list           = "[" [ list_item { "," list_item } [ "," ] ] "]" ;
+list_item      = [ "*" ] expr ;
+dict           = "{" [ dict_item { "," dict_item } [ "," ] ] "}" ;
+dict_item      = expr ":" expr | "**" expr ;
 set            = "{" expr { "," expr } "}" ;
 comprehension  = "[" expr comp_for "]" | "{" expr ":" expr comp_for "}" | "{" expr comp_for "}" ;
 comp_for       = ( "for" for_target "in" or_expr { "if" or_expr } )+ ;

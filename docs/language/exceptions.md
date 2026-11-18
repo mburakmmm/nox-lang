@@ -186,6 +186,42 @@ caught after exit
 A `with` statement can manage several resources: `with a as x, b as y:` is `with a as x:` containing `with b as y:` — `b` is entered after `a` and
 exited before it. `noxc fmt` writes the nested form.
 
+## Re-raising and chaining
+
+A bare `raise` inside an `except` block raises the exception that block caught again (`noxc fmt` keeps the bare form when the clause binds no name; when it does bind one, the formatter writes `raise e`). Outside an `except` block a bare `raise` is a syntax error.
+`raise X from Y` raises `X` and records `Y.message` in `X.cause` (a `str`, empty for an ordinary `raise`); `raise X from None` is just `raise X`. There is no traceback object, so the cause is the message text.
+
+```nox
+class AppError(Exception):
+    pass
+
+def load(path: str) -> None:
+    try:
+        raise ValueError("bad number")
+    except ValueError as e:
+        raise AppError("could not load " + path) from e
+
+try:
+    load("cfg")
+except AppError as e:
+    print(e.message, "|", e.cause)
+
+try:
+    try:
+        raise ValueError("inner")
+    except ValueError:
+        print("cleanup")
+        raise
+except ValueError as e:
+    print("again:", e.message)
+```
+
+```output
+could not load cfg | bad number
+cleanup
+again: inner
+```
+
 ## `defer`
 
 `defer call(args)` (Go-style) schedules a call for when the enclosing function exits by any route; several `defer`s run **last in,

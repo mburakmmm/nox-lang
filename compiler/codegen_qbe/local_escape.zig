@@ -353,7 +353,7 @@ fn stmtsSafeForLocal(self: *const Codegen, stmts: []const ast.Stmt, name: []cons
             // yoktur. `try`/`lowlevel`/`with`/`defer` hâlâ iptal eder.
             .func_def => |fd| if (closureBodyMentions(self, fd.body, null, name) or !stmtsSafeForLocal(self, fd.body, name, class_params)) return false,
             .try_stmt, .lowlevel_stmt, .with_stmt, .defer_stmt => return false,
-            .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
+            .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .type_alias => {},
         }
     }
     return true;
@@ -576,7 +576,7 @@ fn stmtsSafeForGrowableLocal(self: *const Codegen, stmts: []const ast.Stmt, name
             .del_stmt => |e| if (exprHasUnsafeGrowableLocalUse(self, e, name)) return false,
             .func_def => |fd| if (closureBodyMentions(self, fd.body, null, name) or !stmtsSafeForGrowableLocal(self, fd.body, name)) return false,
             .try_stmt, .lowlevel_stmt, .with_stmt, .defer_stmt => return false,
-            .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt => {},
+            .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .type_alias => {},
         }
     }
     return true;

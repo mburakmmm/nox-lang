@@ -2683,3 +2683,24 @@ test "golden(typecheck): dil yüzeyi (v2.2.21) — dil yüzeyi 1 kısayolları t
         @embedFile("typecheck_cases/ok_lang_surface_1.expected"),
     );
 }
+
+test "golden(typecheck): dil yüzeyi 2 (v2.2.22) — takma ad döngüsü reddedilir" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_type_alias_cycle.nox"),
+        @embedFile("typecheck_cases/err_type_alias_cycle.expected"),
+    );
+}
+
+test "golden(typecheck): dil yüzeyi 2 (v2.2.22) — aynı takma ad iki kez tanımlanamaz" {
+    try expectGolden(
+        @embedFile("typecheck_cases/err_type_alias_duplicate.nox"),
+        @embedFile("typecheck_cases/err_type_alias_duplicate.expected"),
+    );
+}
+
+test "golden(typecheck): dil yüzeyi 2 (v2.2.22) — takma adlar tip denetiminden geçer" {
+    try expectGolden(
+        @embedFile("typecheck_cases/ok_type_alias.nox"),
+        @embedFile("typecheck_cases/ok_type_alias.expected"),
+    );
+}

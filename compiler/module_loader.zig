@@ -869,7 +869,7 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         // Bir stdlib modülünün KENDİ `import`u — segmentler stdlib DOSYA
         // YOLUdur, Nox bildirim adı DEĞİLDİR; yeniden adlandırmaya gerek yok.
         // (Zaten `loadImportsRecursive` tarafından AYRICA işlenir.)
-        .import_stmt => return s,
+        .import_stmt, .type_alias => return s,
         // Faz U.3: `.import_stmt` İLE AYNI gerekçe — `from ... import`ın
         // `segments`i de bir DOSYA YOLUdur, `names`teki üye adları YEREL
         // takma adlardır (Nox bildirim adları DEĞİL) — yeniden adlandırmaya
