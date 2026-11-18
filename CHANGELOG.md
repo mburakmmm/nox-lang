@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.27]
+
+GPT-6 P1.5: STW güvenli-nokta gecikmesi ölçüldü (kod değişikliği yok).
+
+- **Ölçüm:** `benchmarks/stw_latency` (4 işçi, `serve_multicore`). Normal yük: `/ping` p99 1,5 ms; döngüsel çöp toplaması görünür etki yok (max 5,7 ms). 300 ms yield etmeyen bir işleyici + eşzamanlı toplama isteği: TÜM işçilerin p99'u ≈ 298 ms (toplam istek sayısı 4199 → 1399). Gecikme yığın boyutuna değil, en uzun yield etmeyen CPU parçasına bağlı: STW yalnızca fiber'lar ARASINDA (`Scheduler.run` döngüsünün başı) katılır.
+- **Karar:** önleyici güvenli nokta (döngü geri-kenarı yoklaması/yield) uygulanmadı — her iki backend'de codegen + sıcak yolda maliyet demektir; ölçüm yalnızca uzun yield etmeyen işleyici + eşzamanlı toplama kesişiminde sorun gösteriyor. Belgelendi (`docs/language/memory.md` "Pauses with several workers").
+
 ## [2.2.26]
 
 Bayt farkında döngü toplama tetikleyicisi (GPT-6 P1.4; performans kaybı koşuluyla).

@@ -66,6 +66,10 @@ The output lists inline retain and release counts per heap kind (`str`, `list`, 
 
 With `NOX_RC_STATS=1` the exit report also contains `NOXGC` lines: how many cycle collections ran, their total/longest pause and a log2 histogram of pause lengths (`parallel=` counts the collections that ran multi-threaded).
 
+### Pauses with several workers
+
+With `serve_multicore` or a thread pool, a cycle collection stops all workers at a **safe point between fibers**. A worker that is inside one long CPU-bound stretch with no I/O, `await` or `yield` cannot reach it, so every other worker waits until that stretch ends. Measured with four workers (`benchmarks/stw_latency`): ordinary requests have a p99 of 1.5 ms and a collection adds nothing visible (max 5.7 ms); with a 300 ms non-yielding handler running and a collection requested at the same time, the p99 of *all* workers becomes about 300 ms. The stall is bounded by the longest non-yielding stretch, not by the size of the heap. If a handler does long pure computation, split it with an `await` between chunks, or keep cyclic data out of that service so no collection is requested.
+
 ### Large cyclic garbage
 
 The collector also reacts to **bytes**, not only to the number of candidate objects: when the live memory held in large blocks (64 KiB and up — big lists and strings) has grown by 64 MiB since the last collection and cyclic candidates are waiting, the next candidate registration starts a collection. A collection that frees little backs the trigger off (the step doubles, up to 4 GiB), so a large live cyclic structure is not rescanned over and over. Nothing is added to the allocation of small objects or to reference counting; only allocating and freeing a block of 64 KiB or more updates one counter. wasm and freestanding builds do not use it.

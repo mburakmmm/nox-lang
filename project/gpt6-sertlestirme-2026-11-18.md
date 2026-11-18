@@ -10,7 +10,7 @@ Yöntem (kullanıcı kuralları): her bulgu önce güncel kaynakta doğrulandı;
 | P1.2 | Paralel/sıralı fark testi yalnızca sayı | **T** | Test artık serbest bırakılan düğüm kimlik kümesini karşılaştırır (6 tohum × 2/3/4/8 iş parçacığı). |
 | P1.3 | Allocator iş parçacığı sözleşmesi | **T** | `docs/apis/internal-abi.md`: freestanding çalışma zamanı tek iş parçacıklı, kancalar kilitsiz, ≥8 bayt hizalama, kesme içinden yeniden girişsiz. |
 | P1.4 | Bayt farkında GC baskısı | **D (v2.2.26)** | 600 MB → 89 MB tepe RSS, süre aynı; yalnız büyük tahsis/serbest yollarında bir sayaç, derleyici/IR değişmedi; kapı geçti, A/B 59 ms ↔ 59 ms. Tasarım: `nox-teknik-spesifikasyon.md` §3.472. |
-| P1.5 | STW güvenli-nokta gecikmesi | **K** | Ölçülmedi/değiştirilmedi: kooperatif STW'nin sınırı tasarımdır; önleyici (preemptive) güvenli nokta mimari karar. |
+| P1.5 | STW güvenli-nokta gecikmesi | **Ö (v2.2.27)** | `benchmarks/stw_latency`: STW yalnızca fiber'lar arasında katılır; 300 ms yield etmeyen işleyici + toplama isteği → tüm işçilerin p99'u ≈ 298 ms (normal yükte 1,5 ms). Gecikme en uzun yield etmeyen CPU parçasıyla sınırlı. Önleyici güvenli nokta yapılmadı (mimari karar, codegen + sıcak yol maliyeti); belgelendi. |
 | P1.6 | Tüketen işlev/kurucu/`_c` klon stresi | **T** | `ctor_consume_stress` fixture'ı: istisna atan kurucu, çift ters çevirme, listeye ekleme, 2000 tur; iki backend, sızıntı/çifte serbest bırakma denetimli (Debug çalışma zamanı). Hata bulunmadı. |
 | P1.7 | Satır içi havuz tahsisi / M geçişleri | **T (okuma)** | Satır içi yol yalnızca `pool_ever_active == false` iken açık; `WorkerPool.create` bayrağı işçilerden önce kapatır; slot 0 serbest listesine yalnızca çağıran dokunur; `nox.thread` çocukları kendi `rt`sine sahip. Çürütülen bir senaryo bulunmadı; P0.1 düzeltmesi ek olarak `fiber_ever_active`i havuzla birlikte açar. |
 | P1.8 | Yıldızlı açmada minimum uzunluk | **D** | `a, *b, c = [1]` sessizce yanlış okuyordu → `ValueError("not enough values to unpack (expected at least 2, got 1)")`. Fixture `star_unpack_min_len` (iki backend). |
@@ -26,5 +26,16 @@ Yöntem (kullanıcı kuralları): her bulgu önce güncel kaynakta doğrulandı;
 ## Kullanıcıya bırakılan kararlar
 
 1. ~~**P1.4**~~ — yapıldı (v2.2.26).
-2. **P1.5** — önleyici güvenli nokta (tasarım gereği kooperatif; değiştirmek mimari).
+2. **P1.5** — ölçüldü (v2.2.27); önleyici güvenli nokta yalnızca isterseniz ayrı bir tasarım turunda (aşağıdaki seçenekler).
 3. **P0.2 politikası** — iş listesi OOM'unda panik (sessiz bozulmanın yerine). Alternatif (Boehm tarzı taşma yeniden taraması) daha karmaşık; istenirse sonraki tur.
+
+## P1.5 ölçüm sonucu ve seçenekler (v2.2.27)
+
+| Senaryo (4 işçi, 3 ping istemcisi) | p50 | p99 | max |
+|---|---|---|---|
+| yalnız ping | 0,58 | 1,52 | 5,9 ms |
+| döngüsel çöp toplaması (STW) | 0,69 | 1,66 | 5,7 ms |
+| 300 ms spin (toplama yok) | 0,30 | 0,60 | 300 ms (yalnızca o işçinin kendi isteği) |
+| spin + toplama isteği | 0,35 | **298** | 300 ms (tüm işçiler) |
+
+Seçenekler: (a) yapma + belgele (yapıldı); (b) döngü geri-kenarlarına yield yoklaması (yalnız havuz modunda; her iki backend'de codegen, tahmini %1-3 yavaşlama, ölçülmeli); (c) toplamayı yalnız bekleyen STW isteği süresi dolunca ertelemek (toplama gecikir, bellek şişer); (d) işleyicide uzun hesabı `await` ile bölme (kullanıcı tarafı). Öneri: (a) + gerçek bir yük şikâyeti gelirse (b) ayrı tasarım.
