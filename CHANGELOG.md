@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.43]
+
+Liste için kararlı başlık (handle) yeniden tasarımı — dogfood D1.2 çözüldü: `ys = xs; xs.append(v)` büyümede de Python gibi çalışır.
+
+- **Yeni liste düzeni:** `[len][cap][data][satır içi elemanlar]` (`LIST_HEADER_SIZE` 16 → 24; `shared/abi_layout.zig`). Başlık adresi listenin ömrü boyunca ASLA değişmez; `data` başlangıçta satır içi tamponu gösterir, `append` kapasiteyi aşınca elemanlar ayrı bir tampona taşınır (`data`/`cap` güncellenir). Literal/`split`/comprehension listeleri hâlâ tek tahsis; maliyet liste başına +8 bayt ve elemana bir ek yükleme (LLVM'de `list_data` TBAA etiketiyle döngü dışına çıkar).
+- **Davranış:** takma ad (`ys = xs`), işlev/metot parametresi, sınıf alanı, iç içe liste, modül global'i ve dict değeri üzerinden büyüme her yerde görünür. Eski "büyüyen listeyi tek sahiple tut" notları (öğretici, `python-differences`, `concurrency`, `functions`) kaldırıldı; `append` artık alıcının slotuna geri yazmaz (liste parametresi kısıtı, "referans liste parametresi" çözümleyicisi `ref_params.zig` ve büyüme-retain dansı silindi).
+- **Çalışma zamanı:** `nox_list_grow` yalnızca eleman tamponunu yeniden boyutlandırır (ilk büyüme en az 4 eleman), `nox_list_free_payload`/`nox_list_new`/`nox_arena_list_grow` eklendi; ayrı tamponun başındaki 8 baytlık kayıt satır içi kapasiteyi tutar (başlık bloğu serbest bırakma boyutu). Tüm stdlib kabukları (`strings/json/path/fs/os/zip/tar/regex/csv/gzip/process/redis/postgres/grpc/wasm`), `dict`, `shared_list`, HPy köprüsü ve `str.chars` yeni düzene geçti; `nox_list_realloc` yalnızca tamponu yeniden boyutlandıran genel yardımcı olarak kaldı.
+- **Kaynak uyumluluğu:** `.nox` kaynakları ve stdlib API'si değişmedi. `ptr_of(xs)` artık `data` göstericisini verir; `detach(xs)` eski sözleşmeyi korur (`ptr_add(detach(xs), 16)` hâlâ ilk eleman: dönen işaretçi `data - 16`).
+- Testler: `list_alias_growth_shared` (iki backend, Debug çalışma zamanında sızıntı/çifte serbest bırakma denetimli), eski ayrışma davranışını sabitleyen iki fixture'ın beklenen çıktısı Python'a göre düzeltildi, IR anlık görüntüleri yenilendi.
 ## [2.2.42]
 
 noxc-nightly Aşama 2.C: parser Nox'a taşındı (tam yüzey).

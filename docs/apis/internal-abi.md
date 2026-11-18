@@ -12,7 +12,7 @@ and the standard library's native shims. It is documented here so contributors u
   `nox_async_spawn`, `nox_http_*`, …). These are the *fast* primitives: names, signatures and the data layouts they imply change as the compiler
   improves. Only the symbols declared in `include/nox_nni.h` are public.
 - **Object layouts.** The reference-count header in front of every managed object, the packed length/ASCII header of `str`, the list header
-  (length and capacity), dictionary buckets, class instances (type tag, vtable pointer, fields), closures and `Task`/`Channel` objects.
+  (length, capacity and the `data` pointer to the element buffer), dictionary buckets, class instances (type tag, vtable pointer, fields), closures and `Task`/`Channel` objects.
 - **The runtime state.** The per-program (or per-worker) `RuntimeState`, allocator plumbing, cycle-collector tables and scheduler structures. The state is
   always threaded through generated code as a hidden first parameter — there is no hidden global state.
 - **Generated symbol names.** Mangled names like `Class_method`, `tuple__int_str`, `__nox_*`, `$name__cbtramp`.

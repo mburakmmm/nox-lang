@@ -606,6 +606,7 @@ fn tbaaSuffix(self: *const Codegen) []const u8 {
         .none => "",
         .list_len => ", !tbaa !1",
         .list_elem => ", !tbaa !2",
+        .list_data => ", !tbaa !6",
     };
 }
 

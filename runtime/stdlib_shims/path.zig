@@ -46,7 +46,6 @@ fn extensionPosix(path: []const u8) []const u8 {
     return filename[index..];
 }
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
-const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 const STR_HEADER_SIZE = abi_layout.STR_HEADER_SIZE;
 
@@ -271,13 +270,13 @@ export fn nox_path_components_raw(rt: ?*anyopaque, p: ?[*:0]const u8) callconv(.
         names.append(scratch_util.scratchAllocator(), comp.name) catch return null;
     }
 
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * names.items.len) orelse return null;
+    const raw = arc.nox_list_new(rt, names.items.len, FIELD_SLOT_SIZE) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(names.items.len);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(names.items.len);
     for (names.items, 0..) |name, i| {
         const dup = dupeToNoxStr(rt, name) orelse return null;
-        const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
     }
     return @ptrCast(bytes);
@@ -491,10 +490,10 @@ test "Faz III.4: nox_path_components_raw yol bilesenlerini dogru sirada doner" {
     const expected = [_][]const u8{ "a", "b", "c.txt" };
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         try std.testing.expectEqualStrings(expected[i], std.mem.sliceTo(p, 0));
     }
-    arc.nox_rc_release(rt, list_ptr, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * count);
+    arc.nox_list_release_raw(rt, list_ptr, FIELD_SLOT_SIZE);
 }

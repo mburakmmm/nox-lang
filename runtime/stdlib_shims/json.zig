@@ -74,7 +74,6 @@ const bridge = @import("../async_rt/bridge.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
-const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 const TAG_SIZE = abi_layout.TAG_SIZE;
 const abi_ptr = @import("../abi_ptr.zig");
@@ -163,12 +162,12 @@ fn callMakeJsonValue(
 /// (ikisi de düz 8 baytlık işaretçi dizisi). Kapasite HER ZAMAN uzunluğa
 /// eşittir (tam-oturan — bkz. `nox_strings_split_raw`daki AYNI gerekçe).
 fn buildPtrList(rt: ?*anyopaque, items: []const ?*anyopaque) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * items.len) orelse return null;
+    const raw = arc.nox_list_new(rt, items.len, FIELD_SLOT_SIZE) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(items.len);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(items.len);
     for (items, 0..) |it, i| {
-        const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(it))));
     }
     return @ptrCast(bytes);
@@ -204,7 +203,7 @@ const SharedEmpties = struct {
 fn initSharedEmpties(rt: ?*anyopaque) ?SharedEmpties {
     const list = buildPtrList(rt, &.{}) orelse return null;
     const s = dupeToNoxStr(rt, "") orelse {
-        arc.nox_rc_release(rt, list, LIST_HEADER_SIZE);
+        arc.nox_list_release_raw(rt, list, FIELD_SLOT_SIZE);
         return null;
     };
     return .{ .list = list, .str = s };
@@ -214,7 +213,7 @@ fn initSharedEmpties(rt: ?*anyopaque) ?SharedEmpties {
 /// birimini bırakır — Nox tarafında bir yerel değişkenin kapsam-sonu
 /// release'ine denk gelir (bkz. `SharedEmpties`nin belge notu).
 fn releaseSharedEmpties(rt: ?*anyopaque, shared: SharedEmpties) void {
-    arc.nox_rc_release(rt, shared.list, LIST_HEADER_SIZE);
+    arc.nox_list_release_raw(rt, shared.list, FIELD_SLOT_SIZE);
     str_mod.nox_str_release(rt, shared.str);
 }
 
@@ -1313,7 +1312,7 @@ fn fastValidate(allocator: std.mem.Allocator, slice: []const u8) bool {
     return p.i == slice.len;
 }
 
-// v2.1.61: `nox.json.dump` Zig'de. Düğüm ağacı (JsonValue: kind@8, b@16, n@24, s@32, arr@40, keys@48, vals@56; liste: len@0, cap@8, elemanlar@LIST_HEADER_SIZE) tek tampona yazılır.
+// v2.1.61: `nox.json.dump` Zig'de. Düğüm ağacı (JsonValue: kind@8, b@16, n@24, s@32, arr@40, keys@48, vals@56; liste: len@0, cap@8, data@16 -> elemanlar) tek tampona yazılır.
 // Anlam `json.nox`un saf-Nox `dump`ıyla BİREBİR: sayı = `s` doluysa (tam tamsayı metni) o, değilse |n| < 1e15 ve tamsayı ise tamsayı, aksi halde `str(float)` (Python repr).
 fn rdI64(p: [*]const u8, off: usize) i64 {
     return @as(*align(1) const i64, @ptrCast(p + off)).*;
@@ -1450,7 +1449,7 @@ fn dumpNodeInto(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), node: [*
             try putByte(a, out, '[');
             for (0..n) |i| {
                 if (i > 0) try putByte(a, out, ',');
-                const child = rdPtr(list, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i) orelse {
+                const child = rdPtr(abi_layout.listData(@constCast(list)), FIELD_SLOT_SIZE * i) orelse {
                     try putSlice(a, out, "null");
                     continue;
                 };
@@ -1465,11 +1464,11 @@ fn dumpNodeInto(a: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), node: [*
             try putByte(a, out, '{');
             for (0..n) |i| {
                 if (i > 0) try putByte(a, out, ',');
-                const kp = rdPtr(keys, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i);
+                const kp = rdPtr(abi_layout.listData(@constCast(keys)), FIELD_SLOT_SIZE * i);
                 const ksl: []const u8 = if (kp) |k| str_mod.nox_str_slice(@ptrCast(k)) else "";
                 try putEscaped(a, out, ksl);
                 try putByte(a, out, ':');
-                const child = rdPtr(vals, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i) orelse {
+                const child = rdPtr(abi_layout.listData(@constCast(vals)), FIELD_SLOT_SIZE * i) orelse {
                     try putSlice(a, out, "null");
                     continue;
                 };
@@ -1488,7 +1487,7 @@ export fn nox_json_object_find(keys_list: ?*anyopaque, key: ?[*:0]const u8) call
     const ks: []const u8 = if (key) |k| str_mod.nox_str_slice(k) else "";
     var i: usize = 0;
     while (i < n) : (i += 1) {
-        const kp = rdPtr(keys, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i) orelse continue;
+        const kp = rdPtr(abi_layout.listData(@constCast(keys)), FIELD_SLOT_SIZE * i) orelse continue;
         if (std.mem.eql(u8, str_mod.nox_str_slice(@ptrCast(kp)), ks)) return @intCast(i);
     }
     return -1;

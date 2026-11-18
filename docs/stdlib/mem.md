@@ -73,5 +73,5 @@ Objects the compiler promotes to the stack or an arena never reach the heap and 
 
 ## Notes
 
-- `detach(x)` of a `list[T]` yields a pointer to the list **header**; the elements start 16 bytes after it. [`nox.buffer`](buffer.md) hides that detail for byte buffers.
+- `detach(x)` of a `list[T]` yields a pointer **16 bytes before the first element** (the historical "header pointer" contract: `ptr_add(detach(xs), 16)` is element 0, also after the list has grown). [`nox.buffer`](buffer.md) hides that detail for byte buffers.
 - This module is part of the same [trust boundary](../language/ffi.md#the-trust-boundary) as `lowlevel`: a wrong pointer is a crash or corruption.

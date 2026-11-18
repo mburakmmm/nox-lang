@@ -16,7 +16,7 @@ const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
 const unicode = @import("../unicode.zig");
 
-const LIST_HEADER_SIZE: usize = 16;
+const abi_layout = @import("abi_layout");
 const FIELD_SLOT_SIZE: usize = 8;
 
 pub const FLAG_ICASE: i64 = 1;
@@ -1077,12 +1077,12 @@ fn search(alloc: std.mem.Allocator, prog: *const Program, text: []const u8, from
 // ------------------------------------------------------------ dışa açık ----
 
 fn buildIntList(rt: ?*anyopaque, vals: []const isize) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * vals.len) orelse return null;
+    const raw = arc.nox_list_new(rt, vals.len, FIELD_SLOT_SIZE) orelse return null;
     const base: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(base)).* = @intCast(vals.len);
     @as(*align(1) i64, @ptrCast(base + 8)).* = @intCast(vals.len);
     for (vals, 0..) |v, i| {
-        const slot = base + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(base) + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = v;
     }
     return @ptrCast(base);
@@ -1090,14 +1090,14 @@ fn buildIntList(rt: ?*anyopaque, vals: []const isize) ?*anyopaque {
 
 /// C sarmalayıcıların (`runtime/c_glue/pcre2_glue.c`) `list[int]` döndürmesi için: `vals[0..n]`den yeni Nox listesi.
 pub export fn nox_int_list_from_c(rt: ?*anyopaque, vals: ?[*]const i64, n: usize) callconv(.c) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * n) orelse return null;
+    const raw = arc.nox_list_new(rt, n, FIELD_SLOT_SIZE) orelse return null;
     const base: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(base)).* = @intCast(n);
     @as(*align(1) i64, @ptrCast(base + 8)).* = @intCast(n);
     if (n > 0) {
         const src = vals.?;
         for (0..n) |i| {
-            const slot = base + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+            const slot = abi_layout.listData(base) + FIELD_SLOT_SIZE * i;
             @as(*align(1) i64, @ptrCast(slot)).* = src[i];
         }
     }

@@ -454,10 +454,9 @@ pub fn emitPublishValue(self: *Codegen, ptr_text: []const u8, info: TypeInfo) Co
             try self.qbeLabel(body);
             const off = try self.newTemp();
             try self.qbeOp2Imm(off, .l, "mul", i, 8);
-            const off16 = try self.newTemp();
-            try self.qbeOp2Imm(off16, .l, "add", off, 16);
+            const data_t = try self.emitListData(ptr_text);
             const addr = try self.newTemp();
-            try self.qbeOp2(addr, .l, "add", ptr_text, off16);
+            try self.qbeOp2(addr, .l, "add", data_t, off);
             const e = try self.newTemp();
             try self.qbeLoadL(e, addr);
             // null eleman yayımlanmaz

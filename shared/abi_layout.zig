@@ -125,17 +125,68 @@ pub fn unpackStrAsciiState(packed_header: i64) u64 {
     return bits >> STR_ASCII_SHIFT;
 }
 
-// ---- `list[T]` başlığı: { len: i64 @0, cap: i64 @8, elemanlar @16... } ----
+// ---- `list[T]` başlığı: { len: i64 @0, cap: i64 @8, data: ptr @16, satır içi elemanlar @24... } ----
+//
+// v2.2.43 (liste handle yeniden tasarımı, dogfood D1.2): bir `list[T]`nin BAŞLIK adresi (ARC payload'ı) listenin ÖMRÜ boyunca HİÇ
+// DEĞİŞMEZ; elemanlar `data` göstericisinin işaret ettiği tamponda durur. `data` başlangıçta başlığın HEMEN ARDINDAKİ satır içi
+// tamponu (`payload + LIST_INLINE_OFF`) gösterir (literal/comprehension/`split` gibi değişmeyen listeler TEK tahsisle kalır);
+// `append` kapasiteyi aşınca elemanlar AYRI bir tampona taşınır, yalnızca `data`/`cap` güncellenir. Böylece `ys = xs; xs.append(v)`
+// büyümede de her takma ad (alias) aynı başlığı — dolayısıyla büyümüş listeyi — görür (Python anlamı).
+//
+// Ayrı tampon düzeni: `[stash: i64][elemanlar...]`, `data = tampon + LIST_BUF_STASH`. `stash` = listenin SATIR İÇİ kapasitesi: başlık bloğunun
+// boyutu (`LIST_HEADER_SIZE + inline_cap*esz`, havuz sınıfı/serbest bırakma için) büyümeden sonra `cap`ten çıkarılamayacağından orada saklanır.
 
-/// `list[T]`nin (ARC payload'ının KENDİSİ) başlık bayt boyutu. Runtime
-/// tarafında `runtime/stdlib_shims/json.zig`nin `buildPtrList`i,
-/// `runtime/stdlib_shims/strings.zig`nin `nox_strings_split_raw`ı/
-/// `buildStrList`i, `runtime/stdlib_shims/path.zig`nin
-/// `nox_path_components_raw`ı, `runtime/stdlib_shims/fs.zig`nin
-/// `nox_fs_read_dir_raw`ı VE `runtime/collections/dict.zig`nin
-/// `buildEntryList`i (`nox_dict_keys`/`nox_dict_values`) AYNI düzeni EL
-/// İLE ürettiğinden BU SABİTLE TUTARLI kalmalıdır.
-pub const LIST_HEADER_SIZE: usize = 16;
+/// Başlık alanlarının bayt ofsetleri (ARC payload'ına göre).
+pub const LIST_LEN_OFF: usize = 0;
+pub const LIST_CAP_OFF: usize = 8;
+pub const LIST_DATA_OFF: usize = 16;
+/// Satır içi tamponun ofseti (== başlık bayt boyutu).
+pub const LIST_INLINE_OFF: usize = 24;
+
+/// `list[T]`nin (ARC payload'ının KENDİSİ) başlık bayt boyutu (`len`+`cap`+`data`). Çalışma zamanında elle liste üreten her yer
+/// (`json`/`strings`/`path`/`fs`/`dict`... kabukları) bunu `listInit` ile kullanır; ELLE ofset hesabı YAPILMAZ.
+pub const LIST_HEADER_SIZE: usize = LIST_INLINE_OFF;
+
+/// Ayrı büyüme tamponunun başındaki "satır içi kapasite" kaydının bayt boyutu.
+pub const LIST_BUF_STASH: usize = 8;
+
+/// `p`nin (liste payload'ı) `data` göstericisini okur. Not: wasm32'de işaretçi 4 bayttır ama `data` yuvası HER hedefte 8 bayttır (`u64`).
+pub inline fn listData(p: [*]const u8) [*]u8 {
+    const v: u64 = @as(*align(1) const u64, @ptrCast(p + LIST_DATA_OFF)).*;
+    return @ptrFromInt(@as(usize, @intCast(v)));
+}
+
+pub inline fn listSetData(p: [*]u8, d: [*]u8) void {
+    @as(*align(1) u64, @ptrCast(p + LIST_DATA_OFF)).* = @as(u64, @intFromPtr(d));
+}
+
+pub inline fn listLen(p: [*]const u8) usize {
+    return @intCast(@as(*align(1) const i64, @ptrCast(p + LIST_LEN_OFF)).*);
+}
+
+pub inline fn listCap(p: [*]const u8) usize {
+    return @intCast(@as(*align(1) const i64, @ptrCast(p + LIST_CAP_OFF)).*);
+}
+
+pub inline fn listSetLen(p: [*]u8, n: usize) void {
+    @as(*align(1) i64, @ptrCast(p + LIST_LEN_OFF)).* = @intCast(n);
+}
+
+pub inline fn listSetCap(p: [*]u8, n: usize) void {
+    @as(*align(1) i64, @ptrCast(p + LIST_CAP_OFF)).* = @intCast(n);
+}
+
+/// Taze (`LIST_HEADER_SIZE + cap*esz` baytlık, `nox_rc_alloc` ile ayrılmış) bir liste bloğunun başlığını kurar: `data` satır içi tamponu gösterir.
+pub inline fn listInit(p: [*]u8, len: usize, cap: usize) void {
+    listSetLen(p, len);
+    listSetCap(p, cap);
+    listSetData(p, p + LIST_INLINE_OFF);
+}
+
+/// Liste hâlâ satır içi tamponunu mu kullanıyor (hiç büyümemiş)?
+pub inline fn listIsInline(p: [*]const u8) bool {
+    return @intFromPtr(listData(p)) == @intFromPtr(p + LIST_INLINE_OFF);
+}
 
 // ---- Sınıf örneği düzeni (ARC payload'ından SONRA) ----
 

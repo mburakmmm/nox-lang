@@ -379,11 +379,7 @@ pub export fn nox_rc_free_payload(rt: ?*anyopaque, ptr: ?*anyopaque, payload_siz
 pub export fn nox_list_shallow_gc_free(rt: ?*anyopaque, ptr: ?*anyopaque) void {
     const p = ptr orelse return;
     if (nox_rc_predecrement(p) == 0) return; // BAŞKA bir sahibi VAR — dokunma.
-    const bytes: [*]u8 = @ptrCast(p);
-    const cap_ptr: *align(1) const i64 = @ptrCast(bytes + 8);
-    const cap: usize = @intCast(@max(cap_ptr.*, 0));
-    const list_header_size = abi_layout.LIST_HEADER_SIZE;
-    nox_rc_free_payload(rt, p, list_header_size + cap * 8);
+    nox_list_free_payload(rt, p, 8);
 }
 
 /// v1.142.11 (dış inceleme: iç içe `list[list[Sınıf]]` alanları döngü
@@ -391,7 +387,7 @@ pub export fn nox_list_shallow_gc_free(rt: ?*anyopaque, ptr: ?*anyopaque) void {
 /// yaprak sınıf işaretçilerini sayar/doldurur/sığ-serbest bırakır. Liste
 /// düzeni her seviyede aynıdır (`{len@0, cap@8, işaretçi elemanlar@16...}`).
 fn nestedListElem(bytes: [*]u8, i: usize) ?*anyopaque {
-    const slot: *align(1) const abi_ptr.Slot = @ptrCast(bytes + abi_layout.LIST_HEADER_SIZE + i * 8);
+    const slot: *align(1) const abi_ptr.Slot = @ptrCast(abi_layout.listData(bytes) + i * 8);
     return abi_ptr.slotPtr(slot.*);
 }
 
@@ -443,9 +439,7 @@ pub export fn nox_list_nested_shallow_gc_free(rt: ?*anyopaque, ptr: ?*anyopaque,
     const n = nestedListLen(bytes);
     var i: usize = 0;
     while (i < n) : (i += 1) nox_list_nested_shallow_gc_free(rt, nestedListElem(bytes, i), depth - 1);
-    const cap_ptr: *align(1) const i64 = @ptrCast(bytes + 8);
-    const cap: usize = @intCast(@max(cap_ptr.*, 0));
-    nox_rc_free_payload(rt, p, abi_layout.LIST_HEADER_SIZE + cap * 8);
+    nox_list_free_payload(rt, p, 8);
 }
 
 fn refcountOf(ptr: *anyopaque) *i64 {
@@ -454,32 +448,99 @@ fn refcountOf(ptr: *anyopaque) *i64 {
     return @ptrCast(@alignCast(base));
 }
 
-/// Faz U.1: `list[T].append()`in "büyütme" yolunun tek çalışma zamanı
-/// primitifi — YENİ (refcount 1'le başlayan, `new_payload_size` baytlık) bir
-/// blok tahsis eder, `old_ptr`den `copy_bytes` baytı (KENDİ başlığı DAHİL —
-/// bkz. `codegen_qbe/codegen.zig`nin `list[T]` başlık düzeni notu, `{len@0,
-/// cap@8, elemanlar@16...}`) KOPYALAR, YENİ işaretçiyi döner. `old_ptr`nin
-/// KENDİSİNE HİÇ DOKUNMAZ (ne serbest bırakır ne refcount'unu değiştirir) —
-/// bu, ÇAĞIRANIN (codegen'in ürettiği `.append()` kodu) sorumluluğundadır
-/// (eski bloğun refcount'unu `nox_rc_predecrement` ile azaltıp, sıfıra
-/// düşerse `nox_rc_free_payload` ile serbest bırakması GEREKİR — elemanların
-/// KENDİSİ bu kopyalamada TAŞINDIĞINDAN [aynı işaretçi değerleri], eski
-/// blok ASLA elemanlarını özyinelemeli olarak release ETMEMELİDİR, yalnızca
-/// KENDİ ham belleği serbest bırakılmalıdır).
-pub export fn nox_list_grow(rt: ?*anyopaque, old_ptr: ?*anyopaque, copy_bytes: usize, new_payload_size: usize) ?*anyopaque {
-    const new_ptr = nox_rc_alloc(rt, new_payload_size) orelse return null;
-    if (old_ptr) |op| {
-        const src: [*]const u8 = @ptrCast(op);
-        const dst: [*]u8 = @ptrCast(new_ptr);
-        @memcpy(dst[0..copy_bytes], src[0..copy_bytes]);
-    }
-    return new_ptr;
+/// v2.2.43 (liste handle yeniden tasarımı): `list[T]` başlığı (ARC payload'ı) ASLA taşınmaz; büyüme yalnızca elemanların durduğu TAMPONU
+/// yeniden boyutlandırır ve başlıktaki `data`/`cap` alanlarını günceller. Böylece listeye başka bir adla (`ys = xs`) bakan her takma ad
+/// büyümeyi görür. `len == cap` iken `append` tarafından çağrılır; YENİ `data` göstericisini döner (bellek yoksa null, başlığa dokunulmaz).
+/// Ayrı tampon düzeni `[stash][elemanlar]` (bkz. `abi_layout` notu): `stash` = listenin satır içi kapasitesi (başlık bloğunun serbest bırakma boyutu).
+pub fn listNextCap(cap: usize) usize {
+    return if (cap < 4) 4 else cap * 2;
 }
 
-/// v2.1.87 (TODO 3.5.3): `list.append` büyütmesinin TEK SAHİPLİ (refcount == 1) yolu. Eski bloğun sahipliğini DEVRALIR: eleman işaretçileri aynen taşınır
-/// (retain/decrement dengesi gerekmez), başlık sayacı (1) korunur, eski işaretçi geçersiz sayılır. Büyük bloklarda (libc yolu) `realloc` çekirdek sayfa
-/// yeniden eşlemesiyle kopyalamadan büyür; havuz sınıfı aynıysa işaretçi aynen döner; diğer boyutlarda tahsis + kopya + eski bloğu bırakma (eski büyütmeyle
-/// aynı maliyet). `old_payload`/`new_payload` bayt cinsinden YÜK boyutlarıdır (başlık hariç, `nox_rc_alloc` ile aynı).
+/// Listenin SATIR İÇİ kapasitesi (başlık bloğunun `LIST_HEADER_SIZE + inline_cap*esz` boyutu için): hiç büyümemişse `cap`, büyümüşse tampon başlığındaki kayıt.
+pub fn listInlineCap(b: [*]u8) usize {
+    if (abi_layout.listIsInline(b)) return abi_layout.listCap(b);
+    const d = abi_layout.listData(b);
+    return @intCast(@as(*align(1) const i64, @ptrCast(d - abi_layout.LIST_BUF_STASH)).*);
+}
+
+pub export fn nox_list_grow(rt: ?*anyopaque, list: ?*anyopaque, esz_i: usize) ?*anyopaque {
+    const b: [*]u8 = @ptrCast(list orelse return null);
+    return nox_list_reserve_cap(rt, b, listNextCap(abi_layout.listCap(b)), esz_i);
+}
+
+/// Kapasiteyi (en az) `new_cap` elemana çıkarır (küçültmez); YENİ `data` göstericisini döner, bellek yoksa null (başlığa dokunulmaz).
+pub fn nox_list_reserve_cap(rt: ?*anyopaque, b: [*]u8, new_cap: usize, esz: usize) ?*anyopaque {
+    const cap = abi_layout.listCap(b);
+    if (new_cap <= cap) return abi_layout.listData(b);
+    const len = abi_layout.listLen(b);
+    const STASH = abi_layout.LIST_BUF_STASH;
+    if (abi_layout.listIsInline(b)) {
+        const nbuf: [*]u8 = @ptrCast(nox_rc_alloc(rt, STASH + new_cap * esz) orelse return null);
+        @as(*align(1) i64, @ptrCast(nbuf)).* = @intCast(cap);
+        const nd = nbuf + STASH;
+        if (len > 0) @memcpy(nd[0 .. len * esz], abi_layout.listData(b)[0 .. len * esz]);
+        abi_layout.listSetData(b, nd);
+        abi_layout.listSetCap(b, new_cap);
+        return nd;
+    }
+    const old_buf = abi_layout.listData(b) - STASH;
+    const nbuf: [*]u8 = @ptrCast(nox_list_realloc(rt, old_buf, STASH + cap * esz, STASH + new_cap * esz) orelse return null);
+    const nd = nbuf + STASH;
+    abi_layout.listSetData(b, nd);
+    abi_layout.listSetCap(b, new_cap);
+    return nd;
+}
+
+/// Arena listesi (`local_escape.zig`nin kanıtladığı, kaçmayan skaler listeler) için `nox_list_grow`nin ikizi: yeni tampon arenadan alınır, eski tampon
+/// "çöp" olarak arena yıkılana kadar yaşar (arenalar nesne başına serbest bırakmayı desteklemez).
+pub export fn nox_arena_list_grow(arena_ptr: ?*anyopaque, list: ?*anyopaque, esz: usize) ?*anyopaque {
+    const b: [*]u8 = @ptrCast(list orelse return null);
+    const cap = abi_layout.listCap(b);
+    const len = abi_layout.listLen(b);
+    const new_cap = listNextCap(cap);
+    const STASH = abi_layout.LIST_BUF_STASH;
+    const inline_cap = listInlineCap(b);
+    const nbuf: [*]u8 = @ptrCast(lowlevel.nox_arena_alloc(arena_ptr, STASH + new_cap * esz) orelse return null);
+    @as(*align(1) i64, @ptrCast(nbuf)).* = @intCast(inline_cap);
+    const nd = nbuf + STASH;
+    if (len > 0) @memcpy(nd[0 .. len * esz], abi_layout.listData(b)[0 .. len * esz]);
+    abi_layout.listSetData(b, nd);
+    abi_layout.listSetCap(b, new_cap);
+    return nd;
+}
+
+/// Liste bloğunu (başlık + varsa ayrı tampon) serbest bırakır; refcount'a ve ELEMANLARA DOKUNMAZ (çağıran zaten sıfıra düşürmüş/elemanları bırakmıştır).
+/// Başlık bloğunun boyutu `LIST_HEADER_SIZE + satır_içi_kapasite*esz`dir (havuz sınıfı/DebugAllocator boyut denetimi buna göre).
+pub export fn nox_list_free_payload(rt: ?*anyopaque, list: ?*anyopaque, esz: usize) void {
+    const b: [*]u8 = @ptrCast(list orelse return);
+    const STASH = abi_layout.LIST_BUF_STASH;
+    var inline_cap: usize = undefined;
+    if (abi_layout.listIsInline(b)) {
+        inline_cap = abi_layout.listCap(b);
+    } else {
+        const buf = abi_layout.listData(b) - STASH;
+        inline_cap = @intCast(@as(*align(1) const i64, @ptrCast(buf)).*);
+        nox_rc_free_payload(rt, buf, STASH + abi_layout.listCap(b) * esz);
+    }
+    nox_rc_free_payload(rt, b, abi_layout.LIST_HEADER_SIZE + inline_cap * esz);
+}
+
+/// `nox_rc_release`nin liste karşılığı (ELEMANLARA dokunmaz; elemanları bırakmak çağıranın işidir): sayaç sıfıra düşerse başlık bloğu + ayrı tampon serbest kalır.
+pub fn nox_list_release_raw(rt: ?*anyopaque, list: ?*anyopaque, esz: usize) void {
+    if (list == null) return;
+    if (nox_rc_predecrement(list) != 0) nox_list_free_payload(rt, list, esz);
+}
+
+/// Taze bir liste bloğu: `len`/`cap` kurulur, `data` satır içi tamponu gösterir. `n` elemanlık satır içi alan ayrılır (`cap == n`).
+pub export fn nox_list_new(rt: ?*anyopaque, n: usize, esz: usize) ?*anyopaque {
+    const raw = nox_rc_alloc(rt, abi_layout.LIST_HEADER_SIZE + n * esz) orelse return null;
+    abi_layout.listInit(@ptrCast(raw), n, n);
+    return raw;
+}
+
+/// `list_realloc`: `nox_list_grow`nin ayrı-tampon yolunun kullandığı GENEL blok yeniden boyutlandırma. Eski bloğun sahipliğini DEVRALIR (içerik + başlık sayacı
+/// korunur, eski işaretçi geçersiz sayılır). Büyük bloklarda (libc yolu) `realloc` çekirdek sayfa yeniden eşlemesiyle kopyalamadan büyür; havuz sınıfı
+/// aynıysa işaretçi aynen döner; diğer boyutlarda tahsis + kopya + eski bloğu bırakma. `old_payload`/`new_payload` bayt cinsinden YÜK boyutlarıdır (başlık hariç).
 pub export fn nox_list_realloc(rt: ?*anyopaque, old_ptr: ?*anyopaque, old_payload: usize, new_payload: usize) ?*anyopaque {
     const old = old_ptr orelse return null;
     const old_total = old_payload + HEADER_SIZE;
@@ -530,27 +591,6 @@ test "v2.1.87: nox_list_realloc içerik ve başlık sayacını korur (havuz ayn�
         cap = ncap;
     }
     nox_rc_free_payload(rt, p, hdr + cap * 8);
-}
-
-/// GG.18 (bkz. plan dosyası "ASAP güçlendirmesi — Tur 2"): `nox_list_grow`nin
-/// arena-farkında ikizi — bir fonksiyon-kapsamlı arenaya (`compiler/
-/// codegen_qbe/local_escape.zig`nin kanıtladığı, SKALER-elemanlı, kaçmayan
-/// bir `list[T]` yereli İçİn) büyüyen listelerin TEK çalışma zamanı
-/// primitifi. `nox_list_grow`DAN TEK FARKI: YENİ blok `nox_rc_alloc`
-/// YERİNE `nox_arena_alloc` İLE tahsis edilir. `old_ptr`e (`nox_list_grow`
-/// İLE AYNI gerekçeyle) HİÇ DOKUNULMAZ — AMA BURADA çağıran TARAFINDAN
-/// `nox_rc_predecrement`/`nox_rc_free_payload` de HİÇ ÇAĞRILMAZ (arenalar
-/// per-object free DESTEKLEMEZ; ESKİ chunk, fonksiyonun KENDİ arenası
-/// TOPLU `nox_arena_destroy` İLE yıkılana kadar SADECE "çöp" olarak
-/// yaşar — bu, arenaların DOĞAL/beklenen MODELİDİR).
-pub export fn nox_arena_list_grow(arena_ptr: ?*anyopaque, old_ptr: ?*anyopaque, copy_bytes: usize, new_payload_size: usize) ?*anyopaque {
-    const new_ptr = lowlevel.nox_arena_alloc(arena_ptr, new_payload_size) orelse return null;
-    if (old_ptr) |op| {
-        const src: [*]const u8 = @ptrCast(op);
-        const dst: [*]u8 = @ptrCast(new_ptr);
-        @memcpy(dst[0..copy_bytes], src[0..copy_bytes]);
-    }
-    return new_ptr;
 }
 
 // GG.24 (bkz. plan dosyası "genClassRelease'in özyineleme derinliği

@@ -1,9 +1,8 @@
 import nox.mem
 
-# NOT: `detach(list[T])` listenin BAŞINDAKİ 16-baytlık başlığa (length+
-# capacity) işaret eden bir ptr döner — GERÇEK eleman verisi 16 bayt
-# SONRA başlar (bkz. `nox.mem`nin KENDİ modül-üstü notu, `shared/
-# abi_layout.zig`nin `LIST_HEADER_SIZE`ı). `ptr_add(raw, 16)` bunu atlar.
+# NOT: `detach(list[T])` listenin ilk elemanından 16 bayt ÖNCEYİ gösteren
+# bir ptr döner (eski başlık-işaretçisi sözleşmesi; bkz. `nox.mem`nin KENDİ
+# modül-üstü notu). `ptr_add(raw, 16)` ilk elemana gider.
 def data_ptr(raw: ptr) -> ptr:
     lowlevel:
         return ptr_add(raw, 16)

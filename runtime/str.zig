@@ -956,7 +956,7 @@ pub export fn nox_str_char_at(rt: ?*anyopaque, s: ?[*:0]const u8, idx: i64) ?[*:
 }
 
 /// `for c in s` (v1.148.0): `s`in her karakterini (UTF-8 codepoint; geçersiz UTF-8'de bayt semantiği, `nox_str_char_at` ile
-/// aynı) TEK karakterlik bir `str` olarak içeren yeni bir `list[str]` döner (liste düzeni: 8 bayt uzunluk + 8 bayt kapasite +
+/// aynı) TEK karakterlik bir `str` olarak içeren yeni bir `list[str]` döner (liste düzeni: 8 bayt uzunluk + 8 bayt kapasite + `data` göstericisi +
 /// eleman işaretçileri). ASCII karakterler paylaşılan pinned tablodan gelir (tahsis yok).
 pub export fn nox_str_chars(rt: ?*anyopaque, s: ?[*:0]const u8) ?*anyopaque {
     const p = s orelse return null;
@@ -964,10 +964,9 @@ pub export fn nox_str_chars(rt: ?*anyopaque, s: ?[*:0]const u8) ?*anyopaque {
     const ascii = ensureAsciiResolved(p);
     const valid = ascii or std.unicode.utf8ValidateSlice(bytes);
     const count: usize = if (valid and !ascii) (std.unicode.utf8CountCodepoints(bytes) catch bytes.len) else bytes.len;
-    const raw = arc.nox_rc_alloc(rt, 16 + 8 * count) orelse return null;
+    const raw = arc.nox_list_new(rt, count, 8) orelse return null;
     const base: [*]u8 = @ptrCast(raw);
-    @as(*align(1) i64, @ptrCast(base)).* = @intCast(count);
-    @as(*align(1) i64, @ptrCast(base + 8)).* = @intCast(count);
+    const data = abi_layout.listData(base);
     var out_i: usize = 0;
     if (valid) {
         var it = std.unicode.Utf8View.initUnchecked(bytes).iterator();
@@ -976,12 +975,12 @@ pub export fn nox_str_chars(rt: ?*anyopaque, s: ?[*:0]const u8) ?*anyopaque {
                 @ptrCast(&nox_ascii_chars[slice[0]].ch)
             else
                 allocStr(rt, slice, ASCII_FALSE);
-            @as(*align(1) i64, @ptrCast(base + 16 + 8 * out_i)).* = @bitCast(@as(u64, @intCast(@intFromPtr(elem))));
+            @as(*align(1) i64, @ptrCast(data + 8 * out_i)).* = @bitCast(@as(u64, @intCast(@intFromPtr(elem))));
         }
     } else {
         for (bytes, 0..) |b, i| {
             const elem: ?[*:0]u8 = if (b < 0x80) @ptrCast(&nox_ascii_chars[b].ch) else allocStr(rt, bytes[i..][0..1], ASCII_FALSE);
-            @as(*align(1) i64, @ptrCast(base + 16 + 8 * i)).* = @bitCast(@as(u64, @intCast(@intFromPtr(elem))));
+            @as(*align(1) i64, @ptrCast(data + 8 * i)).* = @bitCast(@as(u64, @intCast(@intFromPtr(elem))));
         }
     }
     return raw;

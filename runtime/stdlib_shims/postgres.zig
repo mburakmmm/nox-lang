@@ -26,7 +26,6 @@ const str_mod = @import("../str.zig");
 const abi_layout = @import("abi_layout");
 const fiber_net = @import("fiber_net.zig");
 
-const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 fn libraryFileName() [:0]const u8 {
@@ -409,14 +408,14 @@ pub export fn nox_pg_exec_params_raw(h: ?*anyopaque, query: ?[*:0]const u8, para
     var i: usize = 0;
     while (i < count) : (i += 1) {
         const is_null = if (null_bytes) |nb| blk: {
-            const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(nb + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+            const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(nb) + FIELD_SLOT_SIZE * i)).*);
             const flag_str: [*:0]const u8 = @ptrFromInt(addr);
             break :blk flag_str[0] == '1';
         } else false;
         if (is_null) {
             values[i] = null;
         } else {
-            const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+            const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).*);
             values[i] = @ptrFromInt(addr);
         }
     }

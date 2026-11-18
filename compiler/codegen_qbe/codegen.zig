@@ -226,7 +226,6 @@ const decorators_mod = @import("decorators.zig");
 const qbe_emit = @import("qbe_emit.zig");
 const llvm_emit = @import("llvm_emit.zig");
 const hpy_sigs = @import("hpy_sigs.zig");
-const ref_params_mod = @import("ref_params.zig");
 const effect_graph = @import("../effect_graph.zig");
 
 pub const CodegenError = abi.CodegenError;
@@ -319,7 +318,7 @@ pub const QbeAllocSize = qbe_emit.QbeAllocSize;
 /// KULLANIMLARI (BU dosyanın İçİNDE VE 15+ sibling dosyada) DEĞİŞMEDEN
 /// çalışmaya devam eder (enum-literal karşılaştırması bir TİP TAKMA
 /// ADI ÜZERİNDEN ŞEFFAFTIR).
-pub const MemTag = enum { none, list_len, list_elem };
+pub const MemTag = enum { none, list_len, list_elem, list_data };
 
 pub const Backend = @import("../typecheck/types.zig").Backend;
 
@@ -416,7 +415,7 @@ pub const Codegen = struct {
     pub const releaseAllLocalsExcept = ownership.releaseAllLocalsExcept;
     pub const releaseOneLocalIfManaged = ownership.releaseOneLocalIfManaged;
     pub const releaseNamedLocalsExcept = ownership.releaseNamedLocalsExcept;
-    pub const listPayloadSize = ownership.listPayloadSize;
+    pub const emitListFree = ownership.emitListFree;
     pub const releaseFnNameFor = ownership.releaseFnNameFor;
     pub const genListElemRelease = ownership.genListElemRelease;
     pub const releaseValueIfSet = ownership.releaseValueIfSet;
@@ -432,8 +431,6 @@ pub const Codegen = struct {
     pub const emitInlinePredecrement = ownership.emitInlinePredecrement;
     pub const emitClassAlloc = ownership.emitClassAlloc;
     pub const emitClassFreePayload = ownership.emitClassFreePayload;
-    pub const emitListElemRetainLoop = ownership.emitListElemRetainLoop;
-    pub const emitListElemPlainDecrementLoop = ownership.emitListElemPlainDecrementLoop;
     pub const retainIfAliasing = ownership.retainIfAliasing;
     pub const returnNeedsRetain = ownership.returnNeedsRetain;
     pub const returnsUnboxedScalar = ownership.returnsUnboxedScalar;
@@ -1055,13 +1052,38 @@ pub const Codegen = struct {
     pub fn loadListElemValueAt(self: *Codegen, coll: Value, idx: []const u8) CodegenError!Value {
         const byte_off = try self.newTemp();
         try optimizations.emitScaledByteOffset(self, byte_off, idx, qbeSizeOf(coll.elem_qtype));
-        const off8 = try self.newTemp();
-        try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
+        const data = try self.emitListData(coll.text);
         const addr = try self.newTemp();
-        try self.qbeOp2(addr, .l, "add", coll.text, off8);
+        try self.qbeOp2(addr, .l, "add", data, byte_off);
         const raw = try self.newTemp();
         try self.loadListElem(raw, coll.elem_qtype, addr);
         return abi.valueFromElemDescriptor(raw, coll.elem_qtype, coll.elem_heap_info, coll.elem_is_str, coll.elem_fixed_int);
+    }
+
+    /// v2.2.43: taze bir liste bloğunun başlığını kurar: `len`, `cap` ve `data` (= satır içi tampon, `list + LIST_HEADER_SIZE`).
+    pub fn emitListHeaderInit(self: *Codegen, list_text: []const u8, len: usize, cap: usize) CodegenError!void {
+        try self.qbeStoreImmL(@intCast(len), list_text);
+        const cap_addr = try self.newTemp();
+        try self.qbeOp2Imm(cap_addr, .l, "add", list_text, @intCast(types.LIST_CAP_OFF));
+        try self.qbeStoreImmL(@intCast(cap), cap_addr);
+        const inline_addr = try self.newTemp();
+        try self.qbeOp2Imm(inline_addr, .l, "add", list_text, @intCast(types.LIST_HEADER_SIZE));
+        const data_addr = try self.newTemp();
+        try self.qbeOp2Imm(data_addr, .l, "add", list_text, @intCast(types.LIST_DATA_OFF));
+        try self.qbeStoreL(inline_addr, data_addr);
+    }
+
+    /// v2.2.43 (liste handle yeniden tasarımı): listenin eleman tamponu işaretçisini (`data@16`: satır içi tampon ya da büyümeden sonra ayrı tampon) yükler.
+    /// Başlık adresi listenin ömrü boyunca değişmez; elemanlar HER ZAMAN bu işaretçi üzerinden adreslenir (`list + LIST_HEADER_SIZE` varsayımı yoktur).
+    /// LLVM'de TBAA `list_data` etiketi: eleman/uzunluk erişimleriyle örtüşmez, döngü içinde yazmaça alınabilir.
+    pub fn emitListData(self: *Codegen, list_text: []const u8) CodegenError![]const u8 {
+        const addr = try self.newTemp();
+        try self.qbeOp2Imm(addr, .l, "add", list_text, @intCast(types.LIST_DATA_OFF));
+        const d = try self.newTemp();
+        self.setMemTag(.list_data);
+        try self.qbeLoadL(d, addr);
+        self.setMemTag(.none);
+        return d;
     }
 
     /// Sonraki tek `load`/`store`u TBAA etiketiyle işaretlemek için `mem_tag`i ayarlar; çağıran erişimden hemen sonra `clearMemTag` çağırır.
@@ -1663,8 +1685,6 @@ pub const Codegen = struct {
     /// tarafından OKUNUR (bir çağrı sitesinin `.identifier`i BU haritada
     /// VARSA, o site inline-adayı olarak KAYDEDİLİR).
     inlinable_funcs: std.StringHashMapUnmanaged(ast.FuncDef) = .empty,
-    /// v2.1.96 (TODO 7.8): işlev adı -> parametre başına "referans liste parametresi" bayrakları (bkz. `ref_params.zig`). Yalnızca en az bir bayrağı olan işlevler.
-    ref_params: ref_params_mod.RefMap = .empty,
     /// Faz GG.2: (transitif olarak) KENDİ KENDİSİNİ çağıran serbest
     /// fonksiyon/metod sembollerinin kümesi — `markRecursiveFuncs`
     /// tarafından doldurulur, `computeInlinableFunctions` bu kümedeki
@@ -2081,17 +2101,6 @@ pub fn generateModuleWithMetaSinkSplit(allocator: std.mem.Allocator, module: ast
     // derlenmez (tip parametreleri/protokol adları QBE'nin bilmediği
     // isimlerdir) — yalnızca checker'ın ürettiği somut örneklemeler
     // (`extra_functions`) derlenir.
-    // v2.1.96 (TODO 7.8): serbest işlevlerin referans liste parametreleri, gövde üretilmeden ÖNCE hesaplanır (çağrı yerleri ve prolog buna bakar).
-    {
-        var cand: std.ArrayListUnmanaged(ast.FuncDef) = .empty;
-        defer cand.deinit(allocator);
-        for (module.body) |stmt| {
-            if (stmt.kind == .func_def and stmt.kind.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.kind.func_def.name)) {
-                try cand.append(allocator, stmt.kind.func_def);
-            }
-        }
-        gen.ref_params = try ref_params_mod.analyze(gen.allocator, cand.items, functions_used_as_value, callback_targets);
-    }
     for (module.body) |stmt| {
         if (stmt.kind == .func_def and stmt.kind.func_def.type_params.len == 0 and !containsName(generic_template_names, stmt.kind.func_def.name)) {
             try gen.registerFunc(stmt.kind.func_def);
@@ -2523,7 +2532,7 @@ pub fn generateModuleWithMetaSinkSplit(allocator: std.mem.Allocator, module: ast
         // `qbeJnzCold`un `!prof !0` dal ağırlığı (true = hata yolu: 1, false = sıcak yol: 4000).
         try gen.out.writer.writeAll("!0 = !{!\"branch_weights\", i32 1, i32 4000}\n");
         // v2.1.82: TBAA — `!1` liste uzunluğu, `!2` liste elemanı erişim etiketi (bkz. `Codegen.mem_tag`).
-        try gen.out.writer.writeAll("!1 = !{!3, !3, i64 0}\n!2 = !{!4, !4, i64 0}\n!3 = !{!\"nox.list.len\", !5}\n!4 = !{!\"nox.list.elem\", !5}\n!5 = !{!\"nox.root\"}\n");
+        try gen.out.writer.writeAll("!1 = !{!3, !3, i64 0}\n!2 = !{!4, !4, i64 0}\n!3 = !{!\"nox.list.len\", !5}\n!4 = !{!\"nox.list.elem\", !5}\n!5 = !{!\"nox.root\"}\n!6 = !{!7, !7, i64 0}\n!7 = !{!\"nox.list.data\", !5}\n");
     }
 
     const ir_text = try gen.out.toOwnedSlice();

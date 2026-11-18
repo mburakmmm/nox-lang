@@ -677,7 +677,7 @@ pub fn genClassTrace(self: *Codegen, class_name: []const u8, cinfo: ClassInfo) C
 /// `buf`nin İÇİNE, `write_idx_slot`teki ÇALIŞMA-ZAMANI yazma-indeksinden
 /// BAŞLAYARAK kopyala, indeksi HER elemanda artır" döngüsü — hem gerçek
 /// bir `list[T]` alanı HEM `nox_dict_values`in geçici sonucu AYNI bayt
-/// düzenini (`LIST_HEADER_SIZE` + 8-baytlık işaretçi elemanları)
+/// düzenini (`data` göstericisi + 8-baytlık işaretçi elemanları)
 /// TAŞIDIĞINDAN TEK bir yardımcı yeterlidir.
 pub fn emitTraceCopyLoop(self: *Codegen, list_ptr: []const u8, len_v: []const u8, buf: []const u8, write_idx_slot: []const u8, comptime label_prefix: []const u8) CodegenError!void {
     const i_slot = try self.newTemp();
@@ -696,10 +696,9 @@ pub fn emitTraceCopyLoop(self: *Codegen, list_ptr: []const u8, len_v: []const u8
     try self.qbeLabel(body_label);
     const elem_off = try self.newTemp();
     try self.qbeOp2Imm(elem_off, .l, "mul", cur_i, 8);
-    const elem_off2 = try self.newTemp();
-    try self.qbeOp2Imm(elem_off2, .l, "add", elem_off, @intCast(LIST_HEADER_SIZE));
+    const elem_off2_data = try self.emitListData(list_ptr);
     const elem_addr = try self.newTemp();
-    try self.qbeOp2(elem_addr, .l, "add", list_ptr, elem_off2);
+    try self.qbeOp2(elem_addr, .l, "add", elem_off2_data, elem_off);
     const elem_v = try self.newTemp();
     try self.qbeLoadL(elem_v, elem_addr);
     const wi = try self.newTemp();
@@ -1620,12 +1619,12 @@ pub fn genListEq(self: *Codegen, name: []const u8, elem_qtype: QbeType, elem_hea
 
     const off = try self.newTemp();
     try self.qbeOp2Imm(off, .l, "mul", idx_cur, @intCast(qbeSizeOf(elem_qtype)));
-    const off8 = try self.newTemp();
-    try self.qbeOp2Imm(off8, .l, "add", off, @intCast(LIST_HEADER_SIZE));
+    const data_a = try self.emitListData("%a");
+    const data_b = try self.emitListData("%b");
     const addr_a = try self.newTemp();
-    try self.qbeOp2(addr_a, .l, "add", "%a", off8);
+    try self.qbeOp2(addr_a, .l, "add", data_a, off);
     const addr_b = try self.newTemp();
-    try self.qbeOp2(addr_b, .l, "add", "%b", off8);
+    try self.qbeOp2(addr_b, .l, "add", data_b, off);
     const ea = try self.newTemp();
     try self.loadListElem(ea, elem_qtype, addr_a);
     const eb = try self.newTemp();

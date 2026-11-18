@@ -130,16 +130,9 @@ pub fn releaseNamedLocalsExcept(self: *Codegen, names: []const []const u8, excep
 /// SIZE`in belge notu) hesaplanır (sınıflar için artık `genClassRelease`'in
 /// ürettiği `$ClassName_release` kullanılır — `total_size` derleme
 /// zamanında zaten sabittir, bu yol üzerinden hesaplanmaya gerek yoktur).
-pub fn listPayloadSize(self: *Codegen, ptr: []const u8, elem_qtype: QbeType) CodegenError![]const u8 {
-    const cap_addr = try self.newTemp();
-    try self.qbeOp2Imm(cap_addr, .l, "add", ptr, 8);
-    const cap_t = try self.newTemp();
-    try self.qbeLoadL(cap_t, cap_addr);
-    const size_t = try self.newTemp();
-    try self.qbeOp2Imm(size_t, .l, "mul", cap_t, @intCast(qbeSizeOf(elem_qtype)));
-    const total_t = try self.newTemp();
-    try self.qbeOp2Imm(total_t, .l, "add", size_t, @intCast(LIST_HEADER_SIZE));
-    return total_t;
+pub fn emitListFree(self: *Codegen, ptr: []const u8, elem_qtype: QbeType) CodegenError!void {
+    // v2.2.43: başlık bloğunun (satır içi kapasiteye göre) ve varsa ayrı eleman tamponunun boyutları çalışma zamanında okunur — bkz. `abi_layout` notu.
+    try self.qbeCall(null, "$nox_list_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{qbeSizeOf(elem_qtype)}) } });
 }
 
 /// `info`nin betimlediği TEK bir DEĞERİ (bir sınıf örneği ya da bir
@@ -243,17 +236,8 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
 
     const len_t = try self.newTemp();
     try self.qbeLoadL(len_t, "%p");
-    // Faz U.1: gerçek TAHSİS EDİLMİŞ boyut `cap`e (@8) karşılık gelir,
-    // `len`e (@0) DEĞİL — `len`, ELEMAN döngüsünün SINIRI olarak KALIR
-    // (yalnızca GEÇERLİ elemanlar release edilmeli), ama belleği
-    // serbest bırakırken `cap` KULLANILMALIDIR (aksi halde `.append()`in
-    // büyüttüğü bir liste, ONA AYRILAN gerçek bloktan DAHA KÜÇÜK bir
-    // boyutla serbest bırakılır — havuzun serbest-liste sınıf indeksini
-    // BOZAR, bkz. `arc.zig`nin `nox_rc_free_payload` notu).
-    const cap_addr = try self.newTemp();
-    try self.qbeOp2Imm(cap_addr, .l, "add", "%p", 8);
-    const cap_t = try self.newTemp();
-    try self.qbeLoadL(cap_t, cap_addr);
+    // v2.2.43: serbest bırakma boyutları (satır içi kapasite + varsa ayrı tampon) `$nox_list_free_payload` içinde çalışma zamanında hesaplanır;
+    // `len` yalnızca ELEMAN döngüsünün sınırıdır (yalnızca geçerli elemanlar release edilir).
 
     if (info.nested) |n| {
         // Faz U.4.5: `.closure` elemanları HİÇBİR ZAMAN sabit bir `$<isim>_
@@ -289,10 +273,9 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
 
         const off = try self.newTemp();
         try self.qbeOp2Imm(off, .l, "mul", idx_cur, 8);
-        const off8 = try self.newTemp();
-        try self.qbeOp2Imm(off8, .l, "add", off, @intCast(LIST_HEADER_SIZE));
+        const data_t = try self.emitListData("%p");
         const addr = try self.newTemp();
-        try self.qbeOp2(addr, .l, "add", "%p", off8);
+        try self.qbeOp2(addr, .l, "add", data_t, off);
         const elem = try self.newTemp();
         try self.qbeLoadL(elem, addr);
         const is_null = try self.newTemp();
@@ -365,17 +348,9 @@ pub fn genListElemRelease(self: *Codegen, fn_name: []const u8, info: ElemHeapInf
         try self.qbeJmp(cond_label);
         try self.qbeLabel(loopend_label);
 
-        const size_t = try self.newTemp();
-        try self.qbeOp2Imm(size_t, .l, "mul", cap_t, 8);
-        const total_t = try self.newTemp();
-        try self.qbeOp2Imm(total_t, .l, "add", size_t, @intCast(LIST_HEADER_SIZE));
-        try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" }, .{ .ty = .l, .text = total_t } });
+        try self.emitListFree("%p", .l);
     } else {
-        const size_t = try self.newTemp();
-        try self.qbeOp2Imm(size_t, .l, "mul", cap_t, @intCast(qbeSizeOf(info.elem_qtype)));
-        const total_t = try self.newTemp();
-        try self.qbeOp2Imm(total_t, .l, "add", size_t, @intCast(LIST_HEADER_SIZE));
-        try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = "%p" }, .{ .ty = .l, .text = total_t } });
+        try self.emitListFree("%p", info.elem_qtype);
     }
     try self.qbeJmp(done_label);
     try self.qbeLabel(done_label);
@@ -558,14 +533,13 @@ pub fn releaseValueIfSet(self: *Codegen, ptr: []const u8, heap: HeapKind, elem_q
         // Faz GG.7: yukarıdaki `.boxed_scalar` dalıyla AYNI gerekçe —
         // ilkel-elemanlı `list[T]` release'i (ÇOK SIK bir yol) inline
         // predecrement'e taşınır.
-        const size = try self.listPayloadSize(ptr, elem_qtype);
         const should_free = try self.emitInlinePredecrement(ptr, .list);
         const free_label = try self.newLabel("list_free");
         const skip_free_label = try self.newLabel("list_free_skip");
         const free_done_label = try self.newLabel("list_free_done");
         try self.qbeJnz(should_free, free_label, skip_free_label);
         try self.qbeLabel(free_label);
-        try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ptr }, .{ .ty = .l, .text = size } });
+        try self.emitListFree(ptr, elem_qtype);
         try self.qbeJmp(free_done_label);
         try self.qbeLabel(skip_free_label);
         try self.qbeJmp(free_done_label);
@@ -974,95 +948,6 @@ pub fn emitInlinePredecrement(self: *Codegen, ptr: []const u8, heap: HeapKind) C
     return should_free;
 }
 
-/// `genListAppend`nin büyüme yolu İçin: `list_ptr`nin (başlıktan SONRAKİ)
-/// İLK `count` elemanını (null OLMAYANLARI) KOŞULSUZ retain eder (düz
-/// "refcount+1" — `emitInlinePredecrement`in TERSİ, ama HİÇBİR ZAMAN
-/// serbest bırakmaya yol AÇAMAYACAĞINDAN tek bir inline artırım YETERLİDİR,
-/// TİPE özgü özyinelemeli dispatch GEREKMEZ). Bkz. `genListAppend`nin
-/// büyüme-retain notunun TAM gerekçesi: `nox_list_grow`nin ham `@memcpy`i
-/// eleman işaretçilerini retain'SİZ kopyaladığından, bu ÇAĞRI YENİ bloğun
-/// bu elemanlar üzerinde ESKİ bloktan BAĞIMSIZ, GEÇERLİ bir sahiplik payı
-/// KAZANDIĞINI YANSITIR.
-pub fn emitListElemRetainLoop(self: *Codegen, list_ptr: []const u8, count: []const u8, elem_heap: HeapKind) CodegenError!void {
-    const idx_slot = try self.newTemp();
-    try self.qbeAlloc(idx_slot, .eight, 8);
-    try self.qbeStoreImmL(0, idx_slot);
-    const cond_label = try self.newLabel("append_retain_cond");
-    const body_label = try self.newLabel("append_retain_body");
-    const end_label = try self.newLabel("append_retain_end");
-    try self.qbeJmp(cond_label);
-    try self.qbeLabel(cond_label);
-    const idx_cur = try self.newTemp();
-    try self.qbeLoadL(idx_cur, idx_slot);
-    const cont = try self.newTemp();
-    try self.qbeOp2(cont, .w, "csltl", idx_cur, count);
-    try self.qbeJnz(cont, body_label, end_label);
-    try self.qbeLabel(body_label);
-    const off = try self.newTemp();
-    try self.qbeOp2Imm(off, .l, "mul", idx_cur, 8);
-    const off16 = try self.newTemp();
-    try self.qbeOp2Imm(off16, .l, "add", off, @intCast(LIST_HEADER_SIZE));
-    const addr = try self.newTemp();
-    try self.qbeOp2(addr, .l, "add", list_ptr, off16);
-    const elem = try self.newTemp();
-    try self.qbeLoadL(elem, addr);
-    try self.emitInlineRetain(elem, elem_heap);
-    const idx_next = try self.newTemp();
-    try self.qbeOp2Imm(idx_next, .l, "add", idx_cur, 1);
-    try self.qbeStoreL(idx_next, idx_slot);
-    try self.qbeJmp(cond_label);
-    try self.qbeLabel(end_label);
-}
-
-/// `emitListElemRetainLoop`nin dengeleyicisi: `genListAppend`nin büyüme
-/// yolunda ESKİ blok BU ÇAĞRIDA GERÇEKTEN ölüyorsa (`emitInlinePredecrement`
-/// `true` dönerse), retain döngüsünün eklediği fazladan payı GERİ ALMAK
-/// İçin `list_ptr`nin İLK `count` elemanını düz bir decrement İLE azaltır.
-/// **ASLA sıfıra/altına düşüremez** (elemanın KENDİ ÖNCEKİ, geçerli
-/// sahipliği HÂLÂ durur — bu SADECE bu fonksiyonun EKLEDİĞİ +1'i geri
-/// alır) — bu YÜZDEN TAM özyinelemeli `release` (nested serbest bırakma)
-/// GEREKMEZ, TİPE özgü dispatch OLMADAN düz bir "refcount-1" YETERLİDİR.
-pub fn emitListElemPlainDecrementLoop(self: *Codegen, list_ptr: []const u8, count: []const u8, elem_heap: HeapKind) CodegenError!void {
-    const idx_slot = try self.newTemp();
-    try self.qbeAlloc(idx_slot, .eight, 8);
-    try self.qbeStoreImmL(0, idx_slot);
-    const cond_label = try self.newLabel("append_deccomp_cond");
-    const body_label = try self.newLabel("append_deccomp_body");
-    const dec_label = try self.newLabel("append_deccomp_do");
-    const skip_label = try self.newLabel("append_deccomp_skip");
-    const end_label = try self.newLabel("append_deccomp_end");
-    try self.qbeJmp(cond_label);
-    try self.qbeLabel(cond_label);
-    const idx_cur = try self.newTemp();
-    try self.qbeLoadL(idx_cur, idx_slot);
-    const cont = try self.newTemp();
-    try self.qbeOp2(cont, .w, "csltl", idx_cur, count);
-    try self.qbeJnz(cont, body_label, end_label);
-    try self.qbeLabel(body_label);
-    const off = try self.newTemp();
-    try self.qbeOp2Imm(off, .l, "mul", idx_cur, 8);
-    const off16 = try self.newTemp();
-    try self.qbeOp2Imm(off16, .l, "add", off, @intCast(LIST_HEADER_SIZE));
-    const addr = try self.newTemp();
-    try self.qbeOp2(addr, .l, "add", list_ptr, off16);
-    const elem = try self.newTemp();
-    try self.qbeLoadL(elem, addr);
-    const is_null = try self.newTemp();
-    try self.qbeOp2Imm(is_null, .w, "ceql", elem, 0);
-    try self.qbeJnz(is_null, skip_label, dec_label);
-    try self.qbeLabel(dec_label);
-    // Bu decrement ASLA sıfıra/altına düşemez (bkz. bu fonksiyonun belge
-    // notu) — `should_free` dönüş değeri BİLİNÇLİ olarak yok sayılır.
-    _ = try self.emitInlinePredecrement(elem, elem_heap);
-    try self.qbeJmp(skip_label);
-    try self.qbeLabel(skip_label);
-    const idx_next = try self.newTemp();
-    try self.qbeOp2Imm(idx_next, .l, "add", idx_cur, 1);
-    try self.qbeStoreL(idx_next, idx_slot);
-    try self.qbeJmp(cond_label);
-    try self.qbeLabel(end_label);
-}
-
 /// `expr` değerlendirildiğinde BAŞKA BİR YERDE ZATEN sahibi olan, ÖDÜNÇ
 /// ALINMIŞ bir heap referansı mı üretir (bu durumda yeni bir isme takma ad
 /// olması `nox_rc_retain` GEREKTİRİR), yoksa TAZE bir değer mi (`isTemporaryExpr`
@@ -1102,7 +987,7 @@ pub fn retainIfAliasing(self: *Codegen, value: ast.Expr, v0: Value) CodegenError
             const is_local_site = self.move_sites.contains(key);
             const is_param_site = self.active_param_moves.contains(key);
             if ((is_local_site or is_param_site) and !v0.always_fresh and isHeapManaged(v0.heap) and v0.heap != .boxed_scalar and
-                !info.arena and !info.borrowed_field and !info.is_stack_local and !info.manual and info.growable_arena == null and !info.ref_param and
+                !info.arena and !info.borrowed_field and !info.is_stack_local and !info.manual and info.growable_arena == null and
                 (is_param_site or !info.is_param))
             {
                 try self.qbeStoreImmL(0, info.slot);

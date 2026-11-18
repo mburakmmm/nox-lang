@@ -86,4 +86,3 @@ in parallel on a worker pool ([Concurrency](concurrency.md)). There is no `list[
 
 Nox is compiled ahead of time to native code. There is no interpreter overhead, no boxing of `int`/`float`, and memory is released
 deterministically. A straight port of a numeric Python loop typically runs one to two orders of magnitude faster.
-- **Growing a shared list.** `b = a; a.append(x)` can leave `b` seeing the old, shorter list when the append has to reallocate (a list is one block, not a header plus a buffer); in-place element writes and appends that fit are shared. Keep one owner for a list you grow. See [Collections](../tutorial/05-collections.md).

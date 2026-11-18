@@ -559,9 +559,7 @@ test "WorkerPool: paylaşılan liste hücresi (str) 4 işçide eş zamanlı appe
     defer pool.destroy();
     const state: *asap.RuntimeState = @ptrCast(@alignCast(pool.rt));
     state.main_pool_workers = 4;
-    const raw = arc.nox_rc_alloc(pool.rt, 16).?;
-    @as(*align(1) i64, @ptrCast(raw)).* = 0;
-    @as(*align(1) i64, @ptrCast(@as([*]u8, @ptrCast(raw)) + 8)).* = 0;
+    const raw = arc.nox_list_new(pool.rt, 0, 8).?;
     var st = SharedListStress{ .cell = slist_mod.nox_slist_new(pool.rt, raw) };
     try pool.spawnWorkers(*SharedListStress, sharedListWorkerBody, &st);
     sharedListWorkerBody(pool.rt, 0, &st);

@@ -548,7 +548,7 @@ pub export fn nox_hpy_args_add_bytes(mc_ptr: ?*anyopaque, list_ptr: ?*anyopaque)
     defer mc.allocator.free(raw);
     const base: [*]const u8 = @ptrCast(list_ptr.?);
     for (0..len) |i| {
-        const slot: *align(1) const i64 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + i * abi_layout.FIELD_SLOT_SIZE);
+        const slot: *align(1) const i64 = @ptrCast(abi_layout.listData(@constCast(base)) + i * abi_layout.FIELD_SLOT_SIZE);
         if (slot.* < 0 or slot.* > 255) {
             setHpyError("AHPY_NOX008: bytes değeri 0-255 dışında", .{});
             return;
@@ -564,12 +564,10 @@ pub export fn nox_hpy_args_add_bytes(mc_ptr: ?*anyopaque, list_ptr: ?*anyopaque)
 }
 
 fn buildIntList(rt: ?*anyopaque, bytes: []const u8) ?*anyopaque {
-    const raw = arc_mod.nox_rc_alloc(rt, abi_layout.LIST_HEADER_SIZE + abi_layout.FIELD_SLOT_SIZE * bytes.len) orelse return null;
+    const raw = arc_mod.nox_list_new(rt, bytes.len, abi_layout.FIELD_SLOT_SIZE) orelse return null;
     const base: [*]u8 = @ptrCast(raw);
-    @as(*align(1) i64, @ptrCast(base)).* = @intCast(bytes.len);
-    @as(*align(1) i64, @ptrCast(base + 8)).* = @intCast(bytes.len);
     for (bytes, 0..) |b, i| {
-        const slot = base + abi_layout.LIST_HEADER_SIZE + abi_layout.FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(base) + abi_layout.FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @intCast(b);
     }
     return @ptrCast(base);
@@ -800,7 +798,7 @@ fn packArgs(mc: *MarshalCtx, stack_buf: *[PACKED_ARGS_INLINE_CAP]hpy_bridge.cont
     return .{ .items = heap, .heap = heap };
 }
 
-/// `list_ptr`nin (opak, ARC başlığından SONRAKİ `len@0`/`elemler@16`
+/// `list_ptr`nin (opak, ARC başlığından SONRAKİ `len@0`/`data@16`
 /// düzenine sahip) `index`teki elemanını `elem_kind`e (0=int,1=float,
 /// 2=bool,3=str) göre TAZE bir HPy handle'ına marshal eder — ÇAĞIRAN,
 /// bu handle'ı kullanımı BİTER BİTMEZ `ctx_Close` İLE kapatmalıdır.
@@ -809,21 +807,21 @@ fn readListElemAsHpy(mc: *MarshalCtx, list_ptr: ?*anyopaque, index: usize, elem_
     const base: [*]const u8 = @ptrCast(@alignCast(list_ptr orelse return hpy_bridge.context.HPy_NULL));
     switch (elem_kind) {
         0 => {
-            const slot: *align(1) const i64 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + index * 8);
+            const slot: *align(1) const i64 = @ptrCast(abi_layout.listData(@constCast(base)) + index * 8);
             return ctx.ctx_Long_FromInt64_t.?(ctx, slot.*);
         },
         1 => {
-            const slot: *align(1) const i64 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + index * 8);
+            const slot: *align(1) const i64 = @ptrCast(abi_layout.listData(@constCast(base)) + index * 8);
             const f: f64 = @bitCast(slot.*);
             return ctx.ctx_Float_FromDouble.?(ctx, f);
         },
         2 => {
             // v1.142.19: `list[bool]` elemanları 1 bayttır.
-            const slot: *const u8 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + index);
+            const slot: *const u8 = @ptrCast(abi_layout.listData(@constCast(base)) + index);
             return ctx.ctx_Bool_FromBool.?(ctx, slot.* != 0);
         },
         3 => {
-            const slot: *align(1) const i64 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + index * 8);
+            const slot: *align(1) const i64 = @ptrCast(abi_layout.listData(@constCast(base)) + index * 8);
             const raw: usize = @intCast(slot.*);
             if (raw == 0) return ctx.ctx_Unicode_FromString.?(ctx, "");
             const sp: [*:0]const u8 = @ptrFromInt(raw);
@@ -849,7 +847,7 @@ fn freeTempScalarList(rt: ?*anyopaque, list_ptr: ?*anyopaque, elem_size: i64, is
     if (is_str) {
         var i: usize = 0;
         while (i < len) : (i += 1) {
-            const slot: *align(1) const i64 = @ptrCast(base + abi_layout.LIST_HEADER_SIZE + i * 8);
+            const slot: *align(1) const i64 = @ptrCast(abi_layout.listData(@constCast(base)) + i * 8);
             const raw: usize = @intCast(slot.*);
             if (raw != 0) {
                 const sp: [*:0]u8 = @ptrFromInt(raw);
@@ -857,8 +855,7 @@ fn freeTempScalarList(rt: ?*anyopaque, list_ptr: ?*anyopaque, elem_size: i64, is
             }
         }
     }
-    const payload_size = abi_layout.LIST_HEADER_SIZE + @as(usize, @intCast(elem_size)) * len;
-    arc_mod.nox_rc_release(rt, lp, payload_size);
+    arc_mod.nox_list_release_raw(rt, lp, @intCast(elem_size));
 }
 
 /// `handle`nin `ctx`iyle YENİ bir `MarshalCtx` yaratır — `handle_ptr`

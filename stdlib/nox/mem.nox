@@ -14,11 +14,12 @@
 # desen (kullanıcı KENDİ `lowlevel:` bloğunu YAZMAK ZORUNDA DEĞİLDİR).
 #
 # **DİKKAT — `detach(bir list[T])` İLE KULLANIRKEN:** `detach` bir
-# `list[T]`nin BAŞINDAKİ 16-baytlık başlığa (length+capacity, bkz.
-# `shared/abi_layout.zig`nin `LIST_HEADER_SIZE`ı) işaret eden bir ptr
-# döner — GERÇEK eleman verisi 16 bayt SONRA başlar. `nox.mem.copy(dst,
+# `list[T]`nin ilk elemanından 16 bayt ÖNCEYİ gösteren bir ptr döner
+# (eski "başlık işaretçisi" sözleşmesi korunur: v2.2.43'de başlık 24 bayt ve
+# elemanlar `data` göstericisinde olsa da `ptr_add(detach(xs), 16)` hâlâ ilk
+# elemandır, liste büyüdükten sonra da). `nox.mem.copy(dst,
 # ptr[T](ptr_to_int(detach(xs))), n)` GİBİ DOĞRUDAN bir kullanım bu
-# başlığı YANLIŞLIKLA veri SANIP OKUR/YAZAR — çağıran taraf `ptr_add(...,
+# 16 baytı YANLIŞLIKLA veri SANIR — çağıran taraf `ptr_add(...,
 # 16)` İLE bunu KENDİSİ atlamalıdır (bkz. `tests/golden/codegen_cases/
 # nox_mem_copy_move_set_volatile.nox`nin KENDİ örneği). Bu, `Buffer`/`Span`
 # (Faz A madde 5-6) İçİn HENÜZ ÇÖZÜLMEMİŞ, bilinçli olarak İLERİYE

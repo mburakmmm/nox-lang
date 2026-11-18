@@ -124,9 +124,7 @@ print(xs)
 [0, 1, 4, 9]
 ```
 
-`append` and `insert` (and `extend`, which is rewritten to `append`) on a list parameter are visible to the caller, also through several call levels, recursion, module-level lists and object fields (`fill(obj.items, 3)`), and a fresh temporary argument (`fill([1, 2], 3)`) is simply dropped afterwards. Nothing about this shows in the syntax: the compiler passes the address of the caller's variable instead of a copy for such parameters.
-
-What is not supported yet (the compiler reports an unsupported construct): methods that grow a list parameter, using such a function as a value (`f = fill`) or as a decorated/`async` function, growing a parameter that the function also reassigns (`acc = [...]`), and passing a borrowed element such as `grid[i]` to a growing parameter (bind it to a variable first: `row = grid[i]; fill(row, 3)`). Like every list in Nox, a second variable that still points at the old list does not see a reallocation (the existing aliasing difference).
+`append`, `insert` and `extend` on a list parameter are visible to the caller, also through several call levels, recursion, module-level lists, object fields (`fill(obj.items, 3)`) and methods, and a fresh temporary argument (`fill([1, 2], 3)`) is simply dropped afterwards. Nothing about this shows in the syntax: a list is a handle whose header never moves when it grows, so every name that refers to it sees the new elements (exactly as in Python).
 
 ## Functions are values
 

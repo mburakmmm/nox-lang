@@ -29,7 +29,6 @@ const dupeToNoxStr = http_client.dupeToNoxStr;
 /// (derleyiciyle PAYLAŞILAN TEK doğruluk kaynağı) RE-EXPORT. Başlığın
 /// İÇİNDEKİ `cap` alanının ofseti (bilinçli olarak AYRI bir sabit
 /// verilmez, bkz. P1.2'nin plan notu) hâlâ literal `8`dir.
-const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 /// Her `list[T]` elemanı (burada HER ZAMAN bir `str` işaretçisi) TAM 8
 /// bayt yuva kaplar.
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
@@ -48,12 +47,10 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
     const sep_slice = str_mod.nox_str_slice(sep orelse return null);
 
     if (sep_slice.len == 0) {
-        const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE) orelse return null;
+        const raw = arc.nox_list_new(rt, 1, FIELD_SLOT_SIZE) orelse return null;
         const bytes: [*]u8 = @ptrCast(raw);
-        @as(*align(1) i64, @ptrCast(bytes)).* = 1;
-        @as(*align(1) i64, @ptrCast(bytes + 8)).* = 1;
         const dup = dupeToNoxStr(rt, s_slice) orelse return null;
-        @as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
+        @as(*align(1) i64, @ptrCast(abi_layout.listData(bytes))).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
         return @ptrCast(bytes);
     }
 
@@ -63,7 +60,7 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
         var seps: usize = 0;
         for (s_slice) |b| seps += @intFromBool(b == c);
         const n1 = seps + 1;
-        const raw1 = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * n1) orelse return null;
+        const raw1 = arc.nox_list_new(rt, n1, FIELD_SLOT_SIZE) orelse return null;
         const bytes1: [*]u8 = @ptrCast(raw1);
         @as(*align(1) i64, @ptrCast(bytes1)).* = @intCast(n1);
         @as(*align(1) i64, @ptrCast(bytes1 + 8)).* = @intCast(n1);
@@ -72,7 +69,7 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
         while (k < n1) : (k += 1) {
             const end = if (k + 1 < n1) (std.mem.indexOfScalarPos(u8, s_slice, start, c) orelse s_slice.len) else s_slice.len;
             const dup = dupeToNoxStr(rt, s_slice[start..end]) orelse return null;
-            const slot = bytes1 + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * k;
+            const slot = abi_layout.listData(bytes1) + FIELD_SLOT_SIZE * k;
             @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
             start = end + 1;
         }
@@ -85,7 +82,7 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
         while (it.next()) |_| count += 1;
     }
 
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * count) orelse return null;
+    const raw = arc.nox_list_new(rt, count, FIELD_SLOT_SIZE) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(count);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(count);
@@ -94,7 +91,7 @@ export fn nox_strings_split_raw(rt: ?*anyopaque, s: ?[*:0]const u8, sep: ?[*:0]c
     var i: usize = 0;
     while (it.next()) |part| {
         const dup = dupeToNoxStr(rt, part) orelse return null;
-        const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
         i += 1;
     }
@@ -109,7 +106,7 @@ export fn nox_strings_split_ws_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(
         var it = std.mem.tokenizeAny(u8, s_slice, " \t\n\r\x0b\x0c");
         while (it.next()) |_| count += 1;
     }
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * count) orelse return null;
+    const raw = arc.nox_list_new(rt, count, FIELD_SLOT_SIZE) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(count);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(count);
@@ -117,7 +114,7 @@ export fn nox_strings_split_ws_raw(rt: ?*anyopaque, s: ?[*:0]const u8) callconv(
     var i: usize = 0;
     while (it.next()) |part| {
         const dup = dupeToNoxStr(rt, part) orelse return null;
-        const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
         i += 1;
     }
@@ -393,7 +390,7 @@ export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]c
     var total_len: usize = 0;
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]const u8 = @ptrFromInt(addr);
         total_len += std.mem.len(p);
         if (i + 1 < count) total_len += sep_slice.len;
@@ -403,7 +400,7 @@ export fn nox_strings_join_raw(rt: ?*anyopaque, parts: ?*anyopaque, sep: ?[*:0]c
     var off: usize = 0;
     i = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]const u8 = @ptrFromInt(addr);
         const slice = str_mod.nox_str_slice(p);
         @memcpy(buf[off..][0..slice.len], slice);
@@ -541,13 +538,13 @@ test "nox_strings_split_raw temel bolme" {
 
     var i: usize = 0;
     while (i < 3) : (i += 1) {
-        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         if (i == 0) try std.testing.expectEqualStrings("a", std.mem.sliceTo(p, 0));
         if (i == 2) try std.testing.expectEqualStrings("c", std.mem.sliceTo(p, 0));
     }
-    arc.nox_rc_release(rt, list_ptr, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 3);
+    arc.nox_list_release_raw(rt, list_ptr, FIELD_SLOT_SIZE);
 }
 
 test "nox_strings_trim/upper/lower/replace_raw dogru calisir" {
@@ -647,12 +644,12 @@ fn expectStrListAndRelease(rt: ?*anyopaque, list_ptr: *anyopaque, expected: []co
     try std.testing.expectEqual(expected.len, count);
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         try std.testing.expectEqualStrings(expected[i], std.mem.sliceTo(p, 0));
     }
-    arc.nox_rc_release(rt, list_ptr, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * count);
+    arc.nox_list_release_raw(rt, list_ptr, FIELD_SLOT_SIZE);
 }
 
 test "Faz III.2: nox_strings_splitn_raw en fazla n parca uretir, sonuncu kalanin tamami" {
@@ -686,13 +683,13 @@ test "Faz III.2: nox_strings_rsplit_raw AYNI parcalari TERS sirada doner" {
 /// inşa eder — `nox_strings_split_raw`nin KENDİSİNİN inşa mantığıyla AYNI
 /// (bkz. onun belge notu).
 fn buildStrList(rt: ?*anyopaque, parts: []const []const u8) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * parts.len) orelse return null;
+    const raw = arc.nox_list_new(rt, parts.len, FIELD_SLOT_SIZE) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(parts.len);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(parts.len);
     for (parts, 0..) |part, i| {
         const dup = dupeToNoxStr(rt, part) orelse return null;
-        const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
     }
     return @ptrCast(bytes);
@@ -712,10 +709,10 @@ test "nox_strings_join_raw parcalari ayiraçla dogru birlestirir (tek gecis, O(n
         // refcount'larını AYRI AYRI (`str.nox_str_release`) düşürmek gerekir.
         var i: usize = 0;
         while (i < 3) : (i += 1) {
-            const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(parts_bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+            const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(parts_bytes) + FIELD_SLOT_SIZE * i)).*);
             str.nox_str_release(rt, @ptrFromInt(addr));
         }
-        arc.nox_rc_release(rt, parts, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 3);
+        arc.nox_list_release_raw(rt, parts, FIELD_SLOT_SIZE);
     }
 
     const sep_in = makeTestStr(rt, ", ");
@@ -732,7 +729,7 @@ test "nox_strings_join_raw bos liste bos dize doner" {
     defer asap.nox_runtime_deinit(rt);
 
     const parts = buildStrList(rt, &.{}) orelse return error.BuildFailed;
-    defer arc.nox_rc_release(rt, parts, 16);
+    defer arc.nox_list_release_raw(rt, parts, FIELD_SLOT_SIZE);
 
     const sep_in = makeTestStr(rt, ", ");
     defer str.nox_str_release(rt, sep_in);
@@ -752,10 +749,10 @@ test "v1.156.0: nox_strings_split_ws_raw boşluk dizilerini böler, boşları at
     try std.testing.expectEqual(@as(i64, 3), @as(*align(1) i64, @ptrCast(b)).*);
     var i: usize = 0;
     while (i < 3) : (i += 1) {
-        const p: usize = @intCast(@as(*align(1) i64, @ptrCast(b + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+        const p: usize = @intCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(b) + FIELD_SLOT_SIZE * i)).*);
         str_mod.nox_str_release(rt, @ptrFromInt(p));
     }
-    arc.nox_rc_release(rt, l, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 3);
+    arc.nox_list_release_raw(rt, l, FIELD_SLOT_SIZE);
 }
 
 test "nox_strings_leading_tab_raw yalnızca girintideki TAB'ı yakalar" {

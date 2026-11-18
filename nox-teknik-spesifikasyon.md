@@ -6206,8 +6206,8 @@ döner. `old_ptr`e HİÇ DOKUNMAZ (ne serbest bırakır ne refcount DEĞİŞTİR
     `nox_rc_predecrement`+`nox_rc_free_payload` ile serbest bırakılır; YENİ
     işaretçi ALICININ KENDİ SLOTUNA (`var_info.slot`) geri yazılır.
 
-**Bilinçli v1 sınırlamaları (KABUL EDİLDİ):**
-1. **Büyüme ANINDA VAR OLAN bir alias YENİ elemanı GÖRMEZ:** `ys = xs`
+**Bilinçli v1 sınırlamaları (KABUL EDİLDİ) — 1. ve 2. madde v2.2.43'te KALDIRILDI (bkz. §3.480: liste başlığı artık büyümede taşınmaz, alıcı kısıtı/parametre kısıtı yok); 3.-4. geçerlidir:**
+1. **[KALDIRILDI v2.2.43] Büyüme ANINDA VAR OLAN bir alias YENİ elemanı GÖRMEZ:** `ys = xs`
    OLUŞTURULDUKTAN SONRA `xs.append(v)` bir BÜYÜME tetiklerse, `ys` ESKİ
    (artık daha KISA) bloğu GÖRMEYE devam eder — `xs`in KENDİ slotu
    güncellenir ama `ys`in DEĞİL. Bu, Nox'un işaretçi-DEĞERİ-tutan, TEK
@@ -6217,7 +6217,7 @@ döner. `old_ptr`e HİÇ DOKUNMAZ (ne serbest bırakır ne refcount DEĞİŞTİR
    YANLIŞ veri OKUMAZ/belleği BOZMAZ — `ys` KENDİ (kısa) `len`iyle bağlı
    kaldığından, `ys[len(eski)]` gibi bir erişim TEMİZ bir `IndexError`
    fırlatır (bkz. doğrulama, "İlk deneme").
-2. **Alıcı BİR PARAMETRE OLAMAZ:** bir parametre ÖDÜNÇ alınmıştır (refcount'u
+2. **[KALDIRILDI v2.2.43] Alıcı BİR PARAMETRE OLAMAZ:** bir parametre ÖDÜNÇ alınmıştır (refcount'u
    ETKİLENMEDEN geçirilir) — büyüme yolu ESKİ bloğu predecrement/free
    ETTİĞİNDEN, bu ÇAĞIRANIN hâlâ geçerli saydığı belleği BOZARDI. Checker
    parametre/yerel ayrımını TİP DÜZEYİNDE yapmadığından, bu kısıt CODEGEN
@@ -30161,4 +30161,18 @@ Aşama 0.7/0.8. **Yığın:** Nox bileşenleri `async`/`spawn` kullanmadığınd
 ### 3.479 noxc-nightly Aşama 2: Nox parser'ı (v2.2.42)
 
 `selfhost/parser.nox` (üretilmiş; şablon `parser.nox.in`), `compiler/parser/parser.zig`'in tam yüzey portudur. AST düz dizilerdedir (`selfhost/ast_schema.nox`: `n` düğüm tablosu, `l` liste tablosu, `sb` sentezlenmiş dize baytları, `sp_*` ifade span'leri); dize = tek `int`e paketlenmiş (x, y) çifti (`x >= 0` kaynak [x, y), `x < 0` `sb`). Hata: istisna sınıfları (`ErrUnexpected`/`ErrNumber`/`ErrRecursion`); tanılama (`last_diagnostic`) `P.dg_*` alanlarında ve hata anındaki geçerli simge ile birlikte Zig'e açılır; mesaj biçimlendirme Zig'de PAYLAŞILIR (`syntax_report.reportParseFailure`). Ifade span'i Zig'de dilim-yuvası adresine bağlıdır; düz dizide düğüm kimliğine bağlıdır — Zig'in dilim yuvasından DEĞER kopyaladığı yerlerde (`str.format` indirgemesi, guard ikamesi) Nox tarafı `clone_expr` ile span taşımayan kopya üretir. Nox'un bir tuzağı (dogfood D2.1): `xs[i] = f()` kapsayıcıyı sağ taraftan önce değerlendirir; `f` listeyi büyütürse yazma eski tampona gider — parser'da sağ taraf geçici değişkene alınır. Doğrulama ve bütçeler: CHANGELOG [2.2.42], plan §5.
+
+### 3.480 Liste için kararlı başlık (handle) yeniden tasarımı (v2.2.43, dogfood D1.2)
+
+Sorun (§3.20 sınırlama 1-2): `list[T]` tek bir bloktu; büyüme yeni blok ayırıp yalnızca `append`in çağrıldığı adın slotunu güncelliyordu, bu yüzden `ys = xs; xs.append(v)` büyümede `ys`i bayat bırakıyor, liste parametresi büyütmek için "referans liste parametresi" (`ref_params.zig`, çağıranın slot adresini geçirme) çözümleyicisi ve alıcı kısıtları gerekiyordu. Kullanıcı kararı (2026-11-18): geriye dönük **kaynak** uyumluluğu bozulmuyorsa yap; dahili ABI sürümler arası değişebilir (VERSIONING.md §2).
+
+**Yeni düzen** (`shared/abi_layout.zig`, tek doğruluk kaynağı): `{len: i64 @0, cap: i64 @8, data: ptr @16, satır içi elemanlar @24...}`, `LIST_HEADER_SIZE = 24`. Başlık adresi (ARC payload'ı) listenin ömrü boyunca değişmez. `data` başlangıçta `payload + 24`ü (satır içi tampon) gösterir; literal, `split`, comprehension gibi büyümeyen listeler TEK tahsisle kalır (+8 bayt, elemanlara bir ek yükleme). Kapasite dolunca `nox_list_grow(rt, list, esz)` elemanları AYRI bir tampona taşır (`[stash: i64][elemanlar]`, `data = tampon + 8`; ilk büyüme en az 4 eleman, sonra ikiye katlama; tampon büyümesi `nox_list_realloc` ile yerinde olabilir) ve yalnızca `data`/`cap`i günceller. `stash` = satır içi kapasite: başlık bloğunun serbest bırakma boyutu (`24 + inline_cap*esz`, havuz sınıfı/DebugAllocator boyut denetimi) büyümeden sonra `cap`ten çıkarılamayacağından orada saklanır. Serbest bırakma tek yerden: `nox_list_free_payload(rt, list, esz)`. Arena listeleri (GG.18 `growable_arena`) için `nox_arena_list_grow` (eski tampon arena yıkılana kadar çöp). wasm32'de `data` yuvası da 8 bayttır (`u64`).
+
+**Codegen:** her eleman erişimi `emitListData(list)` (`load list+16`, LLVM'de `list_data` TBAA etiketi `!6`) + `data + i*esz`; `emitListHeaderInit` literal/boş-liste tahsisinde `data`yı satır içi tampona bağlar; `genListAppend` yeniden yazıldı: `len >= cap` soğuk blok (`qbeJnzCold`) `nox_list_grow` çağırır, sonra tek yazma yolu; alıcının slotuna geri yazma, `is_param` kısıtı, unique-`realloc` yolu, büyüme-retain/decrement döngüleri (`emitListElemRetainLoop`/`PlainDecrementLoop`) ve `ref_params.zig` tamamen silindi; `$List_*_release` ve ilkel liste serbest bırakma `nox_list_free_payload` çağırır. `ptr_of(xs)` = `data`; `detach(xs)` eski sözleşmeyi korur (`data - 16`, yani `ptr_add(detach(xs), 16)` ilk eleman). Çalışma zamanında elle liste kuran/okuyan her yer (`dict`, `shared_list`, `str.chars`, stdlib kabukları, HPy köprüsü, tests/compat) `abi_layout.listInit/listData` / `nox_list_new` / `nox_list_release_raw` kullanır. `nox_list_push`/`nox_list_reserve` (comprehension) artık başlığı taşımaz.
+
+**Paylaşılan/çok işçili listeler:** blok kilidi ve `HDR_SHARED_BIT` başlık adresine bağlıdır; adres sabit olduğundan `emitPropagateShared` (büyümede yeni blok yayımlama) gerekmez. Eşzamansız okuyucuların kilitsiz erişimi yalnızca kilitli (yığın elemanlı) listelerde güvenlidir; skaler listelerde kilitsiz eşzamanlı büyütme eskiden de tanımsızdı (tek-sahip yolu eski bloğu serbest bırakırdı).
+
+**Davranış:** takma ad, parametre, metot parametresi, alan, iç içe liste, modül global'i ve dict değeri üzerinden `append`/`insert`/`extend` büyümesi her yerde görünür (Python anlamı). Kapsam dışı/değişmeyen: arena listeleri hâlâ büyütülemez (lowlevel kapsamı, GG.18 hariç); checker'ın alıcı biçimi kuralı (değişken veya `isim.alan...`; dizinli alıcı yeniden yazımla) korunur — artık yalnızca "alıcı saklı bir konum olmalı" anlamına gelir.
+
+**Test:** `tests/golden/codegen_cases/list_alias_growth_shared.nox` (11 senaryo, iki backend, Debug çalışma zamanında sızıntı/çifte serbest bırakma); `list_append_unique_realloc` ve `module_global_returned_borrowed` beklenen çıktıları (eski ayrışmayı sabitliyordu) Python'a göre düzeltildi; IR anlık görüntüleri yenilendi; `nox_list_*` birim testleri (`arc.zig`/`list_ops.zig`/`shared_list.zig`/`dict.zig`) yeni düzene taşındı.
 

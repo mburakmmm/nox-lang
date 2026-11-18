@@ -21,18 +21,17 @@ const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
 const abi_layout = @import("abi_layout");
 
-const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 const LastOkSlot = scratch_util.TlsSlot(bool, true);
 
 fn buildIntList(rt: ?*anyopaque, bytes: []const u8) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * bytes.len) orelse return null;
+    const raw = arc.nox_list_new(rt, bytes.len, FIELD_SLOT_SIZE) orelse return null;
     const base: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(base)).* = @intCast(bytes.len);
     @as(*align(1) i64, @ptrCast(base + 8)).* = @intCast(bytes.len);
     for (bytes, 0..) |b, i| {
-        const slot = base + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(base) + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @intCast(b);
     }
     return @ptrCast(base);
@@ -47,7 +46,7 @@ fn readIntListAsBytes(list_ptr: ?*anyopaque) ?[]u8 {
     const len: usize = @intCast(@as(*align(1) i64, @ptrCast(base)).*);
     const out = scratch_util.scratchAllocator().alloc(u8, len) catch return null;
     for (0..len) |i| {
-        const slot = base + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(base) + FIELD_SLOT_SIZE * i;
         const v = @as(*align(1) i64, @ptrCast(slot)).*;
         if (v < 0 or v > 255) {
             scratch_util.scratchAllocator().free(out);

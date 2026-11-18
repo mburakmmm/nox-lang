@@ -43,7 +43,6 @@ const embed = if (is_vfs) struct {
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
 /// Faz P1.2: bkz. `strings.zig`nin AYNI re-export notu.
-const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 /// Faz LL.1 takibi (bkz. nox-teknik-spesifikasyon.md §3.71 — GERÇEK bir
@@ -590,7 +589,7 @@ export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c
         return null;
     };
 
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * names.items.len) orelse {
+    const raw = arc.nox_list_new(rt, names.items.len, FIELD_SLOT_SIZE) orelse {
         fsLastOkPtr().* = false;
         return null;
     };
@@ -602,7 +601,7 @@ export fn nox_fs_read_dir_raw(rt: ?*anyopaque, path: ?[*:0]const u8) callconv(.c
             fsLastOkPtr().* = false;
             return null;
         };
-        const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
     }
     fsLastOkPtr().* = true;
@@ -1090,7 +1089,7 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
     var saw_b = false;
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).*)));
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         const name = std.mem.sliceTo(p, 0);
@@ -1099,7 +1098,7 @@ test "Faz III.3: nox_fs_read_dir_raw dizin girdilerini dogru doner (./.. haric)"
     }
     // Sayım tutmazsa `expectEqual` döner; listeyi ÖNCE bırakmak sızıntı
     // raporunun asıl hatayı örtmesini engeller.
-    arc.nox_rc_release(rt, list_ptr, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * count);
+    arc.nox_list_release_raw(rt, list_ptr, FIELD_SLOT_SIZE);
     try std.testing.expectEqual(@as(usize, 2), count);
     try std.testing.expect(saw_a);
     try std.testing.expect(saw_b);

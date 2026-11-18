@@ -12,7 +12,6 @@ const enabled = @import("../wasm_host.zig").is_freestanding_wasm and wasm_option
 const fetch = if (enabled) @import("http_fetch.zig") else struct {};
 
 const gpa = std.heap.page_allocator;
-const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 const Out = struct {
@@ -37,7 +36,7 @@ export fn nox_process_run_raw(rt: ?*anyopaque, program: ?[*:0]const u8, args: ?*
         const count: usize = @intCast(@as(*align(1) i64, @ptrCast(bytes)).*);
         var i: usize = 0;
         while (i < count) : (i += 1) {
-            const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
+            const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).*)));
             const p: [*:0]const u8 = @ptrFromInt(addr);
             if (i > 0) joined.append(gpa, 0) catch return out;
             joined.appendSlice(gpa, str_mod.nox_str_slice(p)) catch return out;

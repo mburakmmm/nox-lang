@@ -1,7 +1,7 @@
 //! `list[T].sort()` çalışma zamanı desteği — Faz EE.1 (bkz. nox-teknik-
 //! spesifikasyon.md §3.61). `codegen.zig`nin `genListSort`ı, listenin ham
-//! başlığından (`LIST_HEADER_SIZE` = 16 bayt: 8 uzunluk + 8 kapasite)
-//! SONRAKİ ilk eleman adresini (`data`) VE `len`i doğrudan geçirir —
+//! başlığındaki `data` göstericisini (v2.2.43: satır içi ya da ayrı eleman tamponu)
+//! VE `len`i doğrudan geçirir —
 //! kapasite/başlığın KENDİSİ BURADA hiç okunmaz/DOKUNULMAZ (sıralama
 //! YERİNDE, eleman SAYISI/kapasite DEĞİŞMEZ, `.append`nin AKSİNE HİÇBİR
 //! yeniden-tahsis ihtimali YOKTUR).

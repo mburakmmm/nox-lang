@@ -393,8 +393,6 @@ pub const VarInfo = struct {
     /// kind'ı.
     elem_fixed_int: ?FixedIntKind = null,
     is_param: bool = false,
-    /// v2.1.96 (TODO 7.8): "referans liste parametresi" — `slot` çağıranın DEĞİŞKEN YUVASININ adresidir (kopya değil); bkz. `ref_params.zig`.
-    ref_param: bool = false,
     arena: bool = false,
     /// GG.17 (bkz. nox-teknik-spesifikasyon.md §3.10X): `local_escape.zig`nin
     /// `registerLocalStackSlots`ı, BU yerelin İLK (VE TEK) atamasının bir
@@ -437,8 +435,6 @@ pub const LocalDecl = struct {
     name: []const u8,
     info: TypeInfo,
     is_param: bool = false,
-    /// v2.1.96: bkz. `VarInfo.ref_param`.
-    ref_param: bool = false,
     arena: bool = false,
     /// GG.12: bkz. `VarInfo.borrowed_field`in belge notu — `allocSlot`
     /// BUNU doğrudan `VarInfo`ye taşır.
@@ -595,6 +591,10 @@ pub const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 /// AYNI düzeni EL İLE ürettiğinden BU SABİTLE TUTARLI kalmalıdır. Faz P1.2:
 /// `abi_layout`den RE-EXPORT.
 pub const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
+pub const LIST_LEN_OFF = abi_layout.LIST_LEN_OFF;
+pub const LIST_CAP_OFF = abi_layout.LIST_CAP_OFF;
+pub const LIST_DATA_OFF = abi_layout.LIST_DATA_OFF;
+pub const LIST_BUF_STASH = abi_layout.LIST_BUF_STASH;
 /// Her sınıf örneğinin (refcount başlığından SONRA) taşıdığı, çalışma
 /// zamanında `except ClassName:` eşleştirmesi için kullanılan tip etiketi.
 /// Faz P1.2: `abi_layout`den RE-EXPORT.

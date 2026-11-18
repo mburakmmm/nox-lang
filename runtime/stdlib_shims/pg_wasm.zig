@@ -13,7 +13,6 @@ const proto = @import("pg_proto.zig");
 const abi_layout = @import("abi_layout");
 
 const gpa = std.heap.page_allocator;
-const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 const Conn = struct {
@@ -474,7 +473,7 @@ export fn nox_pg_exec_raw(conn: ?*anyopaque, query: ?[*:0]const u8) callconv(.c)
 
 fn listItem(list: *anyopaque, i: usize) []const u8 {
     const bytes: [*]u8 = @ptrCast(list);
-    const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
+    const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).*)));
     const p: [*:0]const u8 = @ptrFromInt(addr);
     return str_mod.nox_str_slice(p);
 }

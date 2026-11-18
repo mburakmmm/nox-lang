@@ -546,10 +546,9 @@ pub fn genListAssign(self: *Codegen, obj0: Value, idx: ast.Index, value_expr: as
     }
     const byte_off = try self.newTemp();
     try optimizations.emitScaledByteOffset(self, byte_off, index_v.text, qbeSizeOf(obj.elem_qtype));
-    const off16 = try self.newTemp();
-    try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
+    const off16_data = try self.emitListData(obj.text);
     const addr = try self.newTemp();
-    try self.qbeOp2(addr, .l, "add", obj.text, off16);
+    try self.qbeOp2(addr, .l, "add", off16_data, byte_off);
 
     // v2.0 madde 4 (Faz D): `elem_heap_info != null` ARTIK "eleman HEAP-
     // yönetimli" ANLAMINA GELMİYOR (`list[u8]` GİBİ skaler-AMA-sabit-
@@ -1317,10 +1316,9 @@ pub fn genForList(self: *Codegen, f: ast.ForStmt, ret_qtype: QbeType) CodegenErr
     // v1.142.19: adım ve yükleme LİSTENİN eleman depolama tipinden (`.b` = 1 bayt), döngü değişkeni ise
     // değer tipinden (`.w`) gelir.
     try optimizations.emitScaledByteOffset(self, byte_off, idx_cur, qbeSizeOf(list_info.elem_qtype));
-    const off8 = try self.newTemp();
-    try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
+    const off8_data = try self.emitListData(list_ptr);
     const elem_addr = try self.newTemp();
-    try self.qbeOp2(elem_addr, .l, "add", list_ptr, off8);
+    try self.qbeOp2(elem_addr, .l, "add", off8_data, byte_off);
     const elem_val = try self.newTemp();
     try self.loadListElem(elem_val, list_info.elem_qtype, elem_addr);
     // Döngü değişkeni sonradan yeniden bildirilmişse yuva sahiplidir (`unifyLoopVarLocals`): önceki elemanı bırak, yenisini retain et.

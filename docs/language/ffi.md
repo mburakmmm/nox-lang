@@ -202,7 +202,7 @@ lowlevel:
 print(buf[0])      # 255
 ```
 
-Rules: the argument must be a variable or a field (not a call result, whose list would be freed with the temporary); only `list[int]`, `list[float]` and lists of fixed-width integers are accepted. The pointer is valid until the list is released **or grows** (`append` can reallocate), exactly like any other `lowlevel` pointer, and lies inside the [trust boundary](#the-trust-boundary). Compared with copying the elements into a native buffer, this costs nothing per element (0.08 ns/element against 0.36 ns in the FFI benchmark).
+Rules: the argument must be a variable or a field (not a call result, whose list would be freed with the temporary); only `list[int]`, `list[float]` and lists of fixed-width integers are accepted. The pointer is valid until the list is released **or grows** (`append` moves the elements to a bigger buffer; the list itself stays put, so call `ptr_of` again after growing), exactly like any other `lowlevel` pointer, and lies inside the [trust boundary](#the-trust-boundary). Compared with copying the elements into a native buffer, this costs nothing per element (0.08 ns/element against 0.36 ns in the FFI benchmark).
 
 ## Sizes and layouts
 

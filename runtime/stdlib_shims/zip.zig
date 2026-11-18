@@ -30,20 +30,20 @@ fn listLen(list_ptr: ?*anyopaque) usize {
 
 fn listStr(list_ptr: ?*anyopaque, i: usize) []const u8 {
     const base: [*]u8 = @ptrCast(list_ptr.?);
-    const slot = base + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+    const slot = abi_layout.listData(base) + FIELD_SLOT_SIZE * i;
     const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(slot)).*)));
     if (addr == 0) return &.{};
     return str_mod.nox_str_slice(@ptrFromInt(addr));
 }
 
 fn buildStrList(rt: ?*anyopaque, parts: []const []const u8) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * parts.len) orelse return null;
+    const raw = arc.nox_list_new(rt, parts.len, FIELD_SLOT_SIZE) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(parts.len);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(parts.len);
     for (parts, 0..) |part, i| {
         const dup = str_mod.nox_str_from_bytes(rt, part) orelse return null;
-        const slot = bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
     }
     return @ptrCast(bytes);
@@ -289,11 +289,11 @@ fn releaseStrList(rt: ?*anyopaque, list: ?*anyopaque) void {
     const n = listLen(list);
     const base: [*]u8 = @ptrCast(list.?);
     for (0..n) |i| {
-        const slot = base + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i;
+        const slot = abi_layout.listData(base) + FIELD_SLOT_SIZE * i;
         const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(slot)).*)));
         str_mod.nox_str_release(rt, @ptrFromInt(addr));
     }
-    arc.nox_rc_release(rt, list.?, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * n);
+    arc.nox_list_release_raw(rt, list.?, FIELD_SLOT_SIZE);
 }
 
 test "zip: paketle-aç gidiş-dönüş (deflate ve depolanmış), bozuk veri reddi" {

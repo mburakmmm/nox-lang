@@ -9,7 +9,6 @@ const str_mod = @import("../str.zig");
 const shim_util = @import("shim_util.zig");
 const abi_layout = @import("abi_layout");
 
-const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 const arc = @import("../alloc/arc.zig");
 
@@ -17,22 +16,22 @@ const LastSlot = shim_util.TlsSlot(bool, true);
 const LensSlot = shim_util.TlsSlot(?std.ArrayListUnmanaged(i64), null);
 
 fn buildStrList(rt: ?*anyopaque, items: []const ?[*:0]u8) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * items.len) orelse return null;
+    const raw = arc.nox_list_new(rt, items.len, FIELD_SLOT_SIZE) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(items.len);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(items.len);
     for (items, 0..) |it, i| {
-        @as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(it))));
+        @as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(it))));
     }
     return @ptrCast(bytes);
 }
 
 fn buildIntList(rt: ?*anyopaque, vals: []const i64) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * vals.len) orelse return null;
+    const raw = arc.nox_list_new(rt, vals.len, FIELD_SLOT_SIZE) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(vals.len);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(vals.len);
-    for (vals, 0..) |v, i| @as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).* = v;
+    for (vals, 0..) |v, i| @as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).* = v;
     return @ptrCast(bytes);
 }
 

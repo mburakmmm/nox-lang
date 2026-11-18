@@ -2175,25 +2175,6 @@ pub fn unifyLoopVarLocals(locals: []LocalDecl) void {
 pub fn allocLocalSlots(self: *Codegen, locals: []LocalDecl) CodegenError!void {
     unifyLoopVarLocals(locals);
     for (locals) |l| {
-        if (l.ref_param) {
-            // v2.1.96 (TODO 7.8): referans liste parametresi — yuva, çağıranın verdiği ADRESTİR (`%p_<ad>`); yeni yuva tahsisi/kopya YOK.
-            try self.vars.put(self.allocator, l.name, .{
-                .slot = try std.fmt.allocPrint(self.allocator, "%p_{s}", .{l.name}),
-                .qtype = l.info.qtype,
-                .heap = l.info.heap,
-                .elem_qtype = l.info.elem_qtype,
-                .class_name = l.info.class_name,
-                .elem_heap_info = l.info.elem_heap_info,
-                .elem_is_str = l.info.elem_is_str,
-                .dict_info = l.info.dict_info,
-                .func_sig = l.info.func_sig,
-                .fixed_int = l.info.fixed_int,
-                .elem_fixed_int = l.info.elem_fixed_int,
-                .is_param = true,
-                .ref_param = true,
-            });
-            continue;
-        }
         try self.allocSlotEx(l.name, l.info, l.is_param, l.arena, l.borrowed_field);
     }
 }
@@ -2315,10 +2296,8 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
 
     var locals: std.ArrayListUnmanaged(LocalDecl) = .empty;
     defer locals.deinit(self.allocator);
-    const ref_flags: ?[]bool = self.ref_params.get(fd.name);
-    for (fd.params, 0..) |p, pi| {
-        const is_ref = if (ref_flags) |fl| pi < fl.len and fl[pi] else false;
-        try locals.append(self.allocator, .{ .name = p.name, .info = try self.resolveType(p.type_expr), .is_param = true, .ref_param = is_ref });
+    for (fd.params) |p| {
+        try locals.append(self.allocator, .{ .name = p.name, .info = try self.resolveType(p.type_expr), .is_param = true });
     }
     try self.collectLocals(&locals, fd.body, false);
     // v1.142.15: bkz. `markBorrowedAliasLocals`.
@@ -2347,7 +2326,6 @@ pub fn genFunction(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     try self.prepareInlineSites(fd.body);
     for (fd.params) |p| {
         const info = self.vars.get(p.name).?;
-        if (info.ref_param) continue; // v2.1.96: yuva zaten çağıranın adresi
         const param_text = try std.fmt.allocPrint(self.allocator, "%p_{s}", .{p.name});
         try self.qbeStore(info.qtype, param_text, info.slot);
     }

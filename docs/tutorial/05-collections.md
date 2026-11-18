@@ -134,6 +134,4 @@ banana 13
 [(1, 'a'), (2, 'b')]
 ```
 
-Collections are **reference values**: `b: list[int] = a` makes both names refer to the same list; use `a.copy()` or `list(a)` to duplicate it.
-
-One difference from Python to know about: a list lives in a single block of memory, and when `append` (or `extend`/`insert`) has to **grow** that block, only the name you appended through is updated. Another name that was bound to the same list earlier still sees the old, shorter block (it never reads wrong memory; an index past its old length raises `IndexError`). Elements changed in place (`a[0] = 1`) and appends that fit in the existing capacity are seen by every name. So keep one owner for a list you grow (a variable or a field) and hand the finished list to others, or build the list first and share it afterwards. A dictionary or a class instance is not affected.
+Collections are **reference values**: `b: list[int] = a` makes both names refer to the same list, exactly as in Python, so an `append` (or `extend`/`insert`) through one name is seen through every other name — also when the list has to grow, and also when the list is a function parameter, a class field or an element of another list. Use `a.copy()` or `list(a)` to duplicate it.

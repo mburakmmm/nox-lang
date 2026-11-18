@@ -14,7 +14,6 @@ const str_mod = @import("../str.zig");
 const wasm_bridge = @import("wasm_bridge");
 const crypto_shim = @import("crypto.zig");
 
-const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 const interp = wasm_bridge.interp;
 const module_mod = wasm_bridge.module;
@@ -384,7 +383,7 @@ fn readIntList(a: std.mem.Allocator, data: ?*anyopaque) ?[]i64 {
     const lp: [*]const u8 = @ptrCast(data orelse return a.alloc(i64, 0) catch null);
     const n: usize = @intCast(@as(*align(1) const i64, @ptrCast(lp)).*);
     const out = a.alloc(i64, n) catch return null;
-    for (0..n) |i| out[i] = @as(*align(1) const i64, @ptrCast(lp + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*;
+    for (0..n) |i| out[i] = @as(*align(1) const i64, @ptrCast(abi_layout.listData(lp) + FIELD_SLOT_SIZE * i)).*;
     return out;
 }
 
@@ -498,7 +497,7 @@ fn readStrList(a: std.mem.Allocator, list: ?*anyopaque) ?[][]const u8 {
     const n: usize = @intCast(@as(*align(1) const i64, @ptrCast(lp)).*);
     const out = a.alloc([]const u8, n) catch return null;
     for (0..n) |i| {
-        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) const i64, @ptrCast(lp + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) const i64, @ptrCast(abi_layout.listData(lp) + FIELD_SLOT_SIZE * i)).*)));
         out[i] = if (addr == 0) "" else str_mod.nox_str_slice(@ptrFromInt(addr));
     }
     return out;
@@ -529,7 +528,7 @@ pub export fn nox_wasm_open_bytes_host_raw(rt: ?*anyopaque, data: ?*anyopaque, n
     const n: usize = @intCast(@as(*align(1) const i64, @ptrCast(lp)).*);
     const buf = a.alloc(u8, n) catch return null;
     for (0..n) |i| {
-        const v = @as(*align(1) const i64, @ptrCast(lp + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*;
+        const v = @as(*align(1) const i64, @ptrCast(abi_layout.listData(lp) + FIELD_SLOT_SIZE * i)).*;
         buf[i] = @truncate(@as(u64, @bitCast(v)));
     }
     const nm = readStrList(a, names) orelse return null;
@@ -587,7 +586,7 @@ pub export fn nox_wasm_open_bytes_raw(rt: ?*anyopaque, data: ?*anyopaque, fuel: 
     const n: usize = @intCast(@as(*align(1) const i64, @ptrCast(lp)).*);
     const buf = a.alloc(u8, n) catch return null;
     for (0..n) |i| {
-        const v = @as(*align(1) const i64, @ptrCast(lp + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*;
+        const v = @as(*align(1) const i64, @ptrCast(abi_layout.listData(lp) + FIELD_SLOT_SIZE * i)).*;
         buf[i] = @truncate(@as(u64, @bitCast(v)));
     }
     return openBytes(rt, buf, fuel, max_pages);
@@ -625,7 +624,7 @@ fn readIntSlots(list: ?*anyopaque, out: []u64) ?usize {
     const lp: [*]const u8 = @ptrCast(list orelse return 0);
     const n: usize = @intCast(@as(*align(1) const i64, @ptrCast(lp)).*);
     if (n > out.len) return null;
-    for (0..n) |i| out[i] = @bitCast(@as(*align(1) const i64, @ptrCast(lp + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+    for (0..n) |i| out[i] = @bitCast(@as(*align(1) const i64, @ptrCast(abi_layout.listData(lp) + FIELD_SLOT_SIZE * i)).*);
     return n;
 }
 
@@ -728,7 +727,7 @@ pub export fn nox_wasm_call_f_raw(rt: ?*anyopaque, hp: ?*anyopaque, name: ?[*:0]
     const ft = h.module.typeOf(idx);
     var slots: [16]u64 = undefined;
     for (0..@min(n, ft.params.len)) |i| {
-        const d: f64 = @bitCast(@as(*align(1) const u64, @ptrCast(lp + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*); // f64 ham biti
+        const d: f64 = @bitCast(@as(*align(1) const u64, @ptrCast(abi_layout.listData(lp) + FIELD_SLOT_SIZE * i)).*); // f64 ham biti
         slots[i] = switch (ft.params[i]) {
             .f64 => @bitCast(d),
             .f32 => @as(u64, @as(u32, @bitCast(@as(f32, @floatCast(d))))),
@@ -850,11 +849,11 @@ fn memSlice(h: *Handle, off: i64, len: i64) ?[]u8 {
 pub export fn nox_wasm_mem_read_raw(rt: ?*anyopaque, hp: ?*anyopaque, off: i64, len: i64) callconv(.c) ?*anyopaque {
     const h = asHandle(hp);
     const sl: []const u8 = if (h) |hh| (memSlice(hh, off, len) orelse &.{}) else &.{};
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * sl.len) orelse return null;
+    const raw = arc.nox_list_new(rt, sl.len, FIELD_SLOT_SIZE) orelse return null;
     const base: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(base)).* = @intCast(sl.len);
     @as(*align(1) i64, @ptrCast(base + 8)).* = @intCast(sl.len);
-    for (sl, 0..) |b, i| @as(*align(1) i64, @ptrCast(base + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).* = b;
+    for (sl, 0..) |b, i| @as(*align(1) i64, @ptrCast(abi_layout.listData(base) + FIELD_SLOT_SIZE * i)).* = b;
     return @ptrCast(base);
 }
 
@@ -872,7 +871,7 @@ pub export fn nox_wasm_mem_write_raw(hp: ?*anyopaque, off: i64, data: ?*anyopaqu
     const lp: [*]const u8 = @ptrCast(data orelse return 1);
     const n: usize = @intCast(@as(*align(1) const i64, @ptrCast(lp)).*);
     const sl = memSlice(h, off, @intCast(n)) orelse return 1;
-    for (0..n) |i| sl[i] = @truncate(@as(u64, @bitCast(@as(*align(1) const i64, @ptrCast(lp + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*)));
+    for (0..n) |i| sl[i] = @truncate(@as(u64, @bitCast(@as(*align(1) const i64, @ptrCast(abi_layout.listData(lp) + FIELD_SLOT_SIZE * i)).*)));
     return 0;
 }
 
@@ -933,12 +932,12 @@ test "nox.wasm kabuğu: modül aç, çağır, belleği sınırla, kapat" {
     // (module (memory 1) (func (export "add_one") (param i32) (result i32) local.get 0 i32.const 1 i32.add)) — kendi kendine yeten bayt listesi:
     // test dosya sistemindeki üretilmiş bir ikiliye (CI'da sıralama bağımlı) DAYANMAZ.
     const code = [_]u8{ 0, 97, 115, 109, 1, 0, 0, 0, 1, 6, 1, 96, 1, 127, 1, 127, 3, 2, 1, 0, 5, 3, 1, 0, 1, 7, 11, 1, 7, 97, 100, 100, 95, 111, 110, 101, 0, 0, 10, 9, 1, 7, 0, 32, 0, 65, 1, 106, 11 };
-    const lraw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * code.len) orelse return error.AllocFailed;
-    defer arc.nox_rc_free_payload(rt, lraw, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * code.len);
+    const lraw = arc.nox_list_new(rt, code.len, FIELD_SLOT_SIZE) orelse return error.AllocFailed;
+    defer arc.nox_list_release_raw(rt, lraw, FIELD_SLOT_SIZE);
     const lb: [*]u8 = @ptrCast(lraw);
     @as(*align(1) i64, @ptrCast(lb)).* = code.len;
     @as(*align(1) i64, @ptrCast(lb + 8)).* = code.len;
-    for (code, 0..) |c, i| @as(*align(1) i64, @ptrCast(lb + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).* = c;
+    for (code, 0..) |c, i| @as(*align(1) i64, @ptrCast(abi_layout.listData(lb) + FIELD_SLOT_SIZE * i)).* = c;
     const hp = nox_wasm_open_bytes_raw(rt, lraw, 0, 0) orelse return error.OpenFailed;
     defer nox_wasm_close_raw(hp);
     const err0 = nox_wasm_error_raw(rt, hp) orelse return error.AllocFailed;
@@ -946,12 +945,10 @@ test "nox.wasm kabuğu: modül aç, çağır, belleği sınırla, kapat" {
     try std.testing.expectEqual(@as(usize, 0), str_mod.nox_str_slice(err0).len);
     const name = str_mod.nox_str_from_bytes(rt, "add_one") orelse return error.AllocFailed;
     defer str_mod.nox_str_release(rt, name);
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + FIELD_SLOT_SIZE) orelse return error.AllocFailed;
+    const raw = arc.nox_list_new(rt, 1, FIELD_SLOT_SIZE) orelse return error.AllocFailed;
     const ab: [*]u8 = @ptrCast(raw);
-    @as(*align(1) i64, @ptrCast(ab)).* = 1;
-    @as(*align(1) i64, @ptrCast(ab + 8)).* = 1;
-    @as(*align(1) i64, @ptrCast(ab + LIST_HEADER_SIZE)).* = 41;
-    defer arc.nox_rc_free_payload(rt, raw, LIST_HEADER_SIZE + FIELD_SLOT_SIZE);
+    @as(*align(1) i64, @ptrCast(abi_layout.listData(ab))).* = 41;
+    defer arc.nox_list_release_raw(rt, raw, FIELD_SLOT_SIZE);
     try std.testing.expectEqual(@as(i64, 42), nox_wasm_call_raw(rt, hp, name, raw));
     // Bellek sınır denetimi: modül belleğinin SONUNDAKİ erişim hata verir, çökme/okuma yok; sınır içi okuma/yazma çalışır.
     const size = nox_wasm_mem_size_raw(hp);

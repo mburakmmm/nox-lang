@@ -13,7 +13,7 @@ handles the differences: QBE's three-address SSA text versus LLVM's typed instru
 
 ## Layout and ABI
 
-`abi.zig` and `layout.zig` define the value representations: reference-counted payloads with a header, the packed `str` header (length plus ASCII flag), list headers (length/capacity), dictionary layout, class instances (type tag,
+`abi.zig` and `layout.zig` define the value representations: reference-counted payloads with a header, the packed `str` header (length plus ASCII flag), list headers (length, capacity and a `data` pointer; the header address never moves, see [Lists](../apis/internal-abi.md)), dictionary layout, class instances (type tag,
 vtable pointer, fields in 8-byte slots — `@repr("C")`/`@packed` classes use real C layouts), closures (function pointer plus captured environment), tuples (generated structs), error unions (value or exception handle),
 `Task`/`Channel` objects. These layouts are internal ([Internal ABI](../apis/internal-abi.md)).
 

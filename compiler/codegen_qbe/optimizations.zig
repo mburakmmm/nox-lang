@@ -790,7 +790,6 @@ pub fn computeFuncConsumed(self: *Codegen, module: ast.Module, extra_functions: 
 
 fn funcConsumedFor(self: *Codegen, fd: ast.FuncDef) CodegenError!void {
     if (fd.is_async) return;
-    if (self.ref_params.contains(fd.name)) return;
     const sig = self.functions.get(fd.name) orelse return;
     try consumedForParams(self, fd.body, fd.params, sig.params, fd.name);
 }

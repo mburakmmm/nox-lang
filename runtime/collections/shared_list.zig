@@ -1,7 +1,7 @@
 //! Faz 9.0 dilim 3 (v2.1.122): işçiler arasında PAYLAŞILAN modül düzeyi `list[T]` global'inin çalışma zamanı hücresi.
 //!
-//! Sorun: `list[T]` tek bir bloktur (başlık + elemanlar) ve büyürken YENİDEN TAHSİS edilir; global yuvası yeni işaretçiyle güncellenir. Bu yüzden nesne başına kilit anlamsızdır. Çözüm: derleyici, listeyi
-//! yalnız ad üzerinden ve izinli biçimlerde kullanan bir global için yuvaya listenin kendisini değil bu HÜCREYİ koyar. Hücre, standart liste bloğunu (len@0, cap@8, elemanlar@16..) tek sahip olarak tutar
+//! Sorun (v2.2.43 öncesi): `list[T]` tek bir bloktu ve büyürken YENİDEN TAHSİS edilirdi; global yuvası yeni işaretçiyle güncellenirdi. Bu yüzden nesne başına kilit anlamsızdı. Çözüm: derleyici, listeyi
+//! yalnız ad üzerinden ve izinli biçimlerde kullanan bir global için yuvaya listenin kendisini değil bu HÜCREYİ koyar. Hücre, standart liste bloğunu (len@0, cap@8, data@16, elemanlar `data`da) tek sahip olarak tutar
 //! ve her işlem kendi önbellek satırındaki kilit altında çalışır. Okuma sonucu `str` ise RETAIN edilmiş (çağırana ait) döner; salt-okunur toplu kullanımlar (`for`, `in`, dilim, `print`) için `snapshot`
 //! bağımsız bir kopya verir. Tek işlemler atomiktir, bileşik işlemler değildir (karar A).
 //!
@@ -19,7 +19,6 @@ const abi_ptr = @import("../abi_ptr.zig");
 const abi_layout = @import("abi_layout");
 const SpinLock = @import("../async_rt/spinlock.zig").SpinLock;
 
-const HDR = abi_layout.LIST_HEADER_SIZE;
 
 pub const Cell = struct {
     /// Sahip olunan liste bloğu (refcount 1).
@@ -53,7 +52,7 @@ inline fn setCap(b: [*]u8, n: i64) void {
 }
 
 inline fn slot(b: [*]u8, i: usize, esz: usize) [*]u8 {
-    return b + HDR + i * esz;
+    return abi_layout.listData(b) + i * esz;
 }
 
 inline fn loadElem(b: [*]u8, i: usize, esz: i64) i64 {
@@ -108,10 +107,8 @@ pub export fn nox_slist_new(rt: ?*anyopaque, block: ?*anyopaque) ?*anyopaque {
 
 /// Tek elemanlı hücre (paylaşılan `str` global'i için): `v` (str işaretçisi, sahiplik hücreye geçer) tek elemandır; okuma `get(0)`, atama `set(0)`.
 pub export fn nox_slist_new_one(rt: ?*anyopaque, v: i64) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, HDR + 8) orelse return null;
+    const raw = arc.nox_list_new(rt, 1, 8) orelse return null;
     const b: [*]u8 = @ptrCast(raw);
-    setLen(b, 1);
-    setCap(b, 1);
     storeElem(b, 0, 8, v);
     return nox_slist_new(rt, raw);
 }
@@ -124,8 +121,7 @@ pub export fn nox_slist_free(rt: ?*anyopaque, cp: ?*anyopaque, kind: i32, esz: i
         var i: usize = 0;
         while (i < n) : (i += 1) releaseElem(rt, kind, loadElem(c.block, i, esz));
     }
-    const cap: usize = @intCast(hdrCap(c.block));
-    arc.nox_rc_free_payload(rt, c.block, HDR + cap * @as(usize, @intCast(esz)));
+    arc.nox_list_free_payload(rt, c.block, @intCast(esz));
     std.heap.page_allocator.destroy(c);
 }
 
@@ -170,7 +166,7 @@ pub export fn nox_slist_set(rt: ?*anyopaque, cp: ?*anyopaque, i: i64, esz: i64, 
     return 1;
 }
 
-/// `xs.append(v)`: `v` zaten retain edilmiştir (sahiplik listeye geçer). Büyütme tek sahipli `nox_list_realloc` yoludur. Dönüş 1 başarı, 0 bellek yok.
+/// `xs.append(v)`: `v` zaten retain edilmiştir (sahiplik listeye geçer). Büyütme yalnızca eleman tamponunu yeniden boyutlandırır (`nox_list_grow`). Dönüş 1 başarı, 0 bellek yok.
 pub export fn nox_slist_append(rt: ?*anyopaque, cp: ?*anyopaque, esz: i64, kind: i32, v: i64) i64 {
     _ = kind;
     const c: *Cell = @ptrCast(@alignCast(cp orelse return 0));
@@ -178,13 +174,7 @@ pub export fn nox_slist_append(rt: ?*anyopaque, cp: ?*anyopaque, esz: i64, kind:
     defer unlockCell(c, held);
     const n = hdrLen(c.block);
     const cap = hdrCap(c.block);
-    if (n >= cap) {
-        const new_cap: i64 = if (cap == 0) 1 else cap * 2;
-        const e: usize = @intCast(esz);
-        const nb = arc.nox_list_realloc(rt, c.block, HDR + @as(usize, @intCast(cap)) * e, HDR + @as(usize, @intCast(new_cap)) * e) orelse return 0;
-        c.block = @ptrCast(nb);
-        setCap(c.block, new_cap);
-    }
+    if (n >= cap) _ = arc.nox_list_grow(rt, c.block, @intCast(esz)) orelse return 0;
     storeElem(c.block, @intCast(n), esz, v);
     setLen(c.block, n + 1);
     return 1;
@@ -229,7 +219,7 @@ pub export fn nox_slist_sort(cp: ?*anyopaque, mode: i32) void {
     defer unlockCell(c, held);
     const n = hdrLen(c.block);
     if (n <= 1) return;
-    const data = c.block + HDR;
+    const data = abi_layout.listData(c.block);
     switch (mode) {
         0 => list_sort.nox_list_sort_int(@ptrCast(@alignCast(data)), n),
         1 => list_sort.nox_list_sort_float(@ptrCast(@alignCast(data)), n),
@@ -251,10 +241,9 @@ pub export fn nox_slist_snapshot(rt: ?*anyopaque, cp: ?*anyopaque, esz: i64, kin
 const testing = std.testing;
 
 fn newBlock(rt: ?*anyopaque, cap: usize, esz: usize) [*]u8 {
-    const raw = arc.nox_rc_alloc(rt, HDR + cap * esz).?;
+    const raw = arc.nox_list_new(rt, cap, esz).?;
     const b: [*]u8 = @ptrCast(raw);
     setLen(b, 0);
-    setCap(b, @intCast(cap));
     return b;
 }
 
@@ -277,7 +266,8 @@ test "slist: append/get/set/pop/len/clear/snapshot tek işçide doğru; büyütm
     const snap: [*]u8 = @ptrCast(nox_slist_snapshot(rt, cell, 8, 0).?);
     try testing.expectEqual(@as(i64, 100), hdrLen(snap));
     try testing.expectEqual(@as(i64, 999), loadElem(snap, 5, 8));
-    arc.nox_rc_free_payload(rt, snap, HDR + 100 * 8);
+    _ = arc.nox_rc_predecrement(snap);
+    arc.nox_list_free_payload(rt, snap, 8);
     try testing.expectEqual(@as(i64, 297), nox_slist_pop(cell, 8, &ok));
     try testing.expectEqual(@as(i64, 99), nox_slist_len(cell));
     nox_slist_clear(rt, cell, 8, 0);

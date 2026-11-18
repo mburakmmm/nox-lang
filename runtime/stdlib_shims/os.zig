@@ -106,19 +106,18 @@ export fn nox_os_getenv_raw(rt: ?*anyopaque, name: ?[*:0]const u8) callconv(.c) 
 /// VAULT 1.4: ortam değişkeni numaralandırması — `AD=değer` biçiminde girdilerden oluşan bir `list[str]` döner
 /// (POSIX `environ`, Windows ortam bloğu, wasm/çıplak çekirdekte bellek içi tablo). Boş/`=` ile başlayan adlar
 /// (Windows'un `=C:` sürücü girdileri) atlanır.
-const ENV_LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const ENV_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 extern "kernel32" fn GetEnvironmentStringsA() callconv(.winapi) ?[*]u8;
 extern "kernel32" fn FreeEnvironmentStringsA(block: [*]u8) callconv(.winapi) c_int;
 
 fn envListFromEntries(rt: ?*anyopaque, entries: []const []const u8) ?*anyopaque {
-    const raw = arc.nox_rc_alloc(rt, ENV_LIST_HEADER_SIZE + ENV_SLOT_SIZE * entries.len) orelse return null;
+    const raw = arc.nox_list_new(rt, entries.len, ENV_SLOT_SIZE) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(entries.len);
     @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(entries.len);
     for (entries, 0..) |entry, i| {
         const dup = dupeToNoxStr(rt, entry) orelse return null;
-        const slot = bytes + ENV_LIST_HEADER_SIZE + ENV_SLOT_SIZE * i;
+        const slot = abi_layout.listData(bytes) + ENV_SLOT_SIZE * i;
         @as(*align(1) i64, @ptrCast(slot)).* = @as(i64, @bitCast(@as(u64, @intFromPtr(dup))));
     }
     return @ptrCast(bytes);
@@ -254,11 +253,11 @@ test "nox_os_environ_raw set_var ile eklenen degiskeni AD=deger olarak listeler"
     var seen = false;
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(bytes + ENV_LIST_HEADER_SIZE + ENV_SLOT_SIZE * i)).*)));
+        const addr: usize = @intCast(@as(u64, @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + ENV_SLOT_SIZE * i)).*)));
         const p: [*:0]u8 = @ptrFromInt(addr);
         defer str.nox_str_release(rt, p);
         if (std.mem.eql(u8, std.mem.sliceTo(p, 0), "NOX_ENVIRON_TEST_VAR=v=1")) seen = true;
     }
-    arc.nox_rc_release(rt, list_ptr, ENV_LIST_HEADER_SIZE + ENV_SLOT_SIZE * count);
+    arc.nox_list_release_raw(rt, list_ptr, ENV_SLOT_SIZE);
     try std.testing.expect(seen);
 }

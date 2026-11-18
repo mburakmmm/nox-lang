@@ -41,7 +41,6 @@ const abi_layout = @import("abi_layout");
 const str_mod = @import("../str.zig");
 
 const dupeToNoxStr = http_client.dupeToNoxStr;
-const LIST_HEADER_SIZE = abi_layout.LIST_HEADER_SIZE;
 const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 fn containsNul(s: []const u8) bool {
@@ -82,7 +81,7 @@ fn copyStrList(gpa: std.mem.Allocator, list_ptr: ?*anyopaque) ![][:0]u8 {
     var i: usize = 0;
     errdefer for (out[0..i]) |s| gpa.free(s);
     while (i < count) : (i += 1) {
-        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(bytes + LIST_HEADER_SIZE + FIELD_SLOT_SIZE * i)).*);
+        const addr: usize = @bitCast(@as(*align(1) i64, @ptrCast(abi_layout.listData(bytes) + FIELD_SLOT_SIZE * i)).*);
         const p: [*:0]const u8 = @ptrFromInt(addr);
         out[i] = try gpa.dupeZ(u8, str_mod.nox_str_slice(p));
     }

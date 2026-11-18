@@ -921,10 +921,9 @@ fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, is_class: bool, elem_
     compact(rt, d); // sıralı gezinti: mezar taşı bırakma
     const n = d.entries.items.len;
     const esz: usize = @intCast(elem_size);
-    const raw = arc.nox_rc_alloc(rt, LIST_HEADER_SIZE + esz * n) orelse return null;
+    const raw = arc.nox_list_new(rt, n, esz) orelse return null;
     const bytes: [*]u8 = @ptrCast(raw);
-    @as(*align(1) i64, @ptrCast(bytes)).* = @intCast(n);
-    @as(*align(1) i64, @ptrCast(bytes + 8)).* = @intCast(n);
+    const data = abi_layout.listData(bytes);
     for (d.entries.items, 0..) |e, i| {
         const payload = if (want_key) e.key else e.value;
         if (is_str and payload != 0) str_mod.nox_str_retain(payloadToStrPtr(payload).?);
@@ -935,7 +934,7 @@ fn buildEntryList(rt: ?*anyopaque, d: *Dict, is_str: bool, is_class: bool, elem_
         // nox_rc_retain` (ARC_HEADER_SIZE'lık sabit ofset) KULLANILIR,
         // `nox_str_retain` DEĞİL.
         if (is_class and payload != 0) arc.nox_rc_retain(payloadToStrPtr(payload).?);
-        const slot = bytes + LIST_HEADER_SIZE + esz * i;
+        const slot = data + esz * i;
         if (esz == 1) {
             slot[0] = @truncate(@as(u64, @bitCast(payload)));
         } else if (esz == 4) {
@@ -1241,17 +1240,17 @@ test "Faz III.6: nox_dict_keys/nox_dict_values int anahtar/deger icin dogru list
     const kbytes: [*]u8 = @ptrCast(keys_list);
     try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(kbytes)).*);
     try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(kbytes + 8)).*);
-    try std.testing.expectEqual(@as(i64, 1), @as(*align(1) i64, @ptrCast(kbytes + LIST_HEADER_SIZE)).*);
-    try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(kbytes + 24)).*);
+    try std.testing.expectEqual(@as(i64, 1), @as(*align(1) i64, @ptrCast(abi_layout.listData(kbytes))).*);
+    try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(abi_layout.listData(kbytes) + 8)).*);
     _ = arc.nox_rc_predecrement(keys_list);
-    arc.nox_rc_free_payload(rt, keys_list, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 2);
+    arc.nox_list_free_payload(rt, keys_list, 8);
 
     const values_list = nox_dict_values(rt, d, 0, 0, 8) orelse return error.Failed;
     const vbytes: [*]u8 = @ptrCast(values_list);
-    try std.testing.expectEqual(@as(i64, 100), @as(*align(1) i64, @ptrCast(vbytes + LIST_HEADER_SIZE)).*);
-    try std.testing.expectEqual(@as(i64, 200), @as(*align(1) i64, @ptrCast(vbytes + 24)).*);
+    try std.testing.expectEqual(@as(i64, 100), @as(*align(1) i64, @ptrCast(abi_layout.listData(vbytes))).*);
+    try std.testing.expectEqual(@as(i64, 200), @as(*align(1) i64, @ptrCast(abi_layout.listData(vbytes) + 8)).*);
     _ = arc.nox_rc_predecrement(values_list);
-    arc.nox_rc_free_payload(rt, values_list, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 2);
+    arc.nox_list_free_payload(rt, values_list, 8);
 
     nox_dict_release(rt, d, 0, 0, 0);
 }
@@ -1269,10 +1268,10 @@ test "Faz III.6: nox_dict_values bool degerler icin 4 baytlik eleman round-trip 
     const values_list = nox_dict_values(rt, d, 0, 0, 4) orelse return error.Failed;
     const vbytes: [*]u8 = @ptrCast(values_list);
     try std.testing.expectEqual(@as(i64, 2), @as(*align(1) i64, @ptrCast(vbytes)).*);
-    try std.testing.expectEqual(@as(i32, 1), @as(*align(1) i32, @ptrCast(vbytes + LIST_HEADER_SIZE)).*);
-    try std.testing.expectEqual(@as(i32, 0), @as(*align(1) i32, @ptrCast(vbytes + 20)).*);
+    try std.testing.expectEqual(@as(i32, 1), @as(*align(1) i32, @ptrCast(abi_layout.listData(vbytes))).*);
+    try std.testing.expectEqual(@as(i32, 0), @as(*align(1) i32, @ptrCast(abi_layout.listData(vbytes) + 4)).*);
     _ = arc.nox_rc_predecrement(values_list);
-    arc.nox_rc_free_payload(rt, values_list, LIST_HEADER_SIZE + 4 * 2);
+    arc.nox_list_free_payload(rt, values_list, 4);
 
     nox_dict_release(rt, d, 0, 0, 0);
 }
@@ -1289,7 +1288,7 @@ test "Faz III.6: nox_dict_keys str anahtarlari retain eder — dict VE list bagi
 
     const keys_list = nox_dict_keys(rt, d, 1, 8) orelse return error.Failed;
     const kbytes: [*]u8 = @ptrCast(keys_list);
-    const kptr_val = @as(*align(1) i64, @ptrCast(kbytes + LIST_HEADER_SIZE)).*;
+    const kptr_val = @as(*align(1) i64, @ptrCast(abi_layout.listData(kbytes))).*;
     const kptr: [*:0]u8 = @ptrFromInt(@as(usize, @bitCast(kptr_val)));
     try std.testing.expectEqualStrings("anahtar1", std.mem.sliceTo(kptr, 0));
 
@@ -1302,7 +1301,7 @@ test "Faz III.6: nox_dict_keys str anahtarlari retain eder — dict VE list bagi
 
     str_lib.nox_str_release(rt, kptr);
     _ = arc.nox_rc_predecrement(keys_list);
-    arc.nox_rc_free_payload(rt, keys_list, LIST_HEADER_SIZE + FIELD_SLOT_SIZE * 1);
+    arc.nox_list_free_payload(rt, keys_list, 8);
 }
 
 // Güvenlik bulgusu M-3 (bkz. güvenlik raporu, 20 Temmuz 2026) — DÜZELTİLDİ:
@@ -1517,12 +1516,12 @@ test "Aura L2: indeks kuruluyken silme mezar taşı bırakır; sıra, len, get/c
     try std.testing.expectEqual(@as(i64, 4), nox_dict_entry_key(d, 90));
     // keys() önce sıkıştırır; liste sırası aynı.
     const keys = nox_dict_keys(rt, d, 0, 8) orelse return error.NewFailed;
-    defer arc.nox_rc_release(rt, keys, 16 + 8 * 91);
+    defer arc.nox_list_release_raw(rt, keys, 8);
     try std.testing.expectEqual(@as(usize, 0), dd.dead);
     const kb: [*]const u8 = @ptrCast(keys);
     try std.testing.expectEqual(@as(i64, 91), @as(*align(1) const i64, @ptrCast(kb)).*);
-    try std.testing.expectEqual(@as(i64, 1), @as(*align(1) const i64, @ptrCast(kb + 16)).*);
-    try std.testing.expectEqual(@as(i64, 4), @as(*align(1) const i64, @ptrCast(kb + 16 + 8 * 90)).*);
+    try std.testing.expectEqual(@as(i64, 1), @as(*align(1) const i64, @ptrCast(abi_layout.listData(@constCast(kb)))).*);
+    try std.testing.expectEqual(@as(i64, 4), @as(*align(1) const i64, @ptrCast(abi_layout.listData(@constCast(kb)) + 8 * 90)).*);
     try std.testing.expectEqual(@as(i64, 444), nox_dict_get(rt, d, 0, 4)); // indeks sıkıştırmadan sonra da doğru
     nox_dict_release(rt, d, 0, 0, 0);
 }

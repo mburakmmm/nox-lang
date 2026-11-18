@@ -1,6 +1,6 @@
 //! `list[T]` ek işlemleri — v1.150.0 (bkz. nox-teknik-spesifikasyon.md §3.267): `copy`, `+`, `*`, dilimleme, `reverse`,
-//! `insert`, `remove`/`del`/`pop(i)`. Listenin ham düzeni `append`/`sort` ile aynıdır: 8 bayt uzunluk + 8 bayt kapasite +
-//! `esz` baytlık elemanlar (`bool`/`u8`/`i8` 1, `u16`/`i16` 2, `i32`/`u32` 4, diğerleri 8).
+//! `insert`, `remove`/`del`/`pop(i)`. Listenin ham düzeni `append`/`sort` ile aynıdır (v2.2.43, bkz. `shared/abi_layout.zig`): 8 bayt uzunluk + 8 bayt kapasite +
+//! 8 bayt `data` göstericisi + (başlangıçta `data`nın işaret ettiği satır içi) `esz` baytlık elemanlar (`bool`/`u8`/`i8` 1, `u16`/`i16` 2, `i32`/`u32` 4, diğerleri 8).
 //!
 //! **Sahiplik (`kind`):** yeni liste üreten işlemler (`copy`/`concat`/`repeat`/`slice`) kopyalanan elemanları RETAIN eder (liste
 //! başına bağımsız bir ikinci sahip, Python'un yüzeysel kopyası): `kind == 0` skaler (retain yok), `1` `str` (paketlenmiş
@@ -12,7 +12,11 @@ const std = @import("std");
 const arc = @import("../alloc/arc.zig");
 const str_mod = @import("../str.zig");
 const abi_layout = @import("abi_layout");
-const HDR = abi_layout.LIST_HEADER_SIZE;
+
+/// Listenin eleman tamponu (`data` göstericisi): satır içi ya da büyümeden sonra ayrı tampon.
+inline fn dat(p: [*]const u8) [*]u8 {
+    return abi_layout.listData(@constCast(p));
+}
 
 // Faz 9.0 F6: uzunluk sözcüğü paylaşılan listelerde kilitsiz okunur (`len(xs)`) — gevşek (monotonic) atomik erişim yarış yok sayılmaz, maliyeti sıfırdır.
 // (wasm32'de 64-bit atomik yok: tek iş parçacıklı, düz erişim.)
@@ -42,21 +46,18 @@ fn retainElem(slot: [*]const u8, kind: i32) void {
 }
 
 fn newList(rt: ?*anyopaque, n: usize, esz: usize) ?[*]u8 {
-    const raw = arc.nox_rc_alloc(rt, HDR + n * esz) orelse return null;
-    const base: [*]u8 = @ptrCast(raw);
-    setLen(base, n);
-    @as(*align(1) i64, @ptrCast(base + 8)).* = @intCast(n);
-    return base;
+    const raw = arc.nox_list_new(rt, n, esz) orelse return null;
+    return @ptrCast(raw);
 }
 
 /// `[src.lo, src.hi)` aralığını yeni bir listeye kopyalar (retain'li). `lo <= hi <= len` çağıran tarafından sağlanır.
 fn sliceRaw(rt: ?*anyopaque, src: [*]const u8, lo: usize, hi: usize, esz: usize, kind: i32) ?*anyopaque {
     const n = hi - lo;
     const out = newList(rt, n, esz) orelse return null;
-    if (n > 0) @memcpy(out[HDR..][0 .. n * esz], src[HDR + lo * esz ..][0 .. n * esz]);
+    if (n > 0) @memcpy(dat(out)[0 .. n * esz], dat(src)[lo * esz ..][0 .. n * esz]);
     if (kind != 0) {
         var i: usize = 0;
-        while (i < n) : (i += 1) retainElem(out + HDR + i * esz, kind);
+        while (i < n) : (i += 1) retainElem(dat(out) + i * esz, kind);
     }
     return @ptrCast(out);
 }
@@ -73,11 +74,11 @@ pub export fn nox_list_concat(rt: ?*anyopaque, a: ?*anyopaque, b: ?*anyopaque, e
     const la = hdrLen(@constCast(pa));
     const lb = hdrLen(@constCast(pb));
     const out = newList(rt, la + lb, esz) orelse return null;
-    if (la > 0) @memcpy(out[HDR..][0 .. la * esz], pa[HDR..][0 .. la * esz]);
-    if (lb > 0) @memcpy(out[HDR + la * esz ..][0 .. lb * esz], pb[HDR..][0 .. lb * esz]);
+    if (la > 0) @memcpy(dat(out)[0 .. la * esz], dat(pa)[0 .. la * esz]);
+    if (lb > 0) @memcpy(dat(out)[la * esz ..][0 .. lb * esz], dat(pb)[0 .. lb * esz]);
     if (kind != 0) {
         var i: usize = 0;
-        while (i < la + lb) : (i += 1) retainElem(out + HDR + i * esz, kind);
+        while (i < la + lb) : (i += 1) retainElem(dat(out) + i * esz, kind);
     }
     return @ptrCast(out);
 }
@@ -94,11 +95,11 @@ pub export fn nox_list_repeat(rt: ?*anyopaque, a: ?*anyopaque, n_i: i64, esz_i: 
     const total = la * reps * esz;
     if (total > 0) {
         const unit = la * esz;
-        const dst = out + HDR;
+        const dst = dat(out);
         if (unit == 1) {
-            @memset(dst[0..total], pa[HDR]);
+            @memset(dst[0..total], dat(pa)[0]);
         } else {
-            @memcpy(dst[0..unit], pa[HDR..][0..unit]);
+            @memcpy(dst[0..unit], dat(pa)[0..unit]);
             var filled: usize = unit;
             while (filled < total) {
                 const chunk = @min(filled, total - filled);
@@ -109,7 +110,7 @@ pub export fn nox_list_repeat(rt: ?*anyopaque, a: ?*anyopaque, n_i: i64, esz_i: 
     }
     if (kind != 0) {
         var i: usize = 0;
-        while (i < la * reps) : (i += 1) retainElem(out + HDR + i * esz, kind);
+        while (i < la * reps) : (i += 1) retainElem(dat(out) + i * esz, kind);
     }
     return @ptrCast(out);
 }
@@ -131,9 +132,9 @@ pub export fn nox_list_slice(rt: ?*anyopaque, a: ?*anyopaque, lo_i: i64, has_lo:
         k += 1;
         idx += sp.step;
     }) {
-        const src = pa + HDR + @as(usize, @intCast(idx)) * esz;
-        @memcpy(out[HDR + k * esz ..][0..esz], src[0..esz]);
-        retainElem(out + HDR + k * esz, kind);
+        const src = dat(pa) + @as(usize, @intCast(idx)) * esz;
+        @memcpy(dat(out)[k * esz ..][0..esz], src[0..esz]);
+        retainElem(dat(out) + k * esz, kind);
     }
     return @ptrCast(out);
 }
@@ -158,9 +159,10 @@ pub export fn nox_list_reverse(list: ?*anyopaque, esz_i: i64) void {
             }) {
                 var k: usize = 0;
                 while (k < esz) : (k += 1) {
-                    const tmp = base[HDR + i * esz + k];
-                    base[HDR + i * esz + k] = base[HDR + j * esz + k];
-                    base[HDR + j * esz + k] = tmp;
+                    const d = dat(base);
+                    const tmp = d[i * esz + k];
+                    d[i * esz + k] = d[j * esz + k];
+                    d[j * esz + k] = tmp;
                 }
             }
         },
@@ -168,7 +170,7 @@ pub export fn nox_list_reverse(list: ?*anyopaque, esz_i: i64) void {
 }
 
 inline fn reverseTyped(comptime T: type, base: [*]u8, n: usize) void {
-    const p: [*]align(1) T = @ptrCast(base + HDR);
+    const p: [*]align(1) T = @ptrCast(dat(base));
     var i: usize = 0;
     var j: usize = n - 1;
     while (i < j) : ({
@@ -195,9 +197,10 @@ pub export fn nox_list_move_last(list: ?*anyopaque, idx: i64, esz_i: i64) void {
     const pos: usize = @intCast(i);
     if (pos == n - 1) return;
     var tmp: [8]u8 = undefined;
-    @memcpy(tmp[0..esz], base[HDR + (n - 1) * esz ..][0..esz]);
-    std.mem.copyBackwards(u8, base[HDR + (pos + 1) * esz ..][0 .. (n - 1 - pos) * esz], base[HDR + pos * esz ..][0 .. (n - 1 - pos) * esz]);
-    @memcpy(base[HDR + pos * esz ..][0..esz], tmp[0..esz]);
+    const d = dat(base);
+    @memcpy(tmp[0..esz], d[(n - 1) * esz ..][0..esz]);
+    std.mem.copyBackwards(u8, d[(pos + 1) * esz ..][0 .. (n - 1 - pos) * esz], d[pos * esz ..][0 .. (n - 1 - pos) * esz]);
+    @memcpy(d[pos * esz ..][0..esz], tmp[0..esz]);
 }
 
 /// `idx`indeki elemanı kaldırır: sonrakileri bir aşağı kaydırır, uzunluğu bir azaltır. Elemanı serbest bırakmak (ya da
@@ -208,7 +211,7 @@ pub export fn nox_list_remove_at(list: ?*anyopaque, idx_i: i64, esz_i: i64) void
     const n = hdrLen(base);
     const idx: usize = @intCast(idx_i);
     if (idx >= n) return;
-    if (idx + 1 < n) std.mem.copyForwards(u8, base[HDR + idx * esz ..][0 .. (n - 1 - idx) * esz], base[HDR + (idx + 1) * esz ..][0 .. (n - 1 - idx) * esz]);
+    if (idx + 1 < n) std.mem.copyForwards(u8, dat(base)[idx * esz ..][0 .. (n - 1 - idx) * esz], dat(base)[(idx + 1) * esz ..][0 .. (n - 1 - idx) * esz]);
     setLen(base, n - 1);
 }
 
@@ -219,7 +222,7 @@ pub export fn nox_list_find_ptr(list: ?*anyopaque, ptr: i64, esz_i: i64) i64 {
     const n = hdrLen(base);
     var i: usize = 0;
     while (i < n) : (i += 1) {
-        const slot: *align(1) const i64 = @ptrCast(base + HDR + i * esz);
+        const slot: *align(1) const i64 = @ptrCast(dat(base) + i * esz);
         if (slot.* == ptr) return @intCast(i);
     }
     return -1;
@@ -231,19 +234,20 @@ pub export fn nox_list_take_all(rt: ?*anyopaque, list: ?*anyopaque, esz_i: i64) 
     const base: [*]u8 = @ptrCast(list orelse return null);
     const esz: usize = @intCast(esz_i);
     const n = hdrLen(base);
-    const blk = arc.nox_rc_alloc(rt, HDR + n * esz) orelse return null;
+    const blk = arc.nox_list_new(rt, n, esz) orelse return null;
     const dst: [*]u8 = @ptrCast(blk);
-    @memcpy(dst[HDR..][0 .. n * esz], base[HDR..][0 .. n * esz]);
-    setLen(dst, n);
-    @as(*align(1) i64, @ptrCast(dst + 8)).* = @intCast(n);
+    @memcpy(dat(dst)[0 .. n * esz], dat(base)[0 .. n * esz]);
     setLen(base, 0);
     return blk;
 }
 
+fn testFreeEsz(rt: ?*anyopaque, p: ?*anyopaque, esz: usize) void {
+    _ = arc.nox_rc_predecrement(p.?);
+    arc.nox_list_free_payload(rt, p, esz);
+}
+
 fn testFree(rt: ?*anyopaque, p: ?*anyopaque) void {
-    const b: [*]u8 = @ptrCast(p.?);
-    const cap: usize = @intCast(@as(*align(1) i64, @ptrCast(b + 8)).*);
-    arc.nox_rc_release(rt, p, HDR + cap * 8);
+    testFreeEsz(rt, p, 8);
 }
 
 /// v1.154.0 (comprehension): boş liste (len = cap = 0).
@@ -252,44 +256,31 @@ pub export fn nox_list_empty(rt: ?*anyopaque) ?*anyopaque {
     return @ptrCast(out);
 }
 
-/// v1.154.0 (comprehension): `value`nun düşük `esz` baytını listenin sonuna ekler; kapasite dolunca ikiye katlar (ilk büyüme 4). Liste YALNIZCA
-/// çağıranın (comprehension) elindedir — eski blok doğrudan serbest bırakılır, elemanlar taşınır (retain değişmez). Yeni (olası) işaretçi döner.
+/// v1.154.0 (comprehension): `value`nun düşük `esz` baytını listenin sonuna ekler; kapasite dolunca ikiye katlar (ilk büyüme 4). v2.2.43: başlık adresi
+/// ARTIK değişmez (büyüme yalnızca `data` tamponunu yeniden boyutlandırır); işaretçi hâlâ döndürülür (çağıranlar uyumlu kalır). Bellek yoksa null.
 pub export fn nox_list_push(rt: ?*anyopaque, list: ?*anyopaque, value: i64, esz_i: i64) ?*anyopaque {
-    var base: [*]u8 = @ptrCast(list orelse return null);
+    const base: [*]u8 = @ptrCast(list orelse return null);
     const esz: usize = @intCast(esz_i);
     const len = hdrLen(base);
-    const cap: usize = @intCast(@as(*align(1) i64, @ptrCast(base + 8)).*);
-    if (len == cap) {
-        const new_cap: usize = if (cap == 0) 4 else cap * 2;
-        const raw = arc.nox_rc_alloc(rt, HDR + new_cap * esz) orelse return null;
-        const nb: [*]u8 = @ptrCast(raw);
-        @memcpy(nb[0 .. HDR + len * esz], base[0 .. HDR + len * esz]);
-        @as(*align(1) i64, @ptrCast(nb + 8)).* = @intCast(new_cap);
-        arc.nox_rc_free_payload(rt, @ptrCast(base), HDR + cap * esz);
-        base = nb;
-    }
+    const cap = abi_layout.listCap(base);
+    if (len == cap) _ = arc.nox_list_grow(rt, base, esz) orelse return null;
     const bytes: [8]u8 = @bitCast(value);
-    @memcpy(base[HDR + len * esz ..][0..esz], bytes[0..esz]);
+    @memcpy(dat(base)[len * esz ..][0..esz], bytes[0..esz]);
     setLen(base, len + 1);
     return @ptrCast(base);
 }
 
 /// v2.1.162 (comprehension ön-ayırma): `list`e en az `extra` eleman daha sığacak kapasiteyi bir kerede ayırır (`extra <= 0` ya da yeterli kapasite varsa liste
-/// aynen döner). `nox_list_push` gibi liste YALNIZCA çağıranın (comprehension) elindedir: eski blok doğrudan serbest bırakılır, elemanlar taşınır.
+/// aynen döner). v2.2.43: başlık adresi değişmez; yalnızca eleman tamponu büyür.
 pub export fn nox_list_reserve(rt: ?*anyopaque, list: ?*anyopaque, extra: i64, esz_i: i64) ?*anyopaque {
-    var base: [*]u8 = @ptrCast(list orelse return null);
+    const base: [*]u8 = @ptrCast(list orelse return null);
     if (extra <= 0) return @ptrCast(base);
     const esz: usize = @intCast(esz_i);
     const len = hdrLen(base);
-    const cap: usize = @intCast(@as(*align(1) i64, @ptrCast(base + 8)).*);
+    const cap = abi_layout.listCap(base);
     const need = len + @as(usize, @intCast(extra));
     if (need <= cap) return @ptrCast(base);
-    const raw = arc.nox_rc_alloc(rt, HDR + need * esz) orelse return @ptrCast(base);
-    const nb: [*]u8 = @ptrCast(raw);
-    @memcpy(nb[0 .. HDR + len * esz], base[0 .. HDR + len * esz]);
-    @as(*align(1) i64, @ptrCast(nb + 8)).* = @intCast(need);
-    arc.nox_rc_free_payload(rt, @ptrCast(base), HDR + cap * esz);
-    base = nb;
+    _ = arc.nox_list_reserve_cap(rt, base, need, esz) orelse return @ptrCast(base);
     return @ptrCast(base);
 }
 
@@ -302,7 +293,7 @@ test "nox_list_reserve: kapasite bir kerede ayrılır, elemanlar korunur, push y
     const r = nox_list_reserve(rt, l, 100, 8) orelse return error.AllocFailed;
     const base: [*]u8 = @ptrCast(r);
     try std.testing.expectEqual(@as(usize, 1), hdrLen(base));
-    try std.testing.expect(@as(i64, @as(*align(1) i64, @ptrCast(base + 8)).*) >= 101);
+    try std.testing.expect(abi_layout.listCap(base) >= 101);
     var cur = r;
     var i: i64 = 0;
     while (i < 100) : (i += 1) cur = nox_list_push(rt, cur, i, 8) orelse return error.AllocFailed;
@@ -321,11 +312,11 @@ test "nox_list_ops: copy/concat/repeat/slice/reverse/move_last/remove_at (int el
 
     const l = newList(rt, 4, 8) orelse return error.AllocFailed;
     defer testFree(rt, l);
-    for (0..4) |i| @as(*align(1) i64, @ptrCast(l + HDR + i * 8)).* = @intCast(i + 1); // 1 2 3 4
+    for (0..4) |i| @as(*align(1) i64, @ptrCast(dat(l) + i * 8)).* = @intCast(i + 1); // 1 2 3 4
     const rd = struct {
         fn at(p: ?*anyopaque, i: usize) i64 {
             const b: [*]const u8 = @ptrCast(p.?);
-            return @as(*align(1) const i64, @ptrCast(b + HDR + i * 8)).*;
+            return @as(*align(1) const i64, @ptrCast(dat(b) + i * 8)).*;
         }
         fn len(p: ?*anyopaque) usize {
             const b: [*]u8 = @ptrCast(p.?);
@@ -376,8 +367,8 @@ test "nox_list_ops: copy/concat/repeat/slice/reverse/move_last/remove_at (int el
     // move_last: [1,2,3,4] + sona 99 eklenmiş gibi
     const m = newList(rt, 5, 8) orelse return error.AllocFailed;
     defer testFree(rt, m);
-    for (0..4) |i| @as(*align(1) i64, @ptrCast(m + HDR + i * 8)).* = @intCast(i + 1);
-    @as(*align(1) i64, @ptrCast(m + HDR + 4 * 8)).* = 99;
+    for (0..4) |i| @as(*align(1) i64, @ptrCast(dat(m) + i * 8)).* = @intCast(i + 1);
+    @as(*align(1) i64, @ptrCast(dat(m) + 4 * 8)).* = 99;
     nox_list_move_last(m, 1, 8);
     try std.testing.expectEqual(@as(i64, 99), rd.at(m, 1));
     try std.testing.expectEqual(@as(i64, 2), rd.at(m, 2));
@@ -393,15 +384,14 @@ test "v1.154.0: nox_list_empty/nox_list_push büyür, bayt genişlikleri doğru"
     while (i < 11) : (i += 1) l = nox_list_push(rt, l, i * 3, 8);
     const b: [*]u8 = @ptrCast(l.?);
     try std.testing.expectEqual(@as(usize, 11), hdrLen(b));
-    try std.testing.expectEqual(@as(i64, 30), @as(*align(1) i64, @ptrCast(b + HDR + 10 * 8)).*);
+    try std.testing.expectEqual(@as(i64, 30), @as(*align(1) i64, @ptrCast(dat(b) + 10 * 8)).*);
     testFree(rt, l);
     var bl = nox_list_empty(rt);
     var k: i64 = 0;
     while (k < 6) : (k += 1) bl = nox_list_push(rt, bl, if (@mod(k, 2) == 0) 1 else 0, 1);
     const bb: [*]u8 = @ptrCast(bl.?);
     try std.testing.expectEqual(@as(usize, 6), hdrLen(bb));
-    try std.testing.expectEqual(@as(u8, 1), bb[HDR + 4]);
-    try std.testing.expectEqual(@as(u8, 0), bb[HDR + 5]);
-    const bcap: usize = @intCast(@as(*align(1) i64, @ptrCast(bb + 8)).*);
-    arc.nox_rc_release(rt, bl, HDR + bcap);
+    try std.testing.expectEqual(@as(u8, 1), dat(bb)[4]);
+    try std.testing.expectEqual(@as(u8, 0), dat(bb)[5]);
+    testFreeEsz(rt, bl, 1);
 }

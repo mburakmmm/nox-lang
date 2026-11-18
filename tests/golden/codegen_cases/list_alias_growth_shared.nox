@@ -1,0 +1,121 @@
+# v2.2.43 (liste handle yeniden tasarımı, dogfood D1.2): liste BAŞLIĞI büyümede asla taşınmaz — `ys = xs; xs.append(v)` büyümede de
+# Python gibi çalışır. Her senaryo büyümeyi (kapasite aşımı) açıkça zorlar; beklenen çıktı Python ile birebir aynıdır.
+
+class Box:
+    def __init__(self: Box) -> None:
+        self.items: list[int] = []
+        self.names: list[str] = []
+
+    def add(self: Box, v: int) -> None:
+        self.items.append(v)
+
+    def grow_param(self: Box, xs: list[int], n: int) -> None:
+        for i in range(n):
+            xs.append(i)
+
+def grow(xs: list[int], n: int) -> None:
+    for i in range(n):
+        xs.append(i)
+
+def grow_twice(xs: list[int]) -> None:
+    grow(xs, 3)
+    grow(xs, 5)
+
+def fill_strs(names: list[str], n: int) -> None:
+    for i in range(n):
+        names.append("name" + str(i))
+
+shared_global: list[int] = []
+
+# 1. yerel takma ad
+xs: list[int] = [1, 2, 3]
+ys: list[int] = xs
+for i in range(20):
+    xs.append(i * 10)
+print(len(ys), ys[0], ys[22])
+ys.append(-1)
+print(len(xs), xs[23])
+
+# 2. boş listeden büyüme (inline kapasite 0)
+e: list[int] = []
+e2: list[int] = e
+for i in range(9):
+    e.append(i)
+print(e2)
+
+# 3. işlev parametresi
+zs: list[int] = [7]
+zs_alias: list[int] = zs
+grow(zs, 10)
+print(zs_alias)
+grow_twice(zs)
+print(len(zs_alias), len(zs))
+
+# 4. sınıf alanı ve metot parametresi
+b: Box = Box()
+items_alias: list[int] = b.items
+for i in range(6):
+    b.add(i)
+print(items_alias)
+b.grow_param(items_alias, 4)
+print(b.items)
+
+# 5. heap elemanlı liste (sızıntı/çift serbest bırakma Debug çalışma zamanında denetlenir)
+names: list[str] = ["a"]
+names_alias: list[str] = names
+fill_strs(names, 7)
+print(names_alias)
+b.names = names
+fill_strs(b.names, 3)
+print(len(names_alias), len(names))
+
+# 6. iç içe liste: iç listenin büyümesi dış listeden görünür
+grid: list[list[int]] = [[1], [2], [3]]
+row: list[int] = grid[1]
+for i in range(8):
+    row.append(i)
+print(grid[1])
+grid[0].append(100)
+grid[0].append(101)
+grid[0].append(102)
+print(grid[0])
+
+# 7. modül düzeyi liste
+sg_alias: list[int] = shared_global
+for i in range(12):
+    shared_global.append(i)
+print(sg_alias)
+
+# 8. sözlük değeri olan liste
+d: dict[str, list[int]] = {"k": []}
+dl: list[int] = d["k"]
+for i in range(5):
+    d["k"].append(i)
+print(dl, d["k"])
+
+# 9. yeniden atama: yeni liste eski takma adı etkilemez
+q: list[int] = [1]
+q2: list[int] = q
+q = [9, 9]
+q.append(5)
+q2.append(2)
+print(q, q2)
+
+# 10. insert/extend/pop/sort/clear büyümeden sonra
+t: list[int] = [3, 1]
+t_alias: list[int] = t
+t.extend([9, 8, 7, 6, 5])
+t.insert(0, 42)
+t.sort()
+last: int = t_alias.pop()
+print(t_alias, last, len(t))
+t.clear()
+t.append(1)
+print(t_alias)
+
+# 11. list[bool]/küçük eleman genişlikleri
+flags: list[bool] = [True]
+flags_alias: list[bool] = flags
+for i in range(10):
+    flags.append(i % 2 == 0)
+print(flags_alias)

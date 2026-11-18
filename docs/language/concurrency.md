@@ -426,7 +426,5 @@ fit comfortably; user code that recurses very deeply should run outside fibers.
   runtime (atomic reference counts).
 - Since v2.1.139 the compiler no longer rejects mutating a list/dict/class instance that is shared through `spawn` (the accesses are locked and
   memory-safe). The old compile-time check is available as a lint: `noxc check --strict-spawn-shared` (also accepted by `build` and `run`).
-  Appending directly to a list *parameter* is still not supported (the grown list cannot be written back to the caller): use index
-  assignment, a dict, or a field of a class instance.
 - Network and file operations in the standard library are non-blocking at the fiber level: a task waiting on a socket does not block the
   worker.

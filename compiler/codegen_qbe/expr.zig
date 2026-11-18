@@ -682,10 +682,9 @@ pub fn genIndex(self: *Codegen, idx: ast.Index) CodegenError!Value {
     }
     const byte_off = try self.newTemp();
     try optimizations.emitScaledByteOffset(self, byte_off, index_v.text, qbeSizeOf(obj.elem_qtype));
-    const off8 = try self.newTemp();
-    try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
+    const off8_data = try self.emitListData(obj.text);
     const addr = try self.newTemp();
-    try self.qbeOp2(addr, .l, "add", obj.text, off8);
+    try self.qbeOp2(addr, .l, "add", off8_data, byte_off);
     const result = try self.newTemp();
     try self.loadListElem(result, obj.elem_qtype, addr);
     // `list[T]`nin elemanları (Faz 21 ön-koşulundan beri) heap tipli
@@ -916,10 +915,7 @@ fn genEmptyListLit(self: *Codegen, target: anytype) CodegenError!Value {
     } else {
         try self.qbeCall(.{ .name = t, .ty = .l }, "$nox_rc_alloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = list_header_size_text } });
     }
-    try self.qbeStoreImmL(0, t);
-    const cap_addr = try self.newTemp();
-    try self.qbeOp2Imm(cap_addr, .l, "add", t, 8);
-    try self.qbeStoreImmL(0, cap_addr);
+    try self.emitListHeaderInit(t, 0, 0);
     return .{
         .text = t,
         .qtype = .l,
@@ -1060,13 +1056,9 @@ fn genListLitHint(self: *Codegen, elems: []const ast.Expr, elem_hint: ?TypeInfo)
         }
         break :blk temp;
     };
-    try self.qbeStoreImmL(@intCast(elems.len), t);
-    // Faz U.1: kapasite (@8) — bir literalden inşa edilen bir liste HER
-    // ZAMAN tam-oturan başlar (kapasite=uzunluk, büyüme SLACK'i YOK) —
-    // yalnızca `.append()` GEREKTİĞİNDE gerçek büyüme uygular.
-    const cap_addr = try self.newTemp();
-    try self.qbeOp2Imm(cap_addr, .l, "add", t, 8);
-    try self.qbeStoreImmL(@intCast(elems.len), cap_addr);
+    // Faz U.1: kapasite (@8) — bir literalden inşa edilen bir liste HER ZAMAN tam-oturan başlar (kapasite=uzunluk, büyüme SLACK'i YOK) —
+    // yalnızca `.append()` GEREKTİĞİNDE gerçek büyüme uygular. v2.2.43: `data@16` başlangıçta satır içi tamponu (`t + LIST_HEADER_SIZE`) gösterir.
+    try self.emitListHeaderInit(t, elems.len, elems.len);
     for (values, 0..) |v, i| {
         const off = LIST_HEADER_SIZE + elem_size * i;
         const addr = try self.newTemp();
@@ -2721,10 +2713,9 @@ pub fn genPrintList(self: *Codegen, v: Value) CodegenError!void {
 
     const off = try self.newTemp();
     try self.qbeOp2Imm(off, .l, "mul", idx_cur, @intCast(qbeSizeOf(v.elem_qtype)));
-    const off8 = try self.newTemp();
-    try self.qbeOp2Imm(off8, .l, "add", off, @intCast(LIST_HEADER_SIZE));
+    const off8_data = try self.emitListData(v.text);
     const addr = try self.newTemp();
-    try self.qbeOp2(addr, .l, "add", v.text, off8);
+    try self.qbeOp2(addr, .l, "add", off8_data, off);
     const elem = try self.newTemp();
     try self.loadListElem(elem, v.elem_qtype, addr);
     try self.genPrintFragment(valueFromElemDescriptor(elem, v.elem_qtype, v.elem_heap_info, v.elem_is_str, v.elem_fixed_int));

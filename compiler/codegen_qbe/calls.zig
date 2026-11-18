@@ -1058,11 +1058,10 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     return .{ .text = v.text, .qtype = .l };
                 }
                 if (std.mem.eql(u8, name, "ptr_of")) {
-                    // `list[T]` veri işaretçisi = liste işaretçisi + başlık (len@0, cap@8). Elemanlar hemen ardından, doğal boyutlu ve paketli dizilir.
+                    // `list[T]` veri işaretçisi = başlıktaki `data@16` göstericisi (v2.2.43: satır içi ya da büyümeden sonra ayrı tampon). Elemanlar bitişik, doğal boyutlu ve paketli dizilir.
                     if (c.args.len != 1) return error.Unsupported;
                     const v = try self.genExpr(c.args[0]);
-                    const data = try self.newTemp();
-                    try self.qbeOp2Imm(data, .l, "add", v.text, @intCast(LIST_HEADER_SIZE));
+                    const data = try self.emitListData(v.text);
                     return .{ .text = data, .qtype = .l, .heap = .none };
                 }
                 if (std.mem.eql(u8, name, "ptr_add")) {
@@ -1242,6 +1241,14 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
                     entry.manual = true;
                     const t = try self.newTemp();
                     try self.qbeLoad(t, entry.qtype, entry.qtype, entry.slot);
+                    if (entry.heap == .list) {
+                        // v2.2.43: `detach(list)` kaynak uyumluluğu için ESKİ "başlık işaretçisi" sözleşmesini korur: dönen işaretçiden 16 bayt SONRA ilk eleman başlar
+                        // (`ptr_add(detach(xs), 16)`). Yeni düzende başlık 24 bayttır ve elemanlar `data` göstericisindedir; bu yüzden `data - 16` döndürülür.
+                        const data = try self.emitListData(t);
+                        const legacy = try self.newTemp();
+                        try self.qbeOp2Imm(legacy, .l, "sub", data, 16);
+                        return .{ .text = legacy, .qtype = .l, .heap = .none };
+                    }
                     return .{ .text = t, .qtype = .l, .heap = .none };
                 }
                 unreachable;
@@ -1383,29 +1390,15 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
 
             const arg_values = try self.allocator.alloc(Value, c.args.len);
             const eval_order = try self.takeEvalOrder(c.args.len);
-            // v2.1.96 (TODO 7.8): referans liste parametrelerinde argüman DEĞERİ değil, değişken YUVASININ adresi geçirilir.
-            const ref_flags: ?[]bool = self.ref_params.get(name);
-            var ref_temp_slots: ?[]?[]const u8 = null;
-            if (ref_flags != null) {
-                ref_temp_slots = try self.allocator.alloc(?[]const u8, c.args.len);
-                @memset(ref_temp_slots.?, null);
-            }
             for (eval_order) |i| {
                 const a = c.args[i];
-                if (ref_flags) |fl| {
-                    if (i < fl.len and fl[i]) {
-                        const addr = try genRefListArgAddr(self, a, sig.params[i], &ref_temp_slots.?[i]);
-                        arg_values[i] = .{ .text = addr, .qtype = .l };
-                        continue;
-                    }
-                }
                 const v0 = try self.genExprForTarget(a, sig.params[i]);
                 try self.checkNoLowlevelEscape(v0);
                 arg_values[i] = try self.convert(v0, sig.params[i].qtype);
             }
 
             const result_temp: ?[]const u8 = if (sig.ret.qtype == .none) null else try self.newTemp();
-            const consumed_flags: ?[]const bool = if (ref_flags == null) try self.consumeCallArgs(name, c.args, arg_values) else null;
+            const consumed_flags: ?[]const bool = try self.consumeCallArgs(name, c.args, arg_values);
             {
                 const fn_args = try self.allocator.alloc(codegen.QbeArg, 1 + arg_values.len);
                 fn_args[0] = .{ .ty = .l, .text = RT_PARAM };
@@ -1425,15 +1418,6 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // kontrolden ÖNCEYE taşındı — bu, DERLEYİCİDEKİ EN SIK
             // ÇALIŞAN çağrı yolu (HER serbest fonksiyon çağrısı) OLDUĞUNDAN
             // özellikle önemli.
-            // v2.1.96: geçici (lvalue olmayan) referans-liste argümanının YUVASINDAKİ (büyümüş olabilir) liste, çağrı sonrası geçici olarak bırakılır.
-            if (ref_temp_slots) |slots| {
-                for (slots, 0..) |maybe_slot, i| {
-                    const slot = maybe_slot orelse continue;
-                    const cur = try self.newTemp();
-                    try self.qbeLoadL(cur, slot);
-                    try self.releaseValueIfSet(cur, .list, sig.params[i].elem_qtype, null, sig.params[i].elem_heap_info, null);
-                }
-            }
             try releaseTemporaryArgsExcept(self, c.args, arg_values, consumed_flags);
             if (!self.must_not_raise.contains(name)) try self.emitExceptionCheck();
 
@@ -1493,53 +1477,6 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             return self.genIndirectCallThroughClosurePtr(v.text, fsig, c.args);
         },
         else => return error.Unsupported,
-    }
-}
-
-/// v2.1.96 (TODO 7.8): referans liste parametresi için argüman YUVASININ adresini üretir. Çıplak yerel/global ya da `nesne.alan` ise o yuvanın adresi;
-/// başka her ifade (çağrı sonucu, literal, ...) için geçici bir yuva açılıp değer oraya yazılır (`temp_slot` doldurulur; çağıran çağrı SONRASI içeriği bırakır).
-fn genRefListArgAddr(self: *Codegen, a: ast.Expr, param: types.TypeInfo, temp_slot: *?[]const u8) CodegenError![]const u8 {
-    switch (a) {
-        .identifier => |nm| {
-            if (self.vars.get(nm)) |vi| {
-                if (vi.heap != .list) return error.Unsupported;
-                // Yığın/arena listeleri büyütülemez: referans geçirilmez (çağıran taraf bunları zaten ARC'ye düşürür; güvenlik için burada da reddedilir).
-                if (vi.arena or vi.is_stack_local or vi.growable_arena != null or vi.borrowed_field) return error.Unsupported;
-                if (vi.is_param and !vi.ref_param) return error.Unsupported;
-                return vi.slot;
-            }
-            const g = self.module_globals.get(nm) orelse return error.Unsupported;
-            const block = try self.newTemp();
-            try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
-            const addr = try self.newTemp();
-            try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
-            return addr;
-        },
-        .attribute => |fa| {
-            const base = try self.genExpr(fa.obj.*);
-            if (base.heap == .class) {
-                try self.checkNoLowlevelEscape(base);
-                const cinfo = self.classes.get(base.class_name.?) orelse return error.Unsupported;
-                for (cinfo.fields.items) |f| {
-                    if (!std.mem.eql(u8, f.name, fa.attr)) continue;
-                    const addr = try self.newTemp();
-                    try self.qbeOp2Imm(addr, .l, "add", base.text, @intCast(f.offset));
-                    return addr;
-                }
-            }
-            return error.Unsupported;
-        },
-        else => {
-            // Yalnızca TAZE (sahipli +1) değerler geçici yuvaya konabilir; ödünç bir ifade (ör. `grid[i]`) büyüyünce yeni işaretçiyi geri yazacak bir yuva yoktur.
-            if (!abi.isTemporaryExpr(a)) return error.Unsupported;
-            const v0 = try self.genExprForTarget(a, param);
-            try self.checkNoLowlevelEscape(v0);
-            const slot = try self.newTemp();
-            try self.qbeAlloc(slot, .eight, 8);
-            try self.qbeStoreL(v0.text, slot);
-            temp_slot.* = slot;
-            return slot;
-        },
     }
 }
 
@@ -2727,93 +2664,58 @@ pub fn genDictMethod(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     return error.Unsupported;
 }
 
-/// `xs.append(v)` — Faz U.1, GERÇEK paylaşım semantikli büyüme (bkz.
-/// nox-teknik-spesifikasyon.md §3.20'nin AYRINTILI notu — kullanıcıyla
-/// netleşen karar). İKİ yol:
-///   - **Hızlı yol** (`len < cap`): YENİ eleman `obj.text`in KENDİ
-///     bloğuna, YERİNDE yazılır, `len` ARTIRILIR — bloğun ADRESİ HİÇ
-///     DEĞİŞMEZ, bu yüzden AYNI listeye başka bir isimden (`ys = xs`)
-///     bakan HERHANGİ bir alias bu değişikliği ANINDA GÖRÜR (gerçek
-///     paylaşım).
-///   - **Büyüme yolu** (`len == cap`): `nox_list_grow` (bkz. `arc.zig`)
-///     YENİ (kapasitesi ikiye katlanmış — `cap == 0` İSE `1`) bir blok
-///     ayırıp ESKİ içeriği KOPYALAR; YENİ eleman ORAYA yazılır; ESKİ
-///     blok (elemanları TAŞINDIĞINDAN — AYNI işaretçi DEĞERLERİ, refcount
-///     DEĞİŞMEDEN — özyinelemeli release EDİLMEDEN, yalnızca KENDİ ham
-///     belleği) `nox_rc_predecrement`+`nox_rc_free_payload` ile serbest
-///     bırakılır; YENİ işaretçi ALICININ KENDİ SLOTUNA geri yazılır.
-///     **Bilinçli v1 sınırlaması (KABUL EDİLDİ):** bu ANDA listenin
-///     BAŞKA bir alias'ı (`ys = xs`) VARSA, O alias ESKİ (artık daha
-///     KISA/serbest bırakılmış) bloğu GÖRMEYE devam eder — `xs`in KENDİ
-///     slotu güncellenir ama `ys`in DEĞİL (Nox'un işaretçi-DEĞERİ-
-///     tutan, TEK dolaylama SEVİYELİ ARC temsilinin doğal bir sonucu —
-///     TAM düzeltme bir "handle" [çift dolaylama] yeniden tasarımı
-///     gerektirir, v1 kapsamı DIŞINDA).
-///
-/// **Bilinçli v1 sınırlaması — alıcı BİR PARAMETRE OLAMAZ:** bir
-/// parametre ÖDÜNÇ alınmıştır (refcount'u ETKİLENMEDEN geçirilir, bkz.
-/// modül üstü not) — büyüme yolu ESKİ bloğu predecrement/free ETTİĞİNDEN,
-/// bu, callee'nin SAHİP OLMADIĞI bir referansı YANLIŞLIKLA serbest
-/// bırakmasına (ÇAĞIRANIN hâlâ geçerli saydığı belleği bozmasına) yol
-/// AÇARDI — checker BUNU AYIRT EDEMEDİĞİNDEN (parametre/yerel ayrımı
-/// tip düzeyinde YOK), codegen `var_info.is_param` İSE `error.Unsupported`
-/// döner (`checkNoLowlevelEscape`in "geniş kural, codegen seviyesinde
-/// uygulanır" ÖNCEDEN kabul edilmiş desenle AYNI).
+/// `xs.append(v)` — v2.2.43 (liste handle yeniden tasarımı, dogfood D1.2): liste BAŞLIĞI (ARC payload'ı) listenin ömrü boyunca hiç taşınmaz;
+/// elemanlar `data@16` göstericisinin işaret ettiği tamponda durur (bkz. `shared/abi_layout.zig`). İki durum:
+///   - `len < cap`: yeni eleman `data[len]`e yazılır, `len` artırılır.
+///   - `len == cap` (soğuk yol): `nox_list_grow` yalnızca eleman TAMPONUNU yeniden boyutlandırır ve başlıktaki `data`/`cap`i günceller;
+///     sonra aynı yazma yolu çalışır.
+/// Başlık adresi değişmediğinden listeye başka bir isimden (`ys = xs`, alan, parametre, iç içe liste) bakan HER takma ad büyümeyi de görür
+/// (Python anlamı); alıcının slotuna geri yazma, alıcı kısıtları (parametre olamaz / tek seviye alan) ve eleman retain dansı artık yoktur.
 pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const ast.Expr) CodegenError!Value {
     if (args.len != 1) return error.Unsupported;
-    // GG.18: `obj.growable_arena` VARSA (bkz. plan dosyası "ASAP
-    // güçlendirmesi — Tur 2") `lowlevel:` kapsamının KATI kısıtlamasının
-    // (arena listeleri büyütülemez, v1 sınırlaması) BİR İSTİSNASIdır —
-    // BU spesifik arena, `local_escape.zig`nin KANITLADIĞI, SKALER-elemanlı
-    // bir yerel İçİn ÖZEL olarak yaratıldı.
+    // GG.18: `obj.growable_arena` VARSA (bkz. plan dosyası "ASAP güçlendirmesi — Tur 2") `lowlevel:` kapsamının KATI kısıtlamasının
+    // (arena listeleri büyütülemez, v1 sınırlaması) BİR İSTİSNASIdır — bu arena, `local_escape.zig`nin kanıtladığı, SKALER elemanlı bir yerel için yaratıldı.
     if (obj.arena and obj.growable_arena == null) return error.Unsupported;
-    // Faz B.4: alıcı ya çıplak bir isim ya da `<isim>.alan` (TEK seviye,
-    // `<isim>` bir sınıf örneği — checker ZORUNLU kıldı). İkinci durumda
-    // büyüme yolunun yeni işaretçiyi geri yazacağı adres, nesnenin
-    // alan ofsetidir (`genAssign`in `.attribute` dalıyla AYNI hesap).
-    var field_recv = false;
-    // Faz 9.0 F3: paylaşım-yetenekli sınıfın liste alanını büyüten `append` alan yuvasına geri yazar: tüm işlem örnek kilidi altında yapılır (örnek paylaşılansa).
+    // Faz 9.0 F3/F5: paylaşım-yetenekli sınıfın liste alanına (ya da yuva-bariyerli global listeye) `append`: işlem örnek/yuva kilidi altında yapılır (örnek paylaşılansa),
+    // liste işaretçisi kilit alındıktan SONRA alandan/yuvadan YENİDEN okunur (başka bir işçi alanı yeniden atamış olabilir).
+    var recv_addr: ?[]const u8 = null;
     var dyn_holder: ?[]const u8 = null;
     var dyn_gslot = false;
-    const recv_addr: []const u8 = switch (a.obj.*) {
-        .attribute => |fa| blk: {
-            const base = try self.genExpr(fa.obj.*);
-            if (base.heap != .class) return error.Unsupported;
-            try self.checkNoLowlevelEscape(base);
-            const cinfo = self.classes.get(base.class_name.?) orelse return error.Unsupported;
-            for (cinfo.fields.items) |f| {
-                if (!std.mem.eql(u8, f.name, fa.attr)) continue;
-                if (dyn_share.isDynClass(self, base.class_name)) dyn_holder = base.text;
-                const addr = try self.newTemp();
-                try self.qbeOp2Imm(addr, .l, "add", base.text, @intCast(f.offset));
-                field_recv = true;
-                break :blk addr;
+    switch (a.obj.*) {
+        .attribute => |fa| {
+            if (fa.obj.* == .identifier) {
+                const base = try self.genExpr(fa.obj.*);
+                if (base.heap == .class) {
+                    try self.checkNoLowlevelEscape(base);
+                    if (self.classes.get(base.class_name.?)) |cinfo| {
+                        for (cinfo.fields.items) |f| {
+                            if (!std.mem.eql(u8, f.name, fa.attr)) continue;
+                            if (dyn_share.isDynClass(self, base.class_name)) dyn_holder = base.text;
+                            const addr = try self.newTemp();
+                            try self.qbeOp2Imm(addr, .l, "add", base.text, @intCast(f.offset));
+                            recv_addr = addr;
+                            break;
+                        }
+                    }
+                }
             }
-            return error.Unsupported;
         },
-        else => blk: {
-            const recv_name = a.obj.identifier;
-            // Bulundu (bkz. proje belleği "modül-seviyesi global durum"
-            // planı): alıcı YEREL DEĞİL modül-seviyesi bir global OLABİLİR
-            // — büyüme yolunun YENİ işaretçiyi geri yazacağı ADRES ya bir
-            // yerelin KENDİ stack slotu ya da globals bloğundaki ofsetidir.
-            if (self.vars.get(recv_name)) |var_info| {
-                if (var_info.is_param and !var_info.ref_param) return error.Unsupported;
-                break :blk var_info.slot;
+        .identifier => |recv_name| {
+            if (!self.vars.contains(recv_name)) {
+                if (self.module_globals.get(recv_name)) |g| {
+                    if (self.dyn_slot_globals.contains(recv_name)) {
+                        const block = try self.newTemp();
+                        try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
+                        const addr = try self.newTemp();
+                        try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
+                        recv_addr = addr;
+                        dyn_gslot = true;
+                    }
+                }
             }
-            const g = self.module_globals.get(recv_name) orelse return error.Unsupported;
-            const block = try self.newTemp();
-            try self.qbeCall(.{ .name = block, .ty = .l }, "$nox_globals_get", &.{.{ .ty = .l, .text = RT_PARAM }});
-            const addr = try self.newTemp();
-            try self.qbeOp2Imm(addr, .l, "add", block, @intCast(g.offset));
-            if (self.dyn_slot_globals.contains(recv_name)) {
-                // Faz 9.0 F5: yuva bariyerli global liste — büyüme yuvaya geri yazar: yuva kilidi altında bloğu yuvadan yeniden oku.
-                dyn_gslot = true;
-                field_recv = true;
-            }
-            break :blk addr;
         },
-    };
+        else => {},
+    }
 
     // v2.0.70: `xs.append([])` — hedef eleman tipi biliniyor, boş literal çözülür.
     const v0 = try self.genExprForTarget(args[0], abi.typeInfoOfValue(abi.valueFromElemDescriptor("0", obj.elem_qtype, obj.elem_heap_info, obj.elem_is_str, obj.elem_fixed_int)));
@@ -2821,10 +2723,6 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     const retained = try self.retainIfAliasing(args[0], v0);
     const val = try self.convert(retained, obj.elem_qtype);
     const elem_size = qbeSizeOf(obj.elem_qtype);
-    // Alan alıcısında argümanın değerlendirilmesi (ör. `self.xs.append(
-    // self.make())`, `make` AYNI alanı büyütebilir) `obj.text`i BAYAT
-    // bırakabilir — işaretçi argümandan SONRA alandan YENİDEN okunur.
-    // (Yerel/global alıcıda bu hesap gereksizdir, `obj.text` kullanılır.)
     var dyn_shared_flag: ?[]const u8 = null;
     if (dyn_gslot) try dyn_share.emitGslotLock(self);
     if (dyn_holder) |h| {
@@ -2832,12 +2730,12 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         try dyn_share.emitCondLock(self, fl, h);
         dyn_shared_flag = fl;
     }
-    const list_text: []const u8 = if (field_recv) blk: {
+    const list_text: []const u8 = if (recv_addr) |ra| blk: {
         const t = try self.newTemp();
-        try self.qbeLoadL(t, recv_addr);
+        try self.qbeLoadL(t, ra);
         break :blk t;
     } else obj.text;
-    // Faz 9.0 F3b: yığın elemanlı paylaşılan liste — blok kilidi (büyüme yolunda eski blok serbest bırakılmadan ÖNCE bırakılır) + yeni elemanın yayımlanması.
+    // Faz 9.0 F3b: yığın elemanlı paylaşılan liste — blok kilidi + yeni elemanın yayımlanması.
     const blk_heap = dyn_share.listHeapElems(self, obj);
     var blk_flag: ?[]const u8 = null;
     if (blk_heap) {
@@ -2845,236 +2743,49 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
         try dyn_share.emitPublishElemIfShared(self, list_text, val.text, obj);
     }
 
-    // v2.1.87: başlık (uzunluk/kapasite) erişimleri TBAA `list_len`, eleman yazımı `list_elem` ile işaretlenir (bkz. `Codegen.mem_tag`): LLVM, ekleme
-    // döngüsünde uzunluğu/kapasiteyi yazmaçta tutabilir. Büyütme yolundaki başlık yazımları etiketsiz kalır (her şeyle çakışabilir = güvenli).
+    // v2.1.87: başlık (uzunluk/kapasite) erişimleri TBAA `list_len`, eleman yazımı `list_elem` ile işaretlenir (bkz. `Codegen.mem_tag`).
     const len_t = try self.newTemp();
     self.setMemTag(.list_len);
     if (self.list_locks) try self.qbeLoadAtomicL(len_t, list_text) else try self.qbeLoadL(len_t, list_text);
     self.setMemTag(.none);
     const cap_addr = try self.newTemp();
-    try self.qbeOp2Imm(cap_addr, .l, "add", list_text, 8);
+    try self.qbeOp2Imm(cap_addr, .l, "add", list_text, @intCast(types.LIST_CAP_OFF));
     const cap_t = try self.newTemp();
     self.setMemTag(.list_len);
     try self.qbeLoadL(cap_t, cap_addr);
     self.setMemTag(.none);
-    const has_room = try self.newTemp();
-    try self.qbeOp2(has_room, .w, "csltl", len_t, cap_t);
+    const is_full = try self.newTemp();
+    try self.qbeOp2(is_full, .w, "csgel", len_t, cap_t);
     const grow_label = try self.newLabel("append_grow");
     const write_label = try self.newLabel("append_write");
-    const done_label = try self.newLabel("append_done");
-    try self.qbeJnz(has_room, write_label, grow_label);
-
-    // Büyüme yolu: new_cap = (cap == 0) ? 1 : cap * 2 (phi'siz, alloc8
-    // tabanlı bir slot ile — bu projenin TÜM merge noktalarında
-    // kullandığı AYNI desen, bkz. `genListElemRelease`nin idx_slot'u).
+    try self.qbeJnzCold(is_full, grow_label, write_label);
+    const cold_start = self.beginCold();
     try self.qbeLabel(grow_label);
-    const cap_is_zero = try self.newTemp();
-    try self.qbeOp2Imm(cap_is_zero, .w, "ceql", cap_t, 0);
-    const doubled = try self.newTemp();
-    try self.qbeOp2Imm(doubled, .l, "mul", cap_t, 2);
-    const new_cap_slot = try self.newTemp();
-    try self.qbeAlloc(new_cap_slot, .eight, 8);
-    const capzero_label = try self.newLabel("append_capzero");
-    const capnz_label = try self.newLabel("append_capnz");
-    const capdone_label = try self.newLabel("append_capdone");
-    try self.qbeJnz(cap_is_zero, capzero_label, capnz_label);
-    try self.qbeLabel(capzero_label);
-    try self.qbeStoreImmL(1, new_cap_slot);
-    try self.qbeJmp(capdone_label);
-    try self.qbeLabel(capnz_label);
-    try self.qbeStoreL(doubled, new_cap_slot);
-    try self.qbeJmp(capdone_label);
-    try self.qbeLabel(capdone_label);
-    const new_cap = try self.newTemp();
-    try self.qbeLoadL(new_cap, new_cap_slot);
-
-    const new_payload_size = try self.newTemp();
-    {
-        const sz = try self.newTemp();
-        try self.qbeOp2Imm(sz, .l, "mul", new_cap, @intCast(elem_size));
-        try self.qbeOp2Imm(new_payload_size, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
-    }
-    const copy_bytes = try self.newTemp();
-    {
-        const sz = try self.newTemp();
-        try self.qbeOp2Imm(sz, .l, "mul", len_t, @intCast(elem_size));
-        try self.qbeOp2Imm(copy_bytes, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
-    }
-    // v2.1.87 (TODO 3.5.3): TEK SAHİPLİ liste (başlık sayacı == 1, arena değil, 64-bit yerel hedef) → `nox_list_realloc`: eski bloğun sahipliği
-    // çalışma zamanına devredilir (büyük bloklarda `realloc` sayfa yeniden eşlemesiyle kopyalamadan büyür), eleman retain/decrement dansı ve eski blok
-    // serbest bırakma GEREKMEZ (elemanlar aynı işaretçilerle taşınır). Sayaç > 1 ise (başka bir sahip/alias var) aşağıdaki eski paylaşımlı yol.
-    if (obj.growable_arena == null and self.profile == .hosted and !self.isWasmTarget()) {
-        const rc_addr = try self.newTemp();
-        try self.qbeOp2Imm(rc_addr, .l, "sub", list_text, @intCast(types.ARC_HEADER_SIZE));
-        const rc_t = try self.newTemp();
-        try self.qbeLoadAtomicL(rc_t, rc_addr);
-        const is_unique = try self.newTemp();
-        try self.qbeOp2Imm(is_unique, .w, "ceql", rc_t, 1);
-        const unique_label = try self.newLabel("append_unique");
-        const shared_label = try self.newLabel("append_shared");
-        try self.qbeJnz(is_unique, unique_label, shared_label);
-        try self.qbeLabel(unique_label);
-        const old_payload = try self.newTemp();
-        {
-            const sz = try self.newTemp();
-            try self.qbeOp2Imm(sz, .l, "mul", cap_t, @intCast(elem_size));
-            try self.qbeOp2Imm(old_payload, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
-        }
-        const uptr = try self.newTemp();
-        try self.qbeCall(.{ .name = uptr, .ty = .l }, "$nox_list_realloc", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = old_payload }, .{ .ty = .l, .text = new_payload_size } });
-        {
-            const byte_off = try self.newTemp();
-            try self.qbeOp2Imm(byte_off, .l, "mul", len_t, @intCast(elem_size));
-            const off16 = try self.newTemp();
-            try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
-            const addr = try self.newTemp();
-            try self.qbeOp2(addr, .l, "add", uptr, off16);
-            try self.qbeStore(obj.elem_qtype, val.text, addr);
-        }
-        const unew_len = try self.newTemp();
-        try self.qbeOp2Imm(unew_len, .l, "add", len_t, 1);
-        try self.qbeStoreL(unew_len, uptr);
-        const ucap_addr = try self.newTemp();
-        try self.qbeOp2Imm(ucap_addr, .l, "add", uptr, 8);
-        try self.qbeStoreL(new_cap, ucap_addr);
-        try self.qbeStoreL(uptr, recv_addr);
-        try self.qbeJmp(done_label);
-        try self.qbeLabel(shared_label);
-    }
-    const new_ptr = try self.newTemp();
+    const esz_lit = try std.fmt.allocPrint(self.allocator, "{d}", .{elem_size});
     if (obj.growable_arena) |arena_handle| {
-        // GG.18: `nox_list_grow`nin arena-farkında ikizi — bkz. `runtime/
-        // alloc/arc.zig`nin `nox_arena_list_grow`ının belge notu.
-        try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_arena_list_grow", &.{ .{ .ty = .l, .text = arena_handle }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = copy_bytes }, .{ .ty = .l, .text = new_payload_size } });
+        // GG.18: arena listesi — yeni tampon arenadan alınır (eski tampon arena yıkılana kadar "çöp").
+        try self.qbeCall(.{ .name = try self.newTemp(), .ty = .l }, "$nox_arena_list_grow", &.{ .{ .ty = .l, .text = arena_handle }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = esz_lit } });
     } else {
-        try self.qbeCall(.{ .name = new_ptr, .ty = .l }, "$nox_list_grow", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = copy_bytes }, .{ .ty = .l, .text = new_payload_size } });
+        try self.qbeCall(.{ .name = try self.newTemp(), .ty = .l }, "$nox_list_grow", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = esz_lit } });
     }
+    try self.qbeJmp(write_label);
+    try self.stashCold(cold_start);
 
-    // **Bulundu, GERÇEK bir çift-serbest-bırakma/erken-serbest-bırakma
-    // hatası** (`self.attr` alanı `list[T]`i büyüten "yerel değişkene
-    // oku, `.append()` et, geri yaz" desenindeki — `.append`in alıcısının
-    // ÇIPLAK bir yerel OLMASI ZORUNLULUĞU YÜZÜNDEN ZORUNLU olan bir
-    // örüntü, bkz. bu fonksiyonun belge notu) tam olarak bu ANDA (`self.
-    // attr` HÂLÂ ESKİ bloğu görürken, yerel ZATEN YENİ bloğa geçmişken):
-    // `nox_list_grow`nin `@memcpy`i ESKİ bloktaki eleman İŞARETÇİLERİNİ
-    // (heap-yönetimli İSE — sınıf/liste/dize/closure) HİÇBİR retain
-    // OLMADAN YENİ bloğa kopyalar. Eğer ESKİ blok bu ÇAĞRIDA hemen
-    // serbest BIRAKILMAZSA (aşağıdaki `should_free` `false` İSE — ör.
-    // `self.attr` HÂLÂ ona işaret ETTİĞİNDEN), ESKİ blok DAHA SONRA
-    // (`self.attr = yerel` atamasının ESKİ değeri serbest bırakma
-    // adımında) TAM anlamıyla ÖZYİNELEMELİ olarak serbest bırakılır
-    // (`genListElemRelease`) — bu, İÇİNDEKİ HER elemanın refcount'unu
-    // BİR AZALTIR, SANKİ o eleman SADECE eski bloğa AİTMİŞ gibi. Ama YENİ
-    // blok da AYNI (retain edilmemiş) işaretçiyi TAŞIYOR — bu YÜZDEN
-    // eleman GERÇEKTEN hâlâ İKİ blok tarafından paylaşılıyorken tek bir
-    // referansmış gibi SAYILIYOR, refcount'u ERKEN sıfıra düşürüp elemanı
-    // GERÇEKTEN CANLIYKEN serbest BIRAKIYOR (gerçekten gözlemlendi:
-    // `router.nox`nin `Router.add`ı gibi bir sınıf-alanı büyüme
-    // deseninde, İKİNCİ `.append()`den SONRA İLK elemanın alanları
-    // `(null)` okunuyordu). Düzeltme: her KOPYALANMIŞ elemanı (varsa)
-    // burada, YENİ bloktan, KOŞULSUZ retain et — ESKİ blok ARTIK
-    // (kavramsal olarak) O elemanlara AYRI, GEÇERLİ bir sahiplik payı
-    // TAŞIYORMUŞ gibi davranılır; aşağıdaki `should_free` dalı BU
-    // retain'i (ESKİ blok GERÇEKTEN bu ÇAĞRIDA ölüyorsa) düz bir
-    // decrement İLE dengeler — böylece HER İKİ olası kaderde (ESKİ blok
-    // HEMEN ölür / DAHA SONRA bir alias üzerinden ölür) net refcount
-    // DEĞİŞİMİ doğru kalır.
-    // GG.18: arena-büyümesinde bu retain-telafi dansı hiç GEREKMEZ (ESKİ
-    // blok ASLA bireysel serbest BIRAKILMAYACAĞINDAN — bkz. aşağıdaki
-    // `should_free` bloğunun ATLANMASI) — ZATEN `obj.growable_arena != null`
-    // İKEN `elem_heap_info` HER ZAMAN `null`dır (`local_escape.zig`nin
-    // SKALER-eleman-tipi KISITLAMASI, bkz. `elemTypeIsScalar`), bu kontrol
-    // SADECE netlik İçİn açıkça eklenir.
-    // v2.0 madde 4 (Faz D): `isHeapManaged` KONTROLÜ — bkz. `expr.zig`nin
-    // `genIndex`indeki AYNI bulgu, "elem_heap_info != null" ARTIK
-    // (`list[u8]` GİBİ skaler-AMA-sabit-genişlikli elemanlarda) "heap-
-    // yönetimli" ANLAMINA GELMİYOR.
-    // Faz 9.0 F3: paylaşılan bloktan büyüyen yeni blok da paylaşılandır (okuyucular/yazıcılar kilit kullanır).
-    if (dyn_holder != null or blk_heap) try dyn_share.emitPropagateShared(self, list_text, new_ptr);
-    if (obj.elem_heap_info != null and isHeapManaged(obj.elem_heap_info.?.heap) and obj.growable_arena == null) {
-        try self.emitListElemRetainLoop(new_ptr, len_t, obj.elem_heap_info.?.heap);
-    }
-
-    // YENİ elemanı YENİ bloğa yaz, başlığı (len/cap) GÜNCELLE.
-    {
-        const byte_off = try self.newTemp();
-        try self.qbeOp2Imm(byte_off, .l, "mul", len_t, @intCast(elem_size));
-        const off16 = try self.newTemp();
-        try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
-        const addr = try self.newTemp();
-        try self.qbeOp2(addr, .l, "add", new_ptr, off16);
-        try self.qbeStore(obj.elem_qtype, val.text, addr);
-    }
+    try self.qbeLabel(write_label);
+    const byte_off = try self.newTemp();
+    try self.qbeOp2Imm(byte_off, .l, "mul", len_t, @intCast(elem_size));
+    const data_t = try self.emitListData(list_text);
+    const addr = try self.newTemp();
+    try self.qbeOp2(addr, .l, "add", data_t, byte_off);
+    self.setMemTag(.list_elem);
+    try self.qbeStore(obj.elem_qtype, val.text, addr);
+    self.setMemTag(.none);
     const new_len = try self.newTemp();
     try self.qbeOp2Imm(new_len, .l, "add", len_t, 1);
-    try self.qbeStoreL(new_len, new_ptr);
-    const new_cap_addr = try self.newTemp();
-    try self.qbeOp2Imm(new_cap_addr, .l, "add", new_ptr, 8);
-    try self.qbeStoreL(new_cap, new_cap_addr);
-
-    // ESKİ bloğu (yalnızca KENDİ ham belleğini — elemanlar TAŞINDI,
-    // özyinelemeli release EDİLMEZ) refcount'u sıfıra düşerse serbest
-    // bırak (bkz. bu fonksiyonun belge notu, "büyüme yolu"). GG.18:
-    // `obj.growable_arena` VARSA bu TÜM blok ATLANIR — ESKİ chunk'ın
-    // REFCOUNT BAŞLIĞI YOK (predecrement/free ANLAMSIZ/GÜVENSİZ olurdu),
-    // arenanın KENDİSİ per-object free DESTEKLEMEZ (ESKİ chunk SADECE
-    // "çöp" olarak, fonksiyonun `function_arena`sı TOPLU yıkılana kadar
-    // yaşar — bu, arenaların DOĞAL/beklenen MODELİDİR).
-    if (blk_flag) |bf| try dyn_share.emitCondUnlock(self, bf, list_text);
-    if (obj.growable_arena == null) {
-        const should_free = try self.emitInlinePredecrement(list_text, .list);
-        const free_label = try self.newLabel("append_free_old");
-        const skip_free_label = try self.newLabel("append_skip_free");
-        try self.qbeJnz(should_free, free_label, skip_free_label);
-        try self.qbeLabel(free_label);
-        if (obj.elem_heap_info != null and isHeapManaged(obj.elem_heap_info.?.heap)) {
-            // ESKİ blok BU çağrıda gerçekten ölüyor (`self.attr` GİBİ başka
-            // bir alias YOK) — yukarıdaki retain döngüsünün eklediği "fazladan"
-            // payı DÜZ bir decrement İLE dengele (TAM özyinelemeli release
-            // DEĞİL: bu decrement ASLA sıfıra/altına düşemez, çünkü elemanın
-            // ÖNCEKİ, GEÇERLİ sahipliği HÂLÂ duruyor — bkz. `genListAppend`nin
-            // büyüme-retain notunun tam gerekçesi).
-            try self.emitListElemPlainDecrementLoop(list_text, len_t, obj.elem_heap_info.?.heap);
-        }
-        const old_size = try self.newTemp();
-        {
-            const sz = try self.newTemp();
-            try self.qbeOp2Imm(sz, .l, "mul", cap_t, @intCast(elem_size));
-            try self.qbeOp2Imm(old_size, .l, "add", sz, @intCast(LIST_HEADER_SIZE));
-        }
-        try self.qbeCall(null, "$nox_rc_free_payload", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = old_size } });
-        try self.qbeJmp(skip_free_label);
-        try self.qbeLabel(skip_free_label);
-    }
-
-    // Alıcının KENDİ slotuna/global ofsetine YENİ işaretçiyi geri yaz —
-    // TEK yerde (hızlı yol bloğun adresini HİÇ değiştirmediğinden
-    // gerekmez).
-    try self.qbeStoreL(new_ptr, recv_addr);
-    try self.qbeJmp(done_label);
-
-    // Hızlı yol: KENDİ bloğuna yerinde yaz.
-    try self.qbeLabel(write_label);
-    {
-        const byte_off = try self.newTemp();
-        try self.qbeOp2Imm(byte_off, .l, "mul", len_t, @intCast(elem_size));
-        const off16 = try self.newTemp();
-        try self.qbeOp2Imm(off16, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
-        const addr = try self.newTemp();
-        try self.qbeOp2(addr, .l, "add", list_text, off16);
-        self.setMemTag(.list_elem);
-        try self.qbeStore(obj.elem_qtype, val.text, addr);
-        self.setMemTag(.none);
-    }
-    const fast_new_len = try self.newTemp();
-    try self.qbeOp2Imm(fast_new_len, .l, "add", len_t, 1);
     self.setMemTag(.list_len);
-    if (self.list_locks) try self.qbeStoreAtomicL(fast_new_len, list_text) else try self.qbeStoreL(fast_new_len, list_text);
+    if (self.list_locks) try self.qbeStoreAtomicL(new_len, list_text) else try self.qbeStoreL(new_len, list_text);
     self.setMemTag(.none);
     if (blk_flag) |bf| try dyn_share.emitCondUnlock(self, bf, list_text);
-    try self.qbeJmp(done_label);
-
-    try self.qbeLabel(done_label);
     if (dyn_shared_flag) |fl| try dyn_share.emitCondUnlock(self, fl, dyn_holder.?);
     if (dyn_gslot) try dyn_share.emitGslotUnlock(self);
     // Alıcı paylaşım-yetenekli alanın SAHİPLİ okumasıysa (`always_fresh`) o referans burada bırakılır (diğer liste yöntemleri kendileri bırakır).
@@ -3098,8 +2809,7 @@ pub fn genListSort(self: *Codegen, obj0: Value, a: ast.Attribute, args: []const 
 
     const len_t = try self.newTemp();
     try self.qbeLoadL(len_t, obj.text);
-    const data_addr = try self.newTemp();
-    try self.qbeOp2Imm(data_addr, .l, "add", obj.text, @intCast(LIST_HEADER_SIZE));
+    const data_addr = try self.emitListData(obj.text);
 
     const fn_name = if (obj.elem_qtype == .d)
         "nox_list_sort_float"
@@ -3171,10 +2881,9 @@ pub fn genListPop(self: *Codegen, obj0: Value, a: ast.Attribute) CodegenError!Va
 
     const byte_off = try self.newTemp();
     try self.qbeOp2Imm(byte_off, .l, "mul", new_len, @intCast(qbeSizeOf(obj.elem_qtype)));
-    const off8 = try self.newTemp();
-    try self.qbeOp2Imm(off8, .l, "add", byte_off, @intCast(LIST_HEADER_SIZE));
+    const off8_data = try self.emitListData(obj.text);
     const addr = try self.newTemp();
-    try self.qbeOp2(addr, .l, "add", obj.text, off8);
+    try self.qbeOp2(addr, .l, "add", off8_data, byte_off);
     const result = try self.newTemp();
     try self.loadListElem(result, obj.elem_qtype, addr);
     try dyn_share.finishMut(self, mctx);
@@ -3742,10 +3451,9 @@ fn genCompLeaf(self: *Codegen, st: *const CompState) CodegenError!void {
                 try self.qbeLabel(fast_label);
                 const off = try self.newTemp();
                 try self.qbeOp2Imm(off, .l, "mul", len_t, 8);
-                const off2 = try self.newTemp();
-                try self.qbeOp2Imm(off2, .l, "add", off, @intCast(LIST_HEADER_SIZE));
+                const off2_data = try self.emitListData(cur);
                 const addr = try self.newTemp();
-                try self.qbeOp2(addr, .l, "add", cur, off2);
+                try self.qbeOp2(addr, .l, "add", off2_data, off);
                 try self.qbeStoreL(payload.text, addr);
                 const nlen = try self.newTemp();
                 try self.qbeOp2Imm(nlen, .l, "add", len_t, 1);
