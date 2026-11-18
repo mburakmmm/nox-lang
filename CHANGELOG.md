@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.16]
+
+Kullanıcı listesi (2026-11-17) belgeleri: O1 ve B3.
+
+- `project/o1-tip-cikarimi-analizi-2026-11-18.md`: Go gibi `x := ifade` için analiz ve öneri (kısıtlı v1 ile evet; karar bekliyor).
+- `project/bootstrap-plani-2026-11.md`: self-hosting için envanter, aşamalar (A1 lexer/parser, A2 tip denetleyici, B codegen, C sürücü, D sabit nokta), kabul ölçütleri (644 IR anlık görüntüsü oracle), ön koşullar ve karar noktaları.
+- Kod değişikliği yok.
+
 ## [2.2.15]
 
 K3: Bacon-Rajan döngü toplayıcısının duraklama ölçümü ve eşik düzeltmesi.
