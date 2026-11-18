@@ -402,7 +402,11 @@ test "nox.http.serve_multicore: num_threads=1 sıradan tek-iş-parçacıklı sun
 
 /// 2.2 limitasyon turu (worker ölçek raporu): yanıt gövdesini (başlıktan sonrası) `out`a okur; geri dönüş gövde uzunluğu (hata: 0).
 fn testGetBody(port: u16, out: *[64]u8) usize {
-    const fd = testConnect(port) catch return 0;
+    // Tanılama: hata yolları sessizce `0` döndürürse CI'daki aralıklı "failed without output" hatası nedeni belirsiz kalıyordu (macOS 2.2.12).
+    const fd = testConnect(port) catch |e| {
+        std.debug.print("testGetBody: bağlanılamadı: {s}\n", .{@errorName(e)});
+        return 0;
+    };
     defer _ = sys.close(fd);
     testSendGet(fd, "/");
     var buf: [512]u8 = undefined;
@@ -413,8 +417,14 @@ fn testGetBody(port: u16, out: *[64]u8) usize {
         total += @intCast(n);
     }
     const resp = buf[0..total];
-    if (!std.mem.startsWith(u8, resp, "HTTP/1.1 200")) return 0;
-    const sep = std.mem.indexOf(u8, resp, "\r\n\r\n") orelse return 0;
+    if (!std.mem.startsWith(u8, resp, "HTTP/1.1 200")) {
+        std.debug.print("testGetBody: beklenmeyen yanıt ({d} bayt): {s}\n", .{ total, resp[0..@min(resp.len, 80)] });
+        return 0;
+    }
+    const sep = std.mem.indexOf(u8, resp, "\r\n\r\n") orelse {
+        std.debug.print("testGetBody: başlık sonu yok ({d} bayt)\n", .{total});
+        return 0;
+    };
     const body = resp[sep + 4 ..];
     const len = @min(body.len, out.len);
     @memcpy(out[0..len], body[0..len]);
@@ -487,6 +497,7 @@ test "nox.http.serve_multicore: bağlantılar birden fazla worker'a dağılır (
         const stderr_data = try stderr_reader.interface.allocRemaining(allocator, .unlimited);
         defer allocator.free(stderr_data);
         const term = try child.wait(io);
+        if (term != .exited or term.exited != 0) std.debug.print("sunucu temiz çıkmadı (SIGTERM sonrası): {any}\n", .{term});
         try std.testing.expect(term == .exited);
         try std.testing.expectEqual(@as(u8, 0), term.exited);
         if (stderr_data.len != 0) std.debug.print("program stderr'e yazdı:\n{s}\n", .{stderr_data});

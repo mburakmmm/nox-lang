@@ -143,3 +143,11 @@ Kalan ve sıradaki adaylar: I1'in genelleştirilmesi (salt-okunur olmayan işlev
 ## 12. Genel tüketen sözleşme (v2.2.14)
 
 Önceki bölümde "ABI'yi her çağıranda değiştirir, `[K]`" diye ertelenen genel tüketen sözleşme, `___init___c` ile aynı klon yaklaşımıyla yapıldı: normal sembol hiç değişmediğinden işlev değerleri, bağlı metodlar, vtable ve `super()` çağrıları eski sözleşmeyle çalışır; yalnızca doğrudan, statik çağrı sitelerinde ve yalnızca taze argüman devredilebiliyorsa klon seçilir. Güvenlik gerekçesi: klon, tüketilen parametreyi sahipli yerel gibi ele aldığından erken çıkış/istisna için ayrı kısıt gerekmez (çıkışta kalan değer bırakılır). Kalan: vtable'lı sınıfların metodları (tüketim sözleşmesi override'larda uyumlu olmalı), genel (kalıtımlı) `__init__`, çağrı sitesinde son kullanımdaki adlandırılmış yerelin klona taşınması (`consumeCallArgs`te şimdi takma ad = retain).
+
+## 13. Kalan adayların kapanışı (2026-11-18, v2.2.19) — ölçümle
+
+v2.2.18 sonrası AST iş yükü (`ast_eval`, ReleaseFast) `NOX_RC_STATS` ile: **retain 491 520, release 1 965 960, tahsis 1 474 440**. 491 520 = 60 ağaç × 8 192 yaprak: kalan her retain, `fold` içinde yaprağın `return n` ile döndürülmesidir (ödünç parametrenin sahipli dönüşe çevrilmesi, +1 zorunlu); release'lerin 1 474 440'ı nesnenin son serbest bırakılmasıdır, geri kalan 491 520'si yukarıdaki retain'lerin çiftidir. Yani bu iş yükünde sayaç trafiği tasarım gereği alt sınırda; süre ~10–20 ms'dir.
+
+`text_proc`: 320 000 `str` retain/release çifti, 434 320 tahsis, toplam ~10–20 ms.
+
+Sonuç: §12'de "kalan" diye listelenen üç iş (çağrı sitesinde son kullanımdaki adlandırılmış yerelin klona taşınması, geçici `str` arenası, vtable'lı sınıf metodları için tüketen sözleşme) **hiçbir ölçülebilir iş yükünde hedef bulmuyor**; ölçüm olmadan codegen riski almak (AGENTS §8: muhafazakâr) haklı değil. B1 **kapatıldı**; yeni bir iş yükü (ör. vtable'lı sınıf hiyerarşisi üzerinde ağır tüketen çağrı) bu üç adaydan birini haklı çıkarırsa yeniden açılır.

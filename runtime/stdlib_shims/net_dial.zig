@@ -49,7 +49,7 @@ test "attemptCapMs: loopback kısa, diğer adresler tam üst sınır" {
     try std.testing.expectEqual(LOOPBACK_ATTEMPT_CAP_MS, attemptCapMs(&.{ .ip4 = .{ .bytes = .{ 127, 1, 2, 3 }, .port = 80 } }));
     try std.testing.expectEqual(LOOPBACK_ATTEMPT_CAP_MS, attemptCapMs(&.{ .ip6 = .{ .bytes = [_]u8{0} ** 15 ++ [_]u8{1}, .port = 80 } }));
     try std.testing.expectEqual(ATTEMPT_CAP_MS, attemptCapMs(&.{ .ip4 = .{ .bytes = .{ 192, 0, 2, 1 }, .port = 80 } }));
-    try std.testing.expectEqual(ATTEMPT_CAP_MS, attemptCapMs(&.{ .ip6 = .{ .bytes = [_]u8{0x20, 0x01, 0x0d, 0xb8} ++ [_]u8{0} ** 11 ++ [_]u8{1}, .port = 80 } }));
+    try std.testing.expectEqual(ATTEMPT_CAP_MS, attemptCapMs(&.{ .ip6 = .{ .bytes = [_]u8{ 0x20, 0x01, 0x0d, 0xb8 } ++ [_]u8{0} ** 11 ++ [_]u8{1}, .port = 80 } }));
 }
 
 /// Fiber içinde süresiz (`timeout_ms == 0`) DNS aramasının kooperatif bekleme üst sınırı.
@@ -969,15 +969,20 @@ test "awaitLookup: 20 eşzamanlı istek aynı ada TEK çözümleme ve TEK iş pa
     try waitSlotsDrained(); // önceki testlerin (genel yuva sayacı paylaşılır) arka plan çözümleyicileri bitmiş olsun
     var fake: FakeResolver = .{};
     const Worker = struct {
-        fn run(f: *FakeResolver, ok_count: *std.atomic.Value(u32)) void {
+        fn run(f: *FakeResolver, ok_count: *std.atomic.Value(u32), started: *std.atomic.Value(u32)) void {
+            _ = started.fetchAdd(1, .acq_rel);
             const job = awaitLookup("singleflight-a.test", 80, null, nowNs() + 5 * std.time.ns_per_s, &FakeResolver.resolve, f) catch return;
             defer job.release();
             if (job.ok and job.count == 1) _ = ok_count.fetchAdd(1, .acq_rel);
         }
     };
     var ok_count: std.atomic.Value(u32) = .init(0);
+    var started: std.atomic.Value(u32) = .init(0);
     var threads: [20]std.Thread = undefined;
-    for (&threads) |*t| t.* = try std.Thread.spawn(.{}, Worker.run, .{ &fake, &ok_count });
+    for (&threads) |*t| t.* = try std.Thread.spawn(.{}, Worker.run, .{ &fake, &ok_count, &started });
+    // Yüklü CI (Windows) koşucusunda son iş parçacığı 100 ms'den geç başlayıp çözümleme bittikten sonra ikinci bir arama açıyordu (calls == 2): önce hepsinin başladığını bekle.
+    var waited: usize = 0;
+    while (started.load(.acquire) < 20 and waited < 1000) : (waited += 1) sleepMsTest(10);
     sleepMsTest(100); // hepsi uçuştaki aramaya katılsın
     try std.testing.expectEqual(@as(u32, 1), g_lookup_slots.inflight.load(.acquire));
     fake.gate.store(true, .release);

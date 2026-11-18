@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.19]
+
+Açık kalan işlerin kapanışı (belge/tanılama sürümü; çalışma zamanı ve derleyici davranışı değişmedi).
+
+- **Test tanılaması:** `http_serve_multicore_golden_test` içindeki "bağlantılar birden fazla worker'a dağılır" testi macOS CI'da aralıklı olarak (v2.2.12) mesajsız ("failed without output") kırılıyordu; yerelde 30'dan fazla koşuda (Debug/ReleaseFast, 10 CPU-yoğun süreç altında) tekrarlanamadı. Hata yolları artık nedenini yazıyor (bağlantı hatası, beklenmeyen yanıt ilk baytları, SIGTERM sonrası çıkış durumu); bir sonraki CI kırılması nedenini gösterecek.
+- **Windows CI aralıklı hatası (v2.2.16):** `net_dial` testi "awaitLookup: 20 eşzamanlı istek aynı ada TEK çözümleme" yüklü koşucuda son iş parçacığı 100 ms'den geç başlayınca ikinci bir arama açıp `expected 1, found 2` veriyordu; test artık önce 20 iş parçacığının da başladığını bekler (yalnız test; üretim kodu değişmedi).
+- **B1 kapandı:** AST iş yükünde kalan retain/release trafiği alt sınırda (yaprak `return n`), kalan üç aday ölçülebilir hedef bulmadığı için yapılmadı (`project/b1-arc-asap-analizi-2026-11-17.md` §13).
+- **F ölçümü doğrulandı:** boşta makinede paralel toplama en uzun duraklamayı 21,1 → 12,4 ms'ye (4 iş parçacığı) indiriyor.
+
 ## [2.2.18]
 
 K2/K3 sonrası: eşzamanlı Bacon-Rajan (E) değerlendirmesi kapatıldı, bunun yerine paralel durdur-ve-işaretle (F) yapıldı.
