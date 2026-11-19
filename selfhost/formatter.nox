@@ -1,0 +1,1812 @@
+# ÜRETİLMİŞ DOSYA: elle DÜZENLEMEYİN. Kaynak: selfhost/parser.nox.in (+ compiler/lexer/token.zig, compiler/parser/ast.zig şeması).
+# Yeniden üretmek için: scripts/gen_selfhost_parser.py   (güncel mi: --check)
+# noxc-nightly Aşama 2.13: Nox biçimlendirici (compiler/fmt/formatter.zig'in birebir portu; Nox lexer + Nox parser AST'si üzerinde). Bu dosya ŞABLONDUR:
+# `scripts/gen_selfhost_parser.py` K/T/O/E/SZ yer tutucularını doldurup `selfhost/formatter.nox`u yazar (elle düzenlenen kaynak BU dosyadır).
+from ast_schema import Ast, at, dump_module, mk_Expr_call, put
+from lexer import Lx, lex
+from parser import P, pk, pkx, pky, sref_len, sref_byte, sref_eq, sref_eq2, parse_module_body, ErrUnexpected, ErrNumber, ErrRecursion
+
+class Pr:
+    a: Ast
+    out: list[int]
+    tr: list[int]
+    ti: int
+    ntr: int
+    last_blank: bool
+    in_fstring: int
+
+    def __init__(self, a: Ast, tr: list[int]) -> None:
+        self.a = a
+        self.out = []
+        self.tr = tr
+        self.ti = 0
+        self.ntr = len(tr) // 5
+        self.last_blank = True
+        self.in_fstring = 0
+
+# --- yazma yardımcıları ---
+def w(pr: Pr, s: str) -> None:
+    for i in range(len(s)):
+        pr.out.append(ord(s[i]))
+
+def wb(pr: Pr, c: int) -> None:
+    pr.out.append(c)
+
+# Paketli dize başvurusunu yazar.
+def ws(pr: Pr, v: int) -> None:
+    a: Ast = pr.a
+    n: int = sref_len(v)
+    for i in range(n):
+        pr.out.append(sref_byte(a, v, i))
+
+def wint(pr: Pr, v: int) -> None:
+    if v < 0:
+        pr.out.append(45)
+        if v == -9223372036854775807 - 1:
+            w(pr, "9223372036854775808")
+            return
+        v = 0 - v
+    if v == 0:
+        pr.out.append(48)
+        return
+    digits: list[int] = []
+    while v > 0:
+        digits.append(48 + v % 10)
+        v = v // 10
+    k: int = len(digits) - 1
+    while k >= 0:
+        pr.out.append(digits[k])
+        k = k - 1
+
+def indent_to(pr: Pr, depth: int) -> None:
+    for i in range(depth):
+        w(pr, "    ")
+
+def hex2(pr: Pr, c: int) -> None:
+    d1: int = c >> 4
+    d2: int = c & 15
+    if d1 < 10:
+        pr.out.append(48 + d1)
+    else:
+        pr.out.append(87 + d1)
+    if d2 < 10:
+        pr.out.append(48 + d2)
+    else:
+        pr.out.append(87 + d2)
+
+# Kontrol baytı kaçışı; yazdıysa True.
+def write_control_escape(pr: Pr, c: int) -> bool:
+    if c == 13:
+        w(pr, "\\r")
+        return True
+    if c <= 8 or c == 11 or c == 12 or (c >= 14 and c <= 31) or c == 127:
+        w(pr, "\\x")
+        hex2(pr, c)
+        return True
+    return False
+
+# --- düğüm erişimi ---
+def sref_at(a: Ast, node: int, off: int) -> int:
+    return pk(a.n[node + off], a.n[node + off + 1])
+
+# `opt(str)` alanı: yoksa -1.
+def opt_at(a: Ast, node: int, off: int) -> int:
+    x: int = a.n[node + off]
+    if x == -4611686018427387904:
+        return -1
+    return pk(x, a.n[node + off + 1])
+
+def sl_at(a: Ast, node: int, off: int) -> int:
+    return pk(a.n[node + off], a.n[node + off + 1])
+
+def sl_len(s: int) -> int:
+    return pky(s)
+
+def sl_get(a: Ast, s: int, i: int) -> int:
+    return a.l[pkx(s) + i]
+
+def sl_from(s: int, k: int) -> int:
+    n: int = pky(s)
+    if k > n:
+        k = n
+    return pk(pkx(s) + k, n - k)
+
+def sl_head(s: int, k: int) -> int:
+    return pk(pkx(s), k)
+
+def s_kind(a: Ast, st: int) -> int:
+    return a.n[st + 0]
+
+def s_tag(a: Ast, st: int) -> int:
+    return a.n[a.n[st + 0]]
+
+def s_pay(a: Ast, st: int) -> int:
+    return a.n[a.n[st + 0] + 1]
+
+def s_line(a: Ast, st: int) -> int:
+    return a.n[st + 1]
+
+def etag(a: Ast, e: int) -> int:
+    return a.n[e]
+
+def starts_with(a: Ast, v: int, pre: str) -> bool:
+    n: int = len(pre)
+    if sref_len(v) < n:
+        return False
+    for i in range(n):
+        if sref_byte(a, v, i) != ord(pre[i]):
+            return False
+    return True
+
+# Son `_`ten sonraki ondalık sayı; yoksa/geçersizse -1.
+def last_us_int(a: Ast, v: int) -> int:
+    n: int = sref_len(v)
+    us: int = -1
+    for i in range(n):
+        if sref_byte(a, v, i) == 95:
+            us = i
+    if us < 0 or us + 1 >= n:
+        return -1
+    acc: int = 0
+    for j in range(us + 1, n):
+        c: int = sref_byte(a, v, j)
+        if c < 48 or c > 57:
+            return -1
+        if acc > 922337203685477579:
+            return -1
+        acc = acc * 10 + (c - 48)
+    return acc
+
+# --- trivia ---
+def emit_leading_trivia(pr: Pr, depth: int, upto_line: int) -> None:
+    a: Ast = pr.a
+    while pr.ti < pr.ntr and pr.tr[pr.ti * 5 + 1] < upto_line:
+        b: int = pr.ti * 5
+        if pr.tr[b] == 1:
+            if not pr.last_blank:
+                wb(pr, 10)
+                pr.last_blank = True
+        else:
+            indent_to(pr, depth)
+            for k in range(pr.tr[b + 3], pr.tr[b + 4]):
+                wb(pr, at(a.src, k))
+            wb(pr, 10)
+            pr.last_blank = False
+        pr.ti = pr.ti + 1
+
+def emit_remaining_trivia(pr: Pr) -> None:
+    emit_leading_trivia(pr, 0, 4294967295)
+
+def line(pr: Pr, source_line: int) -> None:
+    a: Ast = pr.a
+    if pr.ti < pr.ntr:
+        b: int = pr.ti * 5
+        if pr.tr[b] == 0 and pr.tr[b + 2] != 0 and pr.tr[b + 1] == source_line:
+            w(pr, "  ")
+            for k in range(pr.tr[b + 3], pr.tr[b + 4]):
+                wb(pr, at(a.src, k))
+            pr.ti = pr.ti + 1
+    wb(pr, 10)
+    pr.last_blank = False
+
+# Satır sonu + `last_was_blank = false` (Zig'de `writeAll("...\n")` + bayrak).
+def nl(pr: Pr) -> None:
+    wb(pr, 10)
+    pr.last_blank = False
+
+# --- öncelikler ---
+def bin_prec(op: int) -> int:
+    if op == 14:
+        return 1
+    if op == 13:
+        return 2
+    if op == 7 or op == 8 or op == 9 or op == 10 or op == 11 or op == 12 or op == 20 or op == 21:
+        return 4
+    if op == 16:
+        return 5
+    if op == 17:
+        return 6
+    if op == 15:
+        return 7
+    if op == 18 or op == 19:
+        return 8
+    if op == 0 or op == 1:
+        return 9
+    if op == 2 or op == 3 or op == 4 or op == 5:
+        return 10
+    return 12
+
+def unary_prec(op: int) -> int:
+    if op == 1:
+        return 3
+    return 11
+
+def bin_op_str(op: int) -> str:
+    if op == 0:
+        return "+"
+    if op == 1:
+        return "-"
+    if op == 2:
+        return "*"
+    if op == 3:
+        return "/"
+    if op == 4:
+        return "//"
+    if op == 5:
+        return "%"
+    if op == 6:
+        return "**"
+    if op == 7:
+        return "=="
+    if op == 8:
+        return "!="
+    if op == 9:
+        return "<"
+    if op == 10:
+        return "<="
+    if op == 11:
+        return ">"
+    if op == 12:
+        return ">="
+    if op == 13:
+        return "and"
+    if op == 14:
+        return "or"
+    if op == 15:
+        return "&"
+    if op == 16:
+        return "|"
+    if op == 17:
+        return "^"
+    if op == 18:
+        return "<<"
+    if op == 19:
+        return ">>"
+    if op == 20:
+        return "in"
+    return "not in"
+
+def is_aug_op(op: int) -> bool:
+    return op == 0 or op == 1 or op == 2 or op == 3 or op == 4 or op == 5 or op == 6 or op == 15 or op == 16 or op == 17 or op == 18 or op == 19
+
+# --- tuple açma geri çevirme yardımcıları ---
+# `__nox_tup_N_K: __infer = ...` ise K, değilse -1.
+def tuple_temp_count(a: Ast, st: int) -> int:
+    if s_tag(a, st) != 1:
+        return -1
+    v: int = s_pay(a, st)
+    name: int = sref_at(a, v, 0)
+    if not starts_with(a, name, "__nox_tup_"):
+        return -1
+    te: int = a.n[v + 2]
+    if a.n[te] != 0 or not sref_eq(a, pk(a.n[te + 1], a.n[te + 2]), "__infer"):
+        return -1
+    return last_us_int(a, name)
+
+def is_unpack_read(a: Ast, st: int, tmp: int) -> bool:
+    tag: int = s_tag(a, st)
+    val: int = -1
+    if tag == 1:
+        val = a.n[s_pay(a, st) + 3]
+    elif tag == 3:
+        val = a.n[s_pay(a, st) + 1]
+    else:
+        return False
+    if a.n[val] != 9:
+        return False
+    o: int = a.n[a.n[val + 1] + 0]
+    if a.n[o] != 5:
+        return False
+    return sref_eq2(a, pk(a.n[o + 1], a.n[o + 2]), tmp)
+
+def is_unpack_sequence(a: Ast, rest: int, tmp: int, k: int) -> bool:
+    if sl_len(rest) < k:
+        return False
+    for i in range(k):
+        if not is_unpack_read(a, sl_get(a, rest, i), tmp):
+            return False
+    return True
+
+# `for` gövdesindeki gizli tuple değişkeni: K ya da -1 (gövde dilimi `body`).
+def for_unpack_count(a: Ast, var_name: int, body: int) -> int:
+    if not starts_with(a, var_name, "__nox_tup_"):
+        return -1
+    k: int = last_us_int(a, var_name)
+    if k < 0:
+        return -1
+    if sl_len(body) < k or not is_unpack_sequence(a, body, var_name, k):
+        return -1
+    for i in range(k):
+        if s_tag(a, sl_get(a, body, i)) != 1:
+            return -1
+    return k
+
+def is_generic_enum_ctor(a: Ast, prev: int, name: int) -> bool:
+    for i in range(sl_len(prev)):
+        st: int = sl_get(a, prev, i)
+        if s_tag(a, st) != 8:
+            continue
+        c: int = s_pay(a, st)
+        nvar: int = a.n[c + 22 + 1]
+        ntp: int = a.n[c + 14 + 1]
+        if nvar == 0 or ntp == 0:
+            continue
+        cname: int = sref_at(a, c, 0)
+        cn: int = sref_len(cname)
+        if sref_len(name) < cn:
+            continue
+        ok: bool = True
+        for j in range(cn):
+            if sref_byte(a, name, j) != sref_byte(a, cname, j):
+                ok = False
+                break
+        if not ok:
+            continue
+        if sref_len(name) < cn + 2 or sref_byte(a, name, cn) != 95 or sref_byte(a, name, cn + 1) != 95:
+            continue
+        rest: int = pk(0, 0)
+        rlen: int = sref_len(name) - cn - 2
+        vs: int = a.n[c + 22]
+        for vi in range(nvar):
+            vn: int = sref_at(a, a.l[vs + vi], 0)
+            if sref_len(vn) != rlen:
+                continue
+            same: bool = True
+            for q in range(rlen):
+                if sref_byte(a, vn, q) != sref_byte(a, name, cn + 2 + q):
+                    same = False
+                    break
+            if same:
+                return True
+    return False
+
+# --- deyimler ---
+def print_stmts(pr: Pr, stmts: int, depth: int) -> None:
+    a: Ast = pr.a
+    n: int = sl_len(stmts)
+    i: int = 0
+    while i < n:
+        st: int = sl_get(a, stmts, i)
+        tag: int = s_tag(a, st)
+        if tag == 1:
+            v0: int = s_pay(a, st)
+            if a.n[v0 + 4] >= 0 or a.n[v0 + 5] != 0:
+                i = i + 1
+                continue
+        if tag == 4 and a.n[s_pay(a, st) + 9] != 0:
+            i = i + 1
+            continue
+        if tag == 7 and is_generic_enum_ctor(a, sl_head(stmts, i), sref_at(a, s_pay(a, st), 0)):
+            i = i + 1
+            continue
+        emit_leading_trivia(pr, depth, s_line(a, st))
+        if tag == 1:
+            vd: int = s_pay(a, st)
+            uo: int = a.n[vd + 6]
+            if uo >= 0:
+                indent_to(pr, depth)
+                print_unpack_targets(pr, sl_at(a, uo, 0))
+                w(pr, " = ")
+                print_rhs_list(pr, a.n[uo + 2])
+                line(pr, s_line(a, st))
+                i = i + 1 + a.n[uo + 3]
+                continue
+        k: int = tuple_temp_count(a, st)
+        if k >= 0:
+            tname: int = sref_at(a, s_pay(a, st), 0)
+            if i + k < n and is_unpack_sequence(a, sl_from(stmts, i + 1), tname, k):
+                indent_to(pr, depth)
+                for j in range(k):
+                    if j > 0:
+                        w(pr, ", ")
+                    t: int = sl_get(a, stmts, i + 1 + j)
+                    if s_tag(a, t) == 1:
+                        ws(pr, sref_at(a, s_pay(a, t), 0))
+                    else:
+                        print_expr(pr, a.n[s_pay(a, t) + 0])
+                w(pr, " = ")
+                print_rhs_list(pr, a.n[s_pay(a, st) + 3])
+                line(pr, s_line(a, st))
+                i = i + 1 + k
+                continue
+        print_stmt(pr, st, depth)
+        i = i + 1
+
+# `a, b = <değer>` sağ tarafı: çok öğeli tuple ise virgülle, değilse tek ifade.
+def print_rhs_list(pr: Pr, rhs: int) -> None:
+    a: Ast = pr.a
+    if a.n[rhs] == 20 and a.n[rhs + 2] > 1:
+        for j in range(a.n[rhs + 2]):
+            if j > 0:
+                w(pr, ", ")
+            print_expr(pr, a.l[a.n[rhs + 1] + j])
+    else:
+        print_expr(pr, rhs)
+
+def print_match_pattern(pr: Pr, c: int) -> None:
+    a: Ast = pr.a
+    if a.n[c + 5] != 0:
+        w(pr, "_")
+        return
+    cap: int = opt_at(a, c, 8)
+    if cap != -1:
+        ws(pr, cap)
+        return
+    scs: int = sl_at(a, c, 6)
+    if sl_len(scs) > 0:
+        for i in range(sl_len(scs)):
+            if i > 0:
+                w(pr, " | ")
+            print_expr(pr, sl_get(a, scs, i))
+        return
+    path: int = sl_at(a, c, 0)
+    for pi in range(sl_len(path)):
+        if pi > 0:
+            w(pr, ".")
+        ws(pr, pk(a.l[pkx(path) + pi * 2], a.l[pkx(path) + pi * 2 + 1]))
+    if a.n[c + 4] == 0:
+        return
+    w(pr, "(")
+    args: int = sl_at(a, c, 2)
+    for ai in range(sl_len(args)):
+        arg: int = sl_get(a, args, ai)
+        if ai > 0:
+            w(pr, ", ")
+        kw: int = opt_at(a, arg, 0)
+        if kw != -1:
+            ws(pr, kw)
+            w(pr, "=")
+        sub: int = a.n[arg + 4]
+        lit: int = a.n[arg + 5]
+        if sub >= 0:
+            print_match_pattern(pr, sub)
+        elif lit >= 0:
+            print_expr(pr, lit)
+        else:
+            bd: int = opt_at(a, arg, 2)
+            if bd == -1:
+                w(pr, "_")
+            else:
+                ws(pr, bd)
+    w(pr, ")")
+
+def print_match(pr: Pr, f: int, mo: int, line_no: int, depth: int) -> None:
+    a: Ast = pr.a
+    indent_to(pr, depth)
+    w(pr, "match ")
+    print_expr(pr, a.n[mo + 0])
+    w(pr, ":")
+    line(pr, line_no)
+    cases: int = sl_at(a, mo, 1)
+    for i in range(sl_len(cases)):
+        c: int = sl_get(a, cases, i)
+        body: int = pk(0, 0)
+        if a.n[c + 5] != 0:
+            eb: int = sl_at(a, f, 5)
+            if a.n[f + 5] == -4611686018427387904:
+                body = pk(0, 0)
+            else:
+                body = eb
+        elif i == 0:
+            body = sl_at(a, f, 1)
+        else:
+            ec: int = a.l[a.n[f + 3] + i - 1]
+            body = sl_at(a, ec, 1)
+        emit_leading_trivia(pr, depth + 1, a.n[c + 12])
+        indent_to(pr, depth + 1)
+        w(pr, "case ")
+        print_match_pattern(pr, c)
+        g: int = a.n[c + 10]
+        if g >= 0:
+            w(pr, " if ")
+            print_expr(pr, g)
+        w(pr, ":")
+        line(pr, a.n[c + 12])
+        pfx: int = a.n[c + 11]
+        print_stmts(pr, sl_from(body, pfx), depth + 2)
+
+def print_enum(pr: Pr, c: int, line_no: int, depth: int) -> None:
+    a: Ast = pr.a
+    indent_to(pr, depth)
+    w(pr, "enum ")
+    ws(pr, sref_at(a, c, 0))
+    tps: int = sl_at(a, c, 14)
+    if sl_len(tps) > 0:
+        w(pr, "[")
+        for i in range(sl_len(tps)):
+            if i > 0:
+                w(pr, ", ")
+            ws(pr, pk(a.l[pkx(tps) + i * 2], a.l[pkx(tps) + i * 2 + 1]))
+        w(pr, "]")
+    w(pr, ":")
+    line(pr, line_no)
+    doc: int = opt_at(a, c, 4)
+    if doc != -1:
+        indent_to(pr, depth + 1)
+        w(pr, "\"\"\"")
+        ws(pr, doc)
+        w(pr, "\"\"\"\n")
+        pr.last_blank = False
+    vars_: int = sl_at(a, c, 22)
+    for vi in range(sl_len(vars_)):
+        v: int = sl_get(a, vars_, vi)
+        emit_leading_trivia(pr, depth + 1, a.n[v + 6])
+        indent_to(pr, depth + 1)
+        ws(pr, sref_at(a, v, 0))
+        if a.n[v + 5] != 0:
+            w(pr, "(")
+            fs: int = sl_at(a, v, 3)
+            for fi in range(sl_len(fs)):
+                fd: int = sl_get(a, fs, fi)
+                if fi > 0:
+                    w(pr, ", ")
+                ws(pr, sref_at(a, fd, 0))
+                w(pr, ": ")
+                print_type(pr, a.n[fd + 2])
+            w(pr, ")")
+        line(pr, a.n[v + 6])
+    first_user: bool = True
+    methods: int = sl_at(a, c, 16)
+    for mi in range(sl_len(methods)):
+        m: int = sl_get(a, methods, mi)
+        mname: int = sref_at(a, m, 0)
+        if sref_eq(a, mname, "__init__"):
+            continue
+        is_variant: bool = False
+        for vj in range(sl_len(vars_)):
+            if sref_eq2(a, sref_at(a, sl_get(a, vars_, vj), 0), mname):
+                is_variant = True
+        if is_variant:
+            continue
+        mbody: int = sl_at(a, m, 8)
+        if first_user and sl_len(mbody) > 0:
+            bl: int = s_line(a, sl_get(a, mbody, 0))
+            while pr.ti < pr.ntr and pr.tr[pr.ti * 5 + 1] < bl:
+                pr.ti = pr.ti + 1
+        wb(pr, 10)
+        pr.last_blank = True
+        first_user = False
+        print_func_def_no_leading(pr, m, depth + 1)
+
+def print_stmt(pr: Pr, st: int, depth: int) -> None:
+    a: Ast = pr.a
+    tag: int = s_tag(a, st)
+    pay: int = s_pay(a, st)
+    sline: int = s_line(a, st)
+    if tag == 0:
+        e: int = pay
+        indent_to(pr, depth)
+        et: int = a.n[e]
+        done: bool = False
+        if et == 3:
+            sv: int = pk(a.n[e + 1], a.n[e + 2])
+            has_tq: bool = False
+            has_bs: bool = False
+            sn: int = sref_len(sv)
+            for q in range(sn):
+                if sref_byte(a, sv, q) == 92:
+                    has_bs = True
+                if q + 2 < sn and sref_byte(a, sv, q) == 34 and sref_byte(a, sv, q + 1) == 34 and sref_byte(a, sv, q + 2) == 34:
+                    has_tq = True
+            if not has_tq and not has_bs:
+                w(pr, "\"\"\"")
+                ws(pr, sv)
+                w(pr, "\"\"\"")
+                done = True
+        if not done and et == 8:
+            cp: int = a.n[e + 1]
+            callee: int = a.n[cp + 0]
+            if a.n[callee] == 5 and a.n[cp + 1 + 1] == 1:
+                cn: int = pk(a.n[callee + 1], a.n[callee + 2])
+                is_y: bool = sref_eq(a, cn, "__nox_yield")
+                if is_y or sref_eq(a, cn, "__nox_yield_from"):
+                    if is_y:
+                        w(pr, "yield ")
+                    else:
+                        w(pr, "yield from ")
+                    print_expr(pr, a.l[a.n[cp + 1]])
+                    done = True
+        if not done:
+            print_expr(pr, e)
+        line(pr, sline)
+        return
+    if tag == 1:
+        indent_to(pr, depth)
+        if a.n[pay + 7] != 0:
+            ws(pr, sref_at(a, pay, 0))
+            w(pr, " := ")
+            print_expr(pr, a.n[pay + 3])
+            line(pr, sline)
+            return
+        ws(pr, sref_at(a, pay, 0))
+        w(pr, ": ")
+        print_type(pr, a.n[pay + 2])
+        w(pr, " = ")
+        print_expr(pr, a.n[pay + 3])
+        line(pr, sline)
+        return
+    if tag == 3:
+        indent_to(pr, depth)
+        print_expr(pr, a.n[pay + 0])
+        ann: int = a.n[pay + 2]
+        if ann >= 0:
+            w(pr, ": ")
+            print_type(pr, ann)
+        val: int = a.n[pay + 1]
+        aug: bool = False
+        if a.n[val] == 7:
+            bp: int = a.n[val + 1]
+            if a.n[bp + 3] != 0 and is_aug_op(a.n[bp + 0]):
+                aug = True
+                w(pr, " ")
+                w(pr, bin_op_str(a.n[bp + 0]))
+                w(pr, "= ")
+                print_expr(pr, a.n[bp + 2])
+        if not aug:
+            w(pr, " = ")
+            print_expr(pr, val)
+        line(pr, sline)
+        return
+    if tag == 4:
+        mo: int = a.n[pay + 8]
+        if mo >= 0:
+            print_match(pr, pay, mo, sline, depth)
+            return
+        cond: int = a.n[pay + 0]
+        then_b: int = sl_at(a, pay, 1)
+        if a.n[pay + 7] != 0 and a.n[cond] == 6 and sl_len(then_b) == 1:
+            s0: int = sl_get(a, then_b, 0)
+            if s_tag(a, s0) == 12 and a.n[s_pay(a, s0)] == 8:
+                rc: int = a.n[s_pay(a, s0) + 1]
+                indent_to(pr, depth)
+                w(pr, "assert ")
+                print_expr(pr, a.n[a.n[cond + 1] + 1])
+                rargs: int = sl_at(a, rc, 1)
+                if sl_len(rargs) == 1:
+                    r0: int = sl_get(a, rargs, 0)
+                    if not (a.n[r0] == 3 and sref_eq(a, pk(a.n[r0 + 1], a.n[r0 + 2]), "assertion failed")):
+                        w(pr, ", ")
+                        print_expr(pr, r0)
+                line(pr, sline)
+                return
+        indent_to(pr, depth)
+        w(pr, "if ")
+        print_expr(pr, cond)
+        w(pr, ":")
+        line(pr, sline)
+        print_stmts(pr, then_b, depth + 1)
+        els: int = sl_at(a, pay, 3)
+        for ei in range(sl_len(els)):
+            ec: int = sl_get(a, els, ei)
+            indent_to(pr, depth)
+            w(pr, "elif ")
+            print_expr(pr, a.n[ec + 0])
+            w(pr, ":\n")
+            pr.last_blank = False
+            print_stmts(pr, sl_at(a, ec, 1), depth + 1)
+        if a.n[pay + 5] != -4611686018427387904:
+            indent_to(pr, depth)
+            w(pr, "else:\n")
+            pr.last_blank = False
+            print_stmts(pr, sl_at(a, pay, 5), depth + 1)
+        return
+    if tag == 5:
+        indent_to(pr, depth)
+        w(pr, "while ")
+        print_expr(pr, a.n[pay + 0])
+        w(pr, ":")
+        line(pr, sline)
+        eo: int = a.n[pay + 3]
+        if eo >= 0:
+            print_stmts(pr, sl_at(a, eo, 0), depth + 1)
+            print_loop_else(pr, sl_at(a, eo, 2), depth)
+        else:
+            print_stmts(pr, sl_at(a, pay, 1), depth + 1)
+        return
+    if tag == 6:
+        fbody: int = sl_at(a, pay, 3)
+        has_else: bool = False
+        else_body: int = pk(0, 0)
+        feo: int = a.n[pay + 7]
+        if feo >= 0:
+            fbody = sl_at(a, feo, 0)
+            else_body = sl_at(a, feo, 2)
+            has_else = True
+        indent_to(pr, depth)
+        vname: int = sref_at(a, pay, 0)
+        fk: int = for_unpack_count(a, vname, fbody)
+        is_async: bool = a.n[pay + 6] != 0
+        if fk >= 0:
+            if is_async:
+                w(pr, "async ")
+            w(pr, "for ")
+            for j in range(fk):
+                if j > 0:
+                    w(pr, ", ")
+                ws(pr, sref_at(a, s_pay(a, sl_get(a, fbody, j)), 0))
+            w(pr, " in ")
+            print_expr(pr, a.n[pay + 2])
+            w(pr, ":")
+            line(pr, sline)
+            print_stmts(pr, sl_from(fbody, fk), depth + 1)
+            if has_else:
+                print_loop_else(pr, else_body, depth)
+            return
+        if is_async:
+            w(pr, "async ")
+        w(pr, "for ")
+        ws(pr, vname)
+        w(pr, " in ")
+        print_expr(pr, a.n[pay + 2])
+        w(pr, ":")
+        line(pr, sline)
+        print_stmts(pr, fbody, depth + 1)
+        if has_else:
+            print_loop_else(pr, else_body, depth)
+        return
+    if tag == 7:
+        print_func_def(pr, pay, depth, sline)
+        return
+    if tag == 8:
+        print_class(pr, pay, sline, depth)
+        return
+    if tag == 9:
+        indent_to(pr, depth)
+        w(pr, "protocol ")
+        ws(pr, sref_at(a, pay, 0))
+        w(pr, ":")
+        line(pr, sline)
+        pms: int = sl_at(a, pay, 2)
+        for mi in range(sl_len(pms)):
+            if mi > 0:
+                wb(pr, 10)
+                pr.last_blank = True
+            print_func_def_no_leading(pr, sl_get(a, pms, mi), depth + 1)
+        return
+    if tag == 10:
+        print_decorators(pr, sl_at(a, pay, 10), depth)
+        indent_to(pr, depth)
+        w(pr, "extern def ")
+        ws(pr, sref_at(a, pay, 0))
+        w(pr, "(")
+        print_params(pr, sl_at(a, pay, 2))
+        w(pr, ") -> ")
+        print_type(pr, a.n[pay + 4])
+        w(pr, " from \"")
+        ws(pr, sref_at(a, pay, 5))
+        w(pr, "\"")
+        if a.n[pay + 7] != 0:
+            w(pr, " with_rt")
+        rts: int = sl_at(a, pay, 8)
+        if sl_len(rts) > 0:
+            w(pr, " retains(")
+            for ri in range(sl_len(rts)):
+                if ri != 0:
+                    w(pr, ", ")
+                ws(pr, pk(a.l[pkx(rts) + ri * 2], a.l[pkx(rts) + ri * 2 + 1]))
+            w(pr, ")")
+        line(pr, sline)
+        return
+    if tag == 11:
+        indent_to(pr, depth)
+        if pay >= 0:
+            w(pr, "return ")
+            print_expr(pr, pay)
+        else:
+            w(pr, "return")
+        line(pr, sline)
+        return
+    if tag == 12:
+        indent_to(pr, depth)
+        e2: int = pay
+        done2: bool = False
+        if a.n[e2] == 5 and starts_with(a, pk(a.n[e2 + 1], a.n[e2 + 2]), "__nox_exc_"):
+            w(pr, "raise")
+            done2 = True
+        elif a.n[e2] == 8:
+            cp2: int = a.n[e2 + 1]
+            if a.n[cp2 + 7] != 0 and a.n[cp2 + 1 + 1] == 2:
+                w(pr, "raise ")
+                print_expr(pr, a.l[a.n[cp2 + 1]])
+                w(pr, " from ")
+                print_expr(pr, a.l[a.n[cp2 + 1] + 1])
+                done2 = True
+        if not done2:
+            w(pr, "raise ")
+            print_expr(pr, e2)
+        line(pr, sline)
+        return
+    if tag == 13:
+        print_try(pr, pay, sline, depth)
+        return
+    if tag == 14:
+        indent_to(pr, depth)
+        w(pr, "lowlevel:")
+        line(pr, sline)
+        print_stmts(pr, sl_at(a, pay, 0), depth + 1)
+        return
+    if tag == 15:
+        indent_to(pr, depth)
+        w(pr, "import ")
+        segs: int = sl_at(a, pay, 0)
+        for si in range(sl_len(segs)):
+            if si > 0:
+                w(pr, ".")
+            ws(pr, pk(a.l[pkx(segs) + si * 2], a.l[pkx(segs) + si * 2 + 1]))
+        al: int = opt_at(a, pay, 2)
+        if al != -1:
+            w(pr, " as ")
+            ws(pr, al)
+        line(pr, sline)
+        return
+    if tag == 16:
+        indent_to(pr, depth)
+        w(pr, "from ")
+        segs2: int = sl_at(a, pay, 0)
+        for si2 in range(sl_len(segs2)):
+            if si2 > 0:
+                w(pr, ".")
+            ws(pr, pk(a.l[pkx(segs2) + si2 * 2], a.l[pkx(segs2) + si2 * 2 + 1]))
+        w(pr, " import ")
+        names: int = sl_at(a, pay, 2)
+        for ni in range(sl_len(names)):
+            nm: int = sl_get(a, names, ni)
+            if ni > 0:
+                w(pr, ", ")
+            ws(pr, sref_at(a, nm, 0))
+            al2: int = opt_at(a, nm, 2)
+            if al2 != -1:
+                w(pr, " as ")
+                ws(pr, al2)
+        line(pr, sline)
+        return
+    if tag == 2:
+        indent_to(pr, depth)
+        w(pr, "type ")
+        ws(pr, sref_at(a, pay, 0))
+        w(pr, " = ")
+        print_type(pr, a.n[pay + 2])
+        line(pr, sline)
+        return
+    if tag == 17:
+        indent_to(pr, depth)
+        w(pr, "pass")
+        line(pr, sline)
+        return
+    if tag == 20:
+        indent_to(pr, depth)
+        w(pr, "del ")
+        print_expr(pr, pay)
+        line(pr, sline)
+        return
+    if tag == 18:
+        indent_to(pr, depth)
+        w(pr, "break")
+        line(pr, sline)
+        return
+    if tag == 19:
+        indent_to(pr, depth)
+        w(pr, "continue")
+        line(pr, sline)
+        return
+    if tag == 21:
+        indent_to(pr, depth)
+        if a.n[pay + 5] != 0:
+            w(pr, "async ")
+        w(pr, "with ")
+        print_expr(pr, a.n[pay + 0])
+        bnd: int = opt_at(a, pay, 1)
+        if bnd != -1:
+            w(pr, " as ")
+            ws(pr, bnd)
+        w(pr, ":")
+        line(pr, sline)
+        print_stmts(pr, sl_at(a, pay, 3), depth + 1)
+        return
+    if tag == 22:
+        indent_to(pr, depth)
+        w(pr, "defer ")
+        print_call_node(pr, a.n[pay + 0])
+        line(pr, sline)
+        return
+
+def print_call_node(pr: Pr, call: int) -> None:
+    print_expr(pr, mk_Expr_call(pr.a, call))
+
+def print_try(pr: Pr, t0: int, sline: int, depth: int) -> None:
+    a: Ast = pr.a
+    try_body: int = sl_at(a, t0, 0)
+    excepts: int = sl_at(a, t0, 2)
+    fin_x: int = a.n[t0 + 4]
+    fin: int = sl_at(a, t0, 4)
+    has_else: bool = False
+    else_body: int = pk(0, 0)
+    eo: int = a.n[t0 + 6]
+    if eo >= 0:
+        try_body = sl_at(a, eo, 0)
+        excepts = sl_at(a, eo, 2)
+        fin_x = a.n[eo + 6]
+        fin = sl_at(a, eo, 6)
+        else_body = sl_at(a, eo, 4)
+        has_else = True
+    indent_to(pr, depth)
+    w(pr, "try:")
+    line(pr, sline)
+    print_stmts(pr, try_body, depth + 1)
+    ci: int = 0
+    n: int = sl_len(excepts)
+    while ci < n:
+        ec: int = sl_get(a, excepts, ci)
+        indent_to(pr, depth)
+        ec_body: int = sl_at(a, ec, 4)
+        ec_cn: int = opt_at(a, ec, 0)
+        group_end: int = ci + 1
+        while group_end < n and ec_cn != -1:
+            g: int = sl_get(a, excepts, group_end)
+            if opt_at(a, g, 0) == -1:
+                break
+            if a.n[g + 4] != pkx(ec_body) or a.n[g + 4 + 1] != pky(ec_body):
+                break
+            group_end = group_end + 1
+        ec_bind: int = opt_at(a, ec, 2)
+        synth_bind: bool = a.n[ec + 6] != 0
+        if group_end > ci + 1:
+            w(pr, "except (")
+            gi: int = ci
+            while gi < group_end:
+                if gi > ci:
+                    w(pr, ", ")
+                ws(pr, opt_at(a, sl_get(a, excepts, gi), 0))
+                gi = gi + 1
+            w(pr, ")")
+            if ec_bind != -1 and not synth_bind:
+                w(pr, " as ")
+                ws(pr, ec_bind)
+            w(pr, ":\n")
+            ci = group_end - 1
+        elif ec_cn != -1 and a.n[ec + 7] == 0:
+            w(pr, "except ")
+            ws(pr, ec_cn)
+            if ec_bind != -1 and not synth_bind:
+                w(pr, " as ")
+                ws(pr, ec_bind)
+            w(pr, ":\n")
+        else:
+            w(pr, "except:\n")
+        pr.last_blank = False
+        print_stmts(pr, ec_body, depth + 1)
+        ci = ci + 1
+    if has_else:
+        print_loop_else(pr, else_body, depth)
+    if fin_x != -4611686018427387904:
+        indent_to(pr, depth)
+        w(pr, "finally:\n")
+        pr.last_blank = False
+        print_stmts(pr, fin, depth + 1)
+
+def print_name_list(pr: Pr, lst: int) -> None:
+    a: Ast = pr.a
+    for i in range(sl_len(lst)):
+        if i > 0:
+            w(pr, ", ")
+        ws(pr, pk(a.l[pkx(lst) + i * 2], a.l[pkx(lst) + i * 2 + 1]))
+
+def print_class(pr: Pr, c: int, sline: int, depth: int) -> None:
+    a: Ast = pr.a
+    if a.n[c + 22 + 1] > 0:
+        print_enum(pr, c, sline, depth)
+        return
+    print_decorators(pr, sl_at(a, c, 20), depth)
+    indent_to(pr, depth)
+    w(pr, "class ")
+    ws(pr, sref_at(a, c, 0))
+    tps: int = sl_at(a, c, 14)
+    if sl_len(tps) > 0:
+        w(pr, "[")
+        print_name_list(pr, tps)
+        w(pr, "]")
+    base: int = opt_at(a, c, 6)
+    if base != -1:
+        w(pr, "(")
+        ws(pr, base)
+        bas: int = sl_at(a, c, 10)
+        if sl_len(bas) > 0:
+            w(pr, "[")
+            for i in range(sl_len(bas)):
+                if i > 0:
+                    w(pr, ", ")
+                print_type(pr, sl_get(a, bas, i))
+            w(pr, "]")
+        ebs: int = sl_at(a, c, 8)
+        for j in range(sl_len(ebs)):
+            w(pr, ", ")
+            ws(pr, pk(a.l[pkx(ebs) + j * 2], a.l[pkx(ebs) + j * 2 + 1]))
+        w(pr, ")")
+    w(pr, ":")
+    line(pr, sline)
+    doc: int = opt_at(a, c, 4)
+    if doc != -1:
+        indent_to(pr, depth + 1)
+        w(pr, "\"\"\"")
+        ws(pr, doc)
+        w(pr, "\"\"\"\n")
+        pr.last_blank = False
+    consts: int = sl_at(a, c, 2)
+    for ki in range(sl_len(consts)):
+        kd: int = sl_get(a, consts, ki)
+        emit_leading_trivia(pr, depth + 1, a.n[kd + 4])
+        indent_to(pr, depth + 1)
+        ws(pr, sref_at(a, kd, 0))
+        w(pr, ": ")
+        print_type(pr, a.n[kd + 2])
+        w(pr, " = ")
+        print_expr(pr, a.n[kd + 3])
+        line(pr, a.n[kd + 4])
+    fields: int = sl_at(a, c, 18)
+    for fi in range(sl_len(fields)):
+        fd: int = sl_get(a, fields, fi)
+        emit_leading_trivia(pr, depth + 1, a.n[fd + 3])
+        indent_to(pr, depth + 1)
+        ws(pr, sref_at(a, fd, 0))
+        w(pr, ": ")
+        print_type(pr, a.n[fd + 2])
+        line(pr, a.n[fd + 3])
+    methods: int = sl_at(a, c, 16)
+    nfc: int = sl_len(fields) + sl_len(consts)
+    if nfc > 0 and sl_len(methods) > 0:
+        m0b: int = sl_at(a, sl_get(a, methods, 0), 8)
+        if sl_len(m0b) > 0:
+            next_line: int = s_line(a, sl_get(a, m0b, 0))
+            while pr.ti < pr.ntr and pr.tr[pr.ti * 5 + 1] < next_line:
+                pr.ti = pr.ti + 1
+    for mi in range(sl_len(methods)):
+        if mi > 0 or nfc > 0:
+            wb(pr, 10)
+            pr.last_blank = True
+        print_func_def_no_leading(pr, sl_get(a, methods, mi), depth + 1)
+    if doc == -1 and sl_len(fields) == 0 and sl_len(consts) == 0 and sl_len(methods) == 0:
+        indent_to(pr, depth + 1)
+        w(pr, "pass")
+        line(pr, sline)
+
+def print_decorators(pr: Pr, decos: int, depth: int) -> None:
+    a: Ast = pr.a
+    for di in range(sl_len(decos)):
+        dec: int = sl_get(a, decos, di)
+        indent_to(pr, depth)
+        w(pr, "@")
+        ws(pr, sref_at(a, dec, 0))
+        args: int = sl_at(a, dec, 2)
+        if sl_len(args) > 0:
+            w(pr, "(")
+            for i in range(sl_len(args)):
+                if i > 0:
+                    w(pr, ", ")
+                print_expr(pr, sl_get(a, args, i))
+            w(pr, ")")
+        wb(pr, 10)
+        pr.last_blank = False
+
+def print_func_def(pr: Pr, fd: int, depth: int, source_line: int) -> None:
+    a: Ast = pr.a
+    print_decorators(pr, sl_at(a, fd, 11), depth)
+    indent_to(pr, depth)
+    print_func_header(pr, fd)
+    line(pr, source_line)
+    print_decl_list(pr, "nonlocal ", sl_at(a, fd, 15), depth + 1)
+    print_decl_list(pr, "global ", sl_at(a, fd, 17), depth + 1)
+    print_stmts(pr, sl_at(a, fd, 8), depth + 1)
+
+def print_func_def_no_leading(pr: Pr, fd: int, depth: int) -> None:
+    a: Ast = pr.a
+    print_decorators(pr, sl_at(a, fd, 11), depth)
+    indent_to(pr, depth)
+    print_func_header(pr, fd)
+    wb(pr, 10)
+    pr.last_blank = False
+    print_decl_list(pr, "nonlocal ", sl_at(a, fd, 15), depth + 1)
+    print_decl_list(pr, "global ", sl_at(a, fd, 17), depth + 1)
+    print_stmts(pr, sl_at(a, fd, 8), depth + 1)
+
+def print_decl_list(pr: Pr, kw: str, lst: int, depth: int) -> None:
+    if sl_len(lst) == 0:
+        return
+    indent_to(pr, depth)
+    w(pr, kw)
+    print_name_list(pr, lst)
+    wb(pr, 10)
+    pr.last_blank = False
+
+def print_unpack_targets(pr: Pr, targets: int) -> None:
+    a: Ast = pr.a
+    for j in range(sl_len(targets)):
+        t: int = sl_get(a, targets, j)
+        if j > 0:
+            w(pr, ", ")
+        if a.n[t + 2] != -4611686018427387904:
+            nested: int = sl_at(a, t, 2)
+            w(pr, "(")
+            print_unpack_targets(pr, nested)
+            if sl_len(nested) == 1:
+                w(pr, ",")
+            w(pr, ")")
+        else:
+            if a.n[t + 1] != 0:
+                w(pr, "*")
+            print_expr(pr, a.n[t + 0])
+
+def print_spread_items(pr: Pr, e: int, first: list[int]) -> None:
+    a: Ast = pr.a
+    t: int = a.n[e]
+    if t == 7 and a.n[a.n[e + 1] + 6] != 0:
+        bp: int = a.n[e + 1]
+        print_spread_items(pr, a.n[bp + 1], first)
+        print_spread_items(pr, a.n[bp + 2], first)
+    elif t == 11:
+        for i in range(a.n[e + 2]):
+            if first[0] == 0:
+                w(pr, ", ")
+            first[0] = 0
+            print_expr(pr, a.l[a.n[e + 1] + i])
+    else:
+        if first[0] == 0:
+            w(pr, ", ")
+        first[0] = 0
+        w(pr, "*")
+        print_expr(pr, e)
+
+def print_spread_list(pr: Pr, e: int) -> None:
+    w(pr, "[")
+    first: list[int] = [1]
+    print_spread_items(pr, e, first)
+    w(pr, "]")
+
+def print_spread_dict(pr: Pr, args: int) -> None:
+    a: Ast = pr.a
+    w(pr, "{")
+    first: bool = True
+    for i in range(sl_len(args)):
+        op: int = sl_get(a, args, i)
+        if a.n[op] == 12:
+            for j in range(a.n[op + 2]):
+                p: int = a.l[a.n[op + 1] + j]
+                if not first:
+                    w(pr, ", ")
+                first = False
+                print_expr(pr, a.n[p + 0])
+                w(pr, ": ")
+                print_expr(pr, a.n[p + 1])
+        else:
+            if not first:
+                w(pr, ", ")
+            first = False
+            w(pr, "**")
+            print_expr(pr, op)
+    w(pr, "}")
+
+def print_loop_else(pr: Pr, body: int, depth: int) -> None:
+    indent_to(pr, depth)
+    w(pr, "else:\n")
+    pr.last_blank = False
+    print_stmts(pr, body, depth + 1)
+
+def print_func_header(pr: Pr, fd: int) -> None:
+    a: Ast = pr.a
+    if a.n[fd + 10] != 0:
+        w(pr, "async ")
+    w(pr, "def ")
+    ws(pr, sref_at(a, fd, 0))
+    tps: int = sl_at(a, fd, 2)
+    if sl_len(tps) > 0:
+        w(pr, "[")
+        print_name_list(pr, tps)
+        w(pr, "]")
+    w(pr, "(")
+    print_params(pr, sl_at(a, fd, 4))
+    if a.n[fd + 7] != 0:
+        w(pr, "):")
+    else:
+        w(pr, ") -> ")
+        print_type(pr, a.n[fd + 6])
+        w(pr, ":")
+
+def print_params(pr: Pr, params: int) -> None:
+    a: Ast = pr.a
+    n: int = sl_len(params)
+    star_printed: bool = False
+    for qi in range(n):
+        if a.n[sl_get(a, params, qi) + 2] != 0:
+            star_printed = True
+    for idx in range(n):
+        p: int = sl_get(a, params, idx)
+        if idx > 0:
+            w(pr, ", ")
+        if idx > 0 and a.n[sl_get(a, params, idx - 1) + 5] != 0 and a.n[p + 5] == 0:
+            w(pr, "/, ")
+        if a.n[p + 4] != 0 and not star_printed:
+            w(pr, "*, ")
+            star_printed = True
+        pname: int = sref_at(a, p, 0)
+        if a.n[p + 7] != 0:
+            ws(pr, pname)
+            continue
+        te: int = a.n[p + 6]
+        if a.n[p + 3] != 0 and a.n[te] == 1:
+            gp: int = a.n[te + 1]
+            if a.n[gp + 2 + 1] == 2:
+                w(pr, "**")
+                ws(pr, pname)
+                w(pr, ": ")
+                print_type(pr, a.l[a.n[gp + 2] + 1])
+                continue
+        if a.n[p + 2] != 0 and a.n[te] == 1:
+            gp2: int = a.n[te + 1]
+            if a.n[gp2 + 2 + 1] == 1:
+                w(pr, "*")
+                ws(pr, pname)
+                w(pr, ": ")
+                print_type(pr, a.l[a.n[gp2 + 2]])
+                continue
+        ws(pr, pname)
+        w(pr, ": ")
+        print_type(pr, te)
+        dv: int = a.n[p + 8]
+        if dv >= 0:
+            w(pr, " = ")
+            print_expr(pr, dv)
+    if n > 0 and a.n[sl_get(a, params, n - 1) + 5] != 0:
+        w(pr, ", /")
+
+def print_type(pr: Pr, t: int) -> None:
+    a: Ast = pr.a
+    tag: int = a.n[t]
+    if tag == 0:
+        ws(pr, pk(a.n[t + 1], a.n[t + 2]))
+        return
+    if tag == 1:
+        g: int = a.n[t + 1]
+        gn: int = sref_at(a, g, 0)
+        if sref_eq(a, gn, "__nox_Set"):
+            w(pr, "set")
+        elif sref_eq(a, gn, "__nox_Gen"):
+            w(pr, "Iterator")
+        elif sref_eq(a, gn, "__nox_GenS"):
+            w(pr, "Generator")
+        else:
+            ws(pr, gn)
+        w(pr, "[")
+        gargs: int = sl_at(a, g, 2)
+        for i in range(sl_len(gargs)):
+            if i > 0:
+                w(pr, ", ")
+            print_type(pr, sl_get(a, gargs, i))
+        w(pr, "]")
+        return
+    if tag == 2:
+        ft: int = a.n[t + 1]
+        w(pr, "(")
+        fps: int = sl_at(a, ft, 0)
+        for j in range(sl_len(fps)):
+            if j > 0:
+                w(pr, ", ")
+            print_type(pr, sl_get(a, fps, j))
+        w(pr, ") -> ")
+        print_type(pr, a.n[ft + 2])
+        return
+    if tag == 3:
+        print_type(pr, a.n[t + 1])
+        w(pr, " | None")
+        return
+    # qualified
+    qs: int = a.n[t + 1]
+    qn: int = a.n[t + 2]
+    for k in range(qn):
+        if k > 0:
+            w(pr, ".")
+        ws(pr, pk(a.l[qs + k * 2], a.l[qs + k * 2 + 1]))
+
+# --- ifadeler ---
+def print_expr(pr: Pr, e: int) -> None:
+    print_expr_at(pr, e, 0, 0)
+
+def print_fstring(pr: Pr, e: int) -> None:
+    w(pr, "f\"")
+    print_fpieces(pr, e)
+    w(pr, "\"")
+
+def print_fpieces(pr: Pr, e: int) -> None:
+    a: Ast = pr.a
+    if a.n[e] == 7:
+        bp: int = a.n[e + 1]
+        if a.n[bp + 4] != 0 and a.n[bp + 0] == 0:
+            print_fpieces(pr, a.n[bp + 1])
+            print_fpiece(pr, a.n[bp + 2])
+            return
+    print_fpiece(pr, e)
+
+def print_fpiece(pr: Pr, pc: int) -> None:
+    a: Ast = pr.a
+    t: int = a.n[pc]
+    if t == 3:
+        v: int = pk(a.n[pc + 1], a.n[pc + 2])
+        for i in range(sref_len(v)):
+            c: int = sref_byte(a, v, i)
+            if c == 123:
+                w(pr, "{{")
+            elif c == 125:
+                w(pr, "}}")
+            elif c == 34:
+                w(pr, "\\\"")
+            elif c == 92:
+                w(pr, "\\\\")
+            elif c == 10:
+                w(pr, "\\n")
+            elif c == 9:
+                w(pr, "\\t")
+            elif not write_control_escape(pr, c):
+                wb(pr, c)
+        return
+    if t == 8:
+        cl: int = a.n[pc + 1]
+        w(pr, "{")
+        pr.in_fstring = pr.in_fstring + 1
+        nargs: int = a.n[cl + 1 + 1]
+        if nargs > 0:
+            print_expr(pr, a.l[a.n[cl + 1]])
+        pr.in_fstring = pr.in_fstring - 1
+        if nargs == 2:
+            a1: int = a.l[a.n[cl + 1] + 1]
+            if a.n[a1] == 3:
+                w(pr, ":")
+                ws(pr, pk(a.n[a1 + 1], a.n[a1 + 2]))
+        w(pr, "}")
+        return
+    w(pr, "{")
+    pr.in_fstring = pr.in_fstring + 1
+    print_expr(pr, pc)
+    pr.in_fstring = pr.in_fstring - 1
+    w(pr, "}")
+
+def print_chain_left(pr: Pr, e: int) -> None:
+    a: Ast = pr.a
+    if a.n[e] == 7:
+        bp: int = a.n[e + 1]
+        r: int = a.n[bp + 2]
+        if a.n[bp + 3] != 0 and a.n[bp + 0] == 13 and a.n[r] == 7:
+            rp: int = a.n[r + 1]
+            print_chain_left(pr, a.n[bp + 1])
+            w(pr, " ")
+            w(pr, bin_op_str(a.n[rp + 0]))
+            w(pr, " ")
+            print_expr_at(pr, a.n[rp + 2], bin_prec(a.n[rp + 0]), 1)
+            return
+    print_expr_at(pr, e, bin_prec(9), 0)
+
+# `side`: 0 = gevşek, 1 = sıkı.
+def print_expr_at(pr: Pr, e: int, ctx_prec: int, side: int) -> None:
+    a: Ast = pr.a
+    t: int = a.n[e]
+    if t == 7:
+        b: int = a.n[e + 1]
+        if a.n[b + 6] != 0:
+            print_spread_list(pr, e)
+            return
+        if a.n[b + 4] != 0:
+            print_fstring(pr, e)
+            return
+        op: int = a.n[b + 0]
+        left: int = a.n[b + 1]
+        right: int = a.n[b + 2]
+        is_form: bool = a.n[b + 3] != 0
+        if is_form and op == 13 and a.n[right] == 7:
+            rp: int = a.n[right + 1]
+            lt_p: int = bin_prec(9)
+            need_chain: bool = lt_p < ctx_prec or (lt_p == ctx_prec and side == 1)
+            if need_chain:
+                w(pr, "(")
+            print_chain_left(pr, left)
+            w(pr, " ")
+            w(pr, bin_op_str(a.n[rp + 0]))
+            w(pr, " ")
+            print_expr_at(pr, a.n[rp + 2], bin_prec(a.n[rp + 0]), 1)
+            if need_chain:
+                w(pr, ")")
+            return
+        my_prec: int = bin_prec(op)
+        need_parens: bool = my_prec < ctx_prec or (my_prec == ctx_prec and side == 1)
+        if need_parens:
+            w(pr, "(")
+        left_side: int = 0
+        right_side: int = 1
+        if op == 6:
+            left_side = 1
+            right_side = 0
+        print_expr_at(pr, left, my_prec, left_side)
+        if is_form and a.n[right] == 4 and (op == 7 or op == 8):
+            if op == 7:
+                w(pr, " is None")
+            else:
+                w(pr, " is not None")
+            if need_parens:
+                w(pr, ")")
+            return
+        w(pr, " ")
+        w(pr, bin_op_str(op))
+        w(pr, " ")
+        print_expr_at(pr, right, my_prec, right_side)
+        if need_parens:
+            w(pr, ")")
+        return
+    if t == 17:
+        k: int = a.n[e + 1]
+        kn: int = sref_at(a, k, 0)
+        if sref_eq(a, kn, "*") or sref_eq(a, kn, "**"):
+            ws(pr, kn)
+            print_expr(pr, a.n[k + 2])
+            return
+        ws(pr, kn)
+        w(pr, "=")
+        print_expr(pr, a.n[k + 2])
+        return
+    if t == 16:
+        tp: int = a.n[e + 1]
+        need: bool = ctx_prec > 0
+        if need:
+            w(pr, "(")
+        print_expr_at(pr, a.n[tp + 1], 1, 0)
+        w(pr, " if ")
+        print_expr_at(pr, a.n[tp + 0], 1, 0)
+        w(pr, " else ")
+        print_expr_at(pr, a.n[tp + 2], 0, 0)
+        if need:
+            w(pr, ")")
+        return
+    if t == 6:
+        u: int = a.n[e + 1]
+        uop: int = a.n[u + 0]
+        up: int = unary_prec(uop)
+        need_u: bool = up < ctx_prec or (up == ctx_prec and side == 1)
+        if need_u:
+            w(pr, "(")
+        if uop == 0:
+            w(pr, "-")
+        elif uop == 1:
+            w(pr, "not ")
+        else:
+            w(pr, "~")
+        print_expr_at(pr, a.n[u + 1], up, 0)
+        if need_u:
+            w(pr, ")")
+        return
+    print_primary(pr, e)
+
+def print_primary(pr: Pr, e: int) -> None:
+    a: Ast = pr.a
+    t: int = a.n[e]
+    if t == 0:
+        wint(pr, a.n[e + 1])
+        return
+    if t == 1:
+        print_float(pr, a.n[e + 1])
+        return
+    if t == 2:
+        if a.n[e + 1] != 0:
+            w(pr, "True")
+        else:
+            w(pr, "False")
+        return
+    if t == 3:
+        print_string_lit(pr, pk(a.n[e + 1], a.n[e + 2]))
+        return
+    if t == 4:
+        w(pr, "None")
+        return
+    if t == 5:
+        ws(pr, pk(a.n[e + 1], a.n[e + 2]))
+        return
+    if t == 8:
+        print_call_expr(pr, e)
+        return
+    if t == 9:
+        ap: int = a.n[e + 1]
+        print_expr_at(pr, a.n[ap + 0], 0, 0)
+        w(pr, ".")
+        ws(pr, sref_at(a, ap, 1))
+        return
+    if t == 21:
+        lc: int = a.n[e + 1]
+        w(pr, "[")
+        print_expr(pr, a.n[lc + 0])
+        print_comp_clauses(pr, sl_at(a, lc, 1))
+        w(pr, "]")
+        return
+    if t == 22:
+        dc: int = a.n[e + 1]
+        w(pr, "{")
+        print_expr(pr, a.n[dc + 0])
+        w(pr, ": ")
+        print_expr(pr, a.n[dc + 1])
+        print_comp_clauses(pr, sl_at(a, dc, 2))
+        w(pr, "}")
+        return
+    if t == 19:
+        lm: int = a.n[e + 1]
+        w(pr, "lambda")
+        lps: int = sl_at(a, lm, 0)
+        for i in range(sl_len(lps)):
+            if i == 0:
+                w(pr, " ")
+            else:
+                w(pr, ", ")
+            ws(pr, pk(a.l[pkx(lps) + i * 2], a.l[pkx(lps) + i * 2 + 1]))
+        w(pr, ": ")
+        print_expr(pr, a.n[lm + 2])
+        return
+    if t == 18:
+        sp: int = a.n[e + 1]
+        print_expr_at(pr, a.n[sp + 0], 0, 0)
+        w(pr, "[")
+        lo: int = a.n[sp + 1]
+        hi: int = a.n[sp + 2]
+        step: int = a.n[sp + 3]
+        if lo >= 0:
+            print_expr(pr, lo)
+        w(pr, ":")
+        if hi >= 0:
+            print_expr(pr, hi)
+        if step >= 0:
+            w(pr, ":")
+            print_expr(pr, step)
+        w(pr, "]")
+        return
+    if t == 10:
+        ip: int = a.n[e + 1]
+        print_expr_at(pr, a.n[ip + 0], 0, 0)
+        w(pr, "[")
+        print_expr(pr, a.n[ip + 1])
+        w(pr, "]")
+        return
+    if t == 11:
+        w(pr, "[")
+        print_expr_list(pr, a.n[e + 1], a.n[e + 2])
+        w(pr, "]")
+        return
+    if t == 20:
+        w(pr, "(")
+        print_expr_list(pr, a.n[e + 1], a.n[e + 2])
+        if a.n[e + 2] == 1:
+            w(pr, ",")
+        w(pr, ")")
+        return
+    if t == 12:
+        w(pr, "{")
+        for i in range(a.n[e + 2]):
+            p: int = a.l[a.n[e + 1] + i]
+            if i > 0:
+                w(pr, ", ")
+            print_expr(pr, a.n[p + 0])
+            w(pr, ": ")
+            print_expr(pr, a.n[p + 1])
+        w(pr, "}")
+        return
+    if t == 13:
+        w(pr, "await ")
+        print_expr_at(pr, a.n[e + 1], unary_prec(0), 0)
+        return
+    if t == 14:
+        w(pr, "spawn ")
+        print_expr_at(pr, a.n[e + 1], unary_prec(0), 0)
+        return
+    # generic_construct
+    g: int = a.n[e + 1]
+    ws(pr, sref_at(a, g, 0))
+    w(pr, "[")
+    tas: int = sl_at(a, g, 2)
+    for i in range(sl_len(tas)):
+        if i > 0:
+            w(pr, ", ")
+        print_type(pr, sl_get(a, tas, i))
+    w(pr, "](")
+    gas: int = sl_at(a, g, 4)
+    print_expr_list(pr, pkx(gas), sl_len(gas))
+    w(pr, ")")
+
+def print_expr_list(pr: Pr, start: int, n: int) -> None:
+    a: Ast = pr.a
+    for i in range(n):
+        if i > 0:
+            w(pr, ", ")
+        print_expr(pr, a.l[start + i])
+
+def print_call_expr(pr: Pr, e: int) -> None:
+    a: Ast = pr.a
+    c: int = a.n[e + 1]
+    if a.n[c + 3] != 0:
+        print_fstring(pr, e)
+        return
+    callee: int = a.n[c + 0]
+    args: int = sl_at(a, c, 1)
+    nargs: int = sl_len(args)
+    if a.n[callee] == 5 and nargs == 1 and sref_eq(a, pk(a.n[callee + 1], a.n[callee + 2]), "__nox_yield_expr"):
+        w(pr, "yield")
+        a0: int = sl_get(a, args, 0)
+        if a.n[a0] != 4:
+            w(pr, " ")
+            print_expr(pr, a0)
+        return
+    if a.n[c + 8] != 0:
+        if a.n[callee] == 9 and sref_eq(a, sref_at(a, a.n[callee + 1], 1), "copy"):
+            w(pr, "[*")
+            print_expr(pr, a.n[a.n[callee + 1] + 0])
+            w(pr, "]")
+            return
+        if a.n[callee] == 5:
+            print_spread_dict(pr, args)
+            return
+    if a.n[c + 4] != 0 and nargs == 1:
+        w(pr, "{")
+        a0b: int = sl_get(a, args, 0)
+        if a.n[a0b] == 11:
+            print_expr_list(pr, a.n[a0b + 1], a.n[a0b + 2])
+        elif a.n[a0b] == 21:
+            lc: int = a.n[a0b + 1]
+            print_expr(pr, a.n[lc + 0])
+            print_comp_clauses(pr, sl_at(a, lc, 1))
+        w(pr, "}")
+        return
+    print_expr_at(pr, callee, 0, 0)
+    w(pr, "(")
+    if nargs == 1:
+        a1: int = sl_get(a, args, 0)
+        if a.n[a1] == 21 and a.n[a.n[a1 + 1] + 4] != 0:
+            lc2: int = a.n[a1 + 1]
+            print_expr(pr, a.n[lc2 + 0])
+            print_comp_clauses(pr, sl_at(a, lc2, 1))
+            w(pr, ")")
+            return
+    print_expr_list(pr, pkx(args), nargs)
+    w(pr, ")")
+
+def print_comp_clauses(pr: Pr, clauses: int) -> None:
+    a: Ast = pr.a
+    for i in range(sl_len(clauses)):
+        cl: int = sl_get(a, clauses, i)
+        if a.n[cl] == 0:
+            fc: int = a.n[cl + 1]
+            w(pr, " for ")
+            ws(pr, sref_at(a, fc, 0))
+            w(pr, " in ")
+            print_expr_at(pr, a.n[fc + 2], 1, 0)
+        else:
+            w(pr, " if ")
+            print_expr_at(pr, a.n[cl + 1], 1, 0)
+
+def float_from_bits(bits: int) -> float:
+    tmp: list[int] = [bits]
+    out: float = 0.0
+    lowlevel:
+        pp: ptr[float] = ptr[float](ptr_to_int(ptr_of(tmp)))
+        out = ptr_read(pp)
+    return out
+
+# Zig `{d}`/`{e}` en kısa gidiş-dönüş basamakları: Nox `str(float)` aynı basamakları Python biçiminde verir; üssü Zig biçimine çevirir.
+def print_float(pr: Pr, bits: int) -> None:
+    v: float = float_from_bits(bits)
+    s: str = str(v)
+    mag: float = v
+    if mag < 0.0:
+        mag = 0.0 - mag
+    sci: bool = mag != 0.0 and (mag >= 1.0e16 or mag < 1.0e-4)
+    epos: int = -1
+    for i in range(len(s)):
+        if s[i] == "e":
+            epos = i
+    if not sci or epos < 0:
+        w(pr, s)
+        has_dot: bool = False
+        for j in range(len(s)):
+            if s[j] == ".":
+                has_dot = True
+        if not has_dot:
+            w(pr, ".0")
+        return
+    mant_dot: bool = False
+    for k in range(epos):
+        wb(pr, ord(s[k]))
+        if s[k] == ".":
+            mant_dot = True
+    if not mant_dot:
+        w(pr, ".0")
+    wb(pr, 101)
+    k2: int = epos + 1
+    if k2 < len(s) and s[k2] == "+":
+        k2 = k2 + 1
+    elif k2 < len(s) and s[k2] == "-":
+        wb(pr, 45)
+        k2 = k2 + 1
+    while k2 + 1 < len(s) and s[k2] == "0":
+        k2 = k2 + 1
+    while k2 < len(s):
+        wb(pr, ord(s[k2]))
+        k2 = k2 + 1
+
+def print_string_lit(pr: Pr, v: int) -> None:
+    a: Ast = pr.a
+    n: int = sref_len(v)
+    if pr.in_fstring > 0:
+        w(pr, "'")
+        for i in range(n):
+            c: int = sref_byte(a, v, i)
+            if c == 39:
+                w(pr, "\\'")
+            elif c == 92:
+                w(pr, "\\\\")
+            elif c == 10:
+                w(pr, "\\n")
+            elif c == 9:
+                w(pr, "\\t")
+            elif not write_control_escape(pr, c):
+                wb(pr, c)
+        w(pr, "'")
+        return
+    w(pr, "\"")
+    for j in range(n):
+        c2: int = sref_byte(a, v, j)
+        if c2 == 34:
+            w(pr, "\\\"")
+        elif c2 == 92:
+            w(pr, "\\\\")
+        elif c2 == 10:
+            w(pr, "\\n")
+        elif c2 == 9:
+            w(pr, "\\t")
+        elif not write_control_escape(pr, c2):
+            wb(pr, c2)
+    w(pr, "\"")
+
+# --- giriş noktaları ---
+G_FOUT: list[int] = []
+G_FMEM: int = 0
+
+def print_module(pr: Pr, body: int) -> None:
+    print_stmts(pr, body, 0)
+    emit_remaining_trivia(pr)
+
+# Dönüş: 0 tamam; 1..4 sözcük hatası; 10..12 ayrıştırma hatası. Çıktı `nox_fmt_out_buffer`/`nox_fmt_len`.
+def nox_fmt_run(base: int, n: int) -> int:
+    global G_FOUT, G_FMEM
+    lx: Lx = Lx(base, n, True)
+    code: int = lex(lx)
+    if code != 0:
+        return code
+    a: Ast = Ast(base, n)
+    tr: list[int] = lx.trivia
+    p: P = P(a, lx.out)
+    body: int = 0
+    try:
+        body = parse_module_body(p)
+    except ErrUnexpected:
+        return 10
+    except ErrNumber:
+        return 11
+    except ErrRecursion:
+        return 12
+    pr: Pr = Pr(a, tr)
+    print_module(pr, body)
+    G_FOUT = pr.out
+    G_FMEM = (len(a.n) + len(a.l) + len(a.sb) + len(a.sp_ids) + len(a.sp_vals) + len(lx.out) + len(tr) + len(pr.out)) * 8
+    return 0
+
+def nox_fmt_len() -> int:
+    return len(G_FOUT)
+
+def nox_fmt_out_buffer() -> int:
+    xs: list[int] = G_FOUT
+    q: int = 0
+    lowlevel:
+        q = ptr_to_int(ptr_of(xs))
+    return q
+
+# Son biçimlendirmenin canlı verisi (bayt): AST tabloları + token/trivia arabelleği + çıktı.
+def nox_fmt_mem() -> int:
+    return G_FMEM

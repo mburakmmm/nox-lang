@@ -16,7 +16,7 @@ import argparse, concurrent.futures, difflib, os, subprocess, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOXC = os.path.join(ROOT, "zig-out/bin/noxc")
 NIGHTLY = os.path.join(ROOT, "zig-out/bin/noxc-nightly")
-COMPONENTS = {"lexer": "tokens", "ast": "ast", "check": "check", "astdump": "ast --full", "parser": "ast --full"}  # check: tüm hat (modül yükleme + ayrıştırma + tip denetimi) kararlı noxc ↔ nightly (Nox lexer varsayılan)
+COMPONENTS = {"lexer": "tokens", "ast": "ast", "check": "check", "astdump": "ast --full", "parser": "ast --full", "fmt": "fmt --stdout"}  # check: tüm hat (modül yükleme + ayrıştırma + tip denetimi) kararlı noxc ↔ nightly (Nox lexer varsayılan)
 
 
 def corpus(extra_dirs):
@@ -78,6 +78,9 @@ def make_runners(args):
     zig = [NOXC] + sub_parts + extra
     if args.zig_only:
         other = [NOXC] + sub_parts + extra
+    elif args.component == "fmt":
+        # Aşama 2.13: kararlı `noxc fmt --stdout` ↔ `noxc-nightly fmt --stdout` (Nox lexer + Nox parser + Nox biçimlendirici)
+        other = [NIGHTLY] + sub_parts + extra
     elif args.component == "parser":
         # Aşama 2.C: Zig `ast --full` ↔ Nox parser'ının düz-dizi AST'sinin Nox yazıcısı (`parse-nox`)
         other = [NIGHTLY, "parse-nox"] + extra

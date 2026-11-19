@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""noxc-nightly Aşama 2.C: `selfhost/parser.nox.in` şablonundan `selfhost/parser.nox` üretir.
+"""noxc-nightly Aşama 2.C: `selfhost/parser.nox.in` ve `selfhost/formatter.nox.in` şablonlarından `selfhost/parser.nox` ve `selfhost/formatter.nox` üretir.
 
 Tek kaynaktan türetilenler (elle çoğaltılmaz; ast.zig/token.zig değişince `--check` kırılır):
   {{K:ad}}          `compiler/lexer/token.zig` `TokenKind` sayısı
@@ -22,8 +22,10 @@ import gen_selfhost_ast as ga  # noqa: E402
 import gen_selfhost_lexer as gl  # noqa: E402
 
 ROOT = ga.ROOT
-TEMPLATE = os.path.join(ROOT, "selfhost/parser.nox.in")
-OUTPUT = os.path.join(ROOT, "selfhost/parser.nox")
+TEMPLATES = [
+    (os.path.join(ROOT, "selfhost/parser.nox.in"), os.path.join(ROOT, "selfhost/parser.nox")),
+    (os.path.join(ROOT, "selfhost/formatter.nox.in"), os.path.join(ROOT, "selfhost/formatter.nox")),
+]
 
 HEADER = """# ÜRETİLMİŞ DOSYA: elle DÜZENLEMEYİN. Kaynak: selfhost/parser.nox.in (+ compiler/lexer/token.zig, compiler/parser/ast.zig şeması).
 # Yeniden üretmek için: scripts/gen_selfhost_parser.py   (güncel mi: --check)
@@ -55,11 +57,11 @@ def build_tables(types):
     return tags, offs, enums, sizes
 
 
-def generate():
+def generate(template):
     types = ga.load_schema()
     tags, offs, enums, sizes = build_tables(types)
     kinds = gl.token_kinds()
-    tpl = open(TEMPLATE, encoding="utf-8").read()
+    tpl = open(template, encoding="utf-8").read()
 
     def sub(table, label):
         def f(m):
@@ -78,23 +80,28 @@ def generate():
     names = sorted(set(re.findall(r"\b(mk_[A-Za-z_]+)\b", out)))
     names += ["Ast", "dump_module", "put", "at"]
     out = out.replace("{{FROM_AST}}", "from ast_schema import " + ", ".join(sorted(set(names))))
-    if "{{" in out:
-        raise SystemExit("gen_selfhost_parser: çözülmemiş yer tutucu kaldı: " + out[out.index("{{"):][:40])
+    left = re.search(r"\{\{(K|T|O|E|SZ|FROM_AST|NONE)\b", out)
+    if left:
+        raise SystemExit("gen_selfhost_parser: çözülmemiş yer tutucu kaldı: " + out[left.start():][:40])
     return HEADER + out
 
 
 def main():
-    text = generate()
-    if "--check" in sys.argv:
-        cur = open(OUTPUT, encoding="utf-8").read() if os.path.exists(OUTPUT) else ""
-        if cur != text:
-            print("selfhost/parser.nox güncel değil: scripts/gen_selfhost_parser.py çalıştırın", file=sys.stderr)
-            return 1
-        print("selfhost/parser.nox güncel")
-        return 0
-    open(OUTPUT, "w", encoding="utf-8").write(text)
-    print(f"yazıldı: {os.path.relpath(OUTPUT, ROOT)} ({len(text.splitlines())} satır)")
-    return 0
+    rc = 0
+    for template, output in TEMPLATES:
+        text = generate(template)
+        rel = os.path.relpath(output, ROOT)
+        if "--check" in sys.argv:
+            cur = open(output, encoding="utf-8").read() if os.path.exists(output) else ""
+            if cur != text:
+                print(f"{rel} güncel değil: scripts/gen_selfhost_parser.py çalıştırın", file=sys.stderr)
+                rc = 1
+            else:
+                print(f"{rel} güncel")
+            continue
+        open(output, "w", encoding="utf-8").write(text)
+        print(f"yazıldı: {rel} ({len(text.splitlines())} satır)")
+    return rc
 
 
 if __name__ == "__main__":

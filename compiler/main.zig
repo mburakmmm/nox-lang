@@ -466,7 +466,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, lex_bench, ast_roundtrip, parse_nox, parse_bench, tokens_cmd, ast_cmd, legacy };
+    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, lex_bench, ast_roundtrip, parse_nox, parse_bench, fmt_bench, tokens_cmd, ast_cmd, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -498,6 +498,7 @@ fn realMain(init: std.process.Init) !void {
         if (build_options.nightly and std.mem.eql(u8, first, "ast-roundtrip")) break :blk .ast_roundtrip;
         if (build_options.nightly and std.mem.eql(u8, first, "parse-nox")) break :blk .parse_nox;
         if (build_options.nightly and std.mem.eql(u8, first, "parse-bench")) break :blk .parse_bench;
+        if (build_options.nightly and std.mem.eql(u8, first, "fmt-bench")) break :blk .fmt_bench;
         if (std.mem.eql(u8, first, "tokens")) break :blk .tokens_cmd;
         if (std.mem.eql(u8, first, "ast")) break :blk .ast_cmd;
         if (std.mem.eql(u8, first, "expand")) break :blk .expand;
@@ -568,6 +569,7 @@ fn realMain(init: std.process.Init) !void {
         .ast_roundtrip => try cmdAstRoundtrip(gpa, io, a, rest),
         .parse_nox => try cmdParseNox(gpa, io, a, rest),
         .parse_bench => try cmdParseBench(io, a, rest),
+        .fmt_bench => try cmdFmtBench(io, a, rest),
         .tokens_cmd => try cmdTokens(gpa, io, a, rest),
         .ast_cmd => try cmdAst(gpa, io, a, rest),
     }
@@ -828,6 +830,80 @@ fn cmdParseBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !vo
     w.interface.flush() catch return;
     if ((max_ratio > 0 and ratio > max_ratio) or (max_mem > 0 and mratio > max_mem)) {
         printErr("parse-bench: Nox parser over budget (time {d:.2}x / mem {d:.2}x)\n", .{ ratio, mratio });
+        std.process.exit(1);
+    }
+}
+
+/// `noxc-nightly fmt-bench <dosya> [tekrar] [--max-ratio=x] [--max-mem=x]` (Aşama 2.13): Zig biçimlendirici hattı (sözcük+trivia+ayrıştırma+biçimlendirme) ↔ Nox hattı; en iyi süre ve canlı bellek oranı. Gizli; yalnızca nightly.
+fn cmdFmtBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void {
+    if (comptime !build_options.nightly) unreachable;
+    const glue = @import("selfhost_glue.zig");
+    const path = if (rest.len > 0) rest[0] else {
+        printErr("usage: noxc-nightly fmt-bench <file> [reps] [--max-ratio=x] [--max-mem=x]\n", .{});
+        std.process.exit(1);
+    };
+    var reps: usize = 20;
+    var max_ratio: f64 = 0;
+    var max_mem: f64 = 0;
+    for (rest[1..]) |arg| {
+        if (std.mem.startsWith(u8, arg, "--max-ratio=")) {
+            max_ratio = std.fmt.parseFloat(f64, arg["--max-ratio=".len..]) catch 0;
+        } else if (std.mem.startsWith(u8, arg, "--max-mem=")) {
+            max_mem = std.fmt.parseFloat(f64, arg["--max-mem=".len..]) catch 0;
+        } else reps = std.fmt.parseInt(usize, arg, 10) catch 20;
+    }
+    const src = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(256 * 1024 * 1024)) catch {
+        printErr("fmt-bench: cannot read {s}\n", .{path});
+        std.process.exit(1);
+    };
+    const nrt: glue.Runtime = @as(*glue.Runtime, @ptrCast(@alignCast(g_nightly_rt.?))).*;
+    const nowNs = struct {
+        fn f() u64 {
+            var ts: std.c.timespec = undefined;
+            _ = std.c.clock_gettime(.MONOTONIC, &ts);
+            return @as(u64, @intCast(ts.sec)) * 1_000_000_000 + @as(u64, @intCast(ts.nsec));
+        }
+    }.f;
+    var best_zig: u64 = std.math.maxInt(u64);
+    var best_nox: u64 = std.math.maxInt(u64);
+    var zig_mem: usize = 0;
+    var nox_mem: i64 = 0;
+    for (0..reps) |_| {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        var t = nowNs();
+        const saved_hook = lexer.hook;
+        lexer.hook = null;
+        const res = lexer.tokenizeWithTrivia(arena.allocator(), src) catch {
+            printErr("fmt-bench: Zig lexer failed\n", .{});
+            std.process.exit(1);
+        };
+        lexer.hook = saved_hook;
+        const module = parser.parseModule(arena.allocator(), res.tokens) catch {
+            printErr("fmt-bench: Zig parser failed\n", .{});
+            std.process.exit(1);
+        };
+        const out = try formatter.formatModule(arena.allocator(), module, res.trivia);
+        best_zig = @min(best_zig, nowNs() - t);
+        zig_mem = arena.queryCapacity();
+        std.mem.doNotOptimizeAway(out.ptr);
+        t = nowNs();
+        var code: i64 = 0;
+        _ = nrt.formatSource(arena.allocator(), src, &code) catch {
+            printErr("fmt-bench: Nox formatter failed ({d})\n", .{code});
+            std.process.exit(1);
+        };
+        best_nox = @min(best_nox, nowNs() - t);
+        nox_mem = nrt.fmtMem();
+    }
+    var stdout_buf: [512]u8 = undefined;
+    var w = std.Io.File.stdout().writer(io, &stdout_buf);
+    const ratio = @as(f64, @floatFromInt(best_nox)) / @as(f64, @floatFromInt(@max(best_zig, 1)));
+    const mratio = @as(f64, @floatFromInt(nox_mem)) / @as(f64, @floatFromInt(@max(zig_mem, 1)));
+    w.interface.print("{d:.2} MiB kaynak\nzig fmt hattı {d:>8} us, {d} B arena\nnox fmt hattı {d:>8} us ({d:.2}x), {d} B canlı ({d:.2}x)\n", .{ @as(f64, @floatFromInt(src.len)) / (1024.0 * 1024.0), best_zig / 1000, zig_mem, best_nox / 1000, ratio, nox_mem, mratio }) catch return;
+    w.interface.flush() catch return;
+    if ((max_ratio > 0 and ratio > max_ratio) or (max_mem > 0 and mratio > max_mem)) {
+        printErr("fmt-bench: Nox formatter over budget (time {d:.2}x / mem {d:.2}x)\n", .{ ratio, mratio });
         std.process.exit(1);
     }
 }
@@ -2616,14 +2692,45 @@ fn cmdVersion(io: std.Io, args: []const []const u8) !void {
 }
 
 fn cmdFmt(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len == 0) {
-        std.debug.print("usage: noxc fmt <file.nox>\n", .{});
+    var path_arg: ?[]const u8 = null;
+    var to_stdout = false;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--stdout")) to_stdout = true else if (path_arg == null) path_arg = arg;
+    }
+    if (path_arg == null) {
+        std.debug.print("usage: noxc fmt [--stdout] <file.nox>\n", .{});
         std.process.exit(1);
     }
-    const path_arg = args[0];
-    const source = try std.Io.Dir.cwd().readFileAlloc(io, path_arg, gpa, .limited(1024 * 1024));
+    const path = path_arg.?;
+    const source = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1024 * 1024));
     defer gpa.free(source);
 
+    // noxc-nightly (Aşama 2.13): varsayılan olarak Nox biçimlendirici (`selfhost/formatter.nox`); `--frontend zig` ile Zig yolu.
+    const formatted: []const u8 = if (comptime build_options.nightly) blk: {
+        if (g_frontend_nox) {
+            const glue = @import("selfhost_glue.zig");
+            const nrt: *glue.Runtime = @ptrCast(@alignCast(g_nightly_rt.?));
+            var code: i64 = 0;
+            break :blk nrt.formatSource(a, source, &code) catch {
+                const lex_names = [_][]const u8{ "UnexpectedCharacter", "UnterminatedString", "InconsistentIndentation", "TabsNotAllowed" };
+                if (code >= 1 and code <= 4) printErr("fmt: lexer error ({s})\n", .{lex_names[@intCast(code - 1)]}) else printErr("fmt: parse error ({s})\n", .{if (code == 10) "UnexpectedToken" else if (code == 11) "InvalidNumberLiteral" else "RecursionLimitExceeded"});
+                std.process.exit(1);
+            };
+        }
+        break :blk try fmtViaZig(a, source);
+    } else try fmtViaZig(a, source);
+
+    if (to_stdout) {
+        var stdout_buf: [1 << 16]u8 = undefined;
+        var sw = std.Io.File.stdout().writer(io, &stdout_buf);
+        try sw.interface.writeAll(formatted);
+        try sw.interface.flush();
+        return;
+    }
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = formatted });
+}
+
+fn fmtViaZig(a: std.mem.Allocator, source: []const u8) ![]u8 {
     const result = lexer.tokenizeWithTrivia(a, source) catch |e| {
         printErr("fmt: lexer error ({t})\n", .{e});
         std.process.exit(1);
@@ -2632,9 +2739,7 @@ fn cmdFmt(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []cons
         printErr("fmt: parse error ({t})\n", .{e});
         std.process.exit(1);
     };
-    const formatted = try formatter.formatModule(a, module, result.trivia);
-
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path_arg, .data = formatted });
+    return formatter.formatModule(a, module, result.trivia);
 }
 
 const RunSlot = struct {

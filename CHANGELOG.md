@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.44]
+
+noxc-nightly Aşama 2.13: biçimlendirici Nox'ta (kullanıcı kararı 2026-11-19: "hepsini Nox'ta yazalım" — Nox AST'sini Zig AST'sine çeviren çözücü YAZILMADI; biçimlendirici doğrudan düz-dizi AST üzerinde çalışır).
+
+- **`selfhost/formatter.nox` (üretilmiş) ← `formatter.nox.in`:** `compiler/fmt/formatter.zig`in birebir portu (~1 800 satır): trivia (yorum/boş satır) yeniden yerleştirme, tüm deyim/ifade/tip yazımı, parser desugarlarının yüzey biçime geri çevrilmesi (tuple açma, `match`, `assert`, `for/while/try else`, jenerik enum, sınıf sabitleri, birleşik atama, zincirleme karşılaştırma, f-string), öncelik/parantez kuralları, float yazımı (Zig `{d}`/`{e}` en kısa gidiş-dönüş basamakları).
+- **`noxc fmt --stdout`:** sonucu dosya yerine stdout'a yazar (farksal test için). `noxc-nightly fmt` varsayılan olarak Nox hattını kullanır (`--frontend zig` ile Zig); ilk "Nox ile üretilen araç".
+- **Doğrulama:** `frontend_diff.py --component fmt`: depo 1 325 dosya + 3 825 mutasyonlu girdi + `tests/fixtures/fmt_edge/` (float/dize/yorum/ifade/deyim kenar durumları) ve `parser_edge/` Zig çıktısıyla bayt-bayt aynı; `zig build frontend-diff-test`e eklendi. Önceki sürümde "ok_*" diye adlandırılan iki parser fixture'ı (`ok_stmts`, `ok_strings`) aslında sözdizimi hatalıydı (hata yolunu karşılaştırıyordu); gerçekten geçerli olacak şekilde düzeltildi ve parser farkı yeniden (63 dosya) sıfır çıktı.
+- **Bütçe:** `noxc-nightly fmt-bench` (ReleaseFast): süre 2,1× Zig (bütçe 3×), canlı bellek 0,20× (bütçe 2×); sızıntı harness'i (`tests/cli/selfhost_obj_test.zig`) biçimlendiriciyi de kapsıyor.
+- **Dogfood D2.3 (gerçek derleyici hatası):** farklı modüllerde aynı adlı modül-düzeyi globaller tek yuvayı paylaşıyor (sessiz yanlış sonuç + `lib_fini` sızıntısı); selfhost modüllerinde adlar benzersiz tutuldu, derleyici düzeltmesi Aşama 2 dogfood kapanışında.
+
 ## [2.2.43]
 
 Liste için kararlı başlık (handle) yeniden tasarımı — dogfood D1.2 çözüldü: `ys = xs; xs.append(v)` büyümede de Python gibi çalışır.

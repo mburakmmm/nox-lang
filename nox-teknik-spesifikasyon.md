@@ -30176,3 +30176,7 @@ Sorun (§3.20 sınırlama 1-2): `list[T]` tek bir bloktu; büyüme yeni blok ay�
 
 **Test:** `tests/golden/codegen_cases/list_alias_growth_shared.nox` (11 senaryo, iki backend, Debug çalışma zamanında sızıntı/çifte serbest bırakma); `list_append_unique_realloc` ve `module_global_returned_borrowed` beklenen çıktıları (eski ayrışmayı sabitliyordu) Python'a göre düzeltildi; IR anlık görüntüleri yenilendi; `nox_list_*` birim testleri (`arc.zig`/`list_ops.zig`/`shared_list.zig`/`dict.zig`) yeni düzene taşındı.
 
+### 3.481 noxc-nightly Aşama 2.13: Nox biçimlendirici (v2.2.44)
+
+`selfhost/formatter.nox` (üretilmiş; şablon `formatter.nox.in`), `compiler/fmt/formatter.zig`in birebir portudur ve Nox parser'ının düz-dizi AST'si (§3.479) üzerinde çalışır — Nox AST'sini Zig AST'sine çeviren bir çözücü YOKTUR (kullanıcı kararı: bileşenler uçtan uca Nox'ta yazılır). Trivia kaydı Nox lexer'ından gelir (`[tür, satır, sonda mı, başlangıç, bitiş]`). Float yazımı: Zig `{d}` (`1e-4 <= |x| < 1e16`) / `{e}` en kısa gidiş-dönüş basamakları; Nox `str(float)` aynı basamakları Python biçiminde ürettiğinden üs kısmı Zig biçimine çevrilir. `noxc fmt --stdout` sonucu dosya yerine stdout'a yazar. Not (D2.3): farklı modüllerde aynı adlı modül-düzeyi globaller şu an tek yuvayı paylaşır (derleyici hatası; kapanışta düzeltilecek).
+

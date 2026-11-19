@@ -29,3 +29,7 @@ Plan ve takip listesi: `project/noxc-nightly-selfhost-plani-2026-11.md`. Bu dizi
 
 `parser.nox` ÜRETİLMİŞTİR: kaynak `parser.nox.in`, üretici `scripts/gen_selfhost_parser.py` (`--check` güncelliği doğrular). `ast_schema.nox` da üretilmiştir (`scripts/gen_selfhost_ast.py`). Doğrulama: `noxc-nightly parse-nox <dosya>` (Nox parser + Nox yazıcısı) ↔ `noxc ast --full`; `scripts/frontend_diff.py --component parser --stderr [--fuzz N]`; bütçe: `noxc-nightly parse-bench <dosya> [tekrar] --max-ratio=3 --max-mem=2` (ReleaseFast çalışma zamanıyla).
 
+## Aşama 2.13 (biçimlendirici)
+
+`formatter.nox` ÜRETİLMİŞTİR (`formatter.nox.in` + `scripts/gen_selfhost_parser.py`). `noxc-nightly fmt <dosya>` Nox hattını kullanır; doğrulama: `scripts/frontend_diff.py --component fmt` (`noxc fmt --stdout` ↔ `noxc-nightly fmt --stdout`); bütçe: `noxc-nightly fmt-bench <dosya> [tekrar] --max-ratio=3 --max-mem=2`. Modül-düzeyi global adları modüller arasında benzersiz olmalıdır (bkz. dogfood D2.3).
+

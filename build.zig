@@ -831,7 +831,12 @@ pub fn build(b: *std.Build) void {
     const frontend_diff_parser = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "parser", "--stderr", "--fuzz", "1500", "--seed", "5" });
     frontend_diff_parser.step.dependOn(&frontend_diff_astdump.step);
     frontend_diff_parser.step.dependOn(&install_nightly.step);
+    // Aşama 2.13: kararlı `noxc fmt --stdout` ↔ `noxc-nightly fmt --stdout` (Nox lexer + Nox parser + Nox biçimlendirici) bayt-bayt aynı çıktı (depo + mutasyonlu girdiler).
+    const frontend_diff_fmt = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "fmt", "--fuzz", "1500", "--seed", "6" });
+    frontend_diff_fmt.step.dependOn(&frontend_diff_parser.step);
+    frontend_diff_fmt.step.dependOn(&install_nightly.step);
     const frontend_diff_check = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "check" });
+    frontend_diff_check.step.dependOn(&frontend_diff_fmt.step);
     frontend_diff_check.step.dependOn(&frontend_diff_parser.step);
     frontend_diff_check.step.dependOn(&frontend_diff_astdump.step);
     frontend_diff_check.step.dependOn(&frontend_diff_nox_json.step);

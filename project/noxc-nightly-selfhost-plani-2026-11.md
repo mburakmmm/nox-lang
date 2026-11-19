@@ -125,8 +125,8 @@ Girdi: `parser.zig` (~3 000 satır) + `ast.zig` (~640) + `ast_dump.zig`. Çıkı
 - [x] 2.10 (v2.2.42) Hata iletileri ve `syntax_report`: konum + işaretçi gösterimi aynı.
 - [x] 2.11 C ABI: AST'nin Zig tarafına geçişi — **karar noktası `[K]`:** (a) Nox'un AST'yi bayt tamponuna serileştirmesi + Zig'in okuması (parser sınırı), ya da (b) Aşama 3'e kadar yalnızca doğrulama aracı olarak kalması (Zig checker Zig AST'siyle çalışır). Önerilen: (b) ile başla, checker Nox'a geçerken (a).
   **KARAR (2026-11-18, kullanıcı "gerçek selfhost için hangisi" diye sordu; öneri + uygulama):** **(b)**. Self-hosting'in bitiş durumunda AST Zig'e hiç geçmez (Nox parser → Nox checker); (a) iki dilde 100+ düğüm türü için geçici serileştirme olurdu. Parser doğruluğu `noxc ast` dökümü farksal eşitliğiyle kanıtlanır; tek köprü checker sonrası tiplenmiş AST sınırında (3.14) kurulur.
-- [~] 2.12 **(AST dökümü + hata korpusu + stderr iletileri v2.2.42'de TAMAM: depo 1 266 dosya + 3 766 mutasyonlu girdi + 58 kenar-durum fixture'ı `tests/fixtures/parser_edge/`; kalan: `noxc fmt` çıktı eşitliği — 2.13'e bağlı)** Farksal test: AST dökümü eşitliği (tüm depo), sözdizimi hata korpusu, `noxc fmt` (formatter Nox AST'siyle) çıktı eşitliği.
-- [ ] 2.13 İlk "Nox ile üretilen araç": `noxc fmt` Nox lexer+parser ile (düşük risk, görünür kazanım).
+- [x] 2.12 (v2.2.44) Farksal test: AST dökümü eşitliği (tüm depo + mutasyonlu girdiler + `tests/fixtures/parser_edge`/`fmt_edge`), sözdizimi hata korpusu (hata iletisi bayt-bayt), `noxc fmt` çıktı eşitliği (depo 1 325 dosya + 3 825 mutasyonlu girdi; `frontend_diff.py --component fmt`).
+- [x] 2.13 (v2.2.44; kullanıcı kararı 2026-11-19: "hepsini Nox'ta yazalım" — AST çözücüsü yok, biçimlendirici Nox AST'si üzerinde yazıldı) İlk "Nox ile üretilen araç": `noxc-nightly fmt` = Nox lexer + Nox parser + Nox biçimlendirici (`selfhost/formatter.nox`, `compiler/fmt/formatter.zig`in birebir portu; `--frontend zig` ile Zig yolu). Bütçe (`fmt-bench`): süre 2,1× (≤3×), bellek 0,20× (≤2×); sızıntı testi yeşil.
 - [x] 2.14 (v2.2.42) Perf ≤ 3× Zig (ölçülen 1,6–1,7× — `noxc-nightly parse-bench`, 0,96 MiB stdlib+selfhost, ReleaseFast); bellek ≤ 2× (0,31×: 16,1 MB canlı vs Zig arena 51,5 MB); sızıntı/çifte serbest bırakma testi (Debug çalışma zamanı, 30 tur + hata yolları); derin ifade: 10 bin iç içe `(` Zig ile aynı hata iletisi, 300 iç içe blok / 3 000 zincirli öznitelik+çağrı / 6 000 terimli toplam sorunsuz.
 - [x] 2.15 (v2.2.42) Belge + CHANGELOG + spesifikasyon §3.479.
 
@@ -228,7 +228,7 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 |---|---|---|---|
 | 0 Altyapı | 11 | 11 | **bitti (v2.2.32)** — sıradaki Aşama 1 (lexer) |
 | 1 Lexer | 13 | 13 | **bitti (v2.2.33–35; tam-geçiş kuralına göre denetlendi)** — sıradaki Aşama 2 (parser/AST) |
-| 2 Parser/AST | 15 | 13 | **parser tam geçti (v2.2.42)** — açık: 2.12 (`noxc fmt` çıktı eşitliği) ve 2.13 (Nox ile `noxc fmt`; Nox AST → Zig AST kod çözücüsü gerektirir) |
+| 2 Parser/AST | 15 | 15 | **bitti (v2.2.42 parser, v2.2.44 biçimlendirici)** — sıradaki dogfood kapanışı, sonra Aşama 3 (tip denetleyici) |
 | 3 Tip denetleyici | 17 | 0 | açık |
 | 4 Sahiplik + codegen | 13 | 0 | açık |
 | 5 Sürücü | 5 | 0 | açık |

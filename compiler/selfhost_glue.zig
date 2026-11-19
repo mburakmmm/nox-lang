@@ -33,6 +33,11 @@ extern fn parser_nox_parse_dg(rt: ?*anyopaque, i: i64) i64;
 extern fn parser_nox_parse_dg_note_len(rt: ?*anyopaque) i64;
 extern fn parser_nox_parse_dg_note_byte(rt: ?*anyopaque, i: i64) i64;
 
+extern fn formatter_nox_fmt_run(rt: ?*anyopaque, base: i64, n: i64) i64;
+extern fn formatter_nox_fmt_mem(rt: ?*anyopaque) i64;
+extern fn formatter_nox_fmt_len(rt: ?*anyopaque) i64;
+extern fn formatter_nox_fmt_out_buffer(rt: ?*anyopaque) i64;
+
 pub const LexOut = lexer.HookResult;
 
 /// Bir Nox çalışma zamanı bağlamı: `start` ... `stop`. Bileşen çağrıları arasında paylaşılır; iş parçacıkları arası kullanım yok (derleyici tek iş parçacıklıdır).
@@ -74,6 +79,22 @@ pub const Runtime = struct {
         const out = try a.alloc(u8, len);
         for (out, 0..) |*b, k| b.* = @intCast(buf[k]);
         return out;
+    }
+
+    /// Aşama 2.13: Nox biçimlendirici (`selfhost/formatter.nox`; Nox lexer + Nox parser). Başarıda biçimlenmiş kaynak, hatada `error.FormatFailed` ve `code` (1..4 sözcük hatası, 10..12 ayrıştırma hatası).
+    pub fn formatSource(self: Runtime, a: std.mem.Allocator, src: []const u8, code: *i64) ![]u8 {
+        code.* = formatter_nox_fmt_run(self.rt, @intCast(@intFromPtr(src.ptr)), @intCast(src.len));
+        if (code.* != 0) return error.FormatFailed;
+        const len: usize = @intCast(formatter_nox_fmt_len(self.rt));
+        const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(formatter_nox_fmt_out_buffer(self.rt))));
+        const out = try a.alloc(u8, len);
+        for (out, 0..) |*b, k| b.* = @intCast(buf[k]);
+        return out;
+    }
+
+    /// Son `formatSource`ın canlı Nox verisi (bayt).
+    pub fn fmtMem(self: Runtime) i64 {
+        return formatter_nox_fmt_mem(self.rt);
     }
 
     /// Yalnızca ayrıştırma (döküm yok): Nox parser'ını çalıştırır; 0 ya da hata kodu.

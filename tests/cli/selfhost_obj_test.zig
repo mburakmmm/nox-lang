@@ -202,7 +202,7 @@ test "selfhost lexer: tekrarli calistirma sizinti/cifte serbest birakma uretmez 
 }
 
 // noxc-nightly Aşama 2.C değişmez kural (bellek-uyumlu): Nox parser'ı (başarı + hata yolları + döküm) çok kez çalışıp çalışma zamanı yıkılır; Debug çalışma zamanının sızıntı raporu boş olmalı.
-test "selfhost parser: tekrarli calistirma sizinti/cifte serbest birakma uretmez (Debug calisma zamani)" {
+test "selfhost parser+formatter: tekrarli calistirma sizinti/cifte serbest birakma uretmez (Debug calisma zamani)" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
