@@ -466,7 +466,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, lex_bench, ast_roundtrip, parse_nox, parse_bench, fmt_bench, tokens_cmd, ast_cmd, legacy };
+    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, lex_bench, ast_roundtrip, parse_nox, parse_bench, fmt_bench, selfhost_contract, tokens_cmd, ast_cmd, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -499,6 +499,7 @@ fn realMain(init: std.process.Init) !void {
         if (build_options.nightly and std.mem.eql(u8, first, "parse-nox")) break :blk .parse_nox;
         if (build_options.nightly and std.mem.eql(u8, first, "parse-bench")) break :blk .parse_bench;
         if (build_options.nightly and std.mem.eql(u8, first, "fmt-bench")) break :blk .fmt_bench;
+        if (build_options.nightly and std.mem.eql(u8, first, "selfhost-contract")) break :blk .selfhost_contract;
         if (std.mem.eql(u8, first, "tokens")) break :blk .tokens_cmd;
         if (std.mem.eql(u8, first, "ast")) break :blk .ast_cmd;
         if (std.mem.eql(u8, first, "expand")) break :blk .expand;
@@ -570,6 +571,7 @@ fn realMain(init: std.process.Init) !void {
         .parse_nox => try cmdParseNox(gpa, io, a, rest),
         .parse_bench => try cmdParseBench(io, a, rest),
         .fmt_bench => try cmdFmtBench(io, a, rest),
+        .selfhost_contract => try cmdSelfhostContract(io, gpa, a),
         .tokens_cmd => try cmdTokens(gpa, io, a, rest),
         .ast_cmd => try cmdAst(gpa, io, a, rest),
     }
@@ -762,6 +764,112 @@ fn cmdParseNox(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, rest: [
     try sw.interface.flush();
 }
 
+/// R1-P1.14: bench kapısı. Debug derleyici/çalışma zamanı ile performans ölçümü REDDEDİLİR (`--allow-debug` yalnızca tanı içindir), boş/anlamsız girdi kapıdan geçmez ve her rapor
+/// başlığı kip/hedef/sürüm/commit içerir. `reps == 0` ya da `src` boşsa çıkış kodu 1.
+fn benchGate(kind: []const u8, src_len: usize, reps: usize, allow_debug: bool) void {
+    if (comptime !build_options.nightly) unreachable;
+    printErr("[{s}] kip: derleyici={s} calisma-zamani={s} hedef={s}-{s} surum={s} commit={s}\n", .{ kind, @tagName(builtin.mode), build_options.optimize, @tagName(builtin.cpu.arch), @tagName(builtin.os.tag), build_options.version, build_options.commit });
+    const debug = builtin.mode == .Debug or std.mem.eql(u8, build_options.optimize, "Debug");
+    if (debug and !allow_debug) {
+        printErr("{s}: Debug kipinde performans olculmez (derleyici={s}, calisma-zamani={s}); `zig build nightly -Doptimize=ReleaseFast` kullanin ya da yalnizca tani icin --allow-debug verin\n", .{ kind, @tagName(builtin.mode), build_options.optimize });
+        std.process.exit(1);
+    }
+    if (src_len == 0 or reps == 0) {
+        printErr("{s}: bos girdi ya da 0 tekrar anlamsiz sonuc uretir (kaynak={d} B, tekrar={d})\n", .{ kind, src_len, reps });
+        std.process.exit(1);
+    }
+}
+
+/// R1-P1.14: sonuç doğrulaması — sıfır süre/bellek ya da Zig tarafının ölçülmemesi anlamsızdır (kapıdan geçmez).
+fn benchSane(kind: []const u8, best_zig: u64, best_nox: u64, zig_mem: usize, nox_mem: i64) void {
+    if (best_zig == 0 or best_nox == 0 or best_nox == std.math.maxInt(u64) or zig_mem == 0 or nox_mem <= 0) {
+        printErr("{s}: anlamsiz olcum (zig={d} ns/{d} B, nox={d} ns/{d} B); sonuc reddedildi\n", .{ kind, best_zig, zig_mem, best_nox, nox_mem });
+        std.process.exit(1);
+    }
+}
+
+/// R1-P1.7/P1.8: `noxc-nightly selfhost-contract` — Zig↔Nox sınırı sözleşmesi (ardışık çağrılar, hata sonrası temizlik, hata sonrası fini, yeniden init/fini, hata kodunun asla başarı sayılmaması).
+/// Başarıda `selfhost-contract: OK` basar; ihlalde neden yazıp çıkış kodu 1 döner. Gizli; yalnızca nightly.
+fn cmdSelfhostContract(io: std.Io, gpa: std.mem.Allocator, a: std.mem.Allocator) !void {
+    if (comptime !build_options.nightly) unreachable;
+    const glue = @import("selfhost_glue.zig");
+    const good = "def f(x: int) -> int:\n    return x + 1\n";
+    const bad_syntax = "def f(x: int) -> int:\n    return (x +\n";
+    const bad_lex = "x = $\n";
+    var fail = false;
+    const check = struct {
+        fn ok(cond: bool, what: []const u8, f: *bool) void {
+            if (!cond) {
+                printErr("selfhost-contract: IHLAL: {s}\n", .{what});
+                f.* = true;
+            }
+        }
+    }.ok;
+    // Temiz referans: taze çalışma zamanında iyi girdinin çıktıları.
+    var ref_dump: []u8 = &.{};
+    var ref_fmt: []u8 = &.{};
+    {
+        const r0 = try glue.Runtime.start();
+        defer r0.stop();
+        var c: i64 = 0;
+        ref_dump = try r0.parseDump(a, good, &c);
+        ref_fmt = try r0.formatSource(a, good, &c);
+    }
+    // (1) Ardışık çağrılar: hatalı → iyi → hatalı → iyi AYNI çalışma zamanında; hata kodu Zig'de ASLA başarı değildir; hata sonrası iyi girdi taze çalışma zamanıyla bayt-bayt aynı.
+    {
+        const r = try glue.Runtime.start();
+        defer r.stop();
+        var round: usize = 0;
+        while (round < 3) : (round += 1) {
+            var c: i64 = 0;
+            const badp = r.parseDump(a, bad_syntax, &c);
+            check(std.meta.isError(badp) and c != 0, "bozuk ayrıştırma Zig'de hata sayılmalı (kod != 0)", &fail);
+            const bl = r.parseDump(a, bad_lex, &c);
+            check(std.meta.isError(bl) and c >= 1 and c <= 4, "sözcük hatası 1..4 kodu vermeli", &fail);
+            const badf = r.formatSource(a, bad_syntax, &c);
+            check(std.meta.isError(badf) and c != 0, "bozuk biçimlendirme Zig'de hata sayılmalı", &fail);
+            const gp = r.parseDump(a, good, &c) catch &[_]u8{};
+            check(std.mem.eql(u8, gp, ref_dump) and c == 0, "hata sonrası ayrıştırma taze çalışma zamanıyla aynı olmalı (bekleyen durum sızmamalı)", &fail);
+            const gf = r.formatSource(a, good, &c) catch &[_]u8{};
+            check(std.mem.eql(u8, gf, ref_fmt) and c == 0, "hata sonrası biçimlendirme taze çalışma zamanıyla aynı olmalı", &fail);
+        }
+    }
+    // (2) Hata sonrası fini: bozuk girdiden hemen sonra stop() çökmemeli; ardından taze bir çalışma zamanı sağlam çalışmalı (init/fini sırası + yeniden init).
+    {
+        var i: usize = 0;
+        while (i < 3) : (i += 1) {
+            const r = try glue.Runtime.start();
+            var c: i64 = 0;
+            _ = r.parseDump(a, bad_syntax, &c) catch {};
+            _ = r.formatSource(a, bad_lex, &c) catch {};
+            r.stop();
+            const r2 = try glue.Runtime.start();
+            defer r2.stop();
+            const gp = r2.parseDump(a, good, &c) catch &[_]u8{};
+            check(std.mem.eql(u8, gp, ref_dump), "hata + fini sonrası yeni çalışma zamanı sağlam olmalı", &fail);
+        }
+    }
+    // (3) Eşzamanlı iki bağımsız çalışma zamanı: biri hatalı durumdayken diğeri etkilenmemeli (global durum paylaşımı yok).
+    {
+        const r1 = try glue.Runtime.start();
+        const r2 = try glue.Runtime.start();
+        var c: i64 = 0;
+        _ = r1.parseDump(a, bad_syntax, &c) catch {};
+        const gp = r2.parseDump(a, good, &c) catch &[_]u8{};
+        check(std.mem.eql(u8, gp, ref_dump), "bir çalışma zamanındaki hata diğerini etkilememeli", &fail);
+        r1.stop();
+        const gp2 = r2.parseDump(a, good, &c) catch &[_]u8{};
+        check(std.mem.eql(u8, gp2, ref_dump), "bir çalışma zamanı kapanınca diğeri çalışmaya devam etmeli", &fail);
+        r2.stop();
+    }
+    _ = gpa;
+    if (fail) std.process.exit(1);
+    var stdout_buf: [64]u8 = undefined;
+    var w = std.Io.File.stdout().writer(io, &stdout_buf);
+    w.interface.writeAll("selfhost-contract: OK\n") catch return;
+    w.interface.flush() catch return;
+}
+
 /// `noxc-nightly parse-bench <dosya> [tekrar] [--max-ratio=x] [--max-mem=x]` (Aşama 2.12/2.13): Zig (sözcük+ayrıştırma) ↔ Nox parser'ının en iyi süresi ve canlı bellek oranı. Gizli; yalnızca nightly.
 fn cmdParseBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void {
     if (comptime !build_options.nightly) unreachable;
@@ -774,8 +882,14 @@ fn cmdParseBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !vo
     var reps: usize = 20;
     var max_ratio: f64 = 0;
     var max_mem: f64 = 0;
+    var allow_debug = false;
+    var side: u8 = 0; // R1-P1.13: 0 iki taraf, 1 yalnız Zig, 2 yalnız Nox (AYRI süreçte tepe RSS için; scripts/selfhost_bench.sh)
     for (rest[1..]) |arg| {
-        if (std.mem.startsWith(u8, arg, "--max-ratio=")) {
+        if (std.mem.eql(u8, arg, "--allow-debug")) {
+            allow_debug = true;
+        } else if (std.mem.startsWith(u8, arg, "--side=")) {
+            side = if (std.mem.eql(u8, arg["--side=".len..], "zig")) 1 else if (std.mem.eql(u8, arg["--side=".len..], "nox")) 2 else 0;
+        } else if (std.mem.startsWith(u8, arg, "--max-ratio=")) {
             max_ratio = std.fmt.parseFloat(f64, arg["--max-ratio=".len..]) catch 0;
         } else if (std.mem.startsWith(u8, arg, "--max-mem=")) {
             max_mem = std.fmt.parseFloat(f64, arg["--max-mem=".len..]) catch 0;
@@ -785,6 +899,7 @@ fn cmdParseBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !vo
         printErr("parse-bench: cannot read {s}\n", .{path});
         std.process.exit(1);
     };
+    benchGate("parse-bench", src.len, reps, allow_debug);
     const nrt: glue.Runtime = @as(*glue.Runtime, @ptrCast(@alignCast(g_nightly_rt.?))).*;
     const nowNs = struct {
         fn f() u64 {
@@ -800,33 +915,39 @@ fn cmdParseBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !vo
     for (0..reps) |_| {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
-        var t = nowNs();
-        const saved_hook = lexer.hook;
-        lexer.hook = null;
-        const toks = lexer.tokenize(arena.allocator(), src) catch &[_]lexer.Token{};
-        lexer.hook = saved_hook;
-        var p = parser_mod.Parser.init(arena.allocator(), toks);
-        const m = p.parseModule() catch {
-            printErr("parse-bench: Zig parser failed\n", .{});
-            std.process.exit(1);
-        };
-        best_zig = @min(best_zig, nowNs() - t);
-        zig_mem = arena.queryCapacity();
-        std.mem.doNotOptimizeAway(m.body.ptr);
-        t = nowNs();
-        const code = nrt.parseRaw(src);
-        best_nox = @min(best_nox, nowNs() - t);
-        if (code != 0) {
-            printErr("parse-bench: Nox parser failed ({d})\n", .{code});
-            std.process.exit(1);
+        var t: u64 = 0;
+        if (side != 2) {
+            t = nowNs();
+            const saved_hook = lexer.hook;
+            lexer.hook = null;
+            const toks = lexer.tokenize(arena.allocator(), src) catch &[_]lexer.Token{};
+            lexer.hook = saved_hook;
+            var p = parser_mod.Parser.init(arena.allocator(), toks);
+            const m = p.parseModule() catch {
+                printErr("parse-bench: Zig parser failed\n", .{});
+                std.process.exit(1);
+            };
+            best_zig = @min(best_zig, nowNs() - t);
+            zig_mem = arena.queryCapacity();
+            std.mem.doNotOptimizeAway(m.body.ptr);
         }
-        nox_mem = nrt.parseMem();
+        if (side != 1) {
+            t = nowNs();
+            const code = nrt.parseRaw(src);
+            best_nox = @min(best_nox, nowNs() - t);
+            if (code != 0) {
+                printErr("parse-bench: Nox parser failed ({d})\n", .{code});
+                std.process.exit(1);
+            }
+            nox_mem = nrt.parseMem();
+        }
     }
+    if (side == 0) benchSane("parse-bench", best_zig, best_nox, zig_mem, nox_mem);
     var stdout_buf: [512]u8 = undefined;
     var w = std.Io.File.stdout().writer(io, &stdout_buf);
     const ratio = @as(f64, @floatFromInt(best_nox)) / @as(f64, @floatFromInt(@max(best_zig, 1)));
     const mratio = @as(f64, @floatFromInt(nox_mem)) / @as(f64, @floatFromInt(@max(zig_mem, 1)));
-    w.interface.print("{d:.2} MiB kaynak\nzig sözcük+ayrıştırma {d:>8} us, {d} B arena\nnox ayrıştırma        {d:>8} us ({d:.2}x), {d} B canlı ({d:.2}x)\n", .{ @as(f64, @floatFromInt(src.len)) / (1024.0 * 1024.0), best_zig / 1000, zig_mem, best_nox / 1000, ratio, nox_mem, mratio }) catch return;
+    w.interface.print("{d:.2} MiB kaynak\nzig sözcük+ayrıştırma {d:>8} us, {d} B arena-ayrilmis\nnox ayrıştırma        {d:>8} us ({d:.2}x), {d} B mantiksal-canli (mantiksal/ayrilmis {d:.2}x: ESDEGER DEGIL, esdeger metrik: scripts/selfhost_bench.sh tepe-RSS)\n", .{ @as(f64, @floatFromInt(src.len)) / (1024.0 * 1024.0), best_zig / 1000, zig_mem, best_nox / 1000, ratio, nox_mem, mratio }) catch return;
     w.interface.flush() catch return;
     if ((max_ratio > 0 and ratio > max_ratio) or (max_mem > 0 and mratio > max_mem)) {
         printErr("parse-bench: Nox parser over budget (time {d:.2}x / mem {d:.2}x)\n", .{ ratio, mratio });
@@ -845,8 +966,14 @@ fn cmdFmtBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void
     var reps: usize = 20;
     var max_ratio: f64 = 0;
     var max_mem: f64 = 0;
+    var allow_debug = false;
+    var side: u8 = 0; // R1-P1.13: 0 iki taraf, 1 yalnız Zig, 2 yalnız Nox (AYRI süreçte tepe RSS için; scripts/selfhost_bench.sh)
     for (rest[1..]) |arg| {
-        if (std.mem.startsWith(u8, arg, "--max-ratio=")) {
+        if (std.mem.eql(u8, arg, "--allow-debug")) {
+            allow_debug = true;
+        } else if (std.mem.startsWith(u8, arg, "--side=")) {
+            side = if (std.mem.eql(u8, arg["--side=".len..], "zig")) 1 else if (std.mem.eql(u8, arg["--side=".len..], "nox")) 2 else 0;
+        } else if (std.mem.startsWith(u8, arg, "--max-ratio=")) {
             max_ratio = std.fmt.parseFloat(f64, arg["--max-ratio=".len..]) catch 0;
         } else if (std.mem.startsWith(u8, arg, "--max-mem=")) {
             max_mem = std.fmt.parseFloat(f64, arg["--max-mem=".len..]) catch 0;
@@ -856,6 +983,7 @@ fn cmdFmtBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void
         printErr("fmt-bench: cannot read {s}\n", .{path});
         std.process.exit(1);
     };
+    benchGate("fmt-bench", src.len, reps, allow_debug);
     const nrt: glue.Runtime = @as(*glue.Runtime, @ptrCast(@alignCast(g_nightly_rt.?))).*;
     const nowNs = struct {
         fn f() u64 {
@@ -871,36 +999,42 @@ fn cmdFmtBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void
     for (0..reps) |_| {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
-        var t = nowNs();
-        const saved_hook = lexer.hook;
-        lexer.hook = null;
-        const res = lexer.tokenizeWithTrivia(arena.allocator(), src) catch {
-            printErr("fmt-bench: Zig lexer failed\n", .{});
-            std.process.exit(1);
-        };
-        lexer.hook = saved_hook;
-        const module = parser.parseModule(arena.allocator(), res.tokens) catch {
-            printErr("fmt-bench: Zig parser failed\n", .{});
-            std.process.exit(1);
-        };
-        const out = try formatter.formatModule(arena.allocator(), module, res.trivia);
-        best_zig = @min(best_zig, nowNs() - t);
-        zig_mem = arena.queryCapacity();
-        std.mem.doNotOptimizeAway(out.ptr);
-        t = nowNs();
-        var code: i64 = 0;
-        _ = nrt.formatSource(arena.allocator(), src, &code) catch {
-            printErr("fmt-bench: Nox formatter failed ({d})\n", .{code});
-            std.process.exit(1);
-        };
-        best_nox = @min(best_nox, nowNs() - t);
-        nox_mem = nrt.fmtMem();
+        var t: u64 = 0;
+        if (side != 2) {
+            t = nowNs();
+            const saved_hook = lexer.hook;
+            lexer.hook = null;
+            const res = lexer.tokenizeWithTrivia(arena.allocator(), src) catch {
+                printErr("fmt-bench: Zig lexer failed\n", .{});
+                std.process.exit(1);
+            };
+            lexer.hook = saved_hook;
+            const module = parser.parseModule(arena.allocator(), res.tokens) catch {
+                printErr("fmt-bench: Zig parser failed\n", .{});
+                std.process.exit(1);
+            };
+            const out = try formatter.formatModule(arena.allocator(), module, res.trivia);
+            best_zig = @min(best_zig, nowNs() - t);
+            zig_mem = arena.queryCapacity();
+            std.mem.doNotOptimizeAway(out.ptr);
+        }
+        if (side != 1) {
+            t = nowNs();
+            var code: i64 = 0;
+            _ = nrt.formatSource(arena.allocator(), src, &code) catch {
+                printErr("fmt-bench: Nox formatter failed ({d})\n", .{code});
+                std.process.exit(1);
+            };
+            best_nox = @min(best_nox, nowNs() - t);
+            nox_mem = nrt.fmtMem();
+        }
     }
+    if (side == 0) benchSane("fmt-bench", best_zig, best_nox, zig_mem, nox_mem);
     var stdout_buf: [512]u8 = undefined;
     var w = std.Io.File.stdout().writer(io, &stdout_buf);
     const ratio = @as(f64, @floatFromInt(best_nox)) / @as(f64, @floatFromInt(@max(best_zig, 1)));
     const mratio = @as(f64, @floatFromInt(nox_mem)) / @as(f64, @floatFromInt(@max(zig_mem, 1)));
-    w.interface.print("{d:.2} MiB kaynak\nzig fmt hattı {d:>8} us, {d} B arena\nnox fmt hattı {d:>8} us ({d:.2}x), {d} B canlı ({d:.2}x)\n", .{ @as(f64, @floatFromInt(src.len)) / (1024.0 * 1024.0), best_zig / 1000, zig_mem, best_nox / 1000, ratio, nox_mem, mratio }) catch return;
+    w.interface.print("{d:.2} MiB kaynak\nzig fmt hattı {d:>8} us, {d} B arena-ayrilmis\nnox fmt hattı {d:>8} us ({d:.2}x), {d} B mantiksal-canli (mantiksal/ayrilmis {d:.2}x: ESDEGER DEGIL, esdeger metrik: scripts/selfhost_bench.sh tepe-RSS)\n", .{ @as(f64, @floatFromInt(src.len)) / (1024.0 * 1024.0), best_zig / 1000, zig_mem, best_nox / 1000, ratio, nox_mem, mratio }) catch return;
     w.interface.flush() catch return;
     if ((max_ratio > 0 and ratio > max_ratio) or (max_mem > 0 and mratio > max_mem)) {
         printErr("fmt-bench: Nox formatter over budget (time {d:.2}x / mem {d:.2}x)\n", .{ ratio, mratio });

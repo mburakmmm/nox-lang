@@ -784,6 +784,7 @@ pub fn build(b: *std.Build) void {
     nightly_options.addOption([]const u8, "version", build_zig_zon.version);
     nightly_options.addOption([]const u8, "commit", sourceCommit(b));
     nightly_options.addOption(bool, "nightly", true);
+    nightly_options.addOption([]const u8, "optimize", @tagName(optimize)); // R1-P1.14: bench kapısı (Debug ile perf reddi) çalışma zamanı kipini buradan okur
     const noxc_nightly_mod = b.createModule(.{
         .root_source_file = b.path("compiler/main.zig"),
         .target = target,
@@ -835,7 +836,11 @@ pub fn build(b: *std.Build) void {
     const frontend_diff_fmt = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "fmt", "--stderr", "--fuzz", "1500", "--seed", "6" });
     frontend_diff_fmt.step.dependOn(&frontend_diff_parser.step);
     frontend_diff_fmt.step.dependOn(&install_nightly.step);
+    // R1-P1.7/P1.8: Zig↔Nox sınırı sözleşmesi (ardışık çağrılar, hata sonrası temizlik/fini, yeniden init, iki bağımsız çalışma zamanı).
+    const selfhost_contract_cmd = b.addSystemCommand(&.{ "zig-out/bin/noxc-nightly", "selfhost-contract" });
+    selfhost_contract_cmd.step.dependOn(&install_nightly.step);
     const frontend_diff_check = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "check" });
+    frontend_diff_check.step.dependOn(&selfhost_contract_cmd.step);
     frontend_diff_check.step.dependOn(&frontend_diff_fmt.step);
     frontend_diff_check.step.dependOn(&frontend_diff_parser.step);
     frontend_diff_check.step.dependOn(&frontend_diff_astdump.step);
@@ -1659,6 +1664,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/http_multicore_factory_test.zig",
         "tests/cli/selfhost_obj_test.zig",
         "tests/cli/tokens_ast_test.zig",
+        "tests/cli/selfhost_contract_test.zig",
         "tests/cli/match_scalar_test.zig",
         "tests/cli/module_globals_test.zig",
         "tests/cli/optional_narrowing_safety_test.zig",

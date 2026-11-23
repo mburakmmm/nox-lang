@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.48]
+
+GPT-6 sağlamlaştırma listesi — Zig↔Nox sınırı sözleşmesi + ölçüm kapısı (tek toplu tur).
+
+- **R1-P1.7/P1.8:** `noxc-nightly selfhost-contract` (ardışık çağrılar, hata sonrası temizlik/fini, yeniden init, iki bağımsız çalışma zamanı, hata kodunun asla başarı sayılmaması) + `selfhost.o` sembol sözleşmesi testi (glue `extern fn`leri tanımlı, init/fini tekil, çift tanım yok). `frontend-diff-test` adımına bağlandı.
+- **R1-P1.11:** başarısız `fmt` kaynak dosyayı değiştirmez testi (kararlı `noxc` ve `noxc-nightly --frontend nox`).
+- **R1-P1.13/P1.14:** `parse-bench`/`fmt-bench`: Debug kipinde performans reddi (`--allow-debug` yalnız tanı), boş/anlamsız ölçüm reddi, kip/hedef/sürüm/commit başlığı, mantıksal↔ayrılmış oranı "eşdeğer değil" etiketli; `--side=zig|nox` + `scripts/selfhost_bench.sh` ile AYRI süreçte tepe-RSS (eşdeğer metrik).
+
 ## [2.2.47]
 
 GPT-6 sağlamlaştırma listesi — R1-P0.6 (kullanıcı onayıyla): indeksli atamada Python değerlendirme sırası.
