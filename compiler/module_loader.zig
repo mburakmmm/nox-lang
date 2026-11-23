@@ -158,7 +158,9 @@ fn resolveImportsImpl(
             if (m.name.len > 0) own_name = m.name;
         } else |_| {}
     }
-    try loadImportsRecursive(a, env, user_module.body, &loaded, &extra, &module_exports, alias_roots, stdlib_root, project_root, own_name, own_name, if (own_name != null) project_root else null);
+    var vars_reg: VarRegistry = .empty;
+    var aliased: std.StringHashMapUnmanaged(void) = .empty;
+    try loadImportsRecursive(a, env, user_module.body, &loaded, &vars_reg, &aliased, &extra, &module_exports, alias_roots, stdlib_root, project_root, own_name, own_name, if (own_name != null) project_root else null);
 
     const combined = try a.alloc(ast.Stmt, extra.items.len + user_module.body.len);
     @memcpy(combined[0..extra.items.len], extra.items);
@@ -255,11 +257,16 @@ fn extractExportList(a: std.mem.Allocator, s: ast.Stmt, segments: []const []cons
     return .{ .module = try joinWith(a, segments, '.'), .names = try names.toOwnedSlice(a) };
 }
 
+/// Modül-düzeyi değişken kayıt defteri (dogfood D2.3): anahtar `"mod.yolu\x00AD"`, değer değişkenin (yeniden adlandırılmış) tip ifadesi. `from M import VAR` için yerel takma değişken üretiminde kullanılır.
+const VarRegistry = std.StringHashMapUnmanaged(ast.TypeExpr);
+
 fn loadImportsRecursive(
     a: std.mem.Allocator,
     env: LoadEnv,
     stmts: []const ast.Stmt,
     loaded: *std.StringHashMapUnmanaged(void),
+    vars_reg: *VarRegistry,
+    aliased: *std.StringHashMapUnmanaged(void),
     out: *std.ArrayListUnmanaged(ast.Stmt),
     exports: *std.ArrayListUnmanaged(ast.ModuleExports),
     alias_roots: ?*const std.StringHashMapUnmanaged([]const u8),
@@ -281,7 +288,10 @@ fn loadImportsRecursive(
         };
 
         const joined_dot = try joinWith(a, segments, '.');
-        if (loaded.contains(joined_dot)) continue;
+        if (loaded.contains(joined_dot)) {
+            try emitFromImportVarAliases(a, stmt, joined_dot, vars_reg, aliased, out);
+            continue;
+        }
         try loaded.put(a, joined_dot, {});
 
         // **Kritik davranış korunumu:** `alias_roots == null` OLDUĞUNDA
@@ -369,7 +379,7 @@ fn loadImportsRecursive(
         // ÖNCE bu stdlib modülünün KENDİ import'larını özyinelemeli çöz
         // (transitif — bir stdlib modülü başka bir stdlib modülünü import
         // edebilir).
-        try loadImportsRecursive(a, env, stdlib_module.body, loaded, out, exports, alias_roots, stdlib_root, project_root, project_name, next_own_name, next_own_root);
+        try loadImportsRecursive(a, env, stdlib_module.body, loaded, vars_reg, aliased, out, exports, alias_roots, stdlib_root, project_root, project_name, next_own_name, next_own_root);
 
         // Bu modülün KENDİ üst-düzey `func_def`/`class_def` adlarını topla.
         var rename_map: std.StringHashMapUnmanaged([]const u8) = .empty;
@@ -379,6 +389,8 @@ fn loadImportsRecursive(
                 .class_def => |cd| try rename_map.put(a, cd.name, try mangleWith(a, segments, cd.name)),
                 // `type Ad = Tip` takma adları modül kapsamlıdır (GPT-6 P1.9): sınıf/işlevlerle AYNI önekleme; çözümleme `type_alias.zig`de.
                 .type_alias => |ta| try rename_map.put(a, ta.name, try mangleWith(a, segments, ta.name)),
+                // Modül-düzeyi değişkenler (dogfood D2.3): farklı modüllerde AYNI adlı global tek yuvayı paylaşıyordu (`a.G` ↔ `b.G`: sessiz yanlış sonuç). Modül önekiyle ayrılır; `__all__` ve sınıf-sabit deposu (zaten sınıf adından türetilir) hariç.
+                .var_decl => |v| if (v.class_attr == null and !std.mem.eql(u8, v.name, "__all__")) try rename_map.put(a, v.name, try mangleWith(a, segments, v.name)),
                 else => {},
             }
         }
@@ -394,8 +406,38 @@ fn loadImportsRecursive(
                 try exports.append(a, ex);
                 continue;
             }
-            try out.append(a, try renameStmt(a, s, &rename_map));
+            const renamed = try renameStmt(a, s, &rename_map);
+            if (renamed.kind == .var_decl and s.kind == .var_decl and s.kind.var_decl.class_attr == null and rename_map.contains(s.kind.var_decl.name)) {
+                const key = try std.fmt.allocPrint(a, "{s}\x00{s}", .{ joined_dot, s.kind.var_decl.name });
+                try vars_reg.put(a, key, renamed.kind.var_decl.type_expr);
+            }
+            try out.append(a, renamed);
         }
+        try emitFromImportVarAliases(a, stmt, joined_dot, vars_reg, aliased, out);
+    }
+}
+
+/// `from M import VAR [as Y]` içindeki modül-düzeyi DEĞİŞKENLER için, içe aktaran tarafta yerel adla görünen bir takma değişken üretir (`Y: <tip> = M_VAR`; Python'daki gibi içe aktarma anında bağlama). Değişken adı modül önekiyle ayrıldığından (D2.3) çıplak ad artık başka modülün değişkeniyle çakışmaz.
+fn emitFromImportVarAliases(
+    a: std.mem.Allocator,
+    stmt: ast.Stmt,
+    joined_dot: []const u8,
+    vars_reg: *VarRegistry,
+    aliased: *std.StringHashMapUnmanaged(void),
+    out: *std.ArrayListUnmanaged(ast.Stmt),
+) LoadError!void {
+    const fi = switch (stmt.kind) {
+        .from_import_stmt => |f| f,
+        else => return,
+    };
+    for (fi.names) |nm| {
+        const key = try std.fmt.allocPrint(a, "{s}\x00{s}", .{ joined_dot, nm.name });
+        const ty = vars_reg.get(key) orelse continue;
+        const local = nm.alias orelse nm.name;
+        if (aliased.contains(local)) continue;
+        try aliased.put(a, local, {});
+        const dotted = try mangleWith(a, fi.segments, nm.name);
+        out.append(a, .{ .kind = .{ .var_decl = .{ .name = local, .type_expr = ty, .value = .{ .identifier = dotted } } }, .line = stmt.line, .span = stmt.span }) catch return error.OutOfMemory;
     }
 }
 
@@ -776,6 +818,7 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
         .expr_stmt => |e| .{ .expr_stmt = try renameExpr(a, e, map) },
         .var_decl => |v| blk: {
             // Sınıf sabiti deposu: ad, (yeniden adlandırılmış) sınıf adından türetilir ki modüller arası çakışmasın.
+            // `infer_assign`/`is_match_temp` korunur (dogfood D2.3: önceden düşüyordu → `y := 2` ve tuple/match geçicileri içe aktarılan modülde "undefined variable"); `unpack_origin` yalnızca biçimlendirici içindir, düşer.
             if (v.class_attr) |ca| {
                 const cls = map.get(ca.class) orelse ca.class;
                 break :blk .{ .var_decl = .{
@@ -785,7 +828,13 @@ fn renameStmt(a: std.mem.Allocator, s: ast.Stmt, map: *const RenameMap) std.mem.
                     .class_attr = .{ .class = cls, .name = ca.name },
                 } };
             }
-            break :blk .{ .var_decl = .{ .name = v.name, .type_expr = try renameTypeExpr(a, v.type_expr, map), .value = try renameExpr(a, v.value, map) } };
+            break :blk .{ .var_decl = .{
+                .name = map.get(v.name) orelse v.name,
+                .type_expr = try renameTypeExpr(a, v.type_expr, map),
+                .value = try renameExpr(a, v.value, map),
+                .is_match_temp = v.is_match_temp,
+                .infer_assign = v.infer_assign,
+            } };
         },
         .assign => |asg| .{ .assign = .{ .target = try renameExpr(a, asg.target, map), .value = try renameExpr(a, asg.value, map), .ann = if (asg.ann) |ann| try renameTypeExpr(a, ann, map) else null } },
         .if_stmt => |f| blk: {

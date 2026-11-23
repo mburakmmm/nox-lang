@@ -216,7 +216,9 @@ jobs:
     # v2.0.134: korpus büyüdü (HTTP/2, havuz, akış testleri); macOS işi artık normalde
     # 42-45 dakika sürüyor ve 45 dakikalık sınır gerçek bir hang'i değil sıradan bir
     # koşuyu "cancelled" yapıyordu (v2.0.124/130/133: 2724 sn, test ortasında). 75 dk.
-    timeout-minutes: 75
+    # v2.2.45: korpus (selfhost parser/biçimlendirici + kenar-durum fixture'ları) yine büyüdü; koşu 55-75 dk arasında dalgalanıyor ve v2.2.44'te 75 dk sınırında "cancelled" oldu
+    # (bu da Release'in "CI durumu kontrolü"nü kırmızı yaptı) → 120.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
 
@@ -832,8 +834,16 @@ jobs:
       # v2.1.86: 900 sn de aşıldı (v2.1.83/84: korpus yeni fixture'larla ~900 sn sınırına yaklaşmıştı; v2.1.80-82'de başarıyla geçmişti) → 1800.
       # v2.1.106: v2.1.104'ün koşusunda 1800 sn de aşıldı (SIMD/threads/FFI fixture'ları eklendi; korpus ~% büyüdü) → 3600 (işin 180 dk sınırı hâlâ yedektir);
       # yorumlayıcı/atomik/Callback fixture'ları Windows'ta atlanır (wasm köprüsü Windows'ta tests/compat altında zaten sınanıyor).
+      # v2.2.45: Windows'ta `install runtime/async_rt/swap_x86_64.o to lib/swap_asm.o` adımı, aynı dosyayı kullanan bir test süreciyle yarışınca `error.Unexpected NTSTATUS=0xc0000123
+      # (FILE_DELETED)` ile düşebiliyor (v2.2.32 ve v2.2.44'te görüldü; testlerin kendisi geçiyor). Bir kez yeniden denenir: geçen testler önbellekten gelir, gerçek bir test hatası
+      # ikinci denemede de kırmızı kalır.
       - name: zig build test (Debug)
-        run: zig build test -Dwin-test-timeout=3600
+        run: |
+          zig build test -Dwin-test-timeout=3600
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "zig build test ilk denemede başarısız; bir kez yeniden deneniyor (Windows dosya-yarışı dalgalanması olabilir)"
+            zig build test -Dwin-test-timeout=3600
+          }
 
   # v2.0.8: hosted riscv64 dumanı. Tam dil korpusu değil. Sınıf/liste/spawn,
   # fibonacci, sözlük yazdırma ve satır taşıma hata sırası qemu-user altında çalışır.

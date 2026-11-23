@@ -37,6 +37,9 @@ android)
   "$adb" push "$work/probe" /data/local/tmp/nox-net-probe >/dev/null; "$adb" shell chmod 755 /data/local/tmp/nox-net-probe
   for p in $P_OK4 $P_OK6 $P_SILENT $P_TRUNC $P_RESET $P_TLS; do "$adb" reverse tcp:$p tcp:$p >/dev/null 2>&1; done
   HOSTIP=127.0.0.1; DRIPHOST=10.0.2.2
+  # `adb reverse` Android 10 (API 29) görüntülerinde yalnızca IPv4 geri döngüsünü dinler: cihazdan `[::1]:P` host sunucusuna ulaşamaz (API 34'te ulaşır). Bu bir Nox hatası değil, emülatör görüntüsü sınırıdır; senaryo API < 30'da atlanır.
+  api=$("$adb" shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r'); skip_ipv6=0
+  case "$api" in ''|*[!0-9]*) ;; *) [ "$api" -lt 30 ] && skip_ipv6=1 ;; esac
   run_probe() { # url timeout after → stdout (belirteç satırları)
     "$adb" shell "NOX_NET_FIBER=$fiber_mode NOX_NET_URL='$1' NOX_NET_TIMEOUT_MS=$2 NOX_NET_AFTER_URL='$3' NOX_MOBILE_ROOT=/data/local/tmp/nox-net /data/local/tmp/nox-net-probe 2>/dev/null" | tr -d '\r'
   }
@@ -99,7 +102,9 @@ run_probe "$OK4" 5000 "" >/dev/null 2>&1
 core_scenarios() {
   scenario ipv4_literal     "$OK4"                              5000 -        ok          4000
   scenario dns_dual_stack   "http://localhost:$P_OK4/"          5000 -        ok          4000
-  scenario ipv6_literal     "http://[::1]:$P_OK6/"              5000 -        ok          4000
+  if [ "${skip_ipv6:-0}" = 1 ]; then echo "skip ${label}ipv6_literal: adb reverse API<30'da IPv6 geri döngüsünü iletmez (emülatör görüntüsü sınırı)"; else
+    scenario ipv6_literal   "http://[::1]:$P_OK6/"              5000 -        ok          4000
+  fi
   scenario conn_refused     "http://$HOSTIP:$P_CLOSED/"         5000 -        error       4000
   scenario conn_reset       "http://$HOSTIP:$P_RESET/"          5000 "$OK4"   error       4000   ok
   scenario idle_timeout     "http://$HOSTIP:$P_SILENT/"         1500 "$OK4"   timeout     5000   ok

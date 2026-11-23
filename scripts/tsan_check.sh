@@ -3,6 +3,8 @@
 # fixture'larını `NOX_SANITIZE_THREAD=1 noxc build --backend llvm` ile (işlev başlarına `sanitize_thread` eklenir, -fsanitize=thread) derleyip NOX_POOL_WORKERS=4 ile ROUNDS tur çalıştırır.
 # Çıktı `.expected` ile bire bir aynı olmalı ve stderr'de "WARNING: ThreadSanitizer" bulunmamalıdır. Bitince normal `zig build` ile noxrt.o geri kurulur.
 # Kullanım: scripts/tsan_check.sh [ROUNDS=2] [WORKERS=4] [FILTRE=mn_]   (yalnız ana makine, hosted, LLVM yolu; önkoşul clang)
+# macOS koşucusunda GNU `timeout` yok (`gtimeout` coreutils ile gelir; o da yoksa süre sınırsız çalıştırılır, takılmayı CI'ın iş zaman aşımı yakalar).
+if command -v timeout >/dev/null 2>&1; then TMOP="timeout 300"; elif command -v gtimeout >/dev/null 2>&1; then TMOP="gtimeout 300"; else TMOP=""; fi
 cd "$(dirname "$0")/.." || exit 1
 ROUNDS=${1:-2}
 WORKERS=${2:-4}
@@ -26,7 +28,7 @@ for src in tests/golden/codegen_cases/${FILTER}*.nox; do
   r=0
   while [ $r -lt "$ROUNDS" ]; do
     total=$((total + 1))
-    NOX_POOL_WORKERS=$WORKERS TSAN_OPTIONS="halt_on_error=0 suppressions=$SUPP" timeout 300 "$OUT/$name" >"$OUT/out.txt" 2>"$OUT/err.txt"
+    NOX_POOL_WORKERS=$WORKERS TSAN_OPTIONS="halt_on_error=0 suppressions=$SUPP" $TMOP "$OUT/$name" >"$OUT/out.txt" 2>"$OUT/err.txt"
     if grep -q "WARNING: ThreadSanitizer" "$OUT/err.txt"; then
       echo "TSAN UYARISI: $name tur=$r ($(grep -c 'WARNING: ThreadSanitizer' "$OUT/err.txt") rapor)"
       grep -A12 -m1 "WARNING: ThreadSanitizer" "$OUT/err.txt" | head -14

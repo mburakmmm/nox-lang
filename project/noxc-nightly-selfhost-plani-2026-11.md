@@ -228,7 +228,7 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 |---|---|---|---|
 | 0 Altyapı | 11 | 11 | **bitti (v2.2.32)** — sıradaki Aşama 1 (lexer) |
 | 1 Lexer | 13 | 13 | **bitti (v2.2.33–35; tam-geçiş kuralına göre denetlendi)** — sıradaki Aşama 2 (parser/AST) |
-| 2 Parser/AST | 15 | 15 | **bitti (v2.2.42 parser, v2.2.44 biçimlendirici)** — sıradaki dogfood kapanışı, sonra Aşama 3 (tip denetleyici) |
+| 2 Parser/AST | 15 | 15 | **bitti (v2.2.42 parser, v2.2.44 biçimlendirici, v2.2.45 dogfood kapanışı)** — sıradaki Aşama 3 (tip denetleyici) |
 | 3 Tip denetleyici | 17 | 0 | açık |
 | 4 Sahiplik + codegen | 13 | 0 | açık |
 | 5 Sürücü | 5 | 0 | açık |

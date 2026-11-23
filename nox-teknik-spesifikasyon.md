@@ -30180,3 +30180,7 @@ Sorun (§3.20 sınırlama 1-2): `list[T]` tek bir bloktu; büyüme yeni blok ay�
 
 `selfhost/formatter.nox` (üretilmiş; şablon `formatter.nox.in`), `compiler/fmt/formatter.zig`in birebir portudur ve Nox parser'ının düz-dizi AST'si (§3.479) üzerinde çalışır — Nox AST'sini Zig AST'sine çeviren bir çözücü YOKTUR (kullanıcı kararı: bileşenler uçtan uca Nox'ta yazılır). Trivia kaydı Nox lexer'ından gelir (`[tür, satır, sonda mı, başlangıç, bitiş]`). Float yazımı: Zig `{d}` (`1e-4 <= |x| < 1e16`) / `{e}` en kısa gidiş-dönüş basamakları; Nox `str(float)` aynı basamakları Python biçiminde ürettiğinden üs kısmı Zig biçimine çevrilir. `noxc fmt --stdout` sonucu dosya yerine stdout'a yazar. Not (D2.3): farklı modüllerde aynı adlı modül-düzeyi globaller şu an tek yuvayı paylaşır (derleyici hatası; kapanışta düzeltilecek).
 
+### 3.482 Modül-düzeyi değişkenler modül başına ayrıdır (v2.2.45, dogfood D2.3)
+
+İçe aktarılan bir modülün üst-düzey değişkenleri (`G: list[int] = ...`) artık fonksiyon/sınıf/tip takma adlarıyla AYNI biçimde modül önekiyle yeniden adlandırılır (`mangleWith`), böylece iki modüldeki aynı adlı değişken ayrı global yuvalarda yaşar (önceden ad-tabanlı tek blok yuvası paylaşılıyordu). Modül değişkenleri dışarıdan niteliksiz/nitelikli erişime zaten açık değildir (`mod.G` tanımsız); bu değişiklik görünür yüzeyi değiştirmez. `__all__` ve sınıf-sabit deposu (`__nox_cls_*`) hariç. `renameStmt` ayrıca `var_decl.infer_assign`/`is_match_temp` bayraklarını korur.
+

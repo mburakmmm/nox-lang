@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.45]
+
+Aşama 2 dogfood kapanışı: D2.3 (modül-düzeyi değişken çakışması) düzeltildi; D2.1/D2.2 D1.2 (v2.2.43) ile zaten kapanmıştı.
+
+- **Derleyici hatası düzeltildi (D2.3):** farklı modüllerde aynı adlı modül-düzeyi değişkenler (`a.G`, `b.G`) tek global yuvayı paylaşıyor, sessiz yanlış sonuç veriyordu (ve ilk tahsis `lib_fini`de sızıyordu). `module_loader.zig` artık modül-düzeyi `var_decl` adlarını da modül önekiyle ayırıyor (`ga_G`); `__all__` ve sınıf-sabit deposu hariç. Aynı yerde `renameStmt` `infer_assign`/`is_match_temp` bayraklarını düşürüyordu — korunuyor (ör. içe aktarılan modülde `y := 2` artık doğru "modül düzeyinde `:=` olmaz" hatasını veriyor, önceden anlamsız "undefined variable").
+- **`from M import VAR [as Y]`:** modül değişkenleri artık modül önekli olduğundan, içe aktaran tarafa yerel adla bir takma değişken (`Y: <tip> = M_VAR`, içe aktarma anında bağlama — Python ile aynı) yayılır; `from nox.plugin import PLUGIN_API_VERSION` gibi mevcut kullanım aynen çalışır.
+- **CI düzeltmeleri:** (1) `.github/workflows/nightly.yml` geçersiz YAML'di (`name:` içinde düz ifade `lexer: depo` → "workflow file issue"; her push'ta 0 sn'lik kırmızı koşu, hiç zamanlanmış koşu yoktu) → alıntılandı; (2) macOS işi 55-75 dk arasında dalgalanıp 75 dk sınırında iptal oluyordu (v2.2.44; Release'in "CI durumu kontrolü"nü de kırmızı yaptı) → 120 dk; (3) Windows `swap_asm.o` kurulum adımı test süreciyle dosya-yarışına girip `FILE_DELETED` ile düşebiliyordu (v2.2.32, v2.2.44) → `zig build test` bir kez yeniden denenir; (4) gecelik stres/TSan işleri macOS'ta GNU `timeout` bulunamadığı için 2320/95 koşunun hepsini kırmızı sayıyordu (`rc=127`) → `timeout`/`gtimeout`/yok sırasıyla taşınabilir sarmalayıcı; (5) gecelik mobil Android API 29 işi `ipv6_literal` senaryosunda kırmızıydı (`adb reverse` API<30'da IPv6 geri döngüsünü iletmiyor, emülatör görüntüsü sınırı) → senaryo API<30'da açıkça atlanır (`skip` satırı).
+- **Analiz araçları:** graphify kod grafı (`scripts/graphify_build.py`, `.graphifyignore`/`.graphifyrc`, `scripts/graphify_refresh.sh`; Nox için `extern def`/`enum`/`protocol` ek çıkarımı ve Nox↔Zig `binds_ffi` kenarları, selfhost dahil; `precheck.sh` her commit öncesi yeniler; AGENTS.md kuralı) ve rtk (komut çıktısı sıkıştırma; yalnızca geliştirici ortamı, depoya dokunmaz) kuruldu — bkz. `project/graphify-rtk-kurulumu-2026-11.md`.
+- **Test:** `tests/cli/module_globals_test.zig` (iki modülde aynı adlı global + kullanıcı dosyasında aynı ad, LLVM ve QBE); `clibs_pcre2.ssa` IR anlık görüntüsü (nox.pcre2'nin modül değişkenleri artık önekli) kasıtlı olarak yenilendi.
+
 ## [2.2.44]
 
 noxc-nightly Aşama 2.13: biçimlendirici Nox'ta (kullanıcı kararı 2026-11-19: "hepsini Nox'ta yazalım" — Nox AST'sini Zig AST'sine çeviren çözücü YAZILMADI; biçimlendirici doğrudan düz-dizi AST üzerinde çalışır).

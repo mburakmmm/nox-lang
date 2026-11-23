@@ -2,6 +2,8 @@
 # Faz 9.8: M:N paylaşılan modül durumu yarış stresi. `tests/golden/codegen_cases/mn_shared_*.nox` ve `mn_dyn_*.nox` fixture'larını iki backend'de derler ve `NOX_POOL_WORKERS` 1/2/4/8 ile
 # ROUNDS tur çalıştırır; çıktı `.expected` ile bire bir aynı olmalı ve stderr boş (sızıntı/çökme yok) olmalıdır.
 # Kullanım: [BACKENDS="llvm"] scripts/mn_shared_stress.sh [ROUNDS=5] [WORKERS="1 2 4 8"]   (önkoşul: `zig build`; nightly: .github/workflows/stress.yml)
+# macOS koşucusunda GNU `timeout` yok (`gtimeout` coreutils ile gelir; o da yoksa süre sınırsız çalıştırılır, takılmayı CI'ın iş zaman aşımı yakalar).
+if command -v timeout >/dev/null 2>&1; then TMOP="timeout 120"; elif command -v gtimeout >/dev/null 2>&1; then TMOP="gtimeout 120"; else TMOP=""; fi
 cd "$(dirname "$0")/.." || exit 1
 ROUNDS=${1:-5}
 WORKERS=${2:-"1 2 4 8"}
@@ -22,7 +24,7 @@ for src in tests/golden/codegen_cases/mn_shared_*.nox tests/golden/codegen_cases
       r=0
       while [ $r -lt "$ROUNDS" ]; do
         total=$((total + 1))
-        NOX_POOL_WORKERS=$w timeout 120 "$OUT/$name.$be" >"$OUT/out.txt" 2>"$OUT/err.txt"
+        NOX_POOL_WORKERS=$w $TMOP "$OUT/$name.$be" >"$OUT/out.txt" 2>"$OUT/err.txt"
         rc=$?
         if [ $rc -ne 0 ] || ! cmp -s "$OUT/out.txt" "$exp" || [ -s "$OUT/err.txt" ]; then
           echo "BAŞARISIZ: $name backend=$be workers=$w tur=$r rc=$rc"

@@ -16,6 +16,8 @@ Bu dosya, Nox derleyicisi ve çalışma zamanı üzerinde çalışan tüm kodlam
 - **2.3 yapılacaklar listesi (2.2.0-rc.1 ile açıldı): `project/v2-3-yapilacaklar-2026-11.md`.** Açık iş seçmeden önce oraya bak; bitenler `[x]` + sürümle işaretlenir.
 - **2.0 öncesi yapılacaklar KALICI listesi: `project/v2-hazirlik-yol-haritasi.md`.** Yeni bir göreve başlamadan önce oraya bak; bir madde bitince ya da yeni eksik bulununca o dosyayı güncelle.
 
+- **Kod grafı (graphify) — KURAL:** kod analizinde önce `graphify-out/GRAPH_REPORT.md` ve `graphify query "<soru>" --budget 1500` / `graphify path "A" "B" [--undirected]` / `graphify explain "X"` (dosya:satır döner); düz `grep` yalnızca graf yetmezse. **Kodu değiştirdikten sonra, grafı sorgulamadan önce ve her commit'ten önce grafı yenile:** `sh scripts/graphify_refresh.sh --wait` (~15 sn; `scripts/precheck.sh` bunu zaten başlatır). Graf `graphify-out/` altındadır, git'te değildir; yoksa aynı komut üretir. Nox↔Zig bağı: `binds_ffi` kenarları (`extern def` ↔ `export fn`, selfhost Zig köprüsü ↔ `def nox_*`). `selfhost/{lexer,parser,formatter,ast_schema}.nox` üretilmiştir ama grafa dahildir (düzenleme `.nox.in` + `scripts/gen_selfhost_*.py`'de). graphify'ın kendi `update`/hook'unu KULLANMA (Nox ek çıkarımını siler). Ayrıntı: `project/graphify-rtk-kurulumu-2026-11.md`.
+
 ---
 
 ## 1. Proje Özeti
