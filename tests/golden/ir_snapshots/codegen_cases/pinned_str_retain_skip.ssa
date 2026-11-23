@@ -4378,38 +4378,39 @@ export function w $main(w %argc, l %argv) {
 @for_body42
     %t123 =l loadl %t4
     %t124 =l loadl %t5
-    storel %t124, %t12
-    %t125 =l loadl %t12
-    %t126 =l and %t125, 1
-    %t127 =w ceql %t126, 0
-    jnz %t127, @if_then47, @if_end46
+    %t125 =l add %t124, 1
+    storel %t125, %t14
+    %t126 =l loadl %t14
+    %t127 =l and %t126, 1
+    %t128 =w ceql %t127, 0
+    jnz %t128, @if_then47, @if_end46
 @if_then47
-    %t128 =l add $str10, 16
-    storel %t128, %t13
+    %t129 =l add $str10, 16
+    storel %t129, %t15
     jmp @inline_done45
 @after_inline_return48
     jmp @if_end46
 @if_end46
-    %t129 =l add $str11, 16
-    %t130 =l loadl %t12
-    %t131 =l call $nox_int_to_str(l %rt, l %t130)
-    %t132 =l call $nox_str_concat(l %rt, l %t129, l %t131)
-    %t133 =w ceql %t131, 0
-    jnz %t133, @release_skip50, @release49
+    %t130 =l add $str11, 16
+    %t131 =l loadl %t14
+    %t132 =l call $nox_int_to_str(l %rt, l %t131)
+    %t133 =l call $nox_str_concat(l %rt, l %t130, l %t132)
+    %t134 =w ceql %t132, 0
+    jnz %t134, @release_skip50, @release49
 @release49
-    %t134 =l sub %t131, 16
-    %t135 =l loadl %t134
-    %t136 =w csgel %t135, 536870912
-    jnz %t136, @str_free_done54, @str_rel_atomic55
+    %t135 =l sub %t132, 16
+    %t136 =l loadl %t135
+    %t137 =w csgel %t136, 536870912
+    jnz %t137, @str_free_done54, @str_rel_atomic55
 @str_rel_atomic55
-    %t137 =l sub %t131, 16
-    %t138 =l loadl %t137
-    %t139 =l sub %t138, 1
-    storel %t139, %t137
-    %t140 =w cslel %t139, 0
-    jnz %t140, @str_free52, @str_free_skip53
+    %t138 =l sub %t132, 16
+    %t139 =l loadl %t138
+    %t140 =l sub %t139, 1
+    storel %t140, %t138
+    %t141 =w cslel %t140, 0
+    jnz %t141, @str_free52, @str_free_skip53
 @str_free52
-    call $nox_str_free_now(l %rt, l %t131)
+    call $nox_str_free_now(l %rt, l %t132)
     jmp @str_free_done54
 @str_free_skip53
     jmp @str_free_done54
@@ -4418,28 +4419,27 @@ export function w $main(w %argc, l %argv) {
 @release_skip50
     jmp @release_done51
 @release_done51
-    storel %t132, %t13
+    storel %t133, %t15
     jmp @inline_done45
 @after_inline_return56
     jmp @inline_done45
 @inline_done45
-    %t141 =l loadl %t13
-    %t142 =l loadl %t5
-    %t143 =l add %t142, 1
-    storel %t143, %t14
-    %t144 =l loadl %t14
+    %t142 =l loadl %t15
+    %t143 =l loadl %t5
+    storel %t143, %t12
+    %t144 =l loadl %t12
     %t145 =l and %t144, 1
     %t146 =w ceql %t145, 0
     jnz %t146, @if_then59, @if_end58
 @if_then59
     %t147 =l add $str12, 16
-    storel %t147, %t15
+    storel %t147, %t13
     jmp @inline_done57
 @after_inline_return60
     jmp @if_end58
 @if_end58
     %t148 =l add $str13, 16
-    %t149 =l loadl %t14
+    %t149 =l loadl %t12
     %t150 =l call $nox_int_to_str(l %rt, l %t149)
     %t151 =l call $nox_str_concat(l %rt, l %t148, l %t150)
     %t152 =w ceql %t150, 0
@@ -4466,17 +4466,17 @@ export function w $main(w %argc, l %argv) {
 @release_skip62
     jmp @release_done63
 @release_done63
-    storel %t151, %t15
+    storel %t151, %t13
     jmp @inline_done57
 @after_inline_return68
     jmp @inline_done57
 @inline_done57
-    %t160 =l loadl %t15
-    call $nox_dict_set(l %rt, l %t123, w 1, w 1, w 0, l %t141, l %t160)
+    %t160 =l loadl %t13
+    call $nox_dict_set(l %rt, l %t123, w 1, w 1, w 0, l %t160, l %t142)
     %t161 =l loadl %t4
     %t162 =l add $str14, 16
     %t163 =l add $str15, 16
-    call $nox_dict_set(l %rt, l %t161, w 1, w 1, w 0, l %t162, l %t163)
+    call $nox_dict_set(l %rt, l %t161, w 1, w 1, w 0, l %t163, l %t162)
     jmp @for_step44
 @for_step44
     %t164 =l loadl %t5
@@ -6203,8 +6203,8 @@ data $str10 = { l 1073741824, l 2305843009213693956, b "even", b 0 }
 data $str11 = { l 1073741824, l 2305843009213693953, b "n", b 0 }
 data $str12 = { l 1073741824, l 2305843009213693956, b "even", b 0 }
 data $str13 = { l 1073741824, l 2305843009213693953, b "n", b 0 }
-data $str14 = { l 1073741824, l 2305843009213693957, b "fixed", b 0 }
-data $str15 = { l 1073741824, l 2305843009213693957, b "value", b 0 }
+data $str14 = { l 1073741824, l 2305843009213693957, b "value", b 0 }
+data $str15 = { l 1073741824, l 2305843009213693957, b "fixed", b 0 }
 data $str16 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
 data $str17 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
 data $str18 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }

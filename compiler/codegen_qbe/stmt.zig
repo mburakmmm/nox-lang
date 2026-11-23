@@ -490,6 +490,21 @@ pub fn genAssign(self: *Codegen, a: ast.Assign) CodegenError!void {
 /// KORUNDU, DEĞİŞMEDİ.
 pub fn genListAssign(self: *Codegen, obj0: Value, idx: ast.Index, value_expr: ast.Expr) CodegenError!void {
     if (obj0.heap != .list) return error.Unsupported;
+    // R1-P0.6 (v2.2.47, kullanıcı kararı 2026-11-23): Python semantiği —
+    // ÖNCE sağ taraf, SONRA indeks ifadesi, SONRA uzunluk okuma + sınır
+    // kontrolü. `xs[2] = clear_and_return(xs)` artık `IndexError` verir
+    // (önceden sınır kontrolü sağ taraftan ÖNCE yapılıp liste sonradan
+    // boşaltılınca sessizce geçiyordu). Sağ taraf sahipli (retain edilmiş ya
+    // da taze) bir değer üretir; hata dalı onu serbest bırakır.
+    // v1.161.0: hedef (liste elemanı) tipi biliniyor → `xs[i] = []` / `xs[i] = {}` boş literalleri çözülebilir.
+    const elem_target = abi.typeInfoOfValue(abi.valueFromElemDescriptor("0", obj0.elem_qtype, obj0.elem_heap_info, obj0.elem_is_str, obj0.elem_fixed_int));
+    const value_v0 = try self.genExprForTarget(value_expr, elem_target);
+    try self.checkNoLowlevelEscape(value_v0);
+    const retained = try self.retainIfAliasing(value_expr, value_v0);
+    const val = try self.convert(retained, obj0.elem_qtype);
+    var val_owned = val;
+    val_owned.always_fresh = true;
+
     var index_v = try self.genExpr(idx.index.*);
 
     const len_t = try self.newTemp();
@@ -516,16 +531,11 @@ pub fn genListAssign(self: *Codegen, obj0: Value, idx: ast.Index, value_expr: as
     // (bkz. `ownership.zig`nin `releaseNamedLocalsExcept`i) SONRA GÜVENLE
     // yeniden eklendi, döngü testiyle DOĞRULANDI.
     try self.releaseIfTemporary(idx.obj.*, obj0);
+    try self.releaseIfTemporary(value_expr, val_owned);
     try self.emitRaisePropagate();
     try self.stashCold(cold_start);
 
     try self.qbeLabel(ok_label);
-    // v1.161.0: hedef (liste elemanı) tipi biliniyor → `xs[i] = []` / `xs[i] = {}` boş literalleri çözülebilir.
-    const elem_target = abi.typeInfoOfValue(abi.valueFromElemDescriptor("0", obj0.elem_qtype, obj0.elem_heap_info, obj0.elem_is_str, obj0.elem_fixed_int));
-    const value_v0 = try self.genExprForTarget(value_expr, elem_target);
-    try self.checkNoLowlevelEscape(value_v0);
-    const retained = try self.retainIfAliasing(value_expr, value_v0);
-    const val = try self.convert(retained, obj0.elem_qtype);
 
     // Faz 9.0 F3b: yığın elemanlı paylaşılan liste — yeni eleman yayımlanır, sonra kilit altında sınır yeniden doğrulanıp yer değiştirilir (eski eleman kilit dışında bırakılır).
     const mctx = try dyn_share.enterMut(self, idx.obj.*, obj0);
@@ -601,16 +611,17 @@ pub fn genDictAssign(self: *Codegen, obj: Value, idx: ast.Index, value_expr: ast
     try self.checkNoLowlevelEscape(obj);
     const dinfo = obj.dict_info.?;
 
-    const key_v0 = try self.genExpr(idx.index.*);
-    try self.checkNoLowlevelEscape(key_v0);
-    const key_v = try self.retainIfAliasing(idx.index.*, key_v0);
-
+    // R1-P0.6: Python sırası — önce sağ taraf, sonra anahtar ifadesi.
     // v1.161.0: hedef (sözlük değeri) tipi biliniyor → `d[k] = []` / `d[k] = {}` boş literalleri çözülebilir.
     const value_target = abi.typeInfoOfValue(abi.dictValueValue(dinfo, "0", dinfo.value_qtype));
     const value_v0 = try self.genExprForTarget(value_expr, value_target);
     try self.checkNoLowlevelEscape(value_v0);
     const value_v = try self.retainIfAliasing(value_expr, value_v0);
     const value_converted = try self.convert(value_v, dinfo.value_qtype);
+
+    const key_v0 = try self.genExpr(idx.index.*);
+    try self.checkNoLowlevelEscape(key_v0);
+    const key_v = try self.retainIfAliasing(idx.index.*, key_v0);
 
     const key_payload = try self.toPayload(key_v);
     const value_payload = try self.toPayload(value_converted);

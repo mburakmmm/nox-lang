@@ -3893,7 +3893,7 @@ export function w $main(w %argc, l %argv) {
     %t60 =l alloc8 8
     %t97 =l alloc8 8
     %t134 =l alloc8 8
-    %t183 =l alloc8 8
+    %t184 =l alloc8 8
     %t242 =l alloc8 8
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
@@ -4008,17 +4008,17 @@ export function w $main(w %argc, l %argv) {
     storel 0, %t1
     storel %t169, %t1
     %t178 =l loadl %t1
-    %t179 =l loadl %t178
-    %t180 =w cugel 1, %t179
-    jnz %t180, @list_assign_err73, @list_assign_ok74
+    %t179 =l add $str12, 16
+    %t180 =l loadl %t178
+    %t181 =w cugel 1, %t180
+    jnz %t181, @list_assign_err73, @list_assign_ok74
 @list_assign_ok74
-    %t210 =l add $str13, 16
     %t211 =l shl 1, 3
     %t212 =l add %t178, 16
     %t213 =l loadl %t212
     %t214 =l add %t213, %t211
     %t215 =l loadl %t214
-    storel %t210, %t214
+    storel %t179, %t214
     %t216 =w ceql %t215, 0
     jnz %t216, @release_skip90, @release89
 @release89
@@ -4479,75 +4479,75 @@ export function w $main(w %argc, l %argv) {
     call $nox_unhandled_exception(l %rt)
     ret 0
 @list_assign_err73
-    %t181 =l add $str12, 16
-    %t184 =l sub %rt, 24
-    %t185 =l loadl %t184
-    %t186 =w ceql %t185, 0
-    jnz %t186, @calloc_slow75, @calloc_chk76
+    %t182 =l add $str13, 16
+    %t185 =l sub %rt, 24
+    %t186 =l loadl %t185
+    %t187 =w ceql %t186, 0
+    jnz %t187, @calloc_slow75, @calloc_chk76
 @calloc_chk76
-    %t187 =l sub %rt, 32
-    %t188 =l loadl %t187
-    %t189 =l add %t188, 16
-    %t190 =l loadl %t189
-    %t191 =w cnel %t190, 0
-    jnz %t191, @calloc_pop77, @calloc_slow75
+    %t188 =l sub %rt, 32
+    %t189 =l loadl %t188
+    %t190 =l add %t189, 16
+    %t191 =l loadl %t190
+    %t192 =w cnel %t191, 0
+    jnz %t192, @calloc_pop77, @calloc_slow75
 @calloc_pop77
-    %t192 =l loadl %t190
-    storel %t192, %t189
-    storel 1, %t190
-    %t193 =l add %t190, 8
-    storel %t193, %t183
+    %t193 =l loadl %t191
+    storel %t193, %t190
+    storel 1, %t191
+    %t194 =l add %t191, 8
+    storel %t194, %t184
     jmp @calloc_done78
 @calloc_slow75
-    %t194 =l call $nox_rc_alloc(l %rt, l 40)
-    storel %t194, %t183
+    %t195 =l call $nox_rc_alloc(l %rt, l 40)
+    storel %t195, %t184
     jmp @calloc_done78
 @calloc_done78
-    %t195 =l loadl %t183
-    storel 11, %t195
-    %t196 =l add %t195, 8
-    storel $IndexError_vtable, %t196
-    %t197 =l add %t195, 16
-    storel 0, %t197
-    %t198 =l add %t195, 24
+    %t196 =l loadl %t184
+    storel 11, %t196
+    %t197 =l add %t196, 8
+    storel $IndexError_vtable, %t197
+    %t198 =l add %t196, 16
     storel 0, %t198
-    %t199 =l add %t195, 32
+    %t199 =l add %t196, 24
     storel 0, %t199
-    call $Exception___init__(l %rt, l %t195, l %t181)
-    %t200 =w call $nox_exception_pending(l %rt)
-    jnz %t200, @ctor_init_failed79, @ctor_init_cont80
+    %t200 =l add %t196, 32
+    storel 0, %t200
+    call $Exception___init__(l %rt, l %t196, l %t182)
+    %t201 =w call $nox_exception_pending(l %rt)
+    jnz %t201, @ctor_init_failed79, @ctor_init_cont80
 @ctor_init_failed79
-    %t201 =w ceql %t195, 0
-    jnz %t201, @release_skip82, @release81
+    %t202 =w ceql %t196, 0
+    jnz %t202, @release_skip82, @release81
 @release81
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t195)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t196)
     jmp @release_done83
 @release_skip82
     jmp @release_done83
 @release_done83
     jmp @ctor_init_cont80
 @ctor_init_cont80
-    %t202 =l sub %rt, 48
-    %t203 =w loadub %t202
-    %t204 =l sub %rt, 64
-    %t205 =l loadl %t204
-    jnz %t203, @exc_slow84, @exc_fast85
+    %t203 =l sub %rt, 48
+    %t204 =w loadub %t203
+    %t205 =l sub %rt, 64
+    %t206 =l loadl %t205
+    jnz %t204, @exc_slow84, @exc_fast85
 @exc_fast85
-    %t206 =w cnel %t205, 0
+    %t207 =w cnel %t206, 0
     jmp @exc_done86
 @exc_slow84
-    %t207 =w call $nox_exception_pending(l %rt)
+    %t208 =w call $nox_exception_pending(l %rt)
     jmp @exc_done86
 @exc_done86
-    %t208 =w phi @exc_fast85 %t206, @exc_slow84 %t207
-    jnz %t208, @exc_propagate87, @exc_continue88
+    %t209 =w phi @exc_fast85 %t207, @exc_slow84 %t208
+    jnz %t209, @exc_propagate87, @exc_continue88
 @exc_propagate87
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue88
-    %t209 =l add %t195, 24
-    storel 8, %t209
-    call $nox_raise(l %rt, l %t195, l 8)
+    %t210 =l add %t196, 24
+    storel 8, %t210
+    call $nox_raise(l %rt, l %t196, l 8)
     call $nox_unhandled_exception(l %rt)
     ret 0
 @list_assign_err106
@@ -5065,8 +5065,8 @@ data $str8 = { l 1073741824, l 2305843009213693975, b "list index out of range",
 data $str9 = { l 1073741824, l 2305843009213693953, b "a", b 0 }
 data $str10 = { l 1073741824, l 2305843009213693953, b "b", b 0 }
 data $str11 = { l 1073741824, l 2305843009213693953, b "c", b 0 }
-data $str12 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
-data $str13 = { l 1073741824, l 2305843009213693960, b "replaced", b 0 }
+data $str12 = { l 1073741824, l 2305843009213693960, b "replaced", b 0 }
+data $str13 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
 data $str14 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
 data $str15 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $str16 = { l 1073741824, l 2305843009213693952, b "", b 0 }

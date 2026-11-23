@@ -30192,3 +30192,7 @@ Sorun (§3.20 sınırlama 1-2): `list[T]` tek bir bloktu; büyüme yeni blok ay�
 
 `nox_list_grow`/`nox_arena_list_grow` bellek yoksa null döner ve başlığa dokunmaz; `append` kodu artık dönüşü denetler ve null ise `nox_out_of_memory` ile durur (fail-stop). Diğer liste işlemlerinin (`copy/concat/slice/push/reserve`) null dönüşünü tüketen kod yolları null-deref çökmesidir (bozulma değil); tam denetim listede açık.
 
+
+### 3.485 İndeksli atamada Python değerlendirme sırası (v2.2.47, R1-P0.6)
+
+Atama hedefi `xs[i] = v` / `d[k] = v` (ve `xs[i] += v`, bu `xs[i] = xs[i] + v`ye iner) artık Python sırasıyla değerlendirilir: ÖNCE sağ taraf, SONRA indeks/anahtar ifadesi, SONRA uzunluk okuma + sınır kontrolü + yazma. `xs[2] = clear_and_return(xs)` önceden sınır kontrolü sağ taraftan önce yapıldığı için sessizce geçiyordu (`len=0`); artık `IndexError` verir. Sağ taraf sahipli değer olduğundan sınır hatası dalı onu serbest bırakır (sızıntı yok). `genListAssign`, `genListSet` (paylaşılan global liste) ve `genDictAssign` aynı sırayı izler. Alıcı (`xs`) ifadesi hâlâ sağ taraftan önce değerlendirilir (Python'da sonra); fark yalnızca yan etkili alıcı ifadelerde (`make()[0] = f()`) görünür. Golden: `list_index_assign_rhs_first`.

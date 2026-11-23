@@ -4259,7 +4259,7 @@ export function l $nox_os_environ(l %rt) {
     %t2 =l alloc8 8
     %t3 =l alloc8 8
     %t4 =l alloc8 8
-    %t34 =l alloc8 8
+    %t31 =l alloc8 8
     storel 0, %t0
     storel 0, %t1
     %t5 =l call $nox_dict_new(l %rt, w 1)
@@ -4312,32 +4312,32 @@ export function l $nox_os_environ(l %rt) {
     %t25 =l loadl %t0
     %t26 =l loadl %t2
     %t27 =l loadl %t4
-    %t28 =l call $nox_str_slice_op(l %rt, l %t26, l 0, w 1, l %t27, w 1, l 0, w 0)
+    %t28 =l add %t27, 1
     %t29 =l loadl %t2
-    %t30 =l loadl %t4
-    %t31 =l add %t30, 1
-    %t32 =l loadl %t2
-    %t35 =w ceql %t32, 0
-    jnz %t35, @strlen_slow14, @strlen_chk12
+    %t32 =w ceql %t29, 0
+    jnz %t32, @strlen_slow14, @strlen_chk12
 @strlen_chk12
-    %t36 =l sub %t32, 8
-    %t37 =l loadl %t36
-    %t38 =l shr %t37, 61
-    %t39 =l and %t38, 3
-    %t40 =w ceql %t39, 1
-    jnz %t40, @strlen_fast13, @strlen_slow14
+    %t33 =l sub %t29, 8
+    %t34 =l loadl %t33
+    %t35 =l shr %t34, 61
+    %t36 =l and %t35, 3
+    %t37 =w ceql %t36, 1
+    jnz %t37, @strlen_fast13, @strlen_slow14
 @strlen_fast13
-    %t41 =l and %t37, 4503599627370495
-    storel %t41, %t34
+    %t38 =l and %t34, 4503599627370495
+    storel %t38, %t31
     jmp @strlen_done15
 @strlen_slow14
-    %t42 =l call $nox_str_char_count(l %t32)
-    storel %t42, %t34
+    %t39 =l call $nox_str_char_count(l %t29)
+    storel %t39, %t31
     jmp @strlen_done15
 @strlen_done15
-    %t43 =l loadl %t34
-    %t44 =l call $nox_str_slice_op(l %rt, l %t29, l %t31, w 1, l %t43, w 1, l 0, w 0)
-    call $nox_dict_set(l %rt, l %t25, w 1, w 1, w 0, l %t28, l %t44)
+    %t40 =l loadl %t31
+    %t41 =l call $nox_str_slice_op(l %rt, l %t26, l %t28, w 1, l %t40, w 1, l 0, w 0)
+    %t42 =l loadl %t2
+    %t43 =l loadl %t4
+    %t44 =l call $nox_str_slice_op(l %rt, l %t42, l 0, w 1, l %t43, w 1, l 0, w 0)
+    call $nox_dict_set(l %rt, l %t25, w 1, w 1, w 0, l %t44, l %t41)
     jmp @if_end10
 @if_end10
     jmp @forlist_step9

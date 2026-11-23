@@ -3806,7 +3806,7 @@ export function $work(l %rt, l %p_id, l %p_out) {
     %t3 =l alloc8 8
     %t4 =l alloc8 8
     %t31 =l alloc8 64
-    %t52 =l alloc8 64
+    %t63 =l alloc8 64
     storel %p_id, %t0
     storel %p_out, %t1
     storel 0, %t2
@@ -3878,45 +3878,24 @@ export function $work(l %rt, l %p_id, l %p_out) {
     %t49 =l call $nox_globals_get(l %rt)
     %t50 =l add %t49, 16
     %t51 =l loadl %t50
-    %t53 =l add $str7, 16
-    %t54 =l add %t52, 0
-    storel 0, %t54
-    %t55 =l add %t52, 8
-    storel %t53, %t55
-    %t56 =l loadl %t0
-    %t57 =l add %t52, 16
-    storel 1, %t57
-    %t58 =l add %t52, 24
-    storel %t56, %t58
-    %t59 =l add $str8, 16
-    %t60 =l add %t52, 32
-    storel 0, %t60
-    %t61 =l add %t52, 40
-    storel %t59, %t61
-    %t62 =l loadl %t3
-    %t63 =l add %t52, 48
-    storel 1, %t63
-    %t64 =l add %t52, 56
-    storel %t62, %t64
-    %t65 =l call $nox_str_concat_n(l %rt, l %t52, l 4)
-    %t66 =l add $str9, 16
-    %t67 =l loadl %t0
-    %t68 =l call $nox_int_to_str(l %rt, l %t67)
-    %t69 =l call $nox_str_concat(l %rt, l %t66, l %t68)
-    %t70 =w ceql %t68, 0
-    jnz %t70, @release_skip7, @release6
+    %t52 =l add $str7, 16
+    %t53 =l loadl %t0
+    %t54 =l call $nox_int_to_str(l %rt, l %t53)
+    %t55 =l call $nox_str_concat(l %rt, l %t52, l %t54)
+    %t56 =w ceql %t54, 0
+    jnz %t56, @release_skip7, @release6
 @release6
-    %t71 =l sub %t68, 16
-    %t72 =l loadl %t71
-    %t73 =w csgel %t72, 536870912
-    jnz %t73, @str_free_done11, @str_rel_atomic12
+    %t57 =l sub %t54, 16
+    %t58 =l loadl %t57
+    %t59 =w csgel %t58, 536870912
+    jnz %t59, @str_free_done11, @str_rel_atomic12
 @str_rel_atomic12
-    %t74 =l sub %t68, 16
-    %t75 =l call $nox_atomic_rc_sub(l %t74, l 1)
-    %t76 =w cslel %t75, 0
-    jnz %t76, @str_free9, @str_free_skip10
+    %t60 =l sub %t54, 16
+    %t61 =l call $nox_atomic_rc_sub(l %t60, l 1)
+    %t62 =w cslel %t61, 0
+    jnz %t62, @str_free9, @str_free_skip10
 @str_free9
-    call $nox_str_free_now(l %rt, l %t68)
+    call $nox_str_free_now(l %rt, l %t54)
     jmp @str_free_done11
 @str_free_skip10
     jmp @str_free_done11
@@ -3925,7 +3904,28 @@ export function $work(l %rt, l %p_id, l %p_out) {
 @release_skip7
     jmp @release_done8
 @release_done8
-    call $nox_dict_set(l %rt, l %t51, w 1, w 1, w 0, l %t65, l %t69)
+    %t64 =l add $str8, 16
+    %t65 =l add %t63, 0
+    storel 0, %t65
+    %t66 =l add %t63, 8
+    storel %t64, %t66
+    %t67 =l loadl %t0
+    %t68 =l add %t63, 16
+    storel 1, %t68
+    %t69 =l add %t63, 24
+    storel %t67, %t69
+    %t70 =l add $str9, 16
+    %t71 =l add %t63, 32
+    storel 0, %t71
+    %t72 =l add %t63, 40
+    storel %t70, %t72
+    %t73 =l loadl %t3
+    %t74 =l add %t63, 48
+    storel 1, %t74
+    %t75 =l add %t63, 56
+    storel %t73, %t75
+    %t76 =l call $nox_str_concat_n(l %rt, l %t63, l 4)
+    call $nox_dict_set(l %rt, l %t51, w 1, w 1, w 0, l %t76, l %t55)
     %t77 =l loadl %t3
     %t78 =l add %t77, 1
     storel %t78, %t3
@@ -7353,9 +7353,9 @@ data $str3 = { l 1073741824, l 2305843009213693978, b "invalid format specifier:
 data $str4 = { l 1073741824, l 2305843009213693982, b "ord() cannot take an empty str", b 0 }
 data $str5 = { l 1073741824, l 2305843009213693953, b "w", b 0 }
 data $str6 = { l 1073741824, l 2305843009213693953, b "-", b 0 }
-data $str7 = { l 1073741824, l 2305843009213693953, b "k", b 0 }
-data $str8 = { l 1073741824, l 2305843009213693953, b "-", b 0 }
-data $str9 = { l 1073741824, l 2305843009213693953, b "v", b 0 }
+data $str7 = { l 1073741824, l 2305843009213693953, b "v", b 0 }
+data $str8 = { l 1073741824, l 2305843009213693953, b "k", b 0 }
+data $str9 = { l 1073741824, l 2305843009213693953, b "-", b 0 }
 data $str10 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
 data $str11 = { l 1073741824, l 2305843009213693975, b "list index out of range", b 0 }
 data $str12 = { l 1073741824, l 2305843009213693956, b "w3-7", b 0 }

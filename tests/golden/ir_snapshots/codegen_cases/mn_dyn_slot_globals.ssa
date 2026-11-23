@@ -4378,28 +4378,29 @@ export function $worker(l %rt, l %p_id, l %p_out) {
     %t163 =l call $nox_globals_get(l %rt)
     %t164 =l add %t163, 32
     call $nox_obj_unlock(l %t164)
-    %t165 =l add $str7, 16
-    %t166 =l loadl %t3
-    %t167 =l rem %t166, 13
-    %t168 =l sar %t167, 63
-    %t169 =l and %t168, 13
-    %t170 =l add %t167, %t169
-    %t171 =l call $nox_int_to_str(l %rt, l %t170)
-    %t172 =l call $nox_str_concat(l %rt, l %t165, l %t171)
-    %t173 =w ceql %t171, 0
-    jnz %t173, @release_skip85, @release84
+    %t165 =l loadl %t3
+    %t166 =l add $str7, 16
+    %t167 =l loadl %t3
+    %t168 =l rem %t167, 13
+    %t169 =l sar %t168, 63
+    %t170 =l and %t169, 13
+    %t171 =l add %t168, %t170
+    %t172 =l call $nox_int_to_str(l %rt, l %t171)
+    %t173 =l call $nox_str_concat(l %rt, l %t166, l %t172)
+    %t174 =w ceql %t172, 0
+    jnz %t174, @release_skip85, @release84
 @release84
-    %t174 =l sub %t171, 16
-    %t175 =l loadl %t174
-    %t176 =w csgel %t175, 536870912
-    jnz %t176, @str_free_done89, @str_rel_atomic90
+    %t175 =l sub %t172, 16
+    %t176 =l loadl %t175
+    %t177 =w csgel %t176, 536870912
+    jnz %t177, @str_free_done89, @str_rel_atomic90
 @str_rel_atomic90
-    %t177 =l sub %t171, 16
-    %t178 =l call $nox_atomic_rc_sub(l %t177, l 1)
-    %t179 =w cslel %t178, 0
-    jnz %t179, @str_free87, @str_free_skip88
+    %t178 =l sub %t172, 16
+    %t179 =l call $nox_atomic_rc_sub(l %t178, l 1)
+    %t180 =w cslel %t179, 0
+    jnz %t180, @str_free87, @str_free_skip88
 @str_free87
-    call $nox_str_free_now(l %rt, l %t171)
+    call $nox_str_free_now(l %rt, l %t172)
     jmp @str_free_done89
 @str_free_skip88
     jmp @str_free_done89
@@ -4408,8 +4409,7 @@ export function $worker(l %rt, l %p_id, l %p_out) {
 @release_skip85
     jmp @release_done86
 @release_done86
-    %t180 =l loadl %t3
-    call $nox_dict_set(l %rt, l %t159, w 1, w 0, w 0, l %t172, l %t180)
+    call $nox_dict_set(l %rt, l %t159, w 1, w 0, w 0, l %t173, l %t165)
     %t181 =w ceql %t159, 0
     jnz %t181, @release_skip92, @release91
 @release91

@@ -478,12 +478,13 @@ pub fn genListGet(self: *Codegen, g: GlobalVar, index_expr: ast.Expr) CodegenErr
 /// `xs[i] = v`.
 pub fn genListSet(self: *Codegen, g: GlobalVar, index_expr: ast.Expr, value_expr: ast.Expr) CodegenError!void {
     const sh = shapeOf(g);
-    const idx = try self.genExpr(index_expr);
-    const idx_l = try self.convert(idx, .l);
+    // R1-P0.6: Python sırası — önce sağ taraf, sonra indeks ifadesi (sınır kontrolü zaten `nox_slist_set` içinde, yazma anında).
     const target = abi.valueFromElemDescriptor("0", g.info.elem_qtype, g.info.elem_heap_info, g.info.elem_is_str, g.info.elem_fixed_int);
     const v0 = try self.genExprForTarget(value_expr, abi.typeInfoOfValue(target));
     const retained = try self.retainIfAliasing(value_expr, v0);
     const val = try self.convert(retained, g.info.elem_qtype);
+    const idx = try self.genExpr(index_expr);
+    const idx_l = try self.convert(idx, .l);
     const payload = try elemPayload(self, g, val);
     const cell = try loadCell(self, g);
     const ok = try self.newTemp();

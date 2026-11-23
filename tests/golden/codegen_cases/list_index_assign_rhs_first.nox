@@ -1,0 +1,111 @@
+# R1-P0.6 (v2.2.47): indeksli atamada Python sırası — önce sağ taraf, sonra indeks ifadesi, sonra sınır kontrolü.
+log: list[str] = []
+
+def clear_and_return(xs: list[int]) -> int:
+    xs.clear()
+    return 7
+
+def pop_and_return(xs: list[int]) -> int:
+    xs.pop()
+    return 5
+
+def clear_str(xs: list[str]) -> str:
+    xs.clear()
+    return "yeni" + "deger"
+
+def idx(n: int, tag: str) -> int:
+    log.append(tag)
+    return n
+
+def val(n: int, tag: str) -> int:
+    log.append(tag)
+    return n
+
+def t1() -> None:
+    xs: list[int] = [1, 2, 3]
+    try:
+        xs[2] = clear_and_return(xs)
+        print("t1 gecti")
+    except IndexError:
+        print("t1 IndexError")
+    print(len(xs))
+
+def t2() -> None:
+    xs: list[int] = [1, 2, 3]
+    try:
+        xs[2] = pop_and_return(xs)
+        print("t2 gecti")
+    except IndexError:
+        print("t2 IndexError")
+    print(len(xs))
+    ys: list[int] = [1, 2, 3]
+    ys[1] = pop_and_return(ys)
+    print(ys[0], ys[1], len(ys))
+
+def t3() -> None:
+    xs: list[int] = [1, 2, 3]
+    try:
+        xs[-1] = clear_and_return(xs)
+        print("t3 gecti")
+    except IndexError:
+        print("t3 IndexError")
+    print(len(xs))
+
+def t4() -> None:
+    xs: list[int] = [0, 0, 0]
+    log.clear()
+    xs[idx(1, "idx")] = val(9, "val")
+    print(log[0], log[1], xs[1])
+
+def t5() -> None:
+    xs: list[str] = ["a", "b", "c"]
+    try:
+        xs[1] = clear_str(xs)
+        print("t5 gecti")
+    except IndexError:
+        print("t5 IndexError")
+    print(len(xs))
+
+def t6() -> None:
+    g: list[list[int]] = [[1, 2], [3, 4]]
+    try:
+        g[0][1] = clear_and_return(g[0])
+        print("t6 gecti")
+    except IndexError:
+        print("t6 IndexError")
+    print(len(g[0]), len(g[1]))
+
+def t7() -> None:
+    xs: list[int] = [1, 2, 3]
+    try:
+        xs[2] += clear_and_return(xs)
+        print("t7 gecti")
+    except IndexError:
+        print("t7 IndexError")
+    print(len(xs))
+
+def t8() -> None:
+    d: dict[int, int] = {}
+    log.clear()
+    d[idx(1, "key")] = val(2, "dval")
+    print(log[0], log[1], d[1])
+
+def t9() -> None:
+    xs: list[int] = [1, 2, 3]
+    xs[2] = 10
+    xs[-3] = 20
+    print(xs[0], xs[1], xs[2])
+    try:
+        xs[3] = 1
+    except IndexError:
+        print("t9 IndexError")
+
+t1()
+t2()
+t3()
+t4()
+t5()
+t6()
+t7()
+t8()
+t9()

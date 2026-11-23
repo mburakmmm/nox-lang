@@ -3966,8 +3966,8 @@ export function w $main(w %argc, l %argv) {
 @while_body4
     %t19 =l loadl %t0
     %t20 =l loadl %t1
-    %t21 =l loadl %t1
-    %t22 =l mul %t21, 2
+    %t21 =l mul %t20, 2
+    %t22 =l loadl %t1
     %t23 =l add %t19, 106
     %t24 =w loadub %t23
     jnz %t24, @dict_slow7, @dict_chk8
@@ -3983,14 +3983,14 @@ export function w $main(w %argc, l %argv) {
     %t31 =l shl %t25, 4
     %t32 =l add %t30, %t31
     %t33 =l loadl %t32
-    %t34 =w ceql %t33, %t20
+    %t34 =w ceql %t33, %t22
     jnz %t34, @dict_hit6, @dict_slow7
 @dict_hit6
     %t35 =l add %t32, 8
-    storel %t22, %t35
+    storel %t21, %t35
     jmp @dict_done10
 @dict_slow7
-    call $nox_dict_set(l %rt, l %t19, w 0, w 0, w 0, l %t20, l %t22)
+    call $nox_dict_set(l %rt, l %t19, w 0, w 0, w 0, l %t22, l %t21)
     jmp @dict_done10
 @dict_done10
     %t36 =l loadl %t1
@@ -4836,26 +4836,27 @@ export function w $main(w %argc, l %argv) {
     jnz %t611, @while_body263, @while_end264
 @while_body263
     %t612 =l loadl %t9
-    %t613 =l add $str15, 16
-    %t614 =l loadl %t10
-    %t615 =l call $nox_int_to_str(l %rt, l %t614)
-    %t616 =l call $nox_str_concat(l %rt, l %t613, l %t615)
-    %t617 =w ceql %t615, 0
-    jnz %t617, @release_skip266, @release265
+    %t613 =l loadl %t10
+    %t614 =l add $str15, 16
+    %t615 =l loadl %t10
+    %t616 =l call $nox_int_to_str(l %rt, l %t615)
+    %t617 =l call $nox_str_concat(l %rt, l %t614, l %t616)
+    %t618 =w ceql %t616, 0
+    jnz %t618, @release_skip266, @release265
 @release265
-    %t618 =l sub %t615, 16
-    %t619 =l loadl %t618
-    %t620 =w csgel %t619, 536870912
-    jnz %t620, @str_free_done270, @str_rel_atomic271
+    %t619 =l sub %t616, 16
+    %t620 =l loadl %t619
+    %t621 =w csgel %t620, 536870912
+    jnz %t621, @str_free_done270, @str_rel_atomic271
 @str_rel_atomic271
-    %t621 =l sub %t615, 16
-    %t622 =l loadl %t621
-    %t623 =l sub %t622, 1
-    storel %t623, %t621
-    %t624 =w cslel %t623, 0
-    jnz %t624, @str_free268, @str_free_skip269
+    %t622 =l sub %t616, 16
+    %t623 =l loadl %t622
+    %t624 =l sub %t623, 1
+    storel %t624, %t622
+    %t625 =w cslel %t624, 0
+    jnz %t625, @str_free268, @str_free_skip269
 @str_free268
-    call $nox_str_free_now(l %rt, l %t615)
+    call $nox_str_free_now(l %rt, l %t616)
     jmp @str_free_done270
 @str_free_skip269
     jmp @str_free_done270
@@ -4864,8 +4865,7 @@ export function w $main(w %argc, l %argv) {
 @release_skip266
     jmp @release_done267
 @release_done267
-    %t625 =l loadl %t10
-    call $nox_dict_set(l %rt, l %t612, w 1, w 0, w 0, l %t616, l %t625)
+    call $nox_dict_set(l %rt, l %t612, w 1, w 0, w 0, l %t617, l %t613)
     %t626 =l loadl %t10
     %t627 =l add %t626, 1
     storel %t627, %t10
@@ -5524,14 +5524,14 @@ export function w $main(w %argc, l %argv) {
     %t908 =l shl %t902, 4
     %t909 =l add %t907, %t908
     %t910 =l loadl %t909
-    %t911 =w ceql %t910, %t896
+    %t911 =w ceql %t910, %t899
     jnz %t911, @dict_hit410, @dict_slow411
 @dict_hit410
     %t912 =l add %t909, 8
-    storel %t899, %t912
+    storel %t896, %t912
     jmp @dict_done414
 @dict_slow411
-    call $nox_dict_set(l %rt, l %t893, w 0, w 0, w 0, l %t896, l %t899)
+    call $nox_dict_set(l %rt, l %t893, w 0, w 0, w 0, l %t899, l %t896)
     jmp @dict_done414
 @dict_done414
     %t913 =l call $nox_globals_get(l %rt)
@@ -5552,8 +5552,8 @@ export function w $main(w %argc, l %argv) {
 @while_body416
     %t921 =l loadl %t12
     %t922 =l loadl %t13
-    %t923 =l add 1000, %t922
-    %t924 =l loadl %t13
+    %t923 =l loadl %t13
+    %t924 =l add 1000, %t923
     %t925 =l add %t921, 106
     %t926 =w loadub %t925
     jnz %t926, @dict_slow419, @dict_chk420
@@ -5569,14 +5569,14 @@ export function w $main(w %argc, l %argv) {
     %t933 =l shl %t927, 4
     %t934 =l add %t932, %t933
     %t935 =l loadl %t934
-    %t936 =w ceql %t935, %t923
+    %t936 =w ceql %t935, %t924
     jnz %t936, @dict_hit418, @dict_slow419
 @dict_hit418
     %t937 =l add %t934, 8
-    storel %t924, %t937
+    storel %t922, %t937
     jmp @dict_done422
 @dict_slow419
-    call $nox_dict_set(l %rt, l %t921, w 0, w 0, w 0, l %t923, l %t924)
+    call $nox_dict_set(l %rt, l %t921, w 0, w 0, w 0, l %t924, l %t922)
     jmp @dict_done422
 @dict_done422
     %t938 =l loadl %t12

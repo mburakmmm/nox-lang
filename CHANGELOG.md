@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.47]
+
+GPT-6 sağlamlaştırma listesi — R1-P0.6 (kullanıcı onayıyla): indeksli atamada Python değerlendirme sırası.
+
+- **R1-P0.6:** `xs[i] = v` artık ÖNCE sağ tarafı, SONRA indeksi, SONRA uzunluk okuma + sınır kontrolünü yapar: `xs[2] = clear_and_return(xs)` `IndexError` verir (önceden sessizce geçip `len=0` bırakıyordu). Sınır hatası dalı sahipli sağ taraf değerini serbest bırakır. Aynı sıra paylaşılan global liste (`genListSet`) ve sözlük (`d[k] = v`: önce değer, sonra anahtar) için de geçerli; bileşik atama (`xs[i] += f()`) zaten `xs[i] = xs[i] + f()`e indiği için yazma anında yeniden sınır kontrolü alır. Golden: `list_index_assign_rhs_first` (Python ile bayt-bayt aynı, QBE + LLVM). 160 codegen IR anlık görüntüsü yenilendi.
+- **Araç:** `scripts/qrun.sh` — uzun/gürültülü komutların çıktısını log dosyasına yazıp ekrana yalnızca sinyal satırlarını basar (token tasarrufu; çıkış kodu korunur).
+
 ## [2.2.46]
 
 GPT-6 sağlamlaştırma listesi (`project/selfhost-sertlestirme-listesi-2026-11-23.md`) — ilk toplu: Optional daraltma güvenliği, liste büyütme OOM, GC sayacı, harness doğruluğu.

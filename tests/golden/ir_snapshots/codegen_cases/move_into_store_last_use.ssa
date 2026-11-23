@@ -3160,35 +3160,35 @@ export function $Box_put(l %rt, l %p_self, l %p_k, l %p_leaf) {
     %t3 =l loadl %t0
     %t4 =l add %t3, 32
     %t5 =l loadl %t4
-    %t6 =l loadl %t1
+    %t6 =l loadl %t2
     %t7 =w ceql %t6, 0
     jnz %t7, @retain_skip1, @retain0
 @retain0
-    %t8 =l sub %t6, 16
+    %t8 =l sub %t6, 8
     %t9 =l loadl %t8
-    %t10 =w csgel %t9, 536870912
-    jnz %t10, @retain_done2, @retain_bump3
-@retain_bump3
-    %t11 =l loadl %t8
-    %t12 =l add %t11, 1
-    storel %t12, %t8
+    %t10 =l add %t9, 1
+    storel %t10, %t8
     jmp @retain_done2
 @retain_skip1
     jmp @retain_done2
 @retain_done2
-    %t13 =l loadl %t2
-    %t14 =w ceql %t13, 0
-    jnz %t14, @retain_skip5, @retain4
-@retain4
-    %t15 =l sub %t13, 8
-    %t16 =l loadl %t15
+    %t11 =l loadl %t1
+    %t12 =w ceql %t11, 0
+    jnz %t12, @retain_skip4, @retain3
+@retain3
+    %t13 =l sub %t11, 16
+    %t14 =l loadl %t13
+    %t15 =w csgel %t14, 536870912
+    jnz %t15, @retain_done5, @retain_bump6
+@retain_bump6
+    %t16 =l loadl %t13
     %t17 =l add %t16, 1
-    storel %t17, %t15
-    jmp @retain_done6
-@retain_skip5
-    jmp @retain_done6
-@retain_done6
-    call $nox_dict_set(l %rt, l %t5, w 1, w 0, w 1, l %t6, l %t13)
+    storel %t17, %t13
+    jmp @retain_done5
+@retain_skip4
+    jmp @retain_done5
+@retain_done5
+    call $nox_dict_set(l %rt, l %t5, w 1, w 0, w 1, l %t11, l %t6)
 @fn_end7
     ret
 }
@@ -5672,8 +5672,8 @@ export function l $store_move(l %rt, l %p_n) {
     %t5 =l alloc8 8
     %t30 =l alloc8 8
     %t59 =l alloc8 8
-    %t83 =l alloc8 8
-    %t132 =l alloc8 8
+    %t84 =l alloc8 8
+    %t133 =l alloc8 8
     storel 0, %t1
     storel 0, %t2
     storel 0, %t3
@@ -5815,187 +5815,187 @@ export function l $store_move(l %rt, l %p_n) {
     %t76 =l loadl %t1
     %t77 =l add %t76, 16
     %t78 =l loadl %t77
-    %t79 =l loadl %t78
-    %t80 =w cugel 0, %t79
-    jnz %t80, @list_assign_err21, @list_assign_ok22
-@list_assign_ok22
-    %t122 =l loadl %t2
+    %t79 =l loadl %t2
     storel 0, %t2
-    %t123 =l shl 0, 3
-    %t124 =l add %t78, 16
-    %t125 =l loadl %t124
-    %t126 =l add %t125, %t123
-    %t127 =l loadl %t126
-    storel %t122, %t126
-    %t128 =w ceql %t127, 0
-    jnz %t128, @release_skip56, @release55
-@release55
-    call $Leaf_release(l %rt, l %t127)
-    jmp @release_done57
-@release_skip56
-    jmp @release_done57
-@release_done57
-    %t129 =l loadl %t0
-    %t130 =l mul %t129, 2
-    %t133 =l sub %rt, 24
-    %t134 =l loadl %t133
-    %t135 =w ceql %t134, 0
-    jnz %t135, @calloc_slow58, @calloc_chk59
-@calloc_chk59
-    %t136 =l sub %rt, 32
-    %t137 =l loadl %t136
-    %t138 =l add %t137, 8
-    %t139 =l loadl %t138
-    %t140 =w cnel %t139, 0
-    jnz %t140, @calloc_pop60, @calloc_slow58
-@calloc_pop60
-    %t141 =l loadl %t139
-    storel %t141, %t138
-    storel 1, %t139
-    %t142 =l add %t139, 8
-    storel %t142, %t132
-    jmp @calloc_done61
-@calloc_slow58
-    %t143 =l call $nox_rc_alloc(l %rt, l 16)
-    storel %t143, %t132
-    jmp @calloc_done61
-@calloc_done61
-    %t144 =l loadl %t132
-    storel 3, %t144
-    %t145 =l add %t144, 8
-    storel 0, %t145
-    %t146 =l add %t144, 8
-    storel %t130, %t146
-    %t147 =l loadl %t3
-    %t148 =w ceql %t147, 0
-    jnz %t148, @release_skip63, @release62
-@release62
-    call $Leaf_release(l %rt, l %t147)
-    jmp @release_done64
-@release_skip63
-    jmp @release_done64
-@release_done64
+    %t80 =l loadl %t78
+    %t81 =w cugel 0, %t80
+    jnz %t81, @list_assign_err21, @list_assign_ok22
+@list_assign_ok22
+    %t124 =l shl 0, 3
+    %t125 =l add %t78, 16
+    %t126 =l loadl %t125
+    %t127 =l add %t126, %t124
+    %t128 =l loadl %t127
+    storel %t79, %t127
+    %t129 =w ceql %t128, 0
+    jnz %t129, @release_skip59, @release58
+@release58
+    call $Leaf_release(l %rt, l %t128)
+    jmp @release_done60
+@release_skip59
+    jmp @release_done60
+@release_done60
+    %t130 =l loadl %t0
+    %t131 =l mul %t130, 2
+    %t134 =l sub %rt, 24
+    %t135 =l loadl %t134
+    %t136 =w ceql %t135, 0
+    jnz %t136, @calloc_slow61, @calloc_chk62
+@calloc_chk62
+    %t137 =l sub %rt, 32
+    %t138 =l loadl %t137
+    %t139 =l add %t138, 8
+    %t140 =l loadl %t139
+    %t141 =w cnel %t140, 0
+    jnz %t141, @calloc_pop63, @calloc_slow61
+@calloc_pop63
+    %t142 =l loadl %t140
+    storel %t142, %t139
+    storel 1, %t140
+    %t143 =l add %t140, 8
+    storel %t143, %t133
+    jmp @calloc_done64
+@calloc_slow61
+    %t144 =l call $nox_rc_alloc(l %rt, l 16)
+    storel %t144, %t133
+    jmp @calloc_done64
+@calloc_done64
+    %t145 =l loadl %t133
+    storel 3, %t145
+    %t146 =l add %t145, 8
+    storel 0, %t146
+    %t147 =l add %t145, 8
+    storel %t131, %t147
+    %t148 =l loadl %t3
+    %t149 =w ceql %t148, 0
+    jnz %t149, @release_skip66, @release65
+@release65
+    call $Leaf_release(l %rt, l %t148)
+    jmp @release_done67
+@release_skip66
+    jmp @release_done67
+@release_done67
     storel 0, %t3
-    storel %t144, %t3
-    %t149 =l loadl %t1
-    %t150 =l add %t149, 32
-    %t151 =l loadl %t150
-    %t152 =l add $str7, 16
+    storel %t145, %t3
+    %t150 =l loadl %t1
+    %t151 =l add %t150, 32
+    %t152 =l loadl %t151
     %t153 =l loadl %t3
     storel 0, %t3
-    call $nox_dict_set(l %rt, l %t151, w 1, w 0, w 1, l %t152, l %t153)
-    %t154 =l loadl %t1
-    %t155 =l call $Box_total(l %rt, l %t154)
-    %t156 =l sub %rt, 48
-    %t157 =w loadub %t156
-    %t158 =l sub %rt, 64
-    %t159 =l loadl %t158
-    jnz %t157, @exc_slow65, @exc_fast66
-@exc_fast66
-    %t160 =w cnel %t159, 0
-    jmp @exc_done67
-@exc_slow65
-    %t161 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done67
-@exc_done67
-    %t162 =w phi @exc_fast66 %t160, @exc_slow65 %t161
-    jnz %t162, @exc_propagate68, @exc_continue69
-@exc_propagate68
-    %t163 =l loadl %t2
-    %t164 =w ceql %t163, 0
-    jnz %t164, @release_skip71, @release70
-@release70
-    call $Leaf_release(l %rt, l %t163)
-    jmp @release_done72
-@release_skip71
-    jmp @release_done72
-@release_done72
-    storel 0, %t2
-    %t165 =l loadl %t3
-    %t166 =w ceql %t165, 0
-    jnz %t166, @release_skip74, @release73
+    %t154 =l add $str7, 16
+    call $nox_dict_set(l %rt, l %t152, w 1, w 0, w 1, l %t154, l %t153)
+    %t155 =l loadl %t1
+    %t156 =l call $Box_total(l %rt, l %t155)
+    %t157 =l sub %rt, 48
+    %t158 =w loadub %t157
+    %t159 =l sub %rt, 64
+    %t160 =l loadl %t159
+    jnz %t158, @exc_slow68, @exc_fast69
+@exc_fast69
+    %t161 =w cnel %t160, 0
+    jmp @exc_done70
+@exc_slow68
+    %t162 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done70
+@exc_done70
+    %t163 =w phi @exc_fast69 %t161, @exc_slow68 %t162
+    jnz %t163, @exc_propagate71, @exc_continue72
+@exc_propagate71
+    %t164 =l loadl %t2
+    %t165 =w ceql %t164, 0
+    jnz %t165, @release_skip74, @release73
 @release73
-    call $Leaf_release(l %rt, l %t165)
+    call $Leaf_release(l %rt, l %t164)
     jmp @release_done75
 @release_skip74
     jmp @release_done75
 @release_done75
-    storel 0, %t3
-    %t167 =l loadl %t1
-    %t168 =w ceql %t167, 0
-    jnz %t168, @release_skip77, @release76
+    storel 0, %t2
+    %t166 =l loadl %t3
+    %t167 =w ceql %t166, 0
+    jnz %t167, @release_skip77, @release76
 @release76
-    call $Box_release(l %rt, l %t167)
+    call $Leaf_release(l %rt, l %t166)
     jmp @release_done78
 @release_skip77
     jmp @release_done78
 @release_done78
-    storel 0, %t1
-    ret 0
-@exc_continue69
-    %t169 =l loadl %t2
-    %t170 =w ceql %t169, 0
-    jnz %t170, @release_skip80, @release79
+    storel 0, %t3
+    %t168 =l loadl %t1
+    %t169 =w ceql %t168, 0
+    jnz %t169, @release_skip80, @release79
 @release79
-    call $Leaf_release(l %rt, l %t169)
+    call $Box_release(l %rt, l %t168)
     jmp @release_done81
 @release_skip80
     jmp @release_done81
 @release_done81
-    storel 0, %t2
-    %t171 =l loadl %t3
-    %t172 =w ceql %t171, 0
-    jnz %t172, @release_skip83, @release82
+    storel 0, %t1
+    ret 0
+@exc_continue72
+    %t170 =l loadl %t2
+    %t171 =w ceql %t170, 0
+    jnz %t171, @release_skip83, @release82
 @release82
-    call $Leaf_release(l %rt, l %t171)
+    call $Leaf_release(l %rt, l %t170)
     jmp @release_done84
 @release_skip83
     jmp @release_done84
 @release_done84
-    storel 0, %t3
-    %t173 =l loadl %t1
-    %t174 =w ceql %t173, 0
-    jnz %t174, @release_skip86, @release85
+    storel 0, %t2
+    %t172 =l loadl %t3
+    %t173 =w ceql %t172, 0
+    jnz %t173, @release_skip86, @release85
 @release85
-    call $Box_release(l %rt, l %t173)
+    call $Leaf_release(l %rt, l %t172)
     jmp @release_done87
 @release_skip86
     jmp @release_done87
 @release_done87
+    storel 0, %t3
+    %t174 =l loadl %t1
+    %t175 =w ceql %t174, 0
+    jnz %t175, @release_skip89, @release88
+@release88
+    call $Box_release(l %rt, l %t174)
+    jmp @release_done90
+@release_skip89
+    jmp @release_done90
+@release_done90
     storel 0, %t1
-    ret %t155
-@after_return88
-    %t175 =l loadl %t2
-    %t176 =w ceql %t175, 0
-    jnz %t176, @release_skip90, @release89
-@release89
-    call $Leaf_release(l %rt, l %t175)
-    jmp @release_done91
-@release_skip90
-    jmp @release_done91
-@release_done91
-    storel 0, %t2
-    %t177 =l loadl %t3
-    %t178 =w ceql %t177, 0
-    jnz %t178, @release_skip93, @release92
+    ret %t156
+@after_return91
+    %t176 =l loadl %t2
+    %t177 =w ceql %t176, 0
+    jnz %t177, @release_skip93, @release92
 @release92
-    call $Leaf_release(l %rt, l %t177)
+    call $Leaf_release(l %rt, l %t176)
     jmp @release_done94
 @release_skip93
     jmp @release_done94
 @release_done94
-    storel 0, %t3
-    %t179 =l loadl %t1
-    %t180 =w ceql %t179, 0
-    jnz %t180, @release_skip96, @release95
+    storel 0, %t2
+    %t178 =l loadl %t3
+    %t179 =w ceql %t178, 0
+    jnz %t179, @release_skip96, @release95
 @release95
-    call $Box_release(l %rt, l %t179)
+    call $Leaf_release(l %rt, l %t178)
     jmp @release_done97
 @release_skip96
     jmp @release_done97
 @release_done97
+    storel 0, %t3
+    %t180 =l loadl %t1
+    %t181 =w ceql %t180, 0
+    jnz %t181, @release_skip99, @release98
+@release98
+    call $Box_release(l %rt, l %t180)
+    jmp @release_done100
+@release_skip99
+    jmp @release_done100
+@release_done100
     storel 0, %t1
-@fn_end98
+@fn_end101
     ret 0
 @append_grow11
     %t50 =l call $nox_list_grow(l %rt, l %t45, l 8)
@@ -6005,94 +6005,94 @@ export function l $store_move(l %rt, l %p_n) {
     call $nox_out_of_memory()
     ret 0
 @list_assign_err21
-    %t81 =l add $str6, 16
-    %t84 =l sub %rt, 24
-    %t85 =l loadl %t84
-    %t86 =w ceql %t85, 0
-    jnz %t86, @calloc_slow23, @calloc_chk24
+    %t82 =l add $str6, 16
+    %t85 =l sub %rt, 24
+    %t86 =l loadl %t85
+    %t87 =w ceql %t86, 0
+    jnz %t87, @calloc_slow23, @calloc_chk24
 @calloc_chk24
-    %t87 =l sub %rt, 32
-    %t88 =l loadl %t87
-    %t89 =l add %t88, 16
-    %t90 =l loadl %t89
-    %t91 =w cnel %t90, 0
-    jnz %t91, @calloc_pop25, @calloc_slow23
+    %t88 =l sub %rt, 32
+    %t89 =l loadl %t88
+    %t90 =l add %t89, 16
+    %t91 =l loadl %t90
+    %t92 =w cnel %t91, 0
+    jnz %t92, @calloc_pop25, @calloc_slow23
 @calloc_pop25
-    %t92 =l loadl %t90
-    storel %t92, %t89
-    storel 1, %t90
-    %t93 =l add %t90, 8
-    storel %t93, %t83
+    %t93 =l loadl %t91
+    storel %t93, %t90
+    storel 1, %t91
+    %t94 =l add %t91, 8
+    storel %t94, %t84
     jmp @calloc_done26
 @calloc_slow23
-    %t94 =l call $nox_rc_alloc(l %rt, l 40)
-    storel %t94, %t83
+    %t95 =l call $nox_rc_alloc(l %rt, l 40)
+    storel %t95, %t84
     jmp @calloc_done26
 @calloc_done26
-    %t95 =l loadl %t83
-    storel 14, %t95
-    %t96 =l add %t95, 8
-    storel $IndexError_vtable, %t96
-    %t97 =l add %t95, 16
-    storel 0, %t97
-    %t98 =l add %t95, 24
+    %t96 =l loadl %t84
+    storel 14, %t96
+    %t97 =l add %t96, 8
+    storel $IndexError_vtable, %t97
+    %t98 =l add %t96, 16
     storel 0, %t98
-    %t99 =l add %t95, 32
+    %t99 =l add %t96, 24
     storel 0, %t99
-    call $Exception___init__(l %rt, l %t95, l %t81)
-    %t100 =w call $nox_exception_pending(l %rt)
-    jnz %t100, @ctor_init_failed27, @ctor_init_cont28
+    %t100 =l add %t96, 32
+    storel 0, %t100
+    call $Exception___init__(l %rt, l %t96, l %t82)
+    %t101 =w call $nox_exception_pending(l %rt)
+    jnz %t101, @ctor_init_failed27, @ctor_init_cont28
 @ctor_init_failed27
-    %t101 =w ceql %t95, 0
-    jnz %t101, @release_skip30, @release29
+    %t102 =w ceql %t96, 0
+    jnz %t102, @release_skip30, @release29
 @release29
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t95)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t96)
     jmp @release_done31
 @release_skip30
     jmp @release_done31
 @release_done31
     jmp @ctor_init_cont28
 @ctor_init_cont28
-    %t102 =l sub %rt, 48
-    %t103 =w loadub %t102
-    %t104 =l sub %rt, 64
-    %t105 =l loadl %t104
-    jnz %t103, @exc_slow32, @exc_fast33
+    %t103 =l sub %rt, 48
+    %t104 =w loadub %t103
+    %t105 =l sub %rt, 64
+    %t106 =l loadl %t105
+    jnz %t104, @exc_slow32, @exc_fast33
 @exc_fast33
-    %t106 =w cnel %t105, 0
+    %t107 =w cnel %t106, 0
     jmp @exc_done34
 @exc_slow32
-    %t107 =w call $nox_exception_pending(l %rt)
+    %t108 =w call $nox_exception_pending(l %rt)
     jmp @exc_done34
 @exc_done34
-    %t108 =w phi @exc_fast33 %t106, @exc_slow32 %t107
-    jnz %t108, @exc_propagate35, @exc_continue36
+    %t109 =w phi @exc_fast33 %t107, @exc_slow32 %t108
+    jnz %t109, @exc_propagate35, @exc_continue36
 @exc_propagate35
-    %t109 =l loadl %t2
-    %t110 =w ceql %t109, 0
-    jnz %t110, @release_skip38, @release37
+    %t110 =l loadl %t2
+    %t111 =w ceql %t110, 0
+    jnz %t111, @release_skip38, @release37
 @release37
-    call $Leaf_release(l %rt, l %t109)
+    call $Leaf_release(l %rt, l %t110)
     jmp @release_done39
 @release_skip38
     jmp @release_done39
 @release_done39
     storel 0, %t2
-    %t111 =l loadl %t3
-    %t112 =w ceql %t111, 0
-    jnz %t112, @release_skip41, @release40
+    %t112 =l loadl %t3
+    %t113 =w ceql %t112, 0
+    jnz %t113, @release_skip41, @release40
 @release40
-    call $Leaf_release(l %rt, l %t111)
+    call $Leaf_release(l %rt, l %t112)
     jmp @release_done42
 @release_skip41
     jmp @release_done42
 @release_done42
     storel 0, %t3
-    %t113 =l loadl %t1
-    %t114 =w ceql %t113, 0
-    jnz %t114, @release_skip44, @release43
+    %t114 =l loadl %t1
+    %t115 =w ceql %t114, 0
+    jnz %t115, @release_skip44, @release43
 @release43
-    call $Box_release(l %rt, l %t113)
+    call $Box_release(l %rt, l %t114)
     jmp @release_done45
 @release_skip44
     jmp @release_done45
@@ -6100,20 +6100,18 @@ export function l $store_move(l %rt, l %p_n) {
     storel 0, %t1
     ret 0
 @exc_continue36
-    %t115 =l add %t95, 24
-    storel 66, %t115
-    call $nox_raise(l %rt, l %t95, l 66)
-    %t116 =l loadl %t2
-    %t117 =w ceql %t116, 0
+    %t116 =l add %t96, 24
+    storel 66, %t116
+    call $nox_raise(l %rt, l %t96, l 66)
+    %t117 =w ceql %t79, 0
     jnz %t117, @release_skip47, @release46
 @release46
-    call $Leaf_release(l %rt, l %t116)
+    call $Leaf_release(l %rt, l %t79)
     jmp @release_done48
 @release_skip47
     jmp @release_done48
 @release_done48
-    storel 0, %t2
-    %t118 =l loadl %t3
+    %t118 =l loadl %t2
     %t119 =w ceql %t118, 0
     jnz %t119, @release_skip50, @release49
 @release49
@@ -6122,16 +6120,26 @@ export function l $store_move(l %rt, l %p_n) {
 @release_skip50
     jmp @release_done51
 @release_done51
-    storel 0, %t3
-    %t120 =l loadl %t1
+    storel 0, %t2
+    %t120 =l loadl %t3
     %t121 =w ceql %t120, 0
     jnz %t121, @release_skip53, @release52
 @release52
-    call $Box_release(l %rt, l %t120)
+    call $Leaf_release(l %rt, l %t120)
     jmp @release_done54
 @release_skip53
     jmp @release_done54
 @release_done54
+    storel 0, %t3
+    %t122 =l loadl %t1
+    %t123 =w ceql %t122, 0
+    jnz %t123, @release_skip56, @release55
+@release55
+    call $Box_release(l %rt, l %t122)
+    jmp @release_done57
+@release_skip56
+    jmp @release_done57
+@release_done57
     storel 0, %t1
     ret 0
 }
@@ -8817,25 +8825,25 @@ export function $Box_put_c(l %rt, l %p_self, l %p_k, l %p_leaf) {
     %t3 =l loadl %t0
     %t4 =l add %t3, 32
     %t5 =l loadl %t4
-    %t6 =l loadl %t1
-    %t7 =w ceql %t6, 0
-    jnz %t7, @retain_skip1, @retain0
+    %t6 =l loadl %t2
+    storel 0, %t2
+    %t7 =l loadl %t1
+    %t8 =w ceql %t7, 0
+    jnz %t8, @retain_skip1, @retain0
 @retain0
-    %t8 =l sub %t6, 16
-    %t9 =l loadl %t8
-    %t10 =w csgel %t9, 536870912
-    jnz %t10, @retain_done2, @retain_bump3
+    %t9 =l sub %t7, 16
+    %t10 =l loadl %t9
+    %t11 =w csgel %t10, 536870912
+    jnz %t11, @retain_done2, @retain_bump3
 @retain_bump3
-    %t11 =l loadl %t8
-    %t12 =l add %t11, 1
-    storel %t12, %t8
+    %t12 =l loadl %t9
+    %t13 =l add %t12, 1
+    storel %t13, %t9
     jmp @retain_done2
 @retain_skip1
     jmp @retain_done2
 @retain_done2
-    %t13 =l loadl %t2
-    storel 0, %t2
-    call $nox_dict_set(l %rt, l %t5, w 1, w 0, w 1, l %t6, l %t13)
+    call $nox_dict_set(l %rt, l %t5, w 1, w 0, w 1, l %t7, l %t6)
     %t14 =l loadl %t2
     %t15 =w ceql %t14, 0
     jnz %t15, @release_skip5, @release4
