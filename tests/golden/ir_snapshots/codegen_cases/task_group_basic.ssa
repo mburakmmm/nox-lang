@@ -3678,50 +3678,54 @@ export function $nox_tasks_TaskGroup__int_add(l %rt, l %p_self, l %p_t) {
     %t32 =w csgel %t29, %t31
     jnz %t32, @append_grow10, @append_write11
 @append_write11
-    %t34 =l mul %t29, 8
-    %t35 =l add %t11, 16
-    %t36 =l loadl %t35
-    %t37 =l add %t36, %t34
-    storel %t26, %t37
-    %t38 =l add %t29, 1
-    storel %t38, %t11
-    %t39 =l loadl %t0
-    %t40 =l loadl %t2
-    %t41 =w ceql %t40, 0
-    jnz %t41, @retain_skip13, @retain12
-@retain12
-    %t42 =l sub %t40, 8
-    %t43 =l call $nox_atomic_rc_add(l %t42, l 1)
-    jmp @retain_done14
-@retain_skip13
-    jmp @retain_done14
-@retain_done14
-    %t44 =l add %t39, 8
-    %t45 =l loadl %t44
-    storel %t40, %t44
-    %t46 =w ceql %t45, 0
-    jnz %t46, @release_skip16, @release15
-@release15
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t45)
-    jmp @release_done17
-@release_skip16
-    jmp @release_done17
-@release_done17
-    %t47 =l loadl %t2
-    %t48 =w ceql %t47, 0
-    jnz %t48, @release_skip19, @release18
-@release18
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t47)
-    jmp @release_done20
-@release_skip19
-    jmp @release_done20
-@release_done20
+    %t35 =l mul %t29, 8
+    %t36 =l add %t11, 16
+    %t37 =l loadl %t36
+    %t38 =l add %t37, %t35
+    storel %t26, %t38
+    %t39 =l add %t29, 1
+    storel %t39, %t11
+    %t40 =l loadl %t0
+    %t41 =l loadl %t2
+    %t42 =w ceql %t41, 0
+    jnz %t42, @retain_skip14, @retain13
+@retain13
+    %t43 =l sub %t41, 8
+    %t44 =l call $nox_atomic_rc_add(l %t43, l 1)
+    jmp @retain_done15
+@retain_skip14
+    jmp @retain_done15
+@retain_done15
+    %t45 =l add %t40, 8
+    %t46 =l loadl %t45
+    storel %t41, %t45
+    %t47 =w ceql %t46, 0
+    jnz %t47, @release_skip17, @release16
+@release16
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t46)
+    jmp @release_done18
+@release_skip17
+    jmp @release_done18
+@release_done18
+    %t48 =l loadl %t2
+    %t49 =w ceql %t48, 0
+    jnz %t49, @release_skip20, @release19
+@release19
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t48)
+    jmp @release_done21
+@release_skip20
+    jmp @release_done21
+@release_done21
     storel 0, %t2
-@fn_end21
+@fn_end22
     ret
 @append_grow10
     %t33 =l call $nox_list_grow(l %rt, l %t11, l 8)
-    jmp @append_write11
+    %t34 =w ceql %t33, 0
+    jnz %t34, @append_oom12, @append_write11
+@append_oom12
+    call $nox_out_of_memory()
+    ret
 }
 export function l $nox_tasks_TaskGroup__int_size(l %rt, l %p_self) {
 @start
@@ -6098,11 +6102,11 @@ export function $run(l %rt) {
     %t12 =l alloc8 8
     %t14 =l alloc8 8
     %t156 =l alloc8 8
-    %t273 =l alloc8 8
-    %t284 =l alloc8 8
-    %t418 =l alloc8 8
-    %t556 =l alloc8 8
-    %t652 =l alloc8 8
+    %t274 =l alloc8 8
+    %t285 =l alloc8 8
+    %t419 =l alloc8 8
+    %t557 =l alloc8 8
+    %t653 =l alloc8 8
     storel 0, %t0
     storel 0, %t2
     storel 0, %t3
@@ -6953,1704 +6957,1708 @@ export function $run(l %rt) {
     %t261 =w csgel %t258, %t260
     jnz %t261, @append_grow229, @append_write230
 @append_write230
-    %t263 =l mul %t258, 8
-    %t264 =l add %t149, 16
-    %t265 =l loadl %t264
-    %t266 =l add %t265, %t263
-    storel %t230, %t266
-    %t267 =l add %t258, 1
-    storel %t267, %t149
+    %t264 =l mul %t258, 8
+    %t265 =l add %t149, 16
+    %t266 =l loadl %t265
+    %t267 =l add %t266, %t264
+    storel %t230, %t267
+    %t268 =l add %t258, 1
+    storel %t268, %t149
     jmp @forlist_step121
 @forlist_step121
-    %t268 =l loadl %t5
-    %t269 =l add %t268, 1
-    storel %t269, %t5
+    %t269 =l loadl %t5
+    %t270 =l add %t269, 1
+    storel %t270, %t5
     jmp @forlist_cond118
 @forlist_end120
-    %t270 =l loadl %t2
-    %t271 =w ceql %t270, 0
-    jnz %t271, @print_none231, @print_some232
-@print_none231
+    %t271 =l loadl %t2
+    %t272 =w ceql %t271, 0
+    jnz %t272, @print_none232, @print_some233
+@print_none232
     call $printf(l $fmt_lit2)
     call $printf(l $fmt_newline)
-    jmp @print_opt_done233
-@print_some232
+    jmp @print_opt_done234
+@print_some233
     call $printf(l $fmt_lbracket)
-    %t272 =l loadl %t270
-    storel 0, %t273
-    jmp @printlist_cond234
-@printlist_cond234
-    %t274 =l loadl %t273
-    %t275 =w csltl %t274, %t272
-    jnz %t275, @printlist_body235, @printlist_end236
-@printlist_body235
-    %t276 =w cnel %t274, 0
-    jnz %t276, @printlist_comma237, @printlist_skipcomma238
-@printlist_comma237
+    %t273 =l loadl %t271
+    storel 0, %t274
+    jmp @printlist_cond235
+@printlist_cond235
+    %t275 =l loadl %t274
+    %t276 =w csltl %t275, %t273
+    jnz %t276, @printlist_body236, @printlist_end237
+@printlist_body236
+    %t277 =w cnel %t275, 0
+    jnz %t277, @printlist_comma238, @printlist_skipcomma239
+@printlist_comma238
     call $printf(l $fmt_comma_sp)
-    jmp @printlist_skipcomma238
-@printlist_skipcomma238
-    %t277 =l mul %t274, 8
-    %t278 =l add %t270, 16
-    %t279 =l loadl %t278
-    %t280 =l add %t279, %t277
-    %t281 =l loadl %t280
-    call $printf(l $fmt_int_frag, ..., l %t281)
-    %t282 =l add %t274, 1
-    storel %t282, %t273
-    jmp @printlist_cond234
-@printlist_end236
+    jmp @printlist_skipcomma239
+@printlist_skipcomma239
+    %t278 =l mul %t275, 8
+    %t279 =l add %t271, 16
+    %t280 =l loadl %t279
+    %t281 =l add %t280, %t278
+    %t282 =l loadl %t281
+    call $printf(l $fmt_int_frag, ..., l %t282)
+    %t283 =l add %t275, 1
+    storel %t283, %t274
+    jmp @printlist_cond235
+@printlist_end237
     call $printf(l $fmt_rbracket)
     call $printf(l $fmt_newline)
-    jmp @print_opt_done233
-@print_opt_done233
-    %t285 =l sub %rt, 24
-    %t286 =l loadl %t285
-    %t287 =w ceql %t286, 0
-    jnz %t287, @calloc_slow239, @calloc_chk240
-@calloc_chk240
-    %t288 =l sub %rt, 32
-    %t289 =l loadl %t288
-    %t290 =l add %t289, 8
-    %t291 =l loadl %t290
-    %t292 =w cnel %t291, 0
-    jnz %t292, @calloc_pop241, @calloc_slow239
-@calloc_pop241
-    %t293 =l loadl %t291
-    storel %t293, %t290
-    storel 1, %t291
-    %t294 =l add %t291, 8
-    storel %t294, %t284
-    jmp @calloc_done242
-@calloc_slow239
-    %t295 =l call $nox_rc_alloc(l %rt, l 16)
-    storel %t295, %t284
-    jmp @calloc_done242
-@calloc_done242
-    %t296 =l loadl %t284
-    storel 2, %t296
-    %t297 =l add %t296, 8
-    storel 0, %t297
-    call $nox_tasks_TaskGroup__int___init__(l %rt, l %t296)
-    %t298 =l loadl %t6
-    %t299 =w ceql %t298, 0
-    jnz %t299, @release_skip244, @release243
-@release243
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t298)
-    jmp @release_done245
-@release_skip244
-    jmp @release_done245
-@release_done245
+    jmp @print_opt_done234
+@print_opt_done234
+    %t286 =l sub %rt, 24
+    %t287 =l loadl %t286
+    %t288 =w ceql %t287, 0
+    jnz %t288, @calloc_slow240, @calloc_chk241
+@calloc_chk241
+    %t289 =l sub %rt, 32
+    %t290 =l loadl %t289
+    %t291 =l add %t290, 8
+    %t292 =l loadl %t291
+    %t293 =w cnel %t292, 0
+    jnz %t293, @calloc_pop242, @calloc_slow240
+@calloc_pop242
+    %t294 =l loadl %t292
+    storel %t294, %t291
+    storel 1, %t292
+    %t295 =l add %t292, 8
+    storel %t295, %t285
+    jmp @calloc_done243
+@calloc_slow240
+    %t296 =l call $nox_rc_alloc(l %rt, l 16)
+    storel %t296, %t285
+    jmp @calloc_done243
+@calloc_done243
+    %t297 =l loadl %t285
+    storel 2, %t297
+    %t298 =l add %t297, 8
+    storel 0, %t298
+    call $nox_tasks_TaskGroup__int___init__(l %rt, l %t297)
+    %t299 =l loadl %t6
+    %t300 =w ceql %t299, 0
+    jnz %t300, @release_skip245, @release244
+@release244
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t299)
+    jmp @release_done246
+@release_skip245
+    jmp @release_done246
+@release_done246
     storel 0, %t6
-    storel %t296, %t6
-    %t300 =l loadl %t6
-    %t301 =l call $nox_alloc(l %rt, l 16)
-    storel %rt, %t301
-    %t302 =l add %t301, 8
-    storel 50, %t302
-    %t303 =l call $nox_async_spawn(l %rt, l $spawn_wrap_1, l %t301)
-    call $nox_tasks_TaskGroup__int_add(l %rt, l %t300, l %t303)
-    call $nox_async_destroy_task(l %rt, l %t303)
-    %t304 =l sub %rt, 48
-    %t305 =w loadub %t304
-    %t306 =l sub %rt, 64
-    %t307 =l loadl %t306
-    jnz %t305, @exc_slow246, @exc_fast247
-@exc_fast247
-    %t308 =w cnel %t307, 0
-    jmp @exc_done248
-@exc_slow246
-    %t309 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done248
-@exc_done248
-    %t310 =w phi @exc_fast247 %t308, @exc_slow246 %t309
-    jnz %t310, @exc_propagate249, @exc_continue250
-@exc_propagate249
-    %t311 =l loadl %t9
-    %t312 =w ceql %t311, 0
-    jnz %t312, @release_skip252, @release251
-@release251
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t311)
-    jmp @release_done253
-@release_skip252
-    jmp @release_done253
-@release_done253
+    storel %t297, %t6
+    %t301 =l loadl %t6
+    %t302 =l call $nox_alloc(l %rt, l 16)
+    storel %rt, %t302
+    %t303 =l add %t302, 8
+    storel 50, %t303
+    %t304 =l call $nox_async_spawn(l %rt, l $spawn_wrap_1, l %t302)
+    call $nox_tasks_TaskGroup__int_add(l %rt, l %t301, l %t304)
+    call $nox_async_destroy_task(l %rt, l %t304)
+    %t305 =l sub %rt, 48
+    %t306 =w loadub %t305
+    %t307 =l sub %rt, 64
+    %t308 =l loadl %t307
+    jnz %t306, @exc_slow247, @exc_fast248
+@exc_fast248
+    %t309 =w cnel %t308, 0
+    jmp @exc_done249
+@exc_slow247
+    %t310 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done249
+@exc_done249
+    %t311 =w phi @exc_fast248 %t309, @exc_slow247 %t310
+    jnz %t311, @exc_propagate250, @exc_continue251
+@exc_propagate250
+    %t312 =l loadl %t9
+    %t313 =w ceql %t312, 0
+    jnz %t313, @release_skip253, @release252
+@release252
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t312)
+    jmp @release_done254
+@release_skip253
+    jmp @release_done254
+@release_done254
     storel 0, %t9
-    %t313 =l loadl %t6
-    %t314 =w ceql %t313, 0
-    jnz %t314, @release_skip255, @release254
-@release254
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t313)
-    jmp @release_done256
-@release_skip255
-    jmp @release_done256
-@release_done256
+    %t314 =l loadl %t6
+    %t315 =w ceql %t314, 0
+    jnz %t315, @release_skip256, @release255
+@release255
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t314)
+    jmp @release_done257
+@release_skip256
+    jmp @release_done257
+@release_done257
     storel 0, %t6
-    %t315 =l loadl %t2
-    %t316 =w ceql %t315, 0
-    jnz %t316, @release_skip258, @release257
-@release257
-    %t317 =l sub %t315, 8
-    %t318 =l call $nox_atomic_rc_sub(l %t317, l 1)
-    %t320 =l and %t318, 4294967295
-    %t319 =w ceql %t320, 0
-    jnz %t319, @list_free260, @list_free_skip261
-@list_free260
-    call $nox_list_free_payload(l %rt, l %t315, l 8)
-    jmp @list_free_done262
-@list_free_skip261
-    jmp @list_free_done262
-@list_free_done262
-    jmp @release_done259
-@release_skip258
-    jmp @release_done259
-@release_done259
+    %t316 =l loadl %t2
+    %t317 =w ceql %t316, 0
+    jnz %t317, @release_skip259, @release258
+@release258
+    %t318 =l sub %t316, 8
+    %t319 =l call $nox_atomic_rc_sub(l %t318, l 1)
+    %t321 =l and %t319, 4294967295
+    %t320 =w ceql %t321, 0
+    jnz %t320, @list_free261, @list_free_skip262
+@list_free261
+    call $nox_list_free_payload(l %rt, l %t316, l 8)
+    jmp @list_free_done263
+@list_free_skip262
+    jmp @list_free_done263
+@list_free_done263
+    jmp @release_done260
+@release_skip259
+    jmp @release_done260
+@release_done260
     storel 0, %t2
-    %t321 =l loadl %t12
-    %t322 =w ceql %t321, 0
-    jnz %t322, @release_skip264, @release263
-@release263
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t321)
-    jmp @release_done265
-@release_skip264
-    jmp @release_done265
-@release_done265
+    %t322 =l loadl %t12
+    %t323 =w ceql %t322, 0
+    jnz %t323, @release_skip265, @release264
+@release264
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t322)
+    jmp @release_done266
+@release_skip265
+    jmp @release_done266
+@release_done266
     storel 0, %t12
-    %t323 =l loadl %t3
-    %t324 =w ceql %t323, 0
-    jnz %t324, @release_skip267, @release266
-@release266
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t323)
-    jmp @release_done268
-@release_skip267
-    jmp @release_done268
-@release_done268
+    %t324 =l loadl %t3
+    %t325 =w ceql %t324, 0
+    jnz %t325, @release_skip268, @release267
+@release267
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t324)
+    jmp @release_done269
+@release_skip268
+    jmp @release_done269
+@release_done269
     storel 0, %t3
-    %t325 =l loadl %t0
-    %t326 =w ceql %t325, 0
-    jnz %t326, @release_skip270, @release269
-@release269
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t325)
-    jmp @release_done271
-@release_skip270
-    jmp @release_done271
-@release_done271
+    %t326 =l loadl %t0
+    %t327 =w ceql %t326, 0
+    jnz %t327, @release_skip271, @release270
+@release270
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t326)
+    jmp @release_done272
+@release_skip271
+    jmp @release_done272
+@release_done272
     storel 0, %t0
-    %t327 =l loadl %t8
-    %t328 =w ceql %t327, 0
-    jnz %t328, @release_skip273, @release272
-@release272
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t327)
-    jmp @release_done274
-@release_skip273
-    jmp @release_done274
-@release_done274
+    %t328 =l loadl %t8
+    %t329 =w ceql %t328, 0
+    jnz %t329, @release_skip274, @release273
+@release273
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t328)
+    jmp @release_done275
+@release_skip274
+    jmp @release_done275
+@release_done275
     storel 0, %t8
-    %t329 =l loadl %t7
-    %t330 =w ceql %t329, 0
-    jnz %t330, @release_skip276, @release275
-@release275
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t329)
-    jmp @release_done277
-@release_skip276
-    jmp @release_done277
-@release_done277
+    %t330 =l loadl %t7
+    %t331 =w ceql %t330, 0
+    jnz %t331, @release_skip277, @release276
+@release276
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t330)
+    jmp @release_done278
+@release_skip277
+    jmp @release_done278
+@release_done278
     storel 0, %t7
     ret
-@exc_continue250
-    %t331 =l loadl %t6
-    %t332 =w call $nox_tasks_TaskGroup__int_wait_all(l %rt, l %t331, l 30)
-    %t333 =l sub %rt, 48
-    %t334 =w loadub %t333
-    %t335 =l sub %rt, 64
-    %t336 =l loadl %t335
-    jnz %t334, @exc_slow278, @exc_fast279
-@exc_fast279
-    %t337 =w cnel %t336, 0
-    jmp @exc_done280
-@exc_slow278
-    %t338 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done280
-@exc_done280
-    %t339 =w phi @exc_fast279 %t337, @exc_slow278 %t338
-    jnz %t339, @exc_propagate281, @exc_continue282
-@exc_propagate281
-    %t340 =l loadl %t9
-    %t341 =w ceql %t340, 0
-    jnz %t341, @release_skip284, @release283
-@release283
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t340)
-    jmp @release_done285
-@release_skip284
-    jmp @release_done285
-@release_done285
+@exc_continue251
+    %t332 =l loadl %t6
+    %t333 =w call $nox_tasks_TaskGroup__int_wait_all(l %rt, l %t332, l 30)
+    %t334 =l sub %rt, 48
+    %t335 =w loadub %t334
+    %t336 =l sub %rt, 64
+    %t337 =l loadl %t336
+    jnz %t335, @exc_slow279, @exc_fast280
+@exc_fast280
+    %t338 =w cnel %t337, 0
+    jmp @exc_done281
+@exc_slow279
+    %t339 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done281
+@exc_done281
+    %t340 =w phi @exc_fast280 %t338, @exc_slow279 %t339
+    jnz %t340, @exc_propagate282, @exc_continue283
+@exc_propagate282
+    %t341 =l loadl %t9
+    %t342 =w ceql %t341, 0
+    jnz %t342, @release_skip285, @release284
+@release284
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t341)
+    jmp @release_done286
+@release_skip285
+    jmp @release_done286
+@release_done286
     storel 0, %t9
-    %t342 =l loadl %t6
-    %t343 =w ceql %t342, 0
-    jnz %t343, @release_skip287, @release286
-@release286
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t342)
-    jmp @release_done288
-@release_skip287
-    jmp @release_done288
-@release_done288
+    %t343 =l loadl %t6
+    %t344 =w ceql %t343, 0
+    jnz %t344, @release_skip288, @release287
+@release287
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t343)
+    jmp @release_done289
+@release_skip288
+    jmp @release_done289
+@release_done289
     storel 0, %t6
-    %t344 =l loadl %t2
-    %t345 =w ceql %t344, 0
-    jnz %t345, @release_skip290, @release289
-@release289
-    %t346 =l sub %t344, 8
-    %t347 =l call $nox_atomic_rc_sub(l %t346, l 1)
-    %t349 =l and %t347, 4294967295
-    %t348 =w ceql %t349, 0
-    jnz %t348, @list_free292, @list_free_skip293
-@list_free292
-    call $nox_list_free_payload(l %rt, l %t344, l 8)
-    jmp @list_free_done294
-@list_free_skip293
-    jmp @list_free_done294
-@list_free_done294
-    jmp @release_done291
-@release_skip290
-    jmp @release_done291
-@release_done291
+    %t345 =l loadl %t2
+    %t346 =w ceql %t345, 0
+    jnz %t346, @release_skip291, @release290
+@release290
+    %t347 =l sub %t345, 8
+    %t348 =l call $nox_atomic_rc_sub(l %t347, l 1)
+    %t350 =l and %t348, 4294967295
+    %t349 =w ceql %t350, 0
+    jnz %t349, @list_free293, @list_free_skip294
+@list_free293
+    call $nox_list_free_payload(l %rt, l %t345, l 8)
+    jmp @list_free_done295
+@list_free_skip294
+    jmp @list_free_done295
+@list_free_done295
+    jmp @release_done292
+@release_skip291
+    jmp @release_done292
+@release_done292
     storel 0, %t2
-    %t350 =l loadl %t12
-    %t351 =w ceql %t350, 0
-    jnz %t351, @release_skip296, @release295
-@release295
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t350)
-    jmp @release_done297
-@release_skip296
-    jmp @release_done297
-@release_done297
+    %t351 =l loadl %t12
+    %t352 =w ceql %t351, 0
+    jnz %t352, @release_skip297, @release296
+@release296
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t351)
+    jmp @release_done298
+@release_skip297
+    jmp @release_done298
+@release_done298
     storel 0, %t12
-    %t352 =l loadl %t3
-    %t353 =w ceql %t352, 0
-    jnz %t353, @release_skip299, @release298
-@release298
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t352)
-    jmp @release_done300
-@release_skip299
-    jmp @release_done300
-@release_done300
+    %t353 =l loadl %t3
+    %t354 =w ceql %t353, 0
+    jnz %t354, @release_skip300, @release299
+@release299
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t353)
+    jmp @release_done301
+@release_skip300
+    jmp @release_done301
+@release_done301
     storel 0, %t3
-    %t354 =l loadl %t0
-    %t355 =w ceql %t354, 0
-    jnz %t355, @release_skip302, @release301
-@release301
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t354)
-    jmp @release_done303
-@release_skip302
-    jmp @release_done303
-@release_done303
+    %t355 =l loadl %t0
+    %t356 =w ceql %t355, 0
+    jnz %t356, @release_skip303, @release302
+@release302
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t355)
+    jmp @release_done304
+@release_skip303
+    jmp @release_done304
+@release_done304
     storel 0, %t0
-    %t356 =l loadl %t8
-    %t357 =w ceql %t356, 0
-    jnz %t357, @release_skip305, @release304
-@release304
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t356)
-    jmp @release_done306
-@release_skip305
-    jmp @release_done306
-@release_done306
+    %t357 =l loadl %t8
+    %t358 =w ceql %t357, 0
+    jnz %t358, @release_skip306, @release305
+@release305
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t357)
+    jmp @release_done307
+@release_skip306
+    jmp @release_done307
+@release_done307
     storel 0, %t8
-    %t358 =l loadl %t7
-    %t359 =w ceql %t358, 0
-    jnz %t359, @release_skip308, @release307
-@release307
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t358)
-    jmp @release_done309
-@release_skip308
-    jmp @release_done309
-@release_done309
+    %t359 =l loadl %t7
+    %t360 =w ceql %t359, 0
+    jnz %t360, @release_skip309, @release308
+@release308
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t359)
+    jmp @release_done310
+@release_skip309
+    jmp @release_done310
+@release_done310
     storel 0, %t7
     ret
-@exc_continue282
-    %t360 =l loadl %t6
-    %t361 =l call $nox_tasks_TaskGroup__int_finished(l %rt, l %t360)
-    %t362 =l sub %rt, 48
-    %t363 =w loadub %t362
-    %t364 =l sub %rt, 64
-    %t365 =l loadl %t364
-    jnz %t363, @exc_slow310, @exc_fast311
-@exc_fast311
-    %t366 =w cnel %t365, 0
-    jmp @exc_done312
-@exc_slow310
-    %t367 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done312
-@exc_done312
-    %t368 =w phi @exc_fast311 %t366, @exc_slow310 %t367
-    jnz %t368, @exc_propagate313, @exc_continue314
-@exc_propagate313
-    %t369 =l loadl %t9
-    %t370 =w ceql %t369, 0
-    jnz %t370, @release_skip316, @release315
-@release315
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t369)
-    jmp @release_done317
-@release_skip316
-    jmp @release_done317
-@release_done317
+@exc_continue283
+    %t361 =l loadl %t6
+    %t362 =l call $nox_tasks_TaskGroup__int_finished(l %rt, l %t361)
+    %t363 =l sub %rt, 48
+    %t364 =w loadub %t363
+    %t365 =l sub %rt, 64
+    %t366 =l loadl %t365
+    jnz %t364, @exc_slow311, @exc_fast312
+@exc_fast312
+    %t367 =w cnel %t366, 0
+    jmp @exc_done313
+@exc_slow311
+    %t368 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done313
+@exc_done313
+    %t369 =w phi @exc_fast312 %t367, @exc_slow311 %t368
+    jnz %t369, @exc_propagate314, @exc_continue315
+@exc_propagate314
+    %t370 =l loadl %t9
+    %t371 =w ceql %t370, 0
+    jnz %t371, @release_skip317, @release316
+@release316
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t370)
+    jmp @release_done318
+@release_skip317
+    jmp @release_done318
+@release_done318
     storel 0, %t9
-    %t371 =l loadl %t6
-    %t372 =w ceql %t371, 0
-    jnz %t372, @release_skip319, @release318
-@release318
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t371)
-    jmp @release_done320
-@release_skip319
-    jmp @release_done320
-@release_done320
+    %t372 =l loadl %t6
+    %t373 =w ceql %t372, 0
+    jnz %t373, @release_skip320, @release319
+@release319
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t372)
+    jmp @release_done321
+@release_skip320
+    jmp @release_done321
+@release_done321
     storel 0, %t6
-    %t373 =l loadl %t2
-    %t374 =w ceql %t373, 0
-    jnz %t374, @release_skip322, @release321
-@release321
-    %t375 =l sub %t373, 8
-    %t376 =l call $nox_atomic_rc_sub(l %t375, l 1)
-    %t378 =l and %t376, 4294967295
-    %t377 =w ceql %t378, 0
-    jnz %t377, @list_free324, @list_free_skip325
-@list_free324
-    call $nox_list_free_payload(l %rt, l %t373, l 8)
-    jmp @list_free_done326
-@list_free_skip325
-    jmp @list_free_done326
-@list_free_done326
-    jmp @release_done323
-@release_skip322
-    jmp @release_done323
-@release_done323
+    %t374 =l loadl %t2
+    %t375 =w ceql %t374, 0
+    jnz %t375, @release_skip323, @release322
+@release322
+    %t376 =l sub %t374, 8
+    %t377 =l call $nox_atomic_rc_sub(l %t376, l 1)
+    %t379 =l and %t377, 4294967295
+    %t378 =w ceql %t379, 0
+    jnz %t378, @list_free325, @list_free_skip326
+@list_free325
+    call $nox_list_free_payload(l %rt, l %t374, l 8)
+    jmp @list_free_done327
+@list_free_skip326
+    jmp @list_free_done327
+@list_free_done327
+    jmp @release_done324
+@release_skip323
+    jmp @release_done324
+@release_done324
     storel 0, %t2
-    %t379 =l loadl %t12
-    %t380 =w ceql %t379, 0
-    jnz %t380, @release_skip328, @release327
-@release327
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t379)
-    jmp @release_done329
-@release_skip328
-    jmp @release_done329
-@release_done329
+    %t380 =l loadl %t12
+    %t381 =w ceql %t380, 0
+    jnz %t381, @release_skip329, @release328
+@release328
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t380)
+    jmp @release_done330
+@release_skip329
+    jmp @release_done330
+@release_done330
     storel 0, %t12
-    %t381 =l loadl %t3
-    %t382 =w ceql %t381, 0
-    jnz %t382, @release_skip331, @release330
-@release330
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t381)
-    jmp @release_done332
-@release_skip331
-    jmp @release_done332
-@release_done332
+    %t382 =l loadl %t3
+    %t383 =w ceql %t382, 0
+    jnz %t383, @release_skip332, @release331
+@release331
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t382)
+    jmp @release_done333
+@release_skip332
+    jmp @release_done333
+@release_done333
     storel 0, %t3
-    %t383 =l loadl %t0
-    %t384 =w ceql %t383, 0
-    jnz %t384, @release_skip334, @release333
-@release333
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t383)
-    jmp @release_done335
-@release_skip334
-    jmp @release_done335
-@release_done335
+    %t384 =l loadl %t0
+    %t385 =w ceql %t384, 0
+    jnz %t385, @release_skip335, @release334
+@release334
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t384)
+    jmp @release_done336
+@release_skip335
+    jmp @release_done336
+@release_done336
     storel 0, %t0
-    %t385 =l loadl %t8
-    %t386 =w ceql %t385, 0
-    jnz %t386, @release_skip337, @release336
-@release336
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t385)
-    jmp @release_done338
-@release_skip337
-    jmp @release_done338
-@release_done338
+    %t386 =l loadl %t8
+    %t387 =w ceql %t386, 0
+    jnz %t387, @release_skip338, @release337
+@release337
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t386)
+    jmp @release_done339
+@release_skip338
+    jmp @release_done339
+@release_done339
     storel 0, %t8
-    %t387 =l loadl %t7
-    %t388 =w ceql %t387, 0
-    jnz %t388, @release_skip340, @release339
-@release339
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t387)
-    jmp @release_done341
-@release_skip340
-    jmp @release_done341
-@release_done341
+    %t388 =l loadl %t7
+    %t389 =w ceql %t388, 0
+    jnz %t389, @release_skip341, @release340
+@release340
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t388)
+    jmp @release_done342
+@release_skip341
+    jmp @release_done342
+@release_done342
     storel 0, %t7
     ret
-@exc_continue314
-    jnz %t332, @print_true342, @print_false343
-@print_true342
+@exc_continue315
+    jnz %t333, @print_true343, @print_false344
+@print_true343
     call $printf(l $fmt_bool_true_frag)
-    jmp @print_done344
-@print_false343
+    jmp @print_done345
+@print_false344
     call $printf(l $fmt_bool_false_frag)
-    jmp @print_done344
-@print_done344
+    jmp @print_done345
+@print_done345
     call $printf(l $fmt_lit3)
-    call $printf(l $fmt_int_frag, ..., l %t361)
+    call $printf(l $fmt_int_frag, ..., l %t362)
     call $printf(l $fmt_lit4)
-    %t389 =l loadl %t6
-    call $nox_tasks_TaskGroup__int_cancel_all(l %rt, l %t389)
-    %t390 =l sub %rt, 48
-    %t391 =w loadub %t390
-    %t392 =l sub %rt, 64
-    %t393 =l loadl %t392
-    jnz %t391, @exc_slow345, @exc_fast346
-@exc_fast346
-    %t394 =w cnel %t393, 0
-    jmp @exc_done347
-@exc_slow345
-    %t395 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done347
-@exc_done347
-    %t396 =w phi @exc_fast346 %t394, @exc_slow345 %t395
-    jnz %t396, @exc_propagate348, @exc_continue349
-@exc_propagate348
-    %t397 =l loadl %t9
-    %t398 =w ceql %t397, 0
-    jnz %t398, @release_skip351, @release350
-@release350
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t397)
-    jmp @release_done352
-@release_skip351
-    jmp @release_done352
-@release_done352
+    %t390 =l loadl %t6
+    call $nox_tasks_TaskGroup__int_cancel_all(l %rt, l %t390)
+    %t391 =l sub %rt, 48
+    %t392 =w loadub %t391
+    %t393 =l sub %rt, 64
+    %t394 =l loadl %t393
+    jnz %t392, @exc_slow346, @exc_fast347
+@exc_fast347
+    %t395 =w cnel %t394, 0
+    jmp @exc_done348
+@exc_slow346
+    %t396 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done348
+@exc_done348
+    %t397 =w phi @exc_fast347 %t395, @exc_slow346 %t396
+    jnz %t397, @exc_propagate349, @exc_continue350
+@exc_propagate349
+    %t398 =l loadl %t9
+    %t399 =w ceql %t398, 0
+    jnz %t399, @release_skip352, @release351
+@release351
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t398)
+    jmp @release_done353
+@release_skip352
+    jmp @release_done353
+@release_done353
     storel 0, %t9
-    %t399 =l loadl %t6
-    %t400 =w ceql %t399, 0
-    jnz %t400, @release_skip354, @release353
-@release353
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t399)
-    jmp @release_done355
-@release_skip354
-    jmp @release_done355
-@release_done355
+    %t400 =l loadl %t6
+    %t401 =w ceql %t400, 0
+    jnz %t401, @release_skip355, @release354
+@release354
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t400)
+    jmp @release_done356
+@release_skip355
+    jmp @release_done356
+@release_done356
     storel 0, %t6
-    %t401 =l loadl %t2
-    %t402 =w ceql %t401, 0
-    jnz %t402, @release_skip357, @release356
-@release356
-    %t403 =l sub %t401, 8
-    %t404 =l call $nox_atomic_rc_sub(l %t403, l 1)
-    %t406 =l and %t404, 4294967295
-    %t405 =w ceql %t406, 0
-    jnz %t405, @list_free359, @list_free_skip360
-@list_free359
-    call $nox_list_free_payload(l %rt, l %t401, l 8)
-    jmp @list_free_done361
-@list_free_skip360
-    jmp @list_free_done361
-@list_free_done361
-    jmp @release_done358
-@release_skip357
-    jmp @release_done358
-@release_done358
+    %t402 =l loadl %t2
+    %t403 =w ceql %t402, 0
+    jnz %t403, @release_skip358, @release357
+@release357
+    %t404 =l sub %t402, 8
+    %t405 =l call $nox_atomic_rc_sub(l %t404, l 1)
+    %t407 =l and %t405, 4294967295
+    %t406 =w ceql %t407, 0
+    jnz %t406, @list_free360, @list_free_skip361
+@list_free360
+    call $nox_list_free_payload(l %rt, l %t402, l 8)
+    jmp @list_free_done362
+@list_free_skip361
+    jmp @list_free_done362
+@list_free_done362
+    jmp @release_done359
+@release_skip358
+    jmp @release_done359
+@release_done359
     storel 0, %t2
-    %t407 =l loadl %t12
-    %t408 =w ceql %t407, 0
-    jnz %t408, @release_skip363, @release362
-@release362
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t407)
-    jmp @release_done364
-@release_skip363
-    jmp @release_done364
-@release_done364
+    %t408 =l loadl %t12
+    %t409 =w ceql %t408, 0
+    jnz %t409, @release_skip364, @release363
+@release363
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t408)
+    jmp @release_done365
+@release_skip364
+    jmp @release_done365
+@release_done365
     storel 0, %t12
-    %t409 =l loadl %t3
-    %t410 =w ceql %t409, 0
-    jnz %t410, @release_skip366, @release365
-@release365
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t409)
-    jmp @release_done367
-@release_skip366
-    jmp @release_done367
-@release_done367
+    %t410 =l loadl %t3
+    %t411 =w ceql %t410, 0
+    jnz %t411, @release_skip367, @release366
+@release366
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t410)
+    jmp @release_done368
+@release_skip367
+    jmp @release_done368
+@release_done368
     storel 0, %t3
-    %t411 =l loadl %t0
-    %t412 =w ceql %t411, 0
-    jnz %t412, @release_skip369, @release368
-@release368
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t411)
-    jmp @release_done370
-@release_skip369
-    jmp @release_done370
-@release_done370
+    %t412 =l loadl %t0
+    %t413 =w ceql %t412, 0
+    jnz %t413, @release_skip370, @release369
+@release369
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t412)
+    jmp @release_done371
+@release_skip370
+    jmp @release_done371
+@release_done371
     storel 0, %t0
-    %t413 =l loadl %t8
-    %t414 =w ceql %t413, 0
-    jnz %t414, @release_skip372, @release371
-@release371
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t413)
-    jmp @release_done373
-@release_skip372
-    jmp @release_done373
-@release_done373
+    %t414 =l loadl %t8
+    %t415 =w ceql %t414, 0
+    jnz %t415, @release_skip373, @release372
+@release372
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t414)
+    jmp @release_done374
+@release_skip373
+    jmp @release_done374
+@release_done374
     storel 0, %t8
-    %t415 =l loadl %t7
-    %t416 =w ceql %t415, 0
-    jnz %t416, @release_skip375, @release374
-@release374
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t415)
-    jmp @release_done376
-@release_skip375
-    jmp @release_done376
-@release_done376
+    %t416 =l loadl %t7
+    %t417 =w ceql %t416, 0
+    jnz %t417, @release_skip376, @release375
+@release375
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t416)
+    jmp @release_done377
+@release_skip376
+    jmp @release_done377
+@release_done377
     storel 0, %t7
     ret
-@exc_continue349
-    %t419 =l sub %rt, 24
-    %t420 =l loadl %t419
-    %t421 =w ceql %t420, 0
-    jnz %t421, @calloc_slow377, @calloc_chk378
-@calloc_chk378
-    %t422 =l sub %rt, 32
-    %t423 =l loadl %t422
-    %t424 =l add %t423, 8
-    %t425 =l loadl %t424
-    %t426 =w cnel %t425, 0
-    jnz %t426, @calloc_pop379, @calloc_slow377
-@calloc_pop379
-    %t427 =l loadl %t425
-    storel %t427, %t424
-    storel 1, %t425
-    %t428 =l add %t425, 8
-    storel %t428, %t418
-    jmp @calloc_done380
-@calloc_slow377
-    %t429 =l call $nox_rc_alloc(l %rt, l 16)
-    storel %t429, %t418
-    jmp @calloc_done380
-@calloc_done380
-    %t430 =l loadl %t418
-    storel 2, %t430
-    %t431 =l add %t430, 8
-    storel 0, %t431
-    call $nox_tasks_TaskGroup__int___init__(l %rt, l %t430)
-    %t432 =l loadl %t7
-    %t433 =w ceql %t432, 0
-    jnz %t433, @release_skip382, @release381
-@release381
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t432)
-    jmp @release_done383
-@release_skip382
-    jmp @release_done383
-@release_done383
+@exc_continue350
+    %t420 =l sub %rt, 24
+    %t421 =l loadl %t420
+    %t422 =w ceql %t421, 0
+    jnz %t422, @calloc_slow378, @calloc_chk379
+@calloc_chk379
+    %t423 =l sub %rt, 32
+    %t424 =l loadl %t423
+    %t425 =l add %t424, 8
+    %t426 =l loadl %t425
+    %t427 =w cnel %t426, 0
+    jnz %t427, @calloc_pop380, @calloc_slow378
+@calloc_pop380
+    %t428 =l loadl %t426
+    storel %t428, %t425
+    storel 1, %t426
+    %t429 =l add %t426, 8
+    storel %t429, %t419
+    jmp @calloc_done381
+@calloc_slow378
+    %t430 =l call $nox_rc_alloc(l %rt, l 16)
+    storel %t430, %t419
+    jmp @calloc_done381
+@calloc_done381
+    %t431 =l loadl %t419
+    storel 2, %t431
+    %t432 =l add %t431, 8
+    storel 0, %t432
+    call $nox_tasks_TaskGroup__int___init__(l %rt, l %t431)
+    %t433 =l loadl %t7
+    %t434 =w ceql %t433, 0
+    jnz %t434, @release_skip383, @release382
+@release382
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t433)
+    jmp @release_done384
+@release_skip383
+    jmp @release_done384
+@release_done384
     storel 0, %t7
-    storel %t430, %t7
-    %t434 =l loadl %t7
-    %t435 =l call $nox_alloc(l %rt, l 16)
-    storel %rt, %t435
-    %t436 =l add %t435, 8
-    storel 3, %t436
-    %t437 =l call $nox_async_spawn(l %rt, l $spawn_wrap_2, l %t435)
-    call $nox_tasks_TaskGroup__int_add(l %rt, l %t434, l %t437)
-    call $nox_async_destroy_task(l %rt, l %t437)
-    %t438 =l sub %rt, 48
-    %t439 =w loadub %t438
-    %t440 =l sub %rt, 64
-    %t441 =l loadl %t440
-    jnz %t439, @exc_slow384, @exc_fast385
-@exc_fast385
-    %t442 =w cnel %t441, 0
-    jmp @exc_done386
-@exc_slow384
-    %t443 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done386
-@exc_done386
-    %t444 =w phi @exc_fast385 %t442, @exc_slow384 %t443
-    jnz %t444, @exc_propagate387, @exc_continue388
-@exc_propagate387
-    %t445 =l loadl %t9
-    %t446 =w ceql %t445, 0
-    jnz %t446, @release_skip390, @release389
-@release389
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t445)
-    jmp @release_done391
-@release_skip390
-    jmp @release_done391
-@release_done391
+    storel %t431, %t7
+    %t435 =l loadl %t7
+    %t436 =l call $nox_alloc(l %rt, l 16)
+    storel %rt, %t436
+    %t437 =l add %t436, 8
+    storel 3, %t437
+    %t438 =l call $nox_async_spawn(l %rt, l $spawn_wrap_2, l %t436)
+    call $nox_tasks_TaskGroup__int_add(l %rt, l %t435, l %t438)
+    call $nox_async_destroy_task(l %rt, l %t438)
+    %t439 =l sub %rt, 48
+    %t440 =w loadub %t439
+    %t441 =l sub %rt, 64
+    %t442 =l loadl %t441
+    jnz %t440, @exc_slow385, @exc_fast386
+@exc_fast386
+    %t443 =w cnel %t442, 0
+    jmp @exc_done387
+@exc_slow385
+    %t444 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done387
+@exc_done387
+    %t445 =w phi @exc_fast386 %t443, @exc_slow385 %t444
+    jnz %t445, @exc_propagate388, @exc_continue389
+@exc_propagate388
+    %t446 =l loadl %t9
+    %t447 =w ceql %t446, 0
+    jnz %t447, @release_skip391, @release390
+@release390
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t446)
+    jmp @release_done392
+@release_skip391
+    jmp @release_done392
+@release_done392
     storel 0, %t9
-    %t447 =l loadl %t6
-    %t448 =w ceql %t447, 0
-    jnz %t448, @release_skip393, @release392
-@release392
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t447)
-    jmp @release_done394
-@release_skip393
-    jmp @release_done394
-@release_done394
+    %t448 =l loadl %t6
+    %t449 =w ceql %t448, 0
+    jnz %t449, @release_skip394, @release393
+@release393
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t448)
+    jmp @release_done395
+@release_skip394
+    jmp @release_done395
+@release_done395
     storel 0, %t6
-    %t449 =l loadl %t2
-    %t450 =w ceql %t449, 0
-    jnz %t450, @release_skip396, @release395
-@release395
-    %t451 =l sub %t449, 8
-    %t452 =l call $nox_atomic_rc_sub(l %t451, l 1)
-    %t454 =l and %t452, 4294967295
-    %t453 =w ceql %t454, 0
-    jnz %t453, @list_free398, @list_free_skip399
-@list_free398
-    call $nox_list_free_payload(l %rt, l %t449, l 8)
-    jmp @list_free_done400
-@list_free_skip399
-    jmp @list_free_done400
-@list_free_done400
-    jmp @release_done397
-@release_skip396
-    jmp @release_done397
-@release_done397
+    %t450 =l loadl %t2
+    %t451 =w ceql %t450, 0
+    jnz %t451, @release_skip397, @release396
+@release396
+    %t452 =l sub %t450, 8
+    %t453 =l call $nox_atomic_rc_sub(l %t452, l 1)
+    %t455 =l and %t453, 4294967295
+    %t454 =w ceql %t455, 0
+    jnz %t454, @list_free399, @list_free_skip400
+@list_free399
+    call $nox_list_free_payload(l %rt, l %t450, l 8)
+    jmp @list_free_done401
+@list_free_skip400
+    jmp @list_free_done401
+@list_free_done401
+    jmp @release_done398
+@release_skip397
+    jmp @release_done398
+@release_done398
     storel 0, %t2
-    %t455 =l loadl %t12
-    %t456 =w ceql %t455, 0
-    jnz %t456, @release_skip402, @release401
-@release401
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t455)
-    jmp @release_done403
-@release_skip402
-    jmp @release_done403
-@release_done403
+    %t456 =l loadl %t12
+    %t457 =w ceql %t456, 0
+    jnz %t457, @release_skip403, @release402
+@release402
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t456)
+    jmp @release_done404
+@release_skip403
+    jmp @release_done404
+@release_done404
     storel 0, %t12
-    %t457 =l loadl %t3
-    %t458 =w ceql %t457, 0
-    jnz %t458, @release_skip405, @release404
-@release404
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t457)
-    jmp @release_done406
-@release_skip405
-    jmp @release_done406
-@release_done406
+    %t458 =l loadl %t3
+    %t459 =w ceql %t458, 0
+    jnz %t459, @release_skip406, @release405
+@release405
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t458)
+    jmp @release_done407
+@release_skip406
+    jmp @release_done407
+@release_done407
     storel 0, %t3
-    %t459 =l loadl %t0
-    %t460 =w ceql %t459, 0
-    jnz %t460, @release_skip408, @release407
-@release407
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t459)
-    jmp @release_done409
-@release_skip408
-    jmp @release_done409
-@release_done409
+    %t460 =l loadl %t0
+    %t461 =w ceql %t460, 0
+    jnz %t461, @release_skip409, @release408
+@release408
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t460)
+    jmp @release_done410
+@release_skip409
+    jmp @release_done410
+@release_done410
     storel 0, %t0
-    %t461 =l loadl %t8
-    %t462 =w ceql %t461, 0
-    jnz %t462, @release_skip411, @release410
-@release410
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t461)
-    jmp @release_done412
-@release_skip411
-    jmp @release_done412
-@release_done412
+    %t462 =l loadl %t8
+    %t463 =w ceql %t462, 0
+    jnz %t463, @release_skip412, @release411
+@release411
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t462)
+    jmp @release_done413
+@release_skip412
+    jmp @release_done413
+@release_done413
     storel 0, %t8
-    %t463 =l loadl %t7
-    %t464 =w ceql %t463, 0
-    jnz %t464, @release_skip414, @release413
-@release413
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t463)
-    jmp @release_done415
-@release_skip414
-    jmp @release_done415
-@release_done415
+    %t464 =l loadl %t7
+    %t465 =w ceql %t464, 0
+    jnz %t465, @release_skip415, @release414
+@release414
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t464)
+    jmp @release_done416
+@release_skip415
+    jmp @release_done416
+@release_done416
     storel 0, %t7
     ret
-@exc_continue388
-    %t465 =l loadl %t7
-    %t466 =l call $nox_alloc(l %rt, l 16)
-    storel %rt, %t466
-    %t467 =l add %t466, 8
-    storel 4, %t467
-    %t468 =l call $nox_async_spawn(l %rt, l $spawn_wrap_3, l %t466)
-    call $nox_tasks_TaskGroup__int_add(l %rt, l %t465, l %t468)
-    call $nox_async_destroy_task(l %rt, l %t468)
-    %t469 =l sub %rt, 48
-    %t470 =w loadub %t469
-    %t471 =l sub %rt, 64
-    %t472 =l loadl %t471
-    jnz %t470, @exc_slow416, @exc_fast417
-@exc_fast417
-    %t473 =w cnel %t472, 0
-    jmp @exc_done418
-@exc_slow416
-    %t474 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done418
-@exc_done418
-    %t475 =w phi @exc_fast417 %t473, @exc_slow416 %t474
-    jnz %t475, @exc_propagate419, @exc_continue420
-@exc_propagate419
-    %t476 =l loadl %t9
-    %t477 =w ceql %t476, 0
-    jnz %t477, @release_skip422, @release421
-@release421
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t476)
-    jmp @release_done423
-@release_skip422
-    jmp @release_done423
-@release_done423
+@exc_continue389
+    %t466 =l loadl %t7
+    %t467 =l call $nox_alloc(l %rt, l 16)
+    storel %rt, %t467
+    %t468 =l add %t467, 8
+    storel 4, %t468
+    %t469 =l call $nox_async_spawn(l %rt, l $spawn_wrap_3, l %t467)
+    call $nox_tasks_TaskGroup__int_add(l %rt, l %t466, l %t469)
+    call $nox_async_destroy_task(l %rt, l %t469)
+    %t470 =l sub %rt, 48
+    %t471 =w loadub %t470
+    %t472 =l sub %rt, 64
+    %t473 =l loadl %t472
+    jnz %t471, @exc_slow417, @exc_fast418
+@exc_fast418
+    %t474 =w cnel %t473, 0
+    jmp @exc_done419
+@exc_slow417
+    %t475 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done419
+@exc_done419
+    %t476 =w phi @exc_fast418 %t474, @exc_slow417 %t475
+    jnz %t476, @exc_propagate420, @exc_continue421
+@exc_propagate420
+    %t477 =l loadl %t9
+    %t478 =w ceql %t477, 0
+    jnz %t478, @release_skip423, @release422
+@release422
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t477)
+    jmp @release_done424
+@release_skip423
+    jmp @release_done424
+@release_done424
     storel 0, %t9
-    %t478 =l loadl %t6
-    %t479 =w ceql %t478, 0
-    jnz %t479, @release_skip425, @release424
-@release424
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t478)
-    jmp @release_done426
-@release_skip425
-    jmp @release_done426
-@release_done426
+    %t479 =l loadl %t6
+    %t480 =w ceql %t479, 0
+    jnz %t480, @release_skip426, @release425
+@release425
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t479)
+    jmp @release_done427
+@release_skip426
+    jmp @release_done427
+@release_done427
     storel 0, %t6
-    %t480 =l loadl %t2
-    %t481 =w ceql %t480, 0
-    jnz %t481, @release_skip428, @release427
-@release427
-    %t482 =l sub %t480, 8
-    %t483 =l call $nox_atomic_rc_sub(l %t482, l 1)
-    %t485 =l and %t483, 4294967295
-    %t484 =w ceql %t485, 0
-    jnz %t484, @list_free430, @list_free_skip431
-@list_free430
-    call $nox_list_free_payload(l %rt, l %t480, l 8)
-    jmp @list_free_done432
-@list_free_skip431
-    jmp @list_free_done432
-@list_free_done432
-    jmp @release_done429
-@release_skip428
-    jmp @release_done429
-@release_done429
+    %t481 =l loadl %t2
+    %t482 =w ceql %t481, 0
+    jnz %t482, @release_skip429, @release428
+@release428
+    %t483 =l sub %t481, 8
+    %t484 =l call $nox_atomic_rc_sub(l %t483, l 1)
+    %t486 =l and %t484, 4294967295
+    %t485 =w ceql %t486, 0
+    jnz %t485, @list_free431, @list_free_skip432
+@list_free431
+    call $nox_list_free_payload(l %rt, l %t481, l 8)
+    jmp @list_free_done433
+@list_free_skip432
+    jmp @list_free_done433
+@list_free_done433
+    jmp @release_done430
+@release_skip429
+    jmp @release_done430
+@release_done430
     storel 0, %t2
-    %t486 =l loadl %t12
-    %t487 =w ceql %t486, 0
-    jnz %t487, @release_skip434, @release433
-@release433
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t486)
-    jmp @release_done435
-@release_skip434
-    jmp @release_done435
-@release_done435
+    %t487 =l loadl %t12
+    %t488 =w ceql %t487, 0
+    jnz %t488, @release_skip435, @release434
+@release434
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t487)
+    jmp @release_done436
+@release_skip435
+    jmp @release_done436
+@release_done436
     storel 0, %t12
-    %t488 =l loadl %t3
-    %t489 =w ceql %t488, 0
-    jnz %t489, @release_skip437, @release436
-@release436
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t488)
-    jmp @release_done438
-@release_skip437
-    jmp @release_done438
-@release_done438
+    %t489 =l loadl %t3
+    %t490 =w ceql %t489, 0
+    jnz %t490, @release_skip438, @release437
+@release437
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t489)
+    jmp @release_done439
+@release_skip438
+    jmp @release_done439
+@release_done439
     storel 0, %t3
-    %t490 =l loadl %t0
-    %t491 =w ceql %t490, 0
-    jnz %t491, @release_skip440, @release439
-@release439
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t490)
-    jmp @release_done441
-@release_skip440
-    jmp @release_done441
-@release_done441
+    %t491 =l loadl %t0
+    %t492 =w ceql %t491, 0
+    jnz %t492, @release_skip441, @release440
+@release440
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t491)
+    jmp @release_done442
+@release_skip441
+    jmp @release_done442
+@release_done442
     storel 0, %t0
-    %t492 =l loadl %t8
-    %t493 =w ceql %t492, 0
-    jnz %t493, @release_skip443, @release442
-@release442
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t492)
-    jmp @release_done444
-@release_skip443
-    jmp @release_done444
-@release_done444
+    %t493 =l loadl %t8
+    %t494 =w ceql %t493, 0
+    jnz %t494, @release_skip444, @release443
+@release443
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t493)
+    jmp @release_done445
+@release_skip444
+    jmp @release_done445
+@release_done445
     storel 0, %t8
-    %t494 =l loadl %t7
-    %t495 =w ceql %t494, 0
-    jnz %t495, @release_skip446, @release445
-@release445
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t494)
-    jmp @release_done447
-@release_skip446
-    jmp @release_done447
-@release_done447
+    %t495 =l loadl %t7
+    %t496 =w ceql %t495, 0
+    jnz %t496, @release_skip447, @release446
+@release446
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t495)
+    jmp @release_done448
+@release_skip447
+    jmp @release_done448
+@release_done448
     storel 0, %t7
     ret
-@exc_continue420
-    %t496 =l loadl %t7
-    %t497 =w call $nox_tasks_TaskGroup__int_wait_below(l %rt, l %t496, l 1, l 2000)
-    %t498 =l sub %rt, 48
-    %t499 =w loadub %t498
-    %t500 =l sub %rt, 64
-    %t501 =l loadl %t500
-    jnz %t499, @exc_slow448, @exc_fast449
-@exc_fast449
-    %t502 =w cnel %t501, 0
-    jmp @exc_done450
-@exc_slow448
-    %t503 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done450
-@exc_done450
-    %t504 =w phi @exc_fast449 %t502, @exc_slow448 %t503
-    jnz %t504, @exc_propagate451, @exc_continue452
-@exc_propagate451
-    %t505 =l loadl %t9
-    %t506 =w ceql %t505, 0
-    jnz %t506, @release_skip454, @release453
-@release453
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t505)
-    jmp @release_done455
-@release_skip454
-    jmp @release_done455
-@release_done455
+@exc_continue421
+    %t497 =l loadl %t7
+    %t498 =w call $nox_tasks_TaskGroup__int_wait_below(l %rt, l %t497, l 1, l 2000)
+    %t499 =l sub %rt, 48
+    %t500 =w loadub %t499
+    %t501 =l sub %rt, 64
+    %t502 =l loadl %t501
+    jnz %t500, @exc_slow449, @exc_fast450
+@exc_fast450
+    %t503 =w cnel %t502, 0
+    jmp @exc_done451
+@exc_slow449
+    %t504 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done451
+@exc_done451
+    %t505 =w phi @exc_fast450 %t503, @exc_slow449 %t504
+    jnz %t505, @exc_propagate452, @exc_continue453
+@exc_propagate452
+    %t506 =l loadl %t9
+    %t507 =w ceql %t506, 0
+    jnz %t507, @release_skip455, @release454
+@release454
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t506)
+    jmp @release_done456
+@release_skip455
+    jmp @release_done456
+@release_done456
     storel 0, %t9
-    %t507 =l loadl %t6
-    %t508 =w ceql %t507, 0
-    jnz %t508, @release_skip457, @release456
-@release456
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t507)
-    jmp @release_done458
-@release_skip457
-    jmp @release_done458
-@release_done458
+    %t508 =l loadl %t6
+    %t509 =w ceql %t508, 0
+    jnz %t509, @release_skip458, @release457
+@release457
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t508)
+    jmp @release_done459
+@release_skip458
+    jmp @release_done459
+@release_done459
     storel 0, %t6
-    %t509 =l loadl %t2
-    %t510 =w ceql %t509, 0
-    jnz %t510, @release_skip460, @release459
-@release459
-    %t511 =l sub %t509, 8
-    %t512 =l call $nox_atomic_rc_sub(l %t511, l 1)
-    %t514 =l and %t512, 4294967295
-    %t513 =w ceql %t514, 0
-    jnz %t513, @list_free462, @list_free_skip463
-@list_free462
-    call $nox_list_free_payload(l %rt, l %t509, l 8)
-    jmp @list_free_done464
-@list_free_skip463
-    jmp @list_free_done464
-@list_free_done464
-    jmp @release_done461
-@release_skip460
-    jmp @release_done461
-@release_done461
+    %t510 =l loadl %t2
+    %t511 =w ceql %t510, 0
+    jnz %t511, @release_skip461, @release460
+@release460
+    %t512 =l sub %t510, 8
+    %t513 =l call $nox_atomic_rc_sub(l %t512, l 1)
+    %t515 =l and %t513, 4294967295
+    %t514 =w ceql %t515, 0
+    jnz %t514, @list_free463, @list_free_skip464
+@list_free463
+    call $nox_list_free_payload(l %rt, l %t510, l 8)
+    jmp @list_free_done465
+@list_free_skip464
+    jmp @list_free_done465
+@list_free_done465
+    jmp @release_done462
+@release_skip461
+    jmp @release_done462
+@release_done462
     storel 0, %t2
-    %t515 =l loadl %t12
-    %t516 =w ceql %t515, 0
-    jnz %t516, @release_skip466, @release465
-@release465
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t515)
-    jmp @release_done467
-@release_skip466
-    jmp @release_done467
-@release_done467
+    %t516 =l loadl %t12
+    %t517 =w ceql %t516, 0
+    jnz %t517, @release_skip467, @release466
+@release466
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t516)
+    jmp @release_done468
+@release_skip467
+    jmp @release_done468
+@release_done468
     storel 0, %t12
-    %t517 =l loadl %t3
-    %t518 =w ceql %t517, 0
-    jnz %t518, @release_skip469, @release468
-@release468
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t517)
-    jmp @release_done470
-@release_skip469
-    jmp @release_done470
-@release_done470
+    %t518 =l loadl %t3
+    %t519 =w ceql %t518, 0
+    jnz %t519, @release_skip470, @release469
+@release469
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t518)
+    jmp @release_done471
+@release_skip470
+    jmp @release_done471
+@release_done471
     storel 0, %t3
-    %t519 =l loadl %t0
-    %t520 =w ceql %t519, 0
-    jnz %t520, @release_skip472, @release471
-@release471
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t519)
-    jmp @release_done473
-@release_skip472
-    jmp @release_done473
-@release_done473
+    %t520 =l loadl %t0
+    %t521 =w ceql %t520, 0
+    jnz %t521, @release_skip473, @release472
+@release472
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t520)
+    jmp @release_done474
+@release_skip473
+    jmp @release_done474
+@release_done474
     storel 0, %t0
-    %t521 =l loadl %t8
-    %t522 =w ceql %t521, 0
-    jnz %t522, @release_skip475, @release474
-@release474
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t521)
-    jmp @release_done476
-@release_skip475
-    jmp @release_done476
-@release_done476
+    %t522 =l loadl %t8
+    %t523 =w ceql %t522, 0
+    jnz %t523, @release_skip476, @release475
+@release475
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t522)
+    jmp @release_done477
+@release_skip476
+    jmp @release_done477
+@release_done477
     storel 0, %t8
-    %t523 =l loadl %t7
-    %t524 =w ceql %t523, 0
-    jnz %t524, @release_skip478, @release477
-@release477
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t523)
-    jmp @release_done479
-@release_skip478
-    jmp @release_done479
-@release_done479
+    %t524 =l loadl %t7
+    %t525 =w ceql %t524, 0
+    jnz %t525, @release_skip479, @release478
+@release478
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t524)
+    jmp @release_done480
+@release_skip479
+    jmp @release_done480
+@release_done480
     storel 0, %t7
     ret
-@exc_continue452
-    %t525 =l loadl %t7
-    %t526 =l call $nox_tasks_TaskGroup__int_finished(l %rt, l %t525)
-    %t527 =l sub %rt, 48
-    %t528 =w loadub %t527
-    %t529 =l sub %rt, 64
-    %t530 =l loadl %t529
-    jnz %t528, @exc_slow480, @exc_fast481
-@exc_fast481
-    %t531 =w cnel %t530, 0
-    jmp @exc_done482
-@exc_slow480
-    %t532 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done482
-@exc_done482
-    %t533 =w phi @exc_fast481 %t531, @exc_slow480 %t532
-    jnz %t533, @exc_propagate483, @exc_continue484
-@exc_propagate483
-    %t534 =l loadl %t9
-    %t535 =w ceql %t534, 0
-    jnz %t535, @release_skip486, @release485
-@release485
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t534)
-    jmp @release_done487
-@release_skip486
-    jmp @release_done487
-@release_done487
+@exc_continue453
+    %t526 =l loadl %t7
+    %t527 =l call $nox_tasks_TaskGroup__int_finished(l %rt, l %t526)
+    %t528 =l sub %rt, 48
+    %t529 =w loadub %t528
+    %t530 =l sub %rt, 64
+    %t531 =l loadl %t530
+    jnz %t529, @exc_slow481, @exc_fast482
+@exc_fast482
+    %t532 =w cnel %t531, 0
+    jmp @exc_done483
+@exc_slow481
+    %t533 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done483
+@exc_done483
+    %t534 =w phi @exc_fast482 %t532, @exc_slow481 %t533
+    jnz %t534, @exc_propagate484, @exc_continue485
+@exc_propagate484
+    %t535 =l loadl %t9
+    %t536 =w ceql %t535, 0
+    jnz %t536, @release_skip487, @release486
+@release486
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t535)
+    jmp @release_done488
+@release_skip487
+    jmp @release_done488
+@release_done488
     storel 0, %t9
-    %t536 =l loadl %t6
-    %t537 =w ceql %t536, 0
-    jnz %t537, @release_skip489, @release488
-@release488
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t536)
-    jmp @release_done490
-@release_skip489
-    jmp @release_done490
-@release_done490
+    %t537 =l loadl %t6
+    %t538 =w ceql %t537, 0
+    jnz %t538, @release_skip490, @release489
+@release489
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t537)
+    jmp @release_done491
+@release_skip490
+    jmp @release_done491
+@release_done491
     storel 0, %t6
-    %t538 =l loadl %t2
-    %t539 =w ceql %t538, 0
-    jnz %t539, @release_skip492, @release491
-@release491
-    %t540 =l sub %t538, 8
-    %t541 =l call $nox_atomic_rc_sub(l %t540, l 1)
-    %t543 =l and %t541, 4294967295
-    %t542 =w ceql %t543, 0
-    jnz %t542, @list_free494, @list_free_skip495
-@list_free494
-    call $nox_list_free_payload(l %rt, l %t538, l 8)
-    jmp @list_free_done496
-@list_free_skip495
-    jmp @list_free_done496
-@list_free_done496
-    jmp @release_done493
-@release_skip492
-    jmp @release_done493
-@release_done493
+    %t539 =l loadl %t2
+    %t540 =w ceql %t539, 0
+    jnz %t540, @release_skip493, @release492
+@release492
+    %t541 =l sub %t539, 8
+    %t542 =l call $nox_atomic_rc_sub(l %t541, l 1)
+    %t544 =l and %t542, 4294967295
+    %t543 =w ceql %t544, 0
+    jnz %t543, @list_free495, @list_free_skip496
+@list_free495
+    call $nox_list_free_payload(l %rt, l %t539, l 8)
+    jmp @list_free_done497
+@list_free_skip496
+    jmp @list_free_done497
+@list_free_done497
+    jmp @release_done494
+@release_skip493
+    jmp @release_done494
+@release_done494
     storel 0, %t2
-    %t544 =l loadl %t12
-    %t545 =w ceql %t544, 0
-    jnz %t545, @release_skip498, @release497
-@release497
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t544)
-    jmp @release_done499
-@release_skip498
-    jmp @release_done499
-@release_done499
+    %t545 =l loadl %t12
+    %t546 =w ceql %t545, 0
+    jnz %t546, @release_skip499, @release498
+@release498
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t545)
+    jmp @release_done500
+@release_skip499
+    jmp @release_done500
+@release_done500
     storel 0, %t12
-    %t546 =l loadl %t3
-    %t547 =w ceql %t546, 0
-    jnz %t547, @release_skip501, @release500
-@release500
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t546)
-    jmp @release_done502
-@release_skip501
-    jmp @release_done502
-@release_done502
+    %t547 =l loadl %t3
+    %t548 =w ceql %t547, 0
+    jnz %t548, @release_skip502, @release501
+@release501
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t547)
+    jmp @release_done503
+@release_skip502
+    jmp @release_done503
+@release_done503
     storel 0, %t3
-    %t548 =l loadl %t0
-    %t549 =w ceql %t548, 0
-    jnz %t549, @release_skip504, @release503
-@release503
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t548)
-    jmp @release_done505
-@release_skip504
-    jmp @release_done505
-@release_done505
+    %t549 =l loadl %t0
+    %t550 =w ceql %t549, 0
+    jnz %t550, @release_skip505, @release504
+@release504
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t549)
+    jmp @release_done506
+@release_skip505
+    jmp @release_done506
+@release_done506
     storel 0, %t0
-    %t550 =l loadl %t8
-    %t551 =w ceql %t550, 0
-    jnz %t551, @release_skip507, @release506
-@release506
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t550)
-    jmp @release_done508
-@release_skip507
-    jmp @release_done508
-@release_done508
+    %t551 =l loadl %t8
+    %t552 =w ceql %t551, 0
+    jnz %t552, @release_skip508, @release507
+@release507
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t551)
+    jmp @release_done509
+@release_skip508
+    jmp @release_done509
+@release_done509
     storel 0, %t8
-    %t552 =l loadl %t7
-    %t553 =w ceql %t552, 0
-    jnz %t553, @release_skip510, @release509
-@release509
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t552)
-    jmp @release_done511
-@release_skip510
-    jmp @release_done511
-@release_done511
+    %t553 =l loadl %t7
+    %t554 =w ceql %t553, 0
+    jnz %t554, @release_skip511, @release510
+@release510
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t553)
+    jmp @release_done512
+@release_skip511
+    jmp @release_done512
+@release_done512
     storel 0, %t7
     ret
-@exc_continue484
-    %t554 =w csgel %t526, 1
-    jnz %t497, @print_true512, @print_false513
-@print_true512
+@exc_continue485
+    %t555 =w csgel %t527, 1
+    jnz %t498, @print_true513, @print_false514
+@print_true513
     call $printf(l $fmt_bool_true_frag)
-    jmp @print_done514
-@print_false513
+    jmp @print_done515
+@print_false514
     call $printf(l $fmt_bool_false_frag)
-    jmp @print_done514
-@print_done514
+    jmp @print_done515
+@print_done515
     call $printf(l $fmt_lit5)
-    jnz %t554, @print_true515, @print_false516
-@print_true515
+    jnz %t555, @print_true516, @print_false517
+@print_true516
     call $printf(l $fmt_bool_true_frag)
-    jmp @print_done517
-@print_false516
+    jmp @print_done518
+@print_false517
     call $printf(l $fmt_bool_false_frag)
-    jmp @print_done517
-@print_done517
+    jmp @print_done518
+@print_done518
     call $printf(l $fmt_lit6)
-    %t557 =l sub %rt, 24
-    %t558 =l loadl %t557
-    %t559 =w ceql %t558, 0
-    jnz %t559, @calloc_slow518, @calloc_chk519
-@calloc_chk519
-    %t560 =l sub %rt, 32
-    %t561 =l loadl %t560
-    %t562 =l add %t561, 8
-    %t563 =l loadl %t562
-    %t564 =w cnel %t563, 0
-    jnz %t564, @calloc_pop520, @calloc_slow518
-@calloc_pop520
-    %t565 =l loadl %t563
-    storel %t565, %t562
-    storel 1, %t563
-    %t566 =l add %t563, 8
-    storel %t566, %t556
-    jmp @calloc_done521
-@calloc_slow518
-    %t567 =l call $nox_rc_alloc(l %rt, l 16)
-    storel %t567, %t556
-    jmp @calloc_done521
-@calloc_done521
-    %t568 =l loadl %t556
-    storel 2, %t568
-    %t569 =l add %t568, 8
-    storel 0, %t569
-    call $nox_tasks_TaskGroup__int___init__(l %rt, l %t568)
-    %t570 =l loadl %t8
-    %t571 =w ceql %t570, 0
-    jnz %t571, @release_skip523, @release522
-@release522
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t570)
-    jmp @release_done524
-@release_skip523
-    jmp @release_done524
-@release_done524
+    %t558 =l sub %rt, 24
+    %t559 =l loadl %t558
+    %t560 =w ceql %t559, 0
+    jnz %t560, @calloc_slow519, @calloc_chk520
+@calloc_chk520
+    %t561 =l sub %rt, 32
+    %t562 =l loadl %t561
+    %t563 =l add %t562, 8
+    %t564 =l loadl %t563
+    %t565 =w cnel %t564, 0
+    jnz %t565, @calloc_pop521, @calloc_slow519
+@calloc_pop521
+    %t566 =l loadl %t564
+    storel %t566, %t563
+    storel 1, %t564
+    %t567 =l add %t564, 8
+    storel %t567, %t557
+    jmp @calloc_done522
+@calloc_slow519
+    %t568 =l call $nox_rc_alloc(l %rt, l 16)
+    storel %t568, %t557
+    jmp @calloc_done522
+@calloc_done522
+    %t569 =l loadl %t557
+    storel 2, %t569
+    %t570 =l add %t569, 8
+    storel 0, %t570
+    call $nox_tasks_TaskGroup__int___init__(l %rt, l %t569)
+    %t571 =l loadl %t8
+    %t572 =w ceql %t571, 0
+    jnz %t572, @release_skip524, @release523
+@release523
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t571)
+    jmp @release_done525
+@release_skip524
+    jmp @release_done525
+@release_done525
     storel 0, %t8
-    storel %t568, %t8
-    %t572 =l loadl %t8
-    %t573 =l call $nox_alloc(l %rt, l 16)
-    storel %rt, %t573
-    %t574 =l add %t573, 8
-    storel 1, %t574
-    %t575 =l call $nox_async_spawn(l %rt, l $spawn_wrap_4, l %t573)
-    call $nox_tasks_TaskGroup__int_add(l %rt, l %t572, l %t575)
-    call $nox_async_destroy_task(l %rt, l %t575)
-    %t576 =l sub %rt, 48
-    %t577 =w loadub %t576
-    %t578 =l sub %rt, 64
-    %t579 =l loadl %t578
-    jnz %t577, @exc_slow525, @exc_fast526
-@exc_fast526
-    %t580 =w cnel %t579, 0
-    jmp @exc_done527
-@exc_slow525
-    %t581 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done527
-@exc_done527
-    %t582 =w phi @exc_fast526 %t580, @exc_slow525 %t581
-    jnz %t582, @exc_propagate528, @exc_continue529
-@exc_propagate528
-    %t583 =l loadl %t9
-    %t584 =w ceql %t583, 0
-    jnz %t584, @release_skip531, @release530
-@release530
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t583)
-    jmp @release_done532
-@release_skip531
-    jmp @release_done532
-@release_done532
+    storel %t569, %t8
+    %t573 =l loadl %t8
+    %t574 =l call $nox_alloc(l %rt, l 16)
+    storel %rt, %t574
+    %t575 =l add %t574, 8
+    storel 1, %t575
+    %t576 =l call $nox_async_spawn(l %rt, l $spawn_wrap_4, l %t574)
+    call $nox_tasks_TaskGroup__int_add(l %rt, l %t573, l %t576)
+    call $nox_async_destroy_task(l %rt, l %t576)
+    %t577 =l sub %rt, 48
+    %t578 =w loadub %t577
+    %t579 =l sub %rt, 64
+    %t580 =l loadl %t579
+    jnz %t578, @exc_slow526, @exc_fast527
+@exc_fast527
+    %t581 =w cnel %t580, 0
+    jmp @exc_done528
+@exc_slow526
+    %t582 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done528
+@exc_done528
+    %t583 =w phi @exc_fast527 %t581, @exc_slow526 %t582
+    jnz %t583, @exc_propagate529, @exc_continue530
+@exc_propagate529
+    %t584 =l loadl %t9
+    %t585 =w ceql %t584, 0
+    jnz %t585, @release_skip532, @release531
+@release531
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t584)
+    jmp @release_done533
+@release_skip532
+    jmp @release_done533
+@release_done533
     storel 0, %t9
-    %t585 =l loadl %t6
-    %t586 =w ceql %t585, 0
-    jnz %t586, @release_skip534, @release533
-@release533
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t585)
-    jmp @release_done535
-@release_skip534
-    jmp @release_done535
-@release_done535
+    %t586 =l loadl %t6
+    %t587 =w ceql %t586, 0
+    jnz %t587, @release_skip535, @release534
+@release534
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t586)
+    jmp @release_done536
+@release_skip535
+    jmp @release_done536
+@release_done536
     storel 0, %t6
-    %t587 =l loadl %t2
-    %t588 =w ceql %t587, 0
-    jnz %t588, @release_skip537, @release536
-@release536
-    %t589 =l sub %t587, 8
-    %t590 =l call $nox_atomic_rc_sub(l %t589, l 1)
-    %t592 =l and %t590, 4294967295
-    %t591 =w ceql %t592, 0
-    jnz %t591, @list_free539, @list_free_skip540
-@list_free539
-    call $nox_list_free_payload(l %rt, l %t587, l 8)
-    jmp @list_free_done541
-@list_free_skip540
-    jmp @list_free_done541
-@list_free_done541
-    jmp @release_done538
-@release_skip537
-    jmp @release_done538
-@release_done538
+    %t588 =l loadl %t2
+    %t589 =w ceql %t588, 0
+    jnz %t589, @release_skip538, @release537
+@release537
+    %t590 =l sub %t588, 8
+    %t591 =l call $nox_atomic_rc_sub(l %t590, l 1)
+    %t593 =l and %t591, 4294967295
+    %t592 =w ceql %t593, 0
+    jnz %t592, @list_free540, @list_free_skip541
+@list_free540
+    call $nox_list_free_payload(l %rt, l %t588, l 8)
+    jmp @list_free_done542
+@list_free_skip541
+    jmp @list_free_done542
+@list_free_done542
+    jmp @release_done539
+@release_skip538
+    jmp @release_done539
+@release_done539
     storel 0, %t2
-    %t593 =l loadl %t12
-    %t594 =w ceql %t593, 0
-    jnz %t594, @release_skip543, @release542
-@release542
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t593)
-    jmp @release_done544
-@release_skip543
-    jmp @release_done544
-@release_done544
+    %t594 =l loadl %t12
+    %t595 =w ceql %t594, 0
+    jnz %t595, @release_skip544, @release543
+@release543
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t594)
+    jmp @release_done545
+@release_skip544
+    jmp @release_done545
+@release_done545
     storel 0, %t12
-    %t595 =l loadl %t3
-    %t596 =w ceql %t595, 0
-    jnz %t596, @release_skip546, @release545
-@release545
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t595)
-    jmp @release_done547
-@release_skip546
-    jmp @release_done547
-@release_done547
+    %t596 =l loadl %t3
+    %t597 =w ceql %t596, 0
+    jnz %t597, @release_skip547, @release546
+@release546
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t596)
+    jmp @release_done548
+@release_skip547
+    jmp @release_done548
+@release_done548
     storel 0, %t3
-    %t597 =l loadl %t0
-    %t598 =w ceql %t597, 0
-    jnz %t598, @release_skip549, @release548
-@release548
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t597)
-    jmp @release_done550
-@release_skip549
-    jmp @release_done550
-@release_done550
+    %t598 =l loadl %t0
+    %t599 =w ceql %t598, 0
+    jnz %t599, @release_skip550, @release549
+@release549
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t598)
+    jmp @release_done551
+@release_skip550
+    jmp @release_done551
+@release_done551
     storel 0, %t0
-    %t599 =l loadl %t8
-    %t600 =w ceql %t599, 0
-    jnz %t600, @release_skip552, @release551
-@release551
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t599)
-    jmp @release_done553
-@release_skip552
-    jmp @release_done553
-@release_done553
+    %t600 =l loadl %t8
+    %t601 =w ceql %t600, 0
+    jnz %t601, @release_skip553, @release552
+@release552
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t600)
+    jmp @release_done554
+@release_skip553
+    jmp @release_done554
+@release_done554
     storel 0, %t8
-    %t601 =l loadl %t7
-    %t602 =w ceql %t601, 0
-    jnz %t602, @release_skip555, @release554
-@release554
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t601)
-    jmp @release_done556
-@release_skip555
-    jmp @release_done556
-@release_done556
+    %t602 =l loadl %t7
+    %t603 =w ceql %t602, 0
+    jnz %t603, @release_skip556, @release555
+@release555
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t602)
+    jmp @release_done557
+@release_skip556
+    jmp @release_done557
+@release_done557
     storel 0, %t7
     ret
-@exc_continue529
-    %t603 =l loadl %t8
-    %t604 =l call $nox_alloc(l %rt, l 8)
-    storel %rt, %t604
-    %t605 =l call $nox_async_spawn(l %rt, l $spawn_wrap_5, l %t604)
-    call $nox_tasks_TaskGroup__int_add(l %rt, l %t603, l %t605)
-    call $nox_async_destroy_task(l %rt, l %t605)
-    %t606 =l sub %rt, 48
-    %t607 =w loadub %t606
-    %t608 =l sub %rt, 64
-    %t609 =l loadl %t608
-    jnz %t607, @exc_slow557, @exc_fast558
-@exc_fast558
-    %t610 =w cnel %t609, 0
-    jmp @exc_done559
-@exc_slow557
-    %t611 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done559
-@exc_done559
-    %t612 =w phi @exc_fast558 %t610, @exc_slow557 %t611
-    jnz %t612, @exc_propagate560, @exc_continue561
-@exc_propagate560
-    %t613 =l loadl %t9
-    %t614 =w ceql %t613, 0
-    jnz %t614, @release_skip563, @release562
-@release562
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t613)
-    jmp @release_done564
-@release_skip563
-    jmp @release_done564
-@release_done564
+@exc_continue530
+    %t604 =l loadl %t8
+    %t605 =l call $nox_alloc(l %rt, l 8)
+    storel %rt, %t605
+    %t606 =l call $nox_async_spawn(l %rt, l $spawn_wrap_5, l %t605)
+    call $nox_tasks_TaskGroup__int_add(l %rt, l %t604, l %t606)
+    call $nox_async_destroy_task(l %rt, l %t606)
+    %t607 =l sub %rt, 48
+    %t608 =w loadub %t607
+    %t609 =l sub %rt, 64
+    %t610 =l loadl %t609
+    jnz %t608, @exc_slow558, @exc_fast559
+@exc_fast559
+    %t611 =w cnel %t610, 0
+    jmp @exc_done560
+@exc_slow558
+    %t612 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done560
+@exc_done560
+    %t613 =w phi @exc_fast559 %t611, @exc_slow558 %t612
+    jnz %t613, @exc_propagate561, @exc_continue562
+@exc_propagate561
+    %t614 =l loadl %t9
+    %t615 =w ceql %t614, 0
+    jnz %t615, @release_skip564, @release563
+@release563
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t614)
+    jmp @release_done565
+@release_skip564
+    jmp @release_done565
+@release_done565
     storel 0, %t9
-    %t615 =l loadl %t6
-    %t616 =w ceql %t615, 0
-    jnz %t616, @release_skip566, @release565
-@release565
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t615)
-    jmp @release_done567
-@release_skip566
-    jmp @release_done567
-@release_done567
+    %t616 =l loadl %t6
+    %t617 =w ceql %t616, 0
+    jnz %t617, @release_skip567, @release566
+@release566
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t616)
+    jmp @release_done568
+@release_skip567
+    jmp @release_done568
+@release_done568
     storel 0, %t6
-    %t617 =l loadl %t2
-    %t618 =w ceql %t617, 0
-    jnz %t618, @release_skip569, @release568
-@release568
-    %t619 =l sub %t617, 8
-    %t620 =l call $nox_atomic_rc_sub(l %t619, l 1)
-    %t622 =l and %t620, 4294967295
-    %t621 =w ceql %t622, 0
-    jnz %t621, @list_free571, @list_free_skip572
-@list_free571
-    call $nox_list_free_payload(l %rt, l %t617, l 8)
-    jmp @list_free_done573
-@list_free_skip572
-    jmp @list_free_done573
-@list_free_done573
-    jmp @release_done570
-@release_skip569
-    jmp @release_done570
-@release_done570
+    %t618 =l loadl %t2
+    %t619 =w ceql %t618, 0
+    jnz %t619, @release_skip570, @release569
+@release569
+    %t620 =l sub %t618, 8
+    %t621 =l call $nox_atomic_rc_sub(l %t620, l 1)
+    %t623 =l and %t621, 4294967295
+    %t622 =w ceql %t623, 0
+    jnz %t622, @list_free572, @list_free_skip573
+@list_free572
+    call $nox_list_free_payload(l %rt, l %t618, l 8)
+    jmp @list_free_done574
+@list_free_skip573
+    jmp @list_free_done574
+@list_free_done574
+    jmp @release_done571
+@release_skip570
+    jmp @release_done571
+@release_done571
     storel 0, %t2
-    %t623 =l loadl %t12
-    %t624 =w ceql %t623, 0
-    jnz %t624, @release_skip575, @release574
-@release574
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t623)
-    jmp @release_done576
-@release_skip575
-    jmp @release_done576
-@release_done576
+    %t624 =l loadl %t12
+    %t625 =w ceql %t624, 0
+    jnz %t625, @release_skip576, @release575
+@release575
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t624)
+    jmp @release_done577
+@release_skip576
+    jmp @release_done577
+@release_done577
     storel 0, %t12
-    %t625 =l loadl %t3
-    %t626 =w ceql %t625, 0
-    jnz %t626, @release_skip578, @release577
-@release577
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t625)
-    jmp @release_done579
-@release_skip578
-    jmp @release_done579
-@release_done579
+    %t626 =l loadl %t3
+    %t627 =w ceql %t626, 0
+    jnz %t627, @release_skip579, @release578
+@release578
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t626)
+    jmp @release_done580
+@release_skip579
+    jmp @release_done580
+@release_done580
     storel 0, %t3
-    %t627 =l loadl %t0
-    %t628 =w ceql %t627, 0
-    jnz %t628, @release_skip581, @release580
-@release580
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t627)
-    jmp @release_done582
-@release_skip581
-    jmp @release_done582
-@release_done582
+    %t628 =l loadl %t0
+    %t629 =w ceql %t628, 0
+    jnz %t629, @release_skip582, @release581
+@release581
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t628)
+    jmp @release_done583
+@release_skip582
+    jmp @release_done583
+@release_done583
     storel 0, %t0
-    %t629 =l loadl %t8
-    %t630 =w ceql %t629, 0
-    jnz %t630, @release_skip584, @release583
-@release583
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t629)
-    jmp @release_done585
-@release_skip584
-    jmp @release_done585
-@release_done585
+    %t630 =l loadl %t8
+    %t631 =w ceql %t630, 0
+    jnz %t631, @release_skip585, @release584
+@release584
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t630)
+    jmp @release_done586
+@release_skip585
+    jmp @release_done586
+@release_done586
     storel 0, %t8
-    %t631 =l loadl %t7
-    %t632 =w ceql %t631, 0
-    jnz %t632, @release_skip587, @release586
-@release586
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t631)
-    jmp @release_done588
-@release_skip587
-    jmp @release_done588
-@release_done588
+    %t632 =l loadl %t7
+    %t633 =w ceql %t632, 0
+    jnz %t633, @release_skip588, @release587
+@release587
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t632)
+    jmp @release_done589
+@release_skip588
+    jmp @release_done589
+@release_done589
     storel 0, %t7
     ret
-@exc_continue561
-    %t633 =l loadl %t8
-    %t634 =l call $nox_tasks_TaskGroup__int_handles(l %rt, l %t633)
-    %t635 =l loadl %t9
-    %t636 =w ceql %t635, 0
-    jnz %t636, @release_skip593, @release592
-@release592
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t635)
-    jmp @release_done594
-@release_skip593
-    jmp @release_done594
-@release_done594
+@exc_continue562
+    %t634 =l loadl %t8
+    %t635 =l call $nox_tasks_TaskGroup__int_handles(l %rt, l %t634)
+    %t636 =l loadl %t9
+    %t637 =w ceql %t636, 0
+    jnz %t637, @release_skip594, @release593
+@release593
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t636)
+    jmp @release_done595
+@release_skip594
+    jmp @release_done595
+@release_done595
     storel 0, %t9
-    storel %t634, %t9
+    storel %t635, %t9
     storel 0, %t11
-    %t637 =l loadl %t9
-    %t638 =l loadl %t637
-    jmp @forlist_cond595
-@forlist_cond595
-    %t639 =l loadl %t11
-    %t640 =w csltl %t639, %t638
-    jnz %t640, @forlist_body596, @forlist_end597
-@forlist_body596
-    %t641 =l shl %t639, 3
-    %t642 =l add %t637, 16
-    %t643 =l loadl %t642
-    %t644 =l add %t643, %t641
-    %t645 =l loadl %t644
-    storel %t645, %t10
-    %t646 =l loadl %t10
-    %t647 =l add %t646, 8
-    %t648 =l loadl %t647
-    %t649 =w call $nox_task_check_cancelled(l %rt)
-    jnz %t649, @task_cancelled599, @task_not_cancelled600
-@task_cancelled599
-    %t650 =l add $str19, 16
-    %t653 =l sub %rt, 24
-    %t654 =l loadl %t653
-    %t655 =w ceql %t654, 0
-    jnz %t655, @calloc_slow601, @calloc_chk602
-@calloc_chk602
-    %t656 =l sub %rt, 32
-    %t657 =l loadl %t656
-    %t658 =l add %t657, 16
-    %t659 =l loadl %t658
-    %t660 =w cnel %t659, 0
-    jnz %t660, @calloc_pop603, @calloc_slow601
-@calloc_pop603
-    %t661 =l loadl %t659
-    storel %t661, %t658
-    storel 1, %t659
-    %t662 =l add %t659, 8
-    storel %t662, %t652
-    jmp @calloc_done604
-@calloc_slow601
-    %t663 =l call $nox_rc_alloc(l %rt, l 40)
-    storel %t663, %t652
-    jmp @calloc_done604
-@calloc_done604
-    %t664 =l loadl %t652
-    storel 8, %t664
-    %t665 =l add %t664, 8
-    storel $CancelledError_vtable, %t665
-    %t666 =l add %t664, 16
-    storel 0, %t666
-    %t667 =l add %t664, 24
+    %t638 =l loadl %t9
+    %t639 =l loadl %t638
+    jmp @forlist_cond596
+@forlist_cond596
+    %t640 =l loadl %t11
+    %t641 =w csltl %t640, %t639
+    jnz %t641, @forlist_body597, @forlist_end598
+@forlist_body597
+    %t642 =l shl %t640, 3
+    %t643 =l add %t638, 16
+    %t644 =l loadl %t643
+    %t645 =l add %t644, %t642
+    %t646 =l loadl %t645
+    storel %t646, %t10
+    %t647 =l loadl %t10
+    %t648 =l add %t647, 8
+    %t649 =l loadl %t648
+    %t650 =w call $nox_task_check_cancelled(l %rt)
+    jnz %t650, @task_cancelled600, @task_not_cancelled601
+@task_cancelled600
+    %t651 =l add $str19, 16
+    %t654 =l sub %rt, 24
+    %t655 =l loadl %t654
+    %t656 =w ceql %t655, 0
+    jnz %t656, @calloc_slow602, @calloc_chk603
+@calloc_chk603
+    %t657 =l sub %rt, 32
+    %t658 =l loadl %t657
+    %t659 =l add %t658, 16
+    %t660 =l loadl %t659
+    %t661 =w cnel %t660, 0
+    jnz %t661, @calloc_pop604, @calloc_slow602
+@calloc_pop604
+    %t662 =l loadl %t660
+    storel %t662, %t659
+    storel 1, %t660
+    %t663 =l add %t660, 8
+    storel %t663, %t653
+    jmp @calloc_done605
+@calloc_slow602
+    %t664 =l call $nox_rc_alloc(l %rt, l 40)
+    storel %t664, %t653
+    jmp @calloc_done605
+@calloc_done605
+    %t665 =l loadl %t653
+    storel 8, %t665
+    %t666 =l add %t665, 8
+    storel $CancelledError_vtable, %t666
+    %t667 =l add %t665, 16
     storel 0, %t667
-    %t668 =l add %t664, 32
+    %t668 =l add %t665, 24
     storel 0, %t668
-    call $Exception___init__(l %rt, l %t664, l %t650)
-    %t669 =w call $nox_exception_pending(l %rt)
-    jnz %t669, @ctor_init_failed605, @ctor_init_cont606
-@ctor_init_failed605
-    %t670 =w ceql %t664, 0
-    jnz %t670, @release_skip608, @release607
-@release607
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t664)
-    jmp @release_done609
-@release_skip608
-    jmp @release_done609
-@release_done609
-    jmp @ctor_init_cont606
-@ctor_init_cont606
-    %t671 =l sub %rt, 48
-    %t672 =w loadub %t671
-    %t673 =l sub %rt, 64
-    %t674 =l loadl %t673
-    jnz %t672, @exc_slow610, @exc_fast611
-@exc_fast611
-    %t675 =w cnel %t674, 0
-    jmp @exc_done612
-@exc_slow610
-    %t676 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done612
-@exc_done612
-    %t677 =w phi @exc_fast611 %t675, @exc_slow610 %t676
-    jnz %t677, @exc_propagate613, @exc_continue614
-@exc_propagate613
-    jmp @try_dispatch589
-@exc_continue614
-    %t678 =l add %t664, 24
-    storel 41, %t678
-    call $nox_raise(l %rt, l %t664, l 41)
-    %t679 =l sub %rt, 48
-    %t680 =w loadub %t679
-    %t681 =l sub %rt, 64
-    %t682 =l loadl %t681
-    jnz %t680, @exc_slow615, @exc_fast616
-@exc_fast616
-    %t683 =w cnel %t682, 0
-    jmp @exc_done617
-@exc_slow615
-    %t684 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done617
-@exc_done617
-    %t685 =w phi @exc_fast616 %t683, @exc_slow615 %t684
-    jnz %t685, @exc_propagate618, @exc_continue619
-@exc_propagate618
-    jmp @try_dispatch589
-@exc_continue619
-@task_not_cancelled600
-    %t686 =l call $nox_async_await(l %rt, l %t648)
-    %t687 =l sub %rt, 48
-    %t688 =w loadub %t687
-    %t689 =l sub %rt, 64
-    %t690 =l loadl %t689
-    jnz %t688, @exc_slow620, @exc_fast621
-@exc_fast621
-    %t691 =w cnel %t690, 0
-    jmp @exc_done622
-@exc_slow620
-    %t692 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done622
-@exc_done622
-    %t693 =w phi @exc_fast621 %t691, @exc_slow620 %t692
-    jnz %t693, @exc_propagate623, @exc_continue624
-@exc_propagate623
-    jmp @try_dispatch589
-@exc_continue624
-    call $printf(l $fmt_int, ..., l %t686)
-    jmp @forlist_step598
-@forlist_step598
-    %t694 =l loadl %t11
-    %t695 =l add %t694, 1
-    storel %t695, %t11
-    jmp @forlist_cond595
-@forlist_end597
-    jmp @try_after590
-@try_dispatch589
-    %t696 =l call $nox_exception_take(l %rt)
-    %t697 =l loadl %t696
-    jmp @except_check625
-@except_check625
-    %t698 =w ceql %t697, 17
-    jnz %t698, @except_body626, @except_reraise627
-@except_body626
-    %t699 =l loadl %t12
-    %t700 =w ceql %t699, 0
-    jnz %t700, @release_skip629, @release628
-@release628
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t699)
-    jmp @release_done630
-@release_skip629
-    jmp @release_done630
-@release_done630
+    %t669 =l add %t665, 32
+    storel 0, %t669
+    call $Exception___init__(l %rt, l %t665, l %t651)
+    %t670 =w call $nox_exception_pending(l %rt)
+    jnz %t670, @ctor_init_failed606, @ctor_init_cont607
+@ctor_init_failed606
+    %t671 =w ceql %t665, 0
+    jnz %t671, @release_skip609, @release608
+@release608
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t665)
+    jmp @release_done610
+@release_skip609
+    jmp @release_done610
+@release_done610
+    jmp @ctor_init_cont607
+@ctor_init_cont607
+    %t672 =l sub %rt, 48
+    %t673 =w loadub %t672
+    %t674 =l sub %rt, 64
+    %t675 =l loadl %t674
+    jnz %t673, @exc_slow611, @exc_fast612
+@exc_fast612
+    %t676 =w cnel %t675, 0
+    jmp @exc_done613
+@exc_slow611
+    %t677 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done613
+@exc_done613
+    %t678 =w phi @exc_fast612 %t676, @exc_slow611 %t677
+    jnz %t678, @exc_propagate614, @exc_continue615
+@exc_propagate614
+    jmp @try_dispatch590
+@exc_continue615
+    %t679 =l add %t665, 24
+    storel 41, %t679
+    call $nox_raise(l %rt, l %t665, l 41)
+    %t680 =l sub %rt, 48
+    %t681 =w loadub %t680
+    %t682 =l sub %rt, 64
+    %t683 =l loadl %t682
+    jnz %t681, @exc_slow616, @exc_fast617
+@exc_fast617
+    %t684 =w cnel %t683, 0
+    jmp @exc_done618
+@exc_slow616
+    %t685 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done618
+@exc_done618
+    %t686 =w phi @exc_fast617 %t684, @exc_slow616 %t685
+    jnz %t686, @exc_propagate619, @exc_continue620
+@exc_propagate619
+    jmp @try_dispatch590
+@exc_continue620
+@task_not_cancelled601
+    %t687 =l call $nox_async_await(l %rt, l %t649)
+    %t688 =l sub %rt, 48
+    %t689 =w loadub %t688
+    %t690 =l sub %rt, 64
+    %t691 =l loadl %t690
+    jnz %t689, @exc_slow621, @exc_fast622
+@exc_fast622
+    %t692 =w cnel %t691, 0
+    jmp @exc_done623
+@exc_slow621
+    %t693 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done623
+@exc_done623
+    %t694 =w phi @exc_fast622 %t692, @exc_slow621 %t693
+    jnz %t694, @exc_propagate624, @exc_continue625
+@exc_propagate624
+    jmp @try_dispatch590
+@exc_continue625
+    call $printf(l $fmt_int, ..., l %t687)
+    jmp @forlist_step599
+@forlist_step599
+    %t695 =l loadl %t11
+    %t696 =l add %t695, 1
+    storel %t696, %t11
+    jmp @forlist_cond596
+@forlist_end598
+    jmp @try_after591
+@try_dispatch590
+    %t697 =l call $nox_exception_take(l %rt)
+    %t698 =l loadl %t697
+    jmp @except_check626
+@except_check626
+    %t699 =w ceql %t698, 17
+    jnz %t699, @except_body627, @except_reraise628
+@except_body627
+    %t700 =l loadl %t12
+    %t701 =w ceql %t700, 0
+    jnz %t701, @release_skip630, @release629
+@release629
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t700)
+    jmp @release_done631
+@release_skip630
+    jmp @release_done631
+@release_done631
     storel 0, %t12
-    storel %t696, %t12
-    %t701 =l add $str20, 16
-    %t702 =l loadl %t12
-    %t703 =l add %t702, 16
-    %t704 =l loadl %t703
-    call $nox_print_str(l %t701)
+    storel %t697, %t12
+    %t702 =l add $str20, 16
+    %t703 =l loadl %t12
+    %t704 =l add %t703, 16
+    %t705 =l loadl %t704
+    call $nox_print_str(l %t702)
     call $printf(l $fmt_lit7)
-    call $nox_print_str(l %t704)
+    call $nox_print_str(l %t705)
     call $printf(l $fmt_lit8)
-    jmp @try_after590
-@except_reraise627
-    call $nox_raise(l %rt, l %t696, l 43)
-    %t705 =l sub %rt, 48
-    %t706 =w loadub %t705
-    %t707 =l sub %rt, 64
-    %t708 =l loadl %t707
-    jnz %t706, @exc_slow631, @exc_fast632
-@exc_fast632
-    %t709 =w cnel %t708, 0
-    jmp @exc_done633
-@exc_slow631
-    %t710 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done633
-@exc_done633
-    %t711 =w phi @exc_fast632 %t709, @exc_slow631 %t710
-    jnz %t711, @exc_propagate634, @exc_continue635
-@exc_propagate634
-    %t712 =l loadl %t9
-    %t713 =w ceql %t712, 0
-    jnz %t713, @release_skip637, @release636
-@release636
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t712)
-    jmp @release_done638
-@release_skip637
-    jmp @release_done638
-@release_done638
+    jmp @try_after591
+@except_reraise628
+    call $nox_raise(l %rt, l %t697, l 43)
+    %t706 =l sub %rt, 48
+    %t707 =w loadub %t706
+    %t708 =l sub %rt, 64
+    %t709 =l loadl %t708
+    jnz %t707, @exc_slow632, @exc_fast633
+@exc_fast633
+    %t710 =w cnel %t709, 0
+    jmp @exc_done634
+@exc_slow632
+    %t711 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done634
+@exc_done634
+    %t712 =w phi @exc_fast633 %t710, @exc_slow632 %t711
+    jnz %t712, @exc_propagate635, @exc_continue636
+@exc_propagate635
+    %t713 =l loadl %t9
+    %t714 =w ceql %t713, 0
+    jnz %t714, @release_skip638, @release637
+@release637
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t713)
+    jmp @release_done639
+@release_skip638
+    jmp @release_done639
+@release_done639
     storel 0, %t9
-    %t714 =l loadl %t6
-    %t715 =w ceql %t714, 0
-    jnz %t715, @release_skip640, @release639
-@release639
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t714)
-    jmp @release_done641
-@release_skip640
-    jmp @release_done641
-@release_done641
+    %t715 =l loadl %t6
+    %t716 =w ceql %t715, 0
+    jnz %t716, @release_skip641, @release640
+@release640
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t715)
+    jmp @release_done642
+@release_skip641
+    jmp @release_done642
+@release_done642
     storel 0, %t6
-    %t716 =l loadl %t2
-    %t717 =w ceql %t716, 0
-    jnz %t717, @release_skip643, @release642
-@release642
-    %t718 =l sub %t716, 8
-    %t719 =l call $nox_atomic_rc_sub(l %t718, l 1)
-    %t721 =l and %t719, 4294967295
-    %t720 =w ceql %t721, 0
-    jnz %t720, @list_free645, @list_free_skip646
-@list_free645
-    call $nox_list_free_payload(l %rt, l %t716, l 8)
-    jmp @list_free_done647
-@list_free_skip646
-    jmp @list_free_done647
-@list_free_done647
-    jmp @release_done644
-@release_skip643
-    jmp @release_done644
-@release_done644
+    %t717 =l loadl %t2
+    %t718 =w ceql %t717, 0
+    jnz %t718, @release_skip644, @release643
+@release643
+    %t719 =l sub %t717, 8
+    %t720 =l call $nox_atomic_rc_sub(l %t719, l 1)
+    %t722 =l and %t720, 4294967295
+    %t721 =w ceql %t722, 0
+    jnz %t721, @list_free646, @list_free_skip647
+@list_free646
+    call $nox_list_free_payload(l %rt, l %t717, l 8)
+    jmp @list_free_done648
+@list_free_skip647
+    jmp @list_free_done648
+@list_free_done648
+    jmp @release_done645
+@release_skip644
+    jmp @release_done645
+@release_done645
     storel 0, %t2
-    %t722 =l loadl %t12
-    %t723 =w ceql %t722, 0
-    jnz %t723, @release_skip649, @release648
-@release648
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t722)
-    jmp @release_done650
-@release_skip649
-    jmp @release_done650
-@release_done650
+    %t723 =l loadl %t12
+    %t724 =w ceql %t723, 0
+    jnz %t724, @release_skip650, @release649
+@release649
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t723)
+    jmp @release_done651
+@release_skip650
+    jmp @release_done651
+@release_done651
     storel 0, %t12
-    %t724 =l loadl %t3
-    %t725 =w ceql %t724, 0
-    jnz %t725, @release_skip652, @release651
-@release651
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t724)
-    jmp @release_done653
-@release_skip652
-    jmp @release_done653
-@release_done653
+    %t725 =l loadl %t3
+    %t726 =w ceql %t725, 0
+    jnz %t726, @release_skip653, @release652
+@release652
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t725)
+    jmp @release_done654
+@release_skip653
+    jmp @release_done654
+@release_done654
     storel 0, %t3
-    %t726 =l loadl %t0
-    %t727 =w ceql %t726, 0
-    jnz %t727, @release_skip655, @release654
-@release654
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t726)
-    jmp @release_done656
-@release_skip655
-    jmp @release_done656
-@release_done656
+    %t727 =l loadl %t0
+    %t728 =w ceql %t727, 0
+    jnz %t728, @release_skip656, @release655
+@release655
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t727)
+    jmp @release_done657
+@release_skip656
+    jmp @release_done657
+@release_done657
     storel 0, %t0
-    %t728 =l loadl %t8
-    %t729 =w ceql %t728, 0
-    jnz %t729, @release_skip658, @release657
-@release657
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t728)
-    jmp @release_done659
-@release_skip658
-    jmp @release_done659
-@release_done659
+    %t729 =l loadl %t8
+    %t730 =w ceql %t729, 0
+    jnz %t730, @release_skip659, @release658
+@release658
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t729)
+    jmp @release_done660
+@release_skip659
+    jmp @release_done660
+@release_done660
     storel 0, %t8
-    %t730 =l loadl %t7
-    %t731 =w ceql %t730, 0
-    jnz %t731, @release_skip661, @release660
-@release660
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t730)
-    jmp @release_done662
-@release_skip661
-    jmp @release_done662
-@release_done662
+    %t731 =l loadl %t7
+    %t732 =w ceql %t731, 0
+    jnz %t732, @release_skip662, @release661
+@release661
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t731)
+    jmp @release_done663
+@release_skip662
+    jmp @release_done663
+@release_done663
     storel 0, %t7
     ret
-@exc_continue635
-    jmp @try_after590
-@try_after590
-@try_end591
-    %t732 =l loadl %t9
-    %t733 =w ceql %t732, 0
-    jnz %t733, @release_skip664, @release663
-@release663
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t732)
-    jmp @release_done665
-@release_skip664
-    jmp @release_done665
-@release_done665
+@exc_continue636
+    jmp @try_after591
+@try_after591
+@try_end592
+    %t733 =l loadl %t9
+    %t734 =w ceql %t733, 0
+    jnz %t734, @release_skip665, @release664
+@release664
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t733)
+    jmp @release_done666
+@release_skip665
+    jmp @release_done666
+@release_done666
     storel 0, %t9
-    %t734 =l loadl %t6
-    %t735 =w ceql %t734, 0
-    jnz %t735, @release_skip667, @release666
-@release666
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t734)
-    jmp @release_done668
-@release_skip667
-    jmp @release_done668
-@release_done668
+    %t735 =l loadl %t6
+    %t736 =w ceql %t735, 0
+    jnz %t736, @release_skip668, @release667
+@release667
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t735)
+    jmp @release_done669
+@release_skip668
+    jmp @release_done669
+@release_done669
     storel 0, %t6
-    %t736 =l loadl %t2
-    %t737 =w ceql %t736, 0
-    jnz %t737, @release_skip670, @release669
-@release669
-    %t738 =l sub %t736, 8
-    %t739 =l call $nox_atomic_rc_sub(l %t738, l 1)
-    %t741 =l and %t739, 4294967295
-    %t740 =w ceql %t741, 0
-    jnz %t740, @list_free672, @list_free_skip673
-@list_free672
-    call $nox_list_free_payload(l %rt, l %t736, l 8)
-    jmp @list_free_done674
-@list_free_skip673
-    jmp @list_free_done674
-@list_free_done674
-    jmp @release_done671
-@release_skip670
-    jmp @release_done671
-@release_done671
+    %t737 =l loadl %t2
+    %t738 =w ceql %t737, 0
+    jnz %t738, @release_skip671, @release670
+@release670
+    %t739 =l sub %t737, 8
+    %t740 =l call $nox_atomic_rc_sub(l %t739, l 1)
+    %t742 =l and %t740, 4294967295
+    %t741 =w ceql %t742, 0
+    jnz %t741, @list_free673, @list_free_skip674
+@list_free673
+    call $nox_list_free_payload(l %rt, l %t737, l 8)
+    jmp @list_free_done675
+@list_free_skip674
+    jmp @list_free_done675
+@list_free_done675
+    jmp @release_done672
+@release_skip671
+    jmp @release_done672
+@release_done672
     storel 0, %t2
-    %t742 =l loadl %t12
-    %t743 =w ceql %t742, 0
-    jnz %t743, @release_skip676, @release675
-@release675
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t742)
-    jmp @release_done677
-@release_skip676
-    jmp @release_done677
-@release_done677
+    %t743 =l loadl %t12
+    %t744 =w ceql %t743, 0
+    jnz %t744, @release_skip677, @release676
+@release676
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t743)
+    jmp @release_done678
+@release_skip677
+    jmp @release_done678
+@release_done678
     storel 0, %t12
-    %t744 =l loadl %t3
-    %t745 =w ceql %t744, 0
-    jnz %t745, @release_skip679, @release678
-@release678
-    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t744)
-    jmp @release_done680
-@release_skip679
-    jmp @release_done680
-@release_done680
+    %t745 =l loadl %t3
+    %t746 =w ceql %t745, 0
+    jnz %t746, @release_skip680, @release679
+@release679
+    call $List_nox_tasks_TaskHandle__int_release(l %rt, l %t745)
+    jmp @release_done681
+@release_skip680
+    jmp @release_done681
+@release_done681
     storel 0, %t3
-    %t746 =l loadl %t0
-    %t747 =w ceql %t746, 0
-    jnz %t747, @release_skip682, @release681
-@release681
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t746)
-    jmp @release_done683
-@release_skip682
-    jmp @release_done683
-@release_done683
+    %t747 =l loadl %t0
+    %t748 =w ceql %t747, 0
+    jnz %t748, @release_skip683, @release682
+@release682
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t747)
+    jmp @release_done684
+@release_skip683
+    jmp @release_done684
+@release_done684
     storel 0, %t0
-    %t748 =l loadl %t8
-    %t749 =w ceql %t748, 0
-    jnz %t749, @release_skip685, @release684
-@release684
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t748)
-    jmp @release_done686
-@release_skip685
-    jmp @release_done686
-@release_done686
+    %t749 =l loadl %t8
+    %t750 =w ceql %t749, 0
+    jnz %t750, @release_skip686, @release685
+@release685
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t749)
+    jmp @release_done687
+@release_skip686
+    jmp @release_done687
+@release_done687
     storel 0, %t8
-    %t750 =l loadl %t7
-    %t751 =w ceql %t750, 0
-    jnz %t751, @release_skip688, @release687
-@release687
-    call $nox_tasks_TaskGroup__int_release(l %rt, l %t750)
-    jmp @release_done689
-@release_skip688
-    jmp @release_done689
-@release_done689
+    %t751 =l loadl %t7
+    %t752 =w ceql %t751, 0
+    jnz %t752, @release_skip689, @release688
+@release688
+    call $nox_tasks_TaskGroup__int_release(l %rt, l %t751)
+    jmp @release_done690
+@release_skip689
+    jmp @release_done690
+@release_done690
     storel 0, %t7
-@fn_end690
+@fn_end691
     ret
 @append_grow229
     %t262 =l call $nox_list_grow(l %rt, l %t149, l 8)
-    jmp @append_write230
+    %t263 =w ceql %t262, 0
+    jnz %t263, @append_oom231, @append_write230
+@append_oom231
+    call $nox_out_of_memory()
+    ret
 }
 export function l $main_body(l %argp) {
 @start

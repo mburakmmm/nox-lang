@@ -2960,36 +2960,40 @@ export function $PBox_set(l %rt, l %p_self, l %p_s) {
     %t52 =w csgel %t49, %t51
     jnz %t52, @append_grow32, @append_write33
 @append_write33
-    %t54 =l mul %t49, 8
-    %t55 =l add %t44, 16
-    %t56 =l loadl %t55
-    %t57 =l add %t56, %t54
-    storel %t34, %t57
-    %t58 =l add %t49, 1
-    storel %t58, %t44
-    jnz %t48, @dyn_hold_unlock34, @dyn_done35
-@dyn_hold_unlock34
+    %t55 =l mul %t49, 8
+    %t56 =l add %t44, 16
+    %t57 =l loadl %t56
+    %t58 =l add %t57, %t55
+    storel %t34, %t58
+    %t59 =l add %t49, 1
+    storel %t59, %t44
+    jnz %t48, @dyn_hold_unlock35, @dyn_done36
+@dyn_hold_unlock35
     call $nox_obj_unlock(l %t44)
-    jmp @dyn_done35
-@dyn_done35
-    jnz %t43, @dyn_hold_unlock36, @dyn_done37
-@dyn_hold_unlock36
+    jmp @dyn_done36
+@dyn_done36
+    jnz %t43, @dyn_hold_unlock37, @dyn_done38
+@dyn_hold_unlock37
     call $nox_obj_unlock(l %t32)
-    jmp @dyn_done37
-@dyn_done37
-    %t59 =w ceql %t28, 0
-    jnz %t59, @release_skip39, @release38
-@release38
+    jmp @dyn_done38
+@dyn_done38
+    %t60 =w ceql %t28, 0
+    jnz %t60, @release_skip40, @release39
+@release39
     call $List_str_release(l %rt, l %t28)
-    jmp @release_done40
-@release_skip39
-    jmp @release_done40
-@release_done40
-@fn_end41
+    jmp @release_done41
+@release_skip40
+    jmp @release_done41
+@release_done41
+@fn_end42
     ret
 @append_grow32
     %t53 =l call $nox_list_grow(l %rt, l %t44, l 8)
-    jmp @append_write33
+    %t54 =w ceql %t53, 0
+    jnz %t54, @append_oom34, @append_write33
+@append_oom34
+    call $nox_out_of_memory()
+    ret
 }
 export function $PBox_release(l %rt, l %p) {
 @start
@@ -5756,60 +5760,64 @@ export function $PBox_set_c(l %rt, l %p_self, l %p_s) {
     %t47 =w csgel %t44, %t46
     jnz %t47, @append_grow28, @append_write29
 @append_write29
-    %t49 =l mul %t44, 8
-    %t50 =l add %t39, 16
-    %t51 =l loadl %t50
-    %t52 =l add %t51, %t49
-    storel %t34, %t52
-    %t53 =l add %t44, 1
-    storel %t53, %t39
-    jnz %t43, @dyn_hold_unlock30, @dyn_done31
-@dyn_hold_unlock30
+    %t50 =l mul %t44, 8
+    %t51 =l add %t39, 16
+    %t52 =l loadl %t51
+    %t53 =l add %t52, %t50
+    storel %t34, %t53
+    %t54 =l add %t44, 1
+    storel %t54, %t39
+    jnz %t43, @dyn_hold_unlock31, @dyn_done32
+@dyn_hold_unlock31
     call $nox_obj_unlock(l %t39)
-    jmp @dyn_done31
-@dyn_done31
-    jnz %t38, @dyn_hold_unlock32, @dyn_done33
-@dyn_hold_unlock32
+    jmp @dyn_done32
+@dyn_done32
+    jnz %t38, @dyn_hold_unlock33, @dyn_done34
+@dyn_hold_unlock33
     call $nox_obj_unlock(l %t32)
-    jmp @dyn_done33
-@dyn_done33
-    %t54 =w ceql %t28, 0
-    jnz %t54, @release_skip35, @release34
-@release34
+    jmp @dyn_done34
+@dyn_done34
+    %t55 =w ceql %t28, 0
+    jnz %t55, @release_skip36, @release35
+@release35
     call $List_str_release(l %rt, l %t28)
-    jmp @release_done36
-@release_skip35
-    jmp @release_done36
-@release_done36
-    %t55 =l loadl %t1
-    %t56 =w ceql %t55, 0
-    jnz %t56, @release_skip38, @release37
-@release37
-    %t57 =l sub %t55, 16
-    %t58 =l loadl %t57
-    %t59 =w csgel %t58, 536870912
-    jnz %t59, @str_free_done42, @str_rel_atomic43
-@str_rel_atomic43
-    %t60 =l sub %t55, 16
-    %t61 =l call $nox_atomic_rc_sub(l %t60, l 1)
-    %t62 =w cslel %t61, 0
-    jnz %t62, @str_free40, @str_free_skip41
-@str_free40
-    call $nox_str_free_now(l %rt, l %t55)
-    jmp @str_free_done42
-@str_free_skip41
-    jmp @str_free_done42
-@str_free_done42
-    jmp @release_done39
-@release_skip38
-    jmp @release_done39
-@release_done39
+    jmp @release_done37
+@release_skip36
+    jmp @release_done37
+@release_done37
+    %t56 =l loadl %t1
+    %t57 =w ceql %t56, 0
+    jnz %t57, @release_skip39, @release38
+@release38
+    %t58 =l sub %t56, 16
+    %t59 =l loadl %t58
+    %t60 =w csgel %t59, 536870912
+    jnz %t60, @str_free_done43, @str_rel_atomic44
+@str_rel_atomic44
+    %t61 =l sub %t56, 16
+    %t62 =l call $nox_atomic_rc_sub(l %t61, l 1)
+    %t63 =w cslel %t62, 0
+    jnz %t63, @str_free41, @str_free_skip42
+@str_free41
+    call $nox_str_free_now(l %rt, l %t56)
+    jmp @str_free_done43
+@str_free_skip42
+    jmp @str_free_done43
+@str_free_done43
+    jmp @release_done40
+@release_skip39
+    jmp @release_done40
+@release_done40
     storel 0, %t1
-@fn_end44
+@fn_end45
     ret
 @append_grow28
     %t48 =l call $nox_list_grow(l %rt, l %t39, l 8)
-    jmp @append_write29
+    %t49 =w ceql %t48, 0
+    jnz %t49, @append_oom30, @append_write29
+@append_oom30
+    call $nox_out_of_memory()
+    ret
 }
 export function $CBox_rename_c(l %rt, l %p_self, l %p_s) {
 @start

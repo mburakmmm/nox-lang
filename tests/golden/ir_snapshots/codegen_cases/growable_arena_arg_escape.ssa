@@ -3963,83 +3963,91 @@ export function l $compute(l %rt) {
     %t16 =w csgel %t13, %t15
     jnz %t16, @append_grow6, @append_write7
 @append_write7
-    %t18 =l mul %t13, 8
-    %t19 =l add %t12, 16
-    %t20 =l loadl %t19
-    %t21 =l add %t20, %t18
-    storel 1, %t21
-    %t22 =l add %t13, 1
-    storel %t22, %t12
-    %t23 =l loadl %t0
-    %t24 =l loadl %t23
-    %t25 =l add %t23, 8
-    %t26 =l loadl %t25
-    %t27 =w csgel %t24, %t26
-    jnz %t27, @append_grow8, @append_write9
-@append_write9
-    %t29 =l mul %t24, 8
-    %t30 =l add %t23, 16
-    %t31 =l loadl %t30
-    %t32 =l add %t31, %t29
-    storel 2, %t32
-    %t33 =l add %t24, 1
-    storel %t33, %t23
-    %t34 =l loadl %t0
-    %t35 =l call $sum_it(l %rt, l %t34)
+    %t19 =l mul %t13, 8
+    %t20 =l add %t12, 16
+    %t21 =l loadl %t20
+    %t22 =l add %t21, %t19
+    storel 1, %t22
+    %t23 =l add %t13, 1
+    storel %t23, %t12
+    %t24 =l loadl %t0
+    %t25 =l loadl %t24
+    %t26 =l add %t24, 8
+    %t27 =l loadl %t26
+    %t28 =w csgel %t25, %t27
+    jnz %t28, @append_grow9, @append_write10
+@append_write10
+    %t31 =l mul %t25, 8
+    %t32 =l add %t24, 16
+    %t33 =l loadl %t32
+    %t34 =l add %t33, %t31
+    storel 2, %t34
+    %t35 =l add %t25, 1
+    storel %t35, %t24
     %t36 =l loadl %t0
-    %t37 =w ceql %t36, 0
-    jnz %t37, @release_skip11, @release10
-@release10
-    %t38 =l sub %t36, 8
-    %t39 =l loadl %t38
-    %t40 =l sub %t39, 1
-    storel %t40, %t38
-    %t42 =l and %t40, 4294967295
-    %t41 =w ceql %t42, 0
-    jnz %t41, @list_free13, @list_free_skip14
-@list_free13
-    call $nox_list_free_payload(l %rt, l %t36, l 8)
-    jmp @list_free_done15
-@list_free_skip14
-    jmp @list_free_done15
-@list_free_done15
-    jmp @release_done12
-@release_skip11
-    jmp @release_done12
-@release_done12
+    %t37 =l call $sum_it(l %rt, l %t36)
+    %t38 =l loadl %t0
+    %t39 =w ceql %t38, 0
+    jnz %t39, @release_skip13, @release12
+@release12
+    %t40 =l sub %t38, 8
+    %t41 =l loadl %t40
+    %t42 =l sub %t41, 1
+    storel %t42, %t40
+    %t44 =l and %t42, 4294967295
+    %t43 =w ceql %t44, 0
+    jnz %t43, @list_free15, @list_free_skip16
+@list_free15
+    call $nox_list_free_payload(l %rt, l %t38, l 8)
+    jmp @list_free_done17
+@list_free_skip16
+    jmp @list_free_done17
+@list_free_done17
+    jmp @release_done14
+@release_skip13
+    jmp @release_done14
+@release_done14
     storel 0, %t0
-    ret %t35
-@after_return16
-    %t43 =l loadl %t0
-    %t44 =w ceql %t43, 0
-    jnz %t44, @release_skip18, @release17
-@release17
-    %t45 =l sub %t43, 8
-    %t46 =l loadl %t45
-    %t47 =l sub %t46, 1
-    storel %t47, %t45
-    %t49 =l and %t47, 4294967295
-    %t48 =w ceql %t49, 0
-    jnz %t48, @list_free20, @list_free_skip21
-@list_free20
-    call $nox_list_free_payload(l %rt, l %t43, l 8)
-    jmp @list_free_done22
-@list_free_skip21
-    jmp @list_free_done22
-@list_free_done22
-    jmp @release_done19
-@release_skip18
-    jmp @release_done19
-@release_done19
+    ret %t37
+@after_return18
+    %t45 =l loadl %t0
+    %t46 =w ceql %t45, 0
+    jnz %t46, @release_skip20, @release19
+@release19
+    %t47 =l sub %t45, 8
+    %t48 =l loadl %t47
+    %t49 =l sub %t48, 1
+    storel %t49, %t47
+    %t51 =l and %t49, 4294967295
+    %t50 =w ceql %t51, 0
+    jnz %t50, @list_free22, @list_free_skip23
+@list_free22
+    call $nox_list_free_payload(l %rt, l %t45, l 8)
+    jmp @list_free_done24
+@list_free_skip23
+    jmp @list_free_done24
+@list_free_done24
+    jmp @release_done21
+@release_skip20
+    jmp @release_done21
+@release_done21
     storel 0, %t0
-@fn_end23
+@fn_end25
     ret 0
 @append_grow6
     %t17 =l call $nox_list_grow(l %rt, l %t12, l 8)
-    jmp @append_write7
-@append_grow8
-    %t28 =l call $nox_list_grow(l %rt, l %t23, l 8)
-    jmp @append_write9
+    %t18 =w ceql %t17, 0
+    jnz %t18, @append_oom8, @append_write7
+@append_oom8
+    call $nox_out_of_memory()
+    ret 0
+@append_grow9
+    %t29 =l call $nox_list_grow(l %rt, l %t24, l 8)
+    %t30 =w ceql %t29, 0
+    jnz %t30, @append_oom11, @append_write10
+@append_oom11
+    call $nox_out_of_memory()
+    ret 0
 }
 export function w $main(w %argc, l %argv) {
 @start

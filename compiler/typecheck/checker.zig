@@ -48,6 +48,7 @@ const index_call_fixup = @import("index_call_fixup.zig");
 const guard_normalize = @import("guard_normalize.zig");
 const nonlocal_desugar = @import("nonlocal_desugar.zig");
 const generator_desugar = @import("generator_desugar.zig");
+const field_effects = @import("field_effects.zig");
 const type_alias = @import("type_alias.zig");
 const mixin_flatten = @import("mixin_flatten.zig");
 const class_attr_promote = @import("class_attr_promote.zig");
@@ -752,6 +753,11 @@ pub const Checker = struct {
     /// `registerSignatures`in parametre/dönüş tiplerini gövdeyi kontrol
     /// ETMEDEN çözmesi gibi.
     module_globals: std.StringHashMapUnmanaged(Type) = .{},
+    /// R1-P0.5: şu anki ifade denetiminde bir kullanıcı dunder'ı çağrılabildi (bkz. `hasDunder`, `checkExpr`).
+    dunder_hit: bool = false,
+    /// R1-P0.4: modül gövdesi ve (ilk kullanımda kurulan) alan-yazma etkisi özeti (`field_effects.zig`).
+    effect_body: []const ast.Stmt = &.{},
+    effects: ?field_effects.Summary = null,
     /// v2.1.141: DEĞİŞMEZ tamsayı sabitleri — `NAME: int = <literal>` biçiminde bildirilen ve modülün HİÇBİR yerinde yeniden atanmayan üst-düzey değişkenlerin değeri. Bu adlar (ve yalnız
     /// bunlardan/literallerden kurulu `|`, `&`, `+`... ifadeleri) hedef tipi sabit-genişlikli tamsayı olan bir yerde değer aralığa sığıyorsa AÇIK DÖNÜŞÜM OLMADAN kabul edilir
     /// (Go/Zig'deki "tipsiz sabit" ergonomisi; `i32(SQLITE_OPEN_READWRITE)` yazmak gerekmez).
@@ -4214,6 +4220,7 @@ pub const Checker = struct {
 
     pub fn checkModule(self: *Checker, module: ast.Module) TypeError!void {
         self.module_expr_spans = module.expr_spans;
+        self.effect_body = module.body;
         for (module.exports) |ex| {
             var set: std.StringHashMapUnmanaged(void) = .{};
             for (ex.names) |n| try set.put(self.allocator, n, {});
@@ -6741,7 +6748,11 @@ pub const Checker = struct {
 
     fn checkAssign(self: *Checker, ctx: *FnCtx, a: *const ast.Assign) TypeError!void {
         // D1.6: hedefin yolunu (ve öneki taşıyan tüm özellik yollarını) atamadan SONRA daraltmadan düşür (sağ taraf eski daraltmayla denetlenir).
-        defer if (self.pathKey(a.target, 0)) |k| self.invalidateNarrowPrefix(ctx, k);
+        defer {
+            if (self.pathKey(a.target, 0)) |k| self.invalidateNarrowPrefix(ctx, k);
+            // R1-P0.3: alan ataması takma adlar üzerinden başka yolları da bozabilir; yolu çözülemeyen hedefler (`xs[i].f = ...`, `g().f = ...`) de dahil.
+            if (a.target == .attribute) self.invalidateNarrowsByField(ctx, a.target.attribute.attr);
+        }
         switch (a.target) {
             .identifier => |name| {
                 const existing = ctx.scope.lookupLocal(name) orelse blk: {
@@ -7470,7 +7481,20 @@ pub const Checker = struct {
         return self.fail(error.UndefinedVariable, "undefined variable: {s}", .{name});
     }
 
+    /// R1-P0.5: ifade denetimi sırasında bir kullanıcı dunder'ı çağrılabildiyse (`hasDunder` bayrağı) özellik yolu daraltmaları ifade sonrası düşer (dunder bir alanı değiştirebilir).
     fn checkExpr(self: *Checker, ctx: *FnCtx, expr: ast.Expr) TypeError!Type {
+        const saved_hit = self.dunder_hit;
+        self.dunder_hit = false;
+        const t = self.checkExprInner(ctx, expr) catch |e| {
+            self.dunder_hit = saved_hit or self.dunder_hit;
+            return e;
+        };
+        if (self.dunder_hit) self.dropPathNarrows(ctx);
+        self.dunder_hit = saved_hit or self.dunder_hit;
+        return t;
+    }
+
+    fn checkExprInner(self: *Checker, ctx: *FnCtx, expr: ast.Expr) TypeError!Type {
         try self.enterExprRecursion();
         defer self.exitExprRecursion();
         return switch (expr) {
@@ -7871,7 +7895,10 @@ pub const Checker = struct {
 
     fn hasDunder(self: *Checker, t: Type, name: []const u8) bool {
         const info = self.dunderClassInfo(t) orelse return false;
-        return info.methods.contains(name);
+        const has = info.methods.contains(name);
+        // R1-P0.5: kullanıcı tanımlı bir dunder (`__str__`, `__len__`, `__add__` ...) çalışabilir → `checkExpr` sarmalayıcısı bu ifade sonrası yol daraltmalarını düşürür.
+        if (has) self.dunder_hit = true;
+        return has;
     }
 
     fn mkDunderCall(self: *Checker, obj: ast.Expr, name: []const u8, args: []const ast.Expr) TypeError!ast.Expr {
@@ -8188,13 +8215,13 @@ pub const Checker = struct {
     fn collectNarrows(self: *Checker, ctx: *FnCtx, cond: ast.Expr, positive: bool, out: *NarrowList) void {
         switch (cond) {
             .binary => |b| switch (b.op) {
+                // R1-P0.4: sağ operand değerlendirilirken kullanıcı kodu çalışmış olabilir (`n.left != None and clear(n)`): sol operandın ÖZELLİK YOLU daraltmaları
+                // (anahtarında `.` olanlar) bu durumda artık kanıtlanmış değildir. Düz yerel daraltmaları etkilenmez.
                 .and_ => if (positive) {
-                    self.collectNarrows(ctx, b.left.*, true, out);
-                    self.collectNarrows(ctx, b.right.*, true, out);
+                    self.collectLeftThenRight(ctx, b, true, out);
                 },
                 .or_ => if (!positive) {
-                    self.collectNarrows(ctx, b.left.*, false, out);
-                    self.collectNarrows(ctx, b.right.*, false, out);
+                    self.collectLeftThenRight(ctx, b, false, out);
                 },
                 .eq, .ne => if (self.detectNarrowing(ctx, cond)) |n| {
                     if (positive == n.narrows_then) out.add(n);
@@ -8204,6 +8231,76 @@ pub const Checker = struct {
             .unary => |u| if (u.op == .not_) self.collectNarrows(ctx, u.operand.*, !positive, out),
             else => {},
         }
+    }
+
+    /// `A and B` (then) / `A or B` (else) için `collectNarrows`: önce sol, sonra sağ; sağ operand kullanıcı kodu çalıştırabiliyorsa sol operandın yol daraltmaları atılır (R1-P0.4).
+    fn collectLeftThenRight(self: *Checker, ctx: *FnCtx, b: ast.Binary, positive: bool, out: *NarrowList) void {
+        var left_n: NarrowList = .{};
+        self.collectNarrows(ctx, b.left.*, positive, &left_n);
+        const right_runs_user_code = self.mayRunUserCode(b.right.*);
+        for (left_n.items[0..left_n.len]) |n| {
+            if (right_runs_user_code and std.mem.indexOfScalar(u8, n.name, '.') != null) continue;
+            out.add(n);
+        }
+        self.collectNarrows(ctx, b.right.*, positive, out);
+    }
+
+    /// İfade değerlendirilirken sınıf alanlarını değiştirebilecek kullanıcı kodu çalışabilir mi? Çağrı hedefleri için modül-düzeyi dolaylı etki özeti (`field_effects.zig`): yalnızca alan
+    /// yazmadığı kanıtlanan işlev/metotlar (ve yan etkisiz yerleşikler) daraltmayı korur; `await`/`spawn`/lambda/comprehension muhafazakâr olarak "evet".
+    /// Not: operatör aşırı yüklemesi ve `@property` gibi tipe bağlı kullanıcı kodu burada GÖRÜNMEZ (tip bilgisi yok); sıralı ifadelerde `dunder_hit` bayrağı yakalar.
+    fn mayRunUserCode(self: *Checker, e: ast.Expr) bool {
+        if (self.effects == null) self.effects = field_effects.build(self.allocator, self.effect_body) catch return true;
+        const eff = &self.effects.?;
+        return switch (e) {
+            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => false,
+            .unary => |u| self.mayRunUserCode(u.operand.*),
+            .binary => |b| self.mayRunUserCode(b.left.*) or self.mayRunUserCode(b.right.*),
+            .call => |c| blk: {
+                if (eff.callMayWriteFields(c)) break :blk true;
+                if (c.callee.* == .attribute and self.mayRunUserCode(c.callee.attribute.obj.*)) break :blk true;
+                for (c.args) |arg| if (self.mayRunUserCode(arg)) break :blk true;
+                break :blk false;
+            },
+            .attribute => |a| self.mayRunUserCode(a.obj.*),
+            .index => |ix| self.mayRunUserCode(ix.obj.*) or self.mayRunUserCode(ix.index.*),
+            .slice => |sl| self.mayRunUserCode(sl.obj.*) or (if (sl.lo) |x| self.mayRunUserCode(x.*) else false) or (if (sl.hi) |x| self.mayRunUserCode(x.*) else false) or (if (sl.step) |x| self.mayRunUserCode(x.*) else false),
+            .list_lit, .tuple_lit => |items| blk: {
+                for (items) |it| if (self.mayRunUserCode(it)) break :blk true;
+                break :blk false;
+            },
+            .dict_lit => |pairs| blk: {
+                for (pairs) |p| if (self.mayRunUserCode(p.key) or self.mayRunUserCode(p.value)) break :blk true;
+                break :blk false;
+            },
+            .ternary => |t| self.mayRunUserCode(t.cond.*) or self.mayRunUserCode(t.then_expr.*) or self.mayRunUserCode(t.else_expr.*),
+            .kwarg => |k| self.mayRunUserCode(k.value.*),
+            .generic_construct => |g| blk: {
+                if (eff.constructorMayWrite()) break :blk true;
+                for (g.args) |arg| if (self.mayRunUserCode(arg)) break :blk true;
+                break :blk false;
+            },
+            .await_expr, .spawn_expr, .lambda, .list_comp, .dict_comp => true,
+        };
+    }
+
+    /// R1-P0.3: `X.f = ...` ataması, AYNI nesneye başka bir adla (takma ad) erişen yolları da etkiler (`alias.left = None` sonrası `n.left` None olabilir). Nesne kimliği izlenmediğinden
+    /// muhafazakâr davranılır: `f` alan adını kök-olmayan bir adım olarak taşıyan TÜM yol daraltmaları (`n.f`, `p.q.f`, `n.f.g`) düşer.
+    fn invalidateNarrowsByField(self: *Checker, ctx: *FnCtx, field: []const u8) void {
+        if (ctx.narrowed.count() == 0) return;
+        var doomed: std.ArrayListUnmanaged([]const u8) = .empty;
+        var it = ctx.narrowed.iterator();
+        while (it.next()) |e| {
+            const k = e.key_ptr.*;
+            var segs = std.mem.splitScalar(u8, k, '.');
+            _ = segs.next(); // kök (yerel değişken adı)
+            while (segs.next()) |seg| {
+                if (std.mem.eql(u8, seg, field)) {
+                    doomed.append(self.allocator, k) catch {};
+                    break;
+                }
+            }
+        }
+        for (doomed.items) |k| _ = ctx.narrowed.remove(k);
     }
 
     /// D1.6 (selfhost dogfood): `a.b`/`a.b.c` biçimli özellik yolunun anahtarı (`"a.b"`); kök bir tanımlayıcı, adımlar düz özellik olmalı (en çok 4 adım). Tanımlayıcı için ad kendisidir.

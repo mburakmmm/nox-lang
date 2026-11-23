@@ -3176,18 +3176,22 @@ export function $Counted_tag(l %rt, l %p_self, l %p_t) {
     %t18 =w csgel %t15, %t17
     jnz %t18, @append_grow4, @append_write5
 @append_write5
-    %t20 =l mul %t15, 8
-    %t21 =l add %t14, 16
-    %t22 =l loadl %t21
-    %t23 =l add %t22, %t20
-    storel %t7, %t23
-    %t24 =l add %t15, 1
-    storel %t24, %t14
-@fn_end6
+    %t21 =l mul %t15, 8
+    %t22 =l add %t14, 16
+    %t23 =l loadl %t22
+    %t24 =l add %t23, %t21
+    storel %t7, %t24
+    %t25 =l add %t15, 1
+    storel %t25, %t14
+@fn_end7
     ret
 @append_grow4
     %t19 =l call $nox_list_grow(l %rt, l %t14, l 8)
-    jmp @append_write5
+    %t20 =w ceql %t19, 0
+    jnz %t20, @append_oom6, @append_write5
+@append_oom6
+    call $nox_out_of_memory()
+    ret
 }
 export function l $Counted_describe(l %rt, l %p_self) {
 @start
@@ -3462,18 +3466,22 @@ export function $Item_tag(l %rt, l %p_self, l %p_t) {
     %t18 =w csgel %t15, %t17
     jnz %t18, @append_grow4, @append_write5
 @append_write5
-    %t20 =l mul %t15, 8
-    %t21 =l add %t14, 16
-    %t22 =l loadl %t21
-    %t23 =l add %t22, %t20
-    storel %t7, %t23
-    %t24 =l add %t15, 1
-    storel %t24, %t14
-@fn_end6
+    %t21 =l mul %t15, 8
+    %t22 =l add %t14, 16
+    %t23 =l loadl %t22
+    %t24 =l add %t23, %t21
+    storel %t7, %t24
+    %t25 =l add %t15, 1
+    storel %t25, %t14
+@fn_end7
     ret
 @append_grow4
     %t19 =l call $nox_list_grow(l %rt, l %t14, l 8)
-    jmp @append_write5
+    %t20 =w ceql %t19, 0
+    jnz %t20, @append_oom6, @append_write5
+@append_oom6
+    call $nox_out_of_memory()
+    ret
 }
 export function $Item___nox_init_Counted(l %rt, l %p_self) {
 @start

@@ -1116,8 +1116,7 @@ const gc_pressure_on = !is_freestanding and !builtin.cpu.arch.isWasm();
 inline fn noteLargeAlloc(state: *RuntimeState, size: usize) void {
     if (comptime !gc_pressure_on) return;
     if (size < LARGE_CACHE_MIN) return;
-    const net = state.gc_large_bytes.fetchAdd(size, .monotonic) +% size;
-    if (net >= state.gc_pressure_at.load(.monotonic)) state.gc_pressure.store(true, .monotonic);
+    addLargeBytes(state, size);
 }
 
 inline fn noteLargeFree(state: *RuntimeState, size: usize) void {
@@ -1126,10 +1125,47 @@ inline fn noteLargeFree(state: *RuntimeState, size: usize) void {
     _ = state.gc_large_bytes.fetchSub(size, .monotonic);
 }
 
-/// `nox_list_realloc`ın yerinde (libc `realloc`) büyütmesi/küçültmesi için net bayt farkı.
+/// Eşik denetimi YAPMADAN net bayt sayacına ekler (çağıran muhasebeye giren baytları zaten hesaplamıştır).
+inline fn addLargeBytes(state: *RuntimeState, n: usize) void {
+    const net = state.gc_large_bytes.fetchAdd(n, .monotonic) +% n;
+    if (net >= state.gc_pressure_at.load(.monotonic)) state.gc_pressure.store(true, .monotonic);
+}
+
+/// Bir bloğun net sayaca KATKISI: eşik altı bloklar sayılmaz (tahsis/serbest bırakma ile aynı kural).
+inline fn accountedLarge(size: usize) usize {
+    return if (size >= LARGE_CACHE_MIN) size else 0;
+}
+
+/// `nox_list_realloc`ın yerinde (libc `realloc`) büyütmesi/küçültmesi için net bayt farkı. R1-P1.4: fark değil, ESKİ ve YENİ boyutun muhasebe katkıları arasındaki fark kullanılır; aksi halde
+/// eşik altı bir fark (ör. `nox_list_reserve` ile küçük büyüme) sayılmaz, sonraki serbest bırakma ise tam boyutu düşer → işaretsiz sayaç taşar ve bayt baskısı bayrağı sürekli yanar.
 pub fn noteLargeResize(state: *RuntimeState, old_size: usize, new_size: usize) void {
     if (comptime !gc_pressure_on) return;
-    if (new_size >= old_size) noteLargeAlloc(state, new_size - old_size) else noteLargeFree(state, old_size - new_size);
+    const was = accountedLarge(old_size);
+    const now = accountedLarge(new_size);
+    if (now > was) addLargeBytes(state, now - was) else if (was > now) _ = state.gc_large_bytes.fetchSub(was - now, .monotonic);
+}
+
+test "R1-P1.4: noteLargeResize eşik altı farkları ve eşiği geçen boyut değişimlerini doğru muhasebeler" {
+    if (comptime !gc_pressure_on) return error.SkipZigTest;
+    const rt = nox_runtime_init() orelse return error.InitFailed;
+    defer nox_runtime_deinit(rt);
+    const state: *RuntimeState = @ptrCast(@alignCast(rt));
+    const big: usize = 300 * 1024;
+    noteLargeAlloc(state, big);
+    try std.testing.expectEqual(big, state.gc_large_bytes.load(.monotonic));
+    // eşik altı (64 KiB'tan küçük) büyüme: yine de sayılmalı (eski ve yeni boyut ikisi de eşik üstünde)
+    noteLargeResize(state, big, big + 100);
+    try std.testing.expectEqual(big + 100, state.gc_large_bytes.load(.monotonic));
+    // eşik altına küçülme: yalnızca sayılan kısım düşer
+    noteLargeResize(state, big + 100, 70 * 1024);
+    try std.testing.expectEqual(@as(usize, 70 * 1024), state.gc_large_bytes.load(.monotonic));
+    noteLargeResize(state, 70 * 1024, 10 * 1024);
+    try std.testing.expectEqual(@as(usize, 0), state.gc_large_bytes.load(.monotonic));
+    // eşik altından eşik üstüne büyüme: yalnızca yeni boyut eklenir
+    noteLargeResize(state, 10 * 1024, big);
+    try std.testing.expectEqual(big, state.gc_large_bytes.load(.monotonic));
+    noteLargeFree(state, big);
+    try std.testing.expectEqual(@as(usize, 0), state.gc_large_bytes.load(.monotonic));
 }
 const LARGE_CACHE_SLOTS = 8;
 const LARGE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;

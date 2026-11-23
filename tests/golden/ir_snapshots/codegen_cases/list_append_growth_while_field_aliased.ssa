@@ -3138,52 +3138,56 @@ export function $Holder_add(l %rt, l %p_self, l %p_tag) {
     %t39 =w csgel %t36, %t38
     jnz %t39, @append_grow14, @append_write15
 @append_write15
-    %t41 =l mul %t36, 8
-    %t42 =l add %t12, 16
-    %t43 =l loadl %t42
-    %t44 =l add %t43, %t41
-    storel %t27, %t44
-    %t45 =l add %t36, 1
-    storel %t45, %t12
-    %t46 =l loadl %t0
-    %t47 =l loadl %t2
-    %t48 =w ceql %t47, 0
-    jnz %t48, @retain_skip17, @retain16
-@retain16
-    %t49 =l sub %t47, 8
-    %t50 =l loadl %t49
-    %t51 =l add %t50, 1
-    storel %t51, %t49
-    jmp @retain_done18
-@retain_skip17
-    jmp @retain_done18
-@retain_done18
-    %t52 =l add %t46, 8
-    %t53 =l loadl %t52
-    storel %t47, %t52
-    %t54 =w ceql %t53, 0
-    jnz %t54, @release_skip20, @release19
-@release19
-    call $List_Item_release(l %rt, l %t53)
-    jmp @release_done21
-@release_skip20
-    jmp @release_done21
-@release_done21
-    %t55 =l loadl %t2
-    %t56 =w ceql %t55, 0
-    jnz %t56, @release_skip23, @release22
-@release22
-    call $List_Item_release(l %rt, l %t55)
-    jmp @release_done24
-@release_skip23
-    jmp @release_done24
-@release_done24
+    %t42 =l mul %t36, 8
+    %t43 =l add %t12, 16
+    %t44 =l loadl %t43
+    %t45 =l add %t44, %t42
+    storel %t27, %t45
+    %t46 =l add %t36, 1
+    storel %t46, %t12
+    %t47 =l loadl %t0
+    %t48 =l loadl %t2
+    %t49 =w ceql %t48, 0
+    jnz %t49, @retain_skip18, @retain17
+@retain17
+    %t50 =l sub %t48, 8
+    %t51 =l loadl %t50
+    %t52 =l add %t51, 1
+    storel %t52, %t50
+    jmp @retain_done19
+@retain_skip18
+    jmp @retain_done19
+@retain_done19
+    %t53 =l add %t47, 8
+    %t54 =l loadl %t53
+    storel %t48, %t53
+    %t55 =w ceql %t54, 0
+    jnz %t55, @release_skip21, @release20
+@release20
+    call $List_Item_release(l %rt, l %t54)
+    jmp @release_done22
+@release_skip21
+    jmp @release_done22
+@release_done22
+    %t56 =l loadl %t2
+    %t57 =w ceql %t56, 0
+    jnz %t57, @release_skip24, @release23
+@release23
+    call $List_Item_release(l %rt, l %t56)
+    jmp @release_done25
+@release_skip24
+    jmp @release_done25
+@release_done25
     storel 0, %t2
-@fn_end25
+@fn_end26
     ret
 @append_grow14
     %t40 =l call $nox_list_grow(l %rt, l %t12, l 8)
-    jmp @append_write15
+    %t41 =w ceql %t40, 0
+    jnz %t41, @append_oom16, @append_write15
+@append_oom16
+    call $nox_out_of_memory()
+    ret
 }
 export function $Holder_release(l %rt, l %p) {
 @start

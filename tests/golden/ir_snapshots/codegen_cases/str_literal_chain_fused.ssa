@@ -3896,48 +3896,52 @@ export function l $side(l %rt, l %p_c, l %p_v) {
     %t7 =w csgel %t4, %t6
     jnz %t7, @append_grow0, @append_write1
 @append_write1
-    %t9 =l mul %t4, 8
-    %t10 =l add %t2, 16
-    %t11 =l loadl %t10
-    %t12 =l add %t11, %t9
-    storel %t3, %t12
-    %t13 =l add %t4, 1
-    storel %t13, %t2
-    %t14 =l add $str5, 16
-    %t15 =l loadl %t1
-    %t16 =l call $nox_int_to_str(l %rt, l %t15)
-    %t17 =l call $nox_str_concat(l %rt, l %t14, l %t16)
-    %t18 =w ceql %t16, 0
-    jnz %t18, @release_skip3, @release2
-@release2
-    %t19 =l sub %t16, 16
-    %t20 =l loadl %t19
-    %t21 =w csgel %t20, 536870912
-    jnz %t21, @str_free_done7, @str_rel_atomic8
-@str_rel_atomic8
-    %t22 =l sub %t16, 16
-    %t23 =l loadl %t22
-    %t24 =l sub %t23, 1
-    storel %t24, %t22
-    %t25 =w cslel %t24, 0
-    jnz %t25, @str_free5, @str_free_skip6
-@str_free5
-    call $nox_str_free_now(l %rt, l %t16)
-    jmp @str_free_done7
-@str_free_skip6
-    jmp @str_free_done7
-@str_free_done7
-    jmp @release_done4
-@release_skip3
-    jmp @release_done4
-@release_done4
-    ret %t17
-@after_return9
-@fn_end10
+    %t10 =l mul %t4, 8
+    %t11 =l add %t2, 16
+    %t12 =l loadl %t11
+    %t13 =l add %t12, %t10
+    storel %t3, %t13
+    %t14 =l add %t4, 1
+    storel %t14, %t2
+    %t15 =l add $str5, 16
+    %t16 =l loadl %t1
+    %t17 =l call $nox_int_to_str(l %rt, l %t16)
+    %t18 =l call $nox_str_concat(l %rt, l %t15, l %t17)
+    %t19 =w ceql %t17, 0
+    jnz %t19, @release_skip4, @release3
+@release3
+    %t20 =l sub %t17, 16
+    %t21 =l loadl %t20
+    %t22 =w csgel %t21, 536870912
+    jnz %t22, @str_free_done8, @str_rel_atomic9
+@str_rel_atomic9
+    %t23 =l sub %t17, 16
+    %t24 =l loadl %t23
+    %t25 =l sub %t24, 1
+    storel %t25, %t23
+    %t26 =w cslel %t25, 0
+    jnz %t26, @str_free6, @str_free_skip7
+@str_free6
+    call $nox_str_free_now(l %rt, l %t17)
+    jmp @str_free_done8
+@str_free_skip7
+    jmp @str_free_done8
+@str_free_done8
+    jmp @release_done5
+@release_skip4
+    jmp @release_done5
+@release_done5
+    ret %t18
+@after_return10
+@fn_end11
     ret 0
 @append_grow0
     %t8 =l call $nox_list_grow(l %rt, l %t2, l 8)
-    jmp @append_write1
+    %t9 =w ceql %t8, 0
+    jnz %t9, @append_oom2, @append_write1
+@append_oom2
+    call $nox_out_of_memory()
+    ret 0
 }
 export function w $main(w %argc, l %argv) {
 @start

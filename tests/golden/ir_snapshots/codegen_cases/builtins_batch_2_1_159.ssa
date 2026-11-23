@@ -4890,36 +4890,40 @@ export function l $enumerate__str(l %rt, l %p_xs, l %p_start) {
     %t52 =w csgel %t49, %t51
     jnz %t52, @append_grow14, @append_write15
 @append_write15
-    %t54 =l mul %t49, 8
-    %t55 =l add %t14, 16
-    %t56 =l loadl %t55
-    %t57 =l add %t56, %t54
-    storel %t38, %t57
-    %t58 =l add %t49, 1
-    storel %t58, %t14
-    %t59 =l loadl %t3
-    %t60 =l add %t59, 1
-    storel %t60, %t3
+    %t55 =l mul %t49, 8
+    %t56 =l add %t14, 16
+    %t57 =l loadl %t56
+    %t58 =l add %t57, %t55
+    storel %t38, %t58
+    %t59 =l add %t49, 1
+    storel %t59, %t14
+    %t60 =l loadl %t3
+    %t61 =l add %t60, 1
+    storel %t61, %t3
     jmp @while_cond3
 @while_end5
-    %t61 =l loadl %t2
-    ret %t61
-@after_return16
     %t62 =l loadl %t2
-    %t63 =w ceql %t62, 0
-    jnz %t63, @release_skip18, @release17
-@release17
-    call $List_tuple__int_str_release(l %rt, l %t62)
-    jmp @release_done19
-@release_skip18
-    jmp @release_done19
-@release_done19
+    ret %t62
+@after_return17
+    %t63 =l loadl %t2
+    %t64 =w ceql %t63, 0
+    jnz %t64, @release_skip19, @release18
+@release18
+    call $List_tuple__int_str_release(l %rt, l %t63)
+    jmp @release_done20
+@release_skip19
+    jmp @release_done20
+@release_done20
     storel 0, %t2
-@fn_end20
+@fn_end21
     ret 0
 @append_grow14
     %t53 =l call $nox_list_grow(l %rt, l %t14, l 8)
-    jmp @append_write15
+    %t54 =w ceql %t53, 0
+    jnz %t54, @append_oom16, @append_write15
+@append_oom16
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $__nox_zip3__int_str_bool(l %rt, l %p_a, l %p_b, l %p_c) {
 @start
@@ -5080,32 +5084,32 @@ export function l $__nox_zip3__int_str_bool(l %rt, l %p_a, l %p_b, l %p_c) {
     %t185 =w csgel %t182, %t184
     jnz %t185, @append_grow84, @append_write85
 @append_write85
-    %t187 =l mul %t182, 8
-    %t188 =l add %t29, 16
-    %t189 =l loadl %t188
-    %t190 =l add %t189, %t187
-    storel %t169, %t190
-    %t191 =l add %t182, 1
-    storel %t191, %t29
-    %t192 =l loadl %t5
-    %t193 =l add %t192, 1
-    storel %t193, %t5
+    %t188 =l mul %t182, 8
+    %t189 =l add %t29, 16
+    %t190 =l loadl %t189
+    %t191 =l add %t190, %t188
+    storel %t169, %t191
+    %t192 =l add %t182, 1
+    storel %t192, %t29
+    %t193 =l loadl %t5
+    %t194 =l add %t193, 1
+    storel %t194, %t5
     jmp @while_cond7
 @while_end9
-    %t194 =l loadl %t3
-    ret %t194
-@after_return86
     %t195 =l loadl %t3
-    %t196 =w ceql %t195, 0
-    jnz %t196, @release_skip88, @release87
-@release87
-    call $List_tuple__int_str_bool_release(l %rt, l %t195)
-    jmp @release_done89
-@release_skip88
-    jmp @release_done89
-@release_done89
+    ret %t195
+@after_return87
+    %t196 =l loadl %t3
+    %t197 =w ceql %t196, 0
+    jnz %t197, @release_skip89, @release88
+@release88
+    call $List_tuple__int_str_bool_release(l %rt, l %t196)
+    jmp @release_done90
+@release_skip89
+    jmp @release_done90
+@release_done90
     storel 0, %t3
-@fn_end90
+@fn_end91
     ret 0
 @list_idx_err10
     %t34 =l add $str10, 16
@@ -5379,7 +5383,11 @@ export function l $__nox_zip3__int_str_bool(l %rt, l %p_a, l %p_b, l %p_c) {
     ret 0
 @append_grow84
     %t186 =l call $nox_list_grow(l %rt, l %t29, l 8)
-    jmp @append_write85
+    %t187 =w ceql %t186, 0
+    jnz %t187, @append_oom86, @append_write85
+@append_oom86
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $__nox_max_default__int(l %rt, l %p_xs, l %p_default) {
 @start

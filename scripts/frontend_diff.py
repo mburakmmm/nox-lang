@@ -96,7 +96,34 @@ def make_runners(args):
     return zig, other
 
 
+import re
+
+CRASH_RE = re.compile(rb"panic|Segmentation fault|SIGSEGV|SIGABRT|unreachable|stack overflow|Bus error|aborted|reached unreachable|attempt to use null", re.I)
+OOM_RE = re.compile(rb"out of memory|OutOfMemory", re.I)
+OK_CATEGORIES = ("SUCCESS", "EXPECTED_LANGUAGE_ERROR")
+
+
+def classify(rc, err, out=b""):
+    """R1-P1.9: bir çalıştırmanın sonucunu sınıflandırır. Yalnızca SUCCESS ve EXPECTED_LANGUAGE_ERROR eşdeğerlik KANITI olabilir; ortak çökme/timeout/OOM başarı DEĞİLDİR."""
+    if rc == 0:
+        return "SUCCESS"
+    if err == b"TIMEOUT" or (rc == -9 and b"TIMEOUT" in err):
+        return "TIMEOUT"
+    if OOM_RE.search(err):
+        return "OOM"
+    if rc < 0 or rc >= 128 or CRASH_RE.search(err):  # sinyal (POSIX) / Windows özel durum kodları (0xC0000005 ...) / Zig panic izi
+        return "COMPILER_CRASH"
+    if rc == 1 and (re.search(rb"error|unexpected|unterminated|inconsistent|tab used", err, re.I) or out.startswith(b"ERROR ") or b"\nERROR " in out[-400:]):
+        return "EXPECTED_LANGUAGE_ERROR"  # `noxc tokens` sözcük hatasını stdout'a `ERROR <ad> <satır:sütun>` olarak yazar
+    if rc == 1 and not err.strip():
+        return "UNEXPECTED_EXIT"
+    return "INFRASTRUCTURE_ERROR" if rc in (126, 127) else "UNEXPECTED_EXIT"
+
+
 def same(a, b, with_stderr):
+    ca, cb = classify(a[0], a[2], a[1]), classify(b[0], b[2], b[1])
+    if ca != cb or ca not in OK_CATEGORIES:
+        return False  # iki taraf da AYNI şekilde çökse/zaman aşımına uğrasa bile eşdeğerlik başarısı sayılmaz
     return a[0] == b[0] and a[1] == b[1] and (not with_stderr or a[2] == b[2])
 
 
@@ -109,7 +136,7 @@ def compare_file(path, zig, other, with_stderr):
 def show_first_diff(ra, rb):
     sa = ra[1].decode("utf-8", "replace").splitlines()
     sb = rb[1].decode("utf-8", "replace").splitlines()
-    print(f"  çıkış kodları: zig={ra[0]} nox={rb[0]}")
+    print(f"  çıkış kodları: zig={ra[0]} nox={rb[0]}  kategoriler: zig={classify(ra[0], ra[2], ra[1])} nox={classify(rb[0], rb[2], rb[1])}")
     for i, line in enumerate(difflib.unified_diff(sa, sb, "zig", "nox", lineterm="", n=1)):
         if i > 14:
             print("  ...")
@@ -225,7 +252,18 @@ def selftest():
         assert r is not None, "marker içeren dosyada fark YAKALANMALI"
         mn = shrink(bad2, zig, other, False)
         assert b"marker_line" in mn and len(mn.splitlines()) <= 2, f"küçültücü en küçük örneği bulmalı, bulduğu: {mn!r}"
-    print("frontend_diff --selftest: tamam (fark yakalama + küçültme)")
+    # 3) R1-P1.9: ortak çökme / ortak timeout / ortak beklenmeyen çıkış EŞDEĞERLİK DEĞİLDİR; beklenen dil hatası ise eşdeğerdir
+    crash = (-6, b"", b"thread 1 panic: attempt to use null value\n")
+    assert not same(crash, crash, True), "ortak çökme başarı sayılmamalı"
+    assert not same((-9, b"", b"TIMEOUT"), (-9, b"", b"TIMEOUT"), True), "ortak timeout başarı sayılmamalı"
+    assert not same((134, b"", b""), (134, b"", b""), False), "ortak sinyal çıkışı başarı sayılmamalı"
+    assert not same((1, b"", b""), (1, b"", b""), False), "tanılamasız çıkış 1 beklenmeyen çıkıştır"
+    assert not same((1, b"", b"error: out of memory\n"), (1, b"", b"error: out of memory\n"), True), "ortak OOM başarı sayılmamalı"
+    err = (1, b"", b"f.nox:1:9: syntax error: unexpected '2'\n")
+    assert same(err, err, True), "aynı beklenen sözdizimi hatası eşdeğerdir"
+    assert not same(err, (0, b"", b""), False), "hata ↔ başarı fark olmalı"
+    assert classify(crash[0], crash[2]) == "COMPILER_CRASH" and classify(-9, b"TIMEOUT") == "TIMEOUT" and classify(1, b"x: syntax error") == "EXPECTED_LANGUAGE_ERROR"
+    print("frontend_diff --selftest: tamam (fark yakalama + küçültme + ortak çökme/timeout başarı sayılmaz)")
     return 0
 
 

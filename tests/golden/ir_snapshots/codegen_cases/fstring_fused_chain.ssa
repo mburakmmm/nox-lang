@@ -3896,21 +3896,25 @@ export function l $side(l %rt, l %p_counter, l %p_v) {
     %t7 =w csgel %t4, %t6
     jnz %t7, @append_grow0, @append_write1
 @append_write1
-    %t9 =l mul %t4, 8
-    %t10 =l add %t2, 16
-    %t11 =l loadl %t10
-    %t12 =l add %t11, %t9
-    storel %t3, %t12
-    %t13 =l add %t4, 1
-    storel %t13, %t2
-    %t14 =l loadl %t1
-    ret %t14
-@after_return2
-@fn_end3
+    %t10 =l mul %t4, 8
+    %t11 =l add %t2, 16
+    %t12 =l loadl %t11
+    %t13 =l add %t12, %t10
+    storel %t3, %t13
+    %t14 =l add %t4, 1
+    storel %t14, %t2
+    %t15 =l loadl %t1
+    ret %t15
+@after_return3
+@fn_end4
     ret 0
 @append_grow0
     %t8 =l call $nox_list_grow(l %rt, l %t2, l 8)
-    jmp @append_write1
+    %t9 =w ceql %t8, 0
+    jnz %t9, @append_oom2, @append_write1
+@append_oom2
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $name_of(l %rt, l %p_i) {
 @start

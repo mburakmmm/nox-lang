@@ -3944,18 +3944,22 @@ export function $store_it(l %rt, l %p_xs) {
     %t12 =w csgel %t9, %t11
     jnz %t12, @append_grow3, @append_write4
 @append_write4
-    %t14 =l mul %t9, 8
-    %t15 =l add %t3, 16
-    %t16 =l loadl %t15
-    %t17 =l add %t16, %t14
-    storel %t4, %t17
-    %t18 =l add %t9, 1
-    storel %t18, %t3
-@fn_end5
+    %t15 =l mul %t9, 8
+    %t16 =l add %t3, 16
+    %t17 =l loadl %t16
+    %t18 =l add %t17, %t15
+    storel %t4, %t18
+    %t19 =l add %t9, 1
+    storel %t19, %t3
+@fn_end6
     ret
 @append_grow3
     %t13 =l call $nox_list_grow(l %rt, l %t3, l 8)
-    jmp @append_write4
+    %t14 =w ceql %t13, 0
+    jnz %t14, @append_oom5, @append_write4
+@append_oom5
+    call $nox_out_of_memory()
+    ret
 }
 export function l $compute(l %rt) {
 @start

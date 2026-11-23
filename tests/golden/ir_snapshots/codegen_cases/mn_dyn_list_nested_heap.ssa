@@ -2897,36 +2897,40 @@ export function $Grid_add(l %rt, l %p_self, l %p_s) {
     %t46 =w csgel %t43, %t45
     jnz %t46, @append_grow17, @append_write18
 @append_write18
-    %t48 =l mul %t43, 8
-    %t49 =l add %t33, 16
-    %t50 =l loadl %t49
-    %t51 =l add %t50, %t48
-    storel %t23, %t51
-    %t52 =l add %t43, 1
-    storel %t52, %t33
-    jnz %t37, @dyn_hold_unlock19, @dyn_done20
-@dyn_hold_unlock19
+    %t49 =l mul %t43, 8
+    %t50 =l add %t33, 16
+    %t51 =l loadl %t50
+    %t52 =l add %t51, %t49
+    storel %t23, %t52
+    %t53 =l add %t43, 1
+    storel %t53, %t33
+    jnz %t37, @dyn_hold_unlock20, @dyn_done21
+@dyn_hold_unlock20
     call $nox_obj_unlock(l %t33)
-    jmp @dyn_done20
-@dyn_done20
-    jnz %t32, @dyn_hold_unlock21, @dyn_done22
-@dyn_hold_unlock21
+    jmp @dyn_done21
+@dyn_done21
+    jnz %t32, @dyn_hold_unlock22, @dyn_done23
+@dyn_hold_unlock22
     call $nox_obj_unlock(l %t12)
-    jmp @dyn_done22
-@dyn_done22
-    %t53 =w ceql %t8, 0
-    jnz %t53, @release_skip24, @release23
-@release23
+    jmp @dyn_done23
+@dyn_done23
+    %t54 =w ceql %t8, 0
+    jnz %t54, @release_skip25, @release24
+@release24
     call $List_List_str_release(l %rt, l %t8)
-    jmp @release_done25
-@release_skip24
-    jmp @release_done25
-@release_done25
-@fn_end26
+    jmp @release_done26
+@release_skip25
+    jmp @release_done26
+@release_done26
+@fn_end27
     ret
 @append_grow17
     %t47 =l call $nox_list_grow(l %rt, l %t33, l 8)
-    jmp @append_write18
+    %t48 =w ceql %t47, 0
+    jnz %t48, @append_oom19, @append_write18
+@append_oom19
+    call $nox_out_of_memory()
+    ret
 }
 export function $Grid_touch(l %rt, l %p_self, l %p_i, l %p_s) {
 @start
@@ -3089,31 +3093,31 @@ export function $Grid_touch(l %rt, l %p_self, l %p_i, l %p_s) {
     %t97 =w csgel %t94, %t96
     jnz %t97, @append_grow65, @append_write66
 @append_write66
-    %t99 =l mul %t94, 8
-    %t100 =l add %t83, 16
-    %t101 =l loadl %t100
-    %t102 =l add %t101, %t99
-    storel %t84, %t102
-    %t103 =l add %t94, 1
-    storel %t103, %t83
-    jnz %t93, @dyn_hold_unlock67, @dyn_done68
-@dyn_hold_unlock67
+    %t100 =l mul %t94, 8
+    %t101 =l add %t83, 16
+    %t102 =l loadl %t101
+    %t103 =l add %t102, %t100
+    storel %t84, %t103
+    %t104 =l add %t94, 1
+    storel %t104, %t83
+    jnz %t93, @dyn_hold_unlock68, @dyn_done69
+@dyn_hold_unlock68
     call $nox_obj_unlock(l %t83)
-    jmp @dyn_done68
-@dyn_done68
+    jmp @dyn_done69
+@dyn_done69
     jmp @if_end0
 @if_end0
-    %t104 =l loadl %t3
-    %t105 =w ceql %t104, 0
-    jnz %t105, @release_skip70, @release69
-@release69
-    call $List_str_release(l %rt, l %t104)
-    jmp @release_done71
-@release_skip70
-    jmp @release_done71
-@release_done71
+    %t105 =l loadl %t3
+    %t106 =w ceql %t105, 0
+    jnz %t106, @release_skip71, @release70
+@release70
+    call $List_str_release(l %rt, l %t105)
+    jmp @release_done72
+@release_skip71
+    jmp @release_done72
+@release_done72
     storel 0, %t3
-@fn_end72
+@fn_end73
     ret
 @list_idx_err21
     jnz %t32, @dyn_hold_unlock23, @dyn_done24
@@ -3220,7 +3224,11 @@ export function $Grid_touch(l %rt, l %p_self, l %p_i, l %p_s) {
     ret
 @append_grow65
     %t98 =l call $nox_list_grow(l %rt, l %t83, l 8)
-    jmp @append_write66
+    %t99 =w ceql %t98, 0
+    jnz %t99, @append_oom67, @append_write66
+@append_oom67
+    call $nox_out_of_memory()
+    ret
 }
 export function l $Grid_total(l %rt, l %p_self) {
 @start
@@ -5722,55 +5730,55 @@ export function $Grid_touch_c(l %rt, l %p_self, l %p_i, l %p_s) {
     %t108 =w csgel %t105, %t107
     jnz %t108, @append_grow75, @append_write76
 @append_write76
-    %t110 =l mul %t105, 8
-    %t111 =l add %t99, 16
-    %t112 =l loadl %t111
-    %t113 =l add %t112, %t110
-    storel %t100, %t113
-    %t114 =l add %t105, 1
-    storel %t114, %t99
-    jnz %t104, @dyn_hold_unlock77, @dyn_done78
-@dyn_hold_unlock77
+    %t111 =l mul %t105, 8
+    %t112 =l add %t99, 16
+    %t113 =l loadl %t112
+    %t114 =l add %t113, %t111
+    storel %t100, %t114
+    %t115 =l add %t105, 1
+    storel %t115, %t99
+    jnz %t104, @dyn_hold_unlock78, @dyn_done79
+@dyn_hold_unlock78
     call $nox_obj_unlock(l %t99)
-    jmp @dyn_done78
-@dyn_done78
+    jmp @dyn_done79
+@dyn_done79
     jmp @if_end0
 @if_end0
-    %t115 =l loadl %t2
-    %t116 =w ceql %t115, 0
-    jnz %t116, @release_skip80, @release79
-@release79
-    %t117 =l sub %t115, 16
-    %t118 =l loadl %t117
-    %t119 =w csgel %t118, 536870912
-    jnz %t119, @str_free_done84, @str_rel_atomic85
-@str_rel_atomic85
-    %t120 =l sub %t115, 16
-    %t121 =l call $nox_atomic_rc_sub(l %t120, l 1)
-    %t122 =w cslel %t121, 0
-    jnz %t122, @str_free82, @str_free_skip83
-@str_free82
-    call $nox_str_free_now(l %rt, l %t115)
-    jmp @str_free_done84
-@str_free_skip83
-    jmp @str_free_done84
-@str_free_done84
-    jmp @release_done81
-@release_skip80
-    jmp @release_done81
-@release_done81
+    %t116 =l loadl %t2
+    %t117 =w ceql %t116, 0
+    jnz %t117, @release_skip81, @release80
+@release80
+    %t118 =l sub %t116, 16
+    %t119 =l loadl %t118
+    %t120 =w csgel %t119, 536870912
+    jnz %t120, @str_free_done85, @str_rel_atomic86
+@str_rel_atomic86
+    %t121 =l sub %t116, 16
+    %t122 =l call $nox_atomic_rc_sub(l %t121, l 1)
+    %t123 =w cslel %t122, 0
+    jnz %t123, @str_free83, @str_free_skip84
+@str_free83
+    call $nox_str_free_now(l %rt, l %t116)
+    jmp @str_free_done85
+@str_free_skip84
+    jmp @str_free_done85
+@str_free_done85
+    jmp @release_done82
+@release_skip81
+    jmp @release_done82
+@release_done82
     storel 0, %t2
-    %t123 =l loadl %t3
-    %t124 =w ceql %t123, 0
-    jnz %t124, @release_skip87, @release86
-@release86
-    call $List_str_release(l %rt, l %t123)
-    jmp @release_done88
-@release_skip87
-    jmp @release_done88
-@release_done88
+    %t124 =l loadl %t3
+    %t125 =w ceql %t124, 0
+    jnz %t125, @release_skip88, @release87
+@release87
+    call $List_str_release(l %rt, l %t124)
+    jmp @release_done89
+@release_skip88
+    jmp @release_done89
+@release_done89
     storel 0, %t3
-@fn_end89
+@fn_end90
     ret
 @list_idx_err21
     jnz %t32, @dyn_hold_unlock23, @dyn_done24
@@ -5925,7 +5933,11 @@ export function $Grid_touch_c(l %rt, l %p_self, l %p_i, l %p_s) {
     ret
 @append_grow75
     %t109 =l call $nox_list_grow(l %rt, l %t99, l 8)
-    jmp @append_write76
+    %t110 =w ceql %t109, 0
+    jnz %t110, @append_oom77, @append_write76
+@append_oom77
+    call $nox_out_of_memory()
+    ret
 }
 data $__nox_decorators = { l 0 }
 data $__nox_decorator_args = { l 0 }

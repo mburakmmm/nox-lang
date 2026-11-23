@@ -3918,55 +3918,63 @@ export function l $build(l %rt) {
     %t16 =w csgel %t13, %t15
     jnz %t16, @append_grow3, @append_write4
 @append_write4
-    %t18 =l mul %t13, 8
-    %t19 =l add %t7, 16
-    %t20 =l loadl %t19
-    %t21 =l add %t20, %t18
-    storel %t12, %t21
-    %t22 =l add %t13, 1
-    storel %t22, %t7
-    %t23 =l loadl %t0
-    %t24 =l add $str9, 16
-    %t25 =l add $str10, 16
-    %t26 =l add $str11, 16
-    %t27 =l add $str12, 16
-    %t28 =l call $nox_dict_new(l %rt, w 1)
-    call $nox_dict_set(l %rt, l %t28, w 1, w 1, w 0, l %t24, l %t25)
-    call $nox_dict_set(l %rt, l %t28, w 1, w 1, w 0, l %t26, l %t27)
-    %t29 =l loadl %t23
-    %t30 =l add %t23, 8
-    %t31 =l loadl %t30
-    %t32 =w csgel %t29, %t31
-    jnz %t32, @append_grow5, @append_write6
-@append_write6
-    %t34 =l mul %t29, 8
-    %t35 =l add %t23, 16
-    %t36 =l loadl %t35
-    %t37 =l add %t36, %t34
-    storel %t28, %t37
-    %t38 =l add %t29, 1
-    storel %t38, %t23
-    %t39 =l loadl %t0
-    ret %t39
-@after_return7
-    %t40 =l loadl %t0
-    %t41 =w ceql %t40, 0
-    jnz %t41, @release_skip9, @release8
-@release8
-    call $List_dict_release(l %rt, l %t40)
-    jmp @release_done10
-@release_skip9
-    jmp @release_done10
-@release_done10
+    %t19 =l mul %t13, 8
+    %t20 =l add %t7, 16
+    %t21 =l loadl %t20
+    %t22 =l add %t21, %t19
+    storel %t12, %t22
+    %t23 =l add %t13, 1
+    storel %t23, %t7
+    %t24 =l loadl %t0
+    %t25 =l add $str9, 16
+    %t26 =l add $str10, 16
+    %t27 =l add $str11, 16
+    %t28 =l add $str12, 16
+    %t29 =l call $nox_dict_new(l %rt, w 1)
+    call $nox_dict_set(l %rt, l %t29, w 1, w 1, w 0, l %t25, l %t26)
+    call $nox_dict_set(l %rt, l %t29, w 1, w 1, w 0, l %t27, l %t28)
+    %t30 =l loadl %t24
+    %t31 =l add %t24, 8
+    %t32 =l loadl %t31
+    %t33 =w csgel %t30, %t32
+    jnz %t33, @append_grow6, @append_write7
+@append_write7
+    %t36 =l mul %t30, 8
+    %t37 =l add %t24, 16
+    %t38 =l loadl %t37
+    %t39 =l add %t38, %t36
+    storel %t29, %t39
+    %t40 =l add %t30, 1
+    storel %t40, %t24
+    %t41 =l loadl %t0
+    ret %t41
+@after_return9
+    %t42 =l loadl %t0
+    %t43 =w ceql %t42, 0
+    jnz %t43, @release_skip11, @release10
+@release10
+    call $List_dict_release(l %rt, l %t42)
+    jmp @release_done12
+@release_skip11
+    jmp @release_done12
+@release_done12
     storel 0, %t0
-@fn_end11
+@fn_end13
     ret 0
 @append_grow3
     %t17 =l call $nox_list_grow(l %rt, l %t7, l 8)
-    jmp @append_write4
-@append_grow5
-    %t33 =l call $nox_list_grow(l %rt, l %t23, l 8)
-    jmp @append_write6
+    %t18 =w ceql %t17, 0
+    jnz %t18, @append_oom5, @append_write4
+@append_oom5
+    call $nox_out_of_memory()
+    ret 0
+@append_grow6
+    %t34 =l call $nox_list_grow(l %rt, l %t24, l 8)
+    %t35 =w ceql %t34, 0
+    jnz %t35, @append_oom8, @append_write7
+@append_oom8
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $render_records(l %rt, l %p_rows) {
 @start

@@ -5130,70 +5130,74 @@ export function l $hexs(l %rt, l %p_s) {
     %t54 =w csgel %t51, %t53
     jnz %t54, @append_grow32, @append_write33
 @append_write33
-    %t56 =l mul %t51, 8
-    %t57 =l add %t24, 16
-    %t58 =l loadl %t57
-    %t59 =l add %t58, %t56
-    storel %t39, %t59
-    %t60 =l add %t51, 1
-    storel %t60, %t24
+    %t57 =l mul %t51, 8
+    %t58 =l add %t24, 16
+    %t59 =l loadl %t58
+    %t60 =l add %t59, %t57
+    storel %t39, %t60
+    %t61 =l add %t51, 1
+    storel %t61, %t24
     jmp @forlist_step9
 @forlist_step9
-    %t61 =l loadl %t4
-    %t62 =l add %t61, 1
-    storel %t62, %t4
+    %t62 =l loadl %t4
+    %t63 =l add %t62, 1
+    storel %t63, %t4
     jmp @forlist_cond6
 @forlist_end8
-    %t63 =l add $str21, 16
-    %t64 =l loadl %t1
-    %t65 =l call $nox_strings_join_raw(l %rt, l %t64, l %t63)
-    %t66 =l loadl %t1
-    %t67 =w ceql %t66, 0
-    jnz %t67, @release_skip35, @release34
-@release34
-    call $List_str_release(l %rt, l %t66)
-    jmp @release_done36
-@release_skip35
-    jmp @release_done36
-@release_done36
+    %t64 =l add $str21, 16
+    %t65 =l loadl %t1
+    %t66 =l call $nox_strings_join_raw(l %rt, l %t65, l %t64)
+    %t67 =l loadl %t1
+    %t68 =w ceql %t67, 0
+    jnz %t68, @release_skip36, @release35
+@release35
+    call $List_str_release(l %rt, l %t67)
+    jmp @release_done37
+@release_skip36
+    jmp @release_done37
+@release_done37
     storel 0, %t1
-    %t68 =l loadl %t2
-    %t69 =w ceql %t68, 0
-    jnz %t69, @release_skip38, @release37
-@release37
-    call $List_str_release(l %rt, l %t68)
-    jmp @release_done39
-@release_skip38
-    jmp @release_done39
-@release_done39
+    %t69 =l loadl %t2
+    %t70 =w ceql %t69, 0
+    jnz %t70, @release_skip39, @release38
+@release38
+    call $List_str_release(l %rt, l %t69)
+    jmp @release_done40
+@release_skip39
+    jmp @release_done40
+@release_done40
     storel 0, %t2
-    ret %t65
-@after_return40
-    %t70 =l loadl %t1
-    %t71 =w ceql %t70, 0
-    jnz %t71, @release_skip42, @release41
-@release41
-    call $List_str_release(l %rt, l %t70)
-    jmp @release_done43
-@release_skip42
-    jmp @release_done43
-@release_done43
+    ret %t66
+@after_return41
+    %t71 =l loadl %t1
+    %t72 =w ceql %t71, 0
+    jnz %t72, @release_skip43, @release42
+@release42
+    call $List_str_release(l %rt, l %t71)
+    jmp @release_done44
+@release_skip43
+    jmp @release_done44
+@release_done44
     storel 0, %t1
-    %t72 =l loadl %t2
-    %t73 =w ceql %t72, 0
-    jnz %t73, @release_skip45, @release44
-@release44
-    call $List_str_release(l %rt, l %t72)
-    jmp @release_done46
-@release_skip45
-    jmp @release_done46
-@release_done46
+    %t73 =l loadl %t2
+    %t74 =w ceql %t73, 0
+    jnz %t74, @release_skip46, @release45
+@release45
+    call $List_str_release(l %rt, l %t73)
+    jmp @release_done47
+@release_skip46
+    jmp @release_done47
+@release_done47
     storel 0, %t2
-@fn_end47
+@fn_end48
     ret 0
 @append_grow32
     %t55 =l call $nox_list_grow(l %rt, l %t24, l 8)
-    jmp @append_write33
+    %t56 =w ceql %t55, 0
+    jnz %t56, @append_oom34, @append_write33
+@append_oom34
+    call $nox_out_of_memory()
+    ret 0
 }
 export function w $main(w %argc, l %argv) {
 @start

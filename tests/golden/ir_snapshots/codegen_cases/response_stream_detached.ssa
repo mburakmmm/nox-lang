@@ -3773,30 +3773,34 @@ export function w $nox_http_ResponseStream_send(l %rt, l %p_self, l %p_chunk) {
     %t25 =w csgel %t22, %t24
     jnz %t25, @append_grow9, @append_write10
 @append_write10
-    %t27 =l mul %t22, 8
-    %t28 =l add %t21, 16
-    %t29 =l loadl %t28
-    %t30 =l add %t29, %t27
-    storel %t14, %t30
-    %t31 =l add %t22, 1
-    storel %t31, %t21
+    %t28 =l mul %t22, 8
+    %t29 =l add %t21, 16
+    %t30 =l loadl %t29
+    %t31 =l add %t30, %t28
+    storel %t14, %t31
+    %t32 =l add %t22, 1
+    storel %t32, %t21
     ret 1
-@after_return11
+@after_return12
     jmp @if_end0
 @if_end0
-    %t32 =l loadl %t0
-    %t33 =l add %t32, 8
-    %t34 =l loadl %t33
-    %t35 =l loadl %t1
-    %t36 =l call $nox_http_respstream_send_raw(l %t34, l %t35)
-    %t37 =w cnel %t36, 0
-    ret %t37
-@after_return12
-@fn_end13
+    %t33 =l loadl %t0
+    %t34 =l add %t33, 8
+    %t35 =l loadl %t34
+    %t36 =l loadl %t1
+    %t37 =l call $nox_http_respstream_send_raw(l %t35, l %t36)
+    %t38 =w cnel %t37, 0
+    ret %t38
+@after_return13
+@fn_end14
     ret 0
 @append_grow9
     %t26 =l call $nox_list_grow(l %rt, l %t21, l 8)
-    jmp @append_write10
+    %t27 =w ceql %t26, 0
+    jnz %t27, @append_oom11, @append_write10
+@append_oom11
+    call $nox_out_of_memory()
+    ret 0
 }
 export function w $nox_http_ResponseStream_event(l %rt, l %p_self, l %p_data, l %p_event, l %p_id) {
 @start

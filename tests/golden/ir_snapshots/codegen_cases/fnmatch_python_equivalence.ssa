@@ -4011,40 +4011,44 @@ export function l $nox_fnmatch_filter_names(l %rt, l %p_names, l %p_pattern) {
     %t43 =w csgel %t40, %t42
     jnz %t43, @append_grow21, @append_write22
 @append_write22
-    %t45 =l mul %t40, 8
-    %t46 =l add %t32, 16
-    %t47 =l loadl %t46
-    %t48 =l add %t47, %t45
-    storel %t33, %t48
-    %t49 =l add %t40, 1
-    storel %t49, %t32
+    %t46 =l mul %t40, 8
+    %t47 =l add %t32, 16
+    %t48 =l loadl %t47
+    %t49 =l add %t48, %t46
+    storel %t33, %t49
+    %t50 =l add %t40, 1
+    storel %t50, %t32
     jmp @if_end7
 @if_end7
     jmp @forlist_step6
 @forlist_step6
-    %t50 =l loadl %t4
-    %t51 =l add %t50, 1
-    storel %t51, %t4
+    %t51 =l loadl %t4
+    %t52 =l add %t51, 1
+    storel %t52, %t4
     jmp @forlist_cond3
 @forlist_end5
-    %t52 =l loadl %t2
-    ret %t52
-@after_return23
     %t53 =l loadl %t2
-    %t54 =w ceql %t53, 0
-    jnz %t54, @release_skip25, @release24
-@release24
-    call $List_str_release(l %rt, l %t53)
-    jmp @release_done26
-@release_skip25
-    jmp @release_done26
-@release_done26
+    ret %t53
+@after_return24
+    %t54 =l loadl %t2
+    %t55 =w ceql %t54, 0
+    jnz %t55, @release_skip26, @release25
+@release25
+    call $List_str_release(l %rt, l %t54)
+    jmp @release_done27
+@release_skip26
+    jmp @release_done27
+@release_done27
     storel 0, %t2
-@fn_end27
+@fn_end28
     ret 0
 @append_grow21
     %t44 =l call $nox_list_grow(l %rt, l %t32, l 8)
-    jmp @append_write22
+    %t45 =w ceql %t44, 0
+    jnz %t45, @append_oom23, @append_write22
+@append_oom23
+    call $nox_out_of_memory()
+    ret 0
 }
 export function w $nox_fnmatch_has_magic(l %rt, l %p_pattern) {
 @start

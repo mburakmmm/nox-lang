@@ -4117,69 +4117,69 @@ export function l $collect(l %rt, l %p_n) {
     %t125 =w csgel %t122, %t124
     jnz %t125, @append_grow71, @append_write72
 @append_write72
-    %t127 =l mul %t122, 8
-    %t128 =l add %t67, 16
-    %t129 =l loadl %t128
-    %t130 =l add %t129, %t127
-    storel %t116, %t130
-    %t131 =l add %t122, 1
-    storel %t131, %t67
+    %t128 =l mul %t122, 8
+    %t129 =l add %t67, 16
+    %t130 =l loadl %t129
+    %t131 =l add %t130, %t128
+    storel %t116, %t131
+    %t132 =l add %t122, 1
+    storel %t132, %t67
     jmp @while_cond3
 @while_end5
-    %t132 =l loadl %t1
-    %t133 =l loadl %t4
-    %t134 =w ceql %t133, 0
-    jnz %t134, @release_skip74, @release73
-@release73
-    call $List_str_release(l %rt, l %t133)
-    jmp @release_done75
-@release_skip74
-    jmp @release_done75
-@release_done75
+    %t133 =l loadl %t1
+    %t134 =l loadl %t4
+    %t135 =w ceql %t134, 0
+    jnz %t135, @release_skip75, @release74
+@release74
+    call $List_str_release(l %rt, l %t134)
+    jmp @release_done76
+@release_skip75
+    jmp @release_done76
+@release_done76
     storel 0, %t4
-    %t135 =l loadl %t3
-    %t136 =w ceql %t135, 0
-    jnz %t136, @release_skip77, @release76
-@release76
-    call $Item_release(l %rt, l %t135)
-    jmp @release_done78
-@release_skip77
-    jmp @release_done78
-@release_done78
+    %t136 =l loadl %t3
+    %t137 =w ceql %t136, 0
+    jnz %t137, @release_skip78, @release77
+@release77
+    call $Item_release(l %rt, l %t136)
+    jmp @release_done79
+@release_skip78
+    jmp @release_done79
+@release_done79
     storel 0, %t3
-    ret %t132
-@after_return79
-    %t137 =l loadl %t1
-    %t138 =w ceql %t137, 0
-    jnz %t138, @release_skip81, @release80
-@release80
-    call $List_str_release(l %rt, l %t137)
-    jmp @release_done82
-@release_skip81
-    jmp @release_done82
-@release_done82
+    ret %t133
+@after_return80
+    %t138 =l loadl %t1
+    %t139 =w ceql %t138, 0
+    jnz %t139, @release_skip82, @release81
+@release81
+    call $List_str_release(l %rt, l %t138)
+    jmp @release_done83
+@release_skip82
+    jmp @release_done83
+@release_done83
     storel 0, %t1
-    %t139 =l loadl %t4
-    %t140 =w ceql %t139, 0
-    jnz %t140, @release_skip84, @release83
-@release83
-    call $List_str_release(l %rt, l %t139)
-    jmp @release_done85
-@release_skip84
-    jmp @release_done85
-@release_done85
+    %t140 =l loadl %t4
+    %t141 =w ceql %t140, 0
+    jnz %t141, @release_skip85, @release84
+@release84
+    call $List_str_release(l %rt, l %t140)
+    jmp @release_done86
+@release_skip85
+    jmp @release_done86
+@release_done86
     storel 0, %t4
-    %t141 =l loadl %t3
-    %t142 =w ceql %t141, 0
-    jnz %t142, @release_skip87, @release86
-@release86
-    call $Item_release(l %rt, l %t141)
-    jmp @release_done88
-@release_skip87
-    jmp @release_done88
-@release_done88
+    %t142 =l loadl %t3
+    %t143 =w ceql %t142, 0
+    jnz %t143, @release_skip88, @release87
+@release87
+    call $Item_release(l %rt, l %t142)
+    jmp @release_done89
+@release_skip88
+    jmp @release_done89
+@release_done89
     storel 0, %t3
-@fn_end89
+@fn_end90
     ret 0
 @list_idx_err33
     %t71 =l add $str7, 16
@@ -4313,7 +4313,11 @@ export function l $collect(l %rt, l %p_n) {
     ret 0
 @append_grow71
     %t126 =l call $nox_list_grow(l %rt, l %t67, l 8)
-    jmp @append_write72
+    %t127 =w ceql %t126, 0
+    jnz %t127, @append_oom73, @append_write72
+@append_oom73
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $worker(l %rt, l %p_x) {
 @start

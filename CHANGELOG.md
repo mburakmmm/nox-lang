@@ -11,6 +11,19 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.46]
+
+GPT-6 sağlamlaştırma listesi (`project/selfhost-sertlestirme-listesi-2026-11-23.md`) — ilk toplu: Optional daraltma güvenliği, liste büyütme OOM, GC sayacı, harness doğruluğu.
+
+- **R1-P0.3 / P0.4 (tip güvenliği, reproducer ile doğrulanmıştı):** (1) `alias.left = None` sonrası `n.left.value` KABUL ediliyor ve program None üzerinden sessizce çöküyordu; artık `X.f = ...` ataması `f` alan adını kök-olmayan adım olarak taşıyan TÜM özellik-yolu daraltmalarını düşürür (takma adlar, `xs[0].f = ...` gibi yolu çözülemeyen hedefler dahil). (2) `n.left != None and clear(n)` biçiminde sağ operandın alanı sıfırlaması koşul bittikten sonra eski kanıtı yeniden üretiyordu; artık sağ operand alan yazabiliyorsa sol operandın yol daraltmaları atılır. Alan yazma kararı yeni modül-düzeyi dolaylı etki özetiyle verilir (`compiler/typecheck/field_effects.zig`: işlev/metot adı → güvensiz tohumlar [`X.f = ...` (yalnızca `__init__`'te `self.f = ...` güvenli), `await/spawn/with/lowlevel`, çözülemeyen çağrı] + `effect_graph.propagateBad`); alan yazmayan metot çağrıları (`t.l != None and t.l.depth() > 0`) daraltmayı korur — D1.6 fixture'ı ve geçerli kalıplar reddedilmez.
+- **R1-P0.5 (kısmen):** `hasDunder` bayrağı + `checkExpr` sarmalayıcısı: kullanıcı dunder'ı (`__str__`, `__len__`, operatörler) çağrılabilen her ifadeden sonra yol daraltmaları düşer.
+- **R1-P0.2 (bellek güvenliği):** `xs.append(v)` kapasite dolunca `nox_list_grow`/`nox_arena_list_grow` çağırıyor, bellek yetersizliğinde bu null dönüp başlığa dokunmuyor; dönüş denetlenmeden yazılınca kapasitenin 1 eleman ötesine yazılırdı. Artık null ise `nox_out_of_memory` (açık fail-stop, diğer tahsis yollarıyla aynı politika); 244 IR anlık görüntüsü kasıtlı olarak yenilendi (soğuk dal).
+- **R1-P1.4:** `noteLargeResize` farkı eşik kontrollü yardımcıya iletiyordu; küçük bir büyüme sayılmayıp sonraki serbest bırakma tam boyutu düşünce işaretsiz sayaç taşabilir ve bayt-baskısı bayrağı sürekli yanabilirdi → eski/yeni boyutun muhasebe katkıları arasındaki fark kullanılır (birim testi).
+- **R1-P1.6:** `Runtime.start` `nox_runtime_init` null dönüşünü denetler (`error.RuntimeInitFailed`, `runOnBigStack` iletir).
+- **R1-P1.9:** `scripts/frontend_diff.py` sonuçları sınıflandırır (SUCCESS / EXPECTED_LANGUAGE_ERROR / COMPILER_CRASH / TIMEOUT / OOM / INFRASTRUCTURE_ERROR / UNEXPECTED_EXIT); ortak çökme/timeout/OOM artık eşdeğerlik başarısı sayılmaz; selftest'e eklendi. **R1-P1.11 (kısmen):** `frontend-diff-test`in fmt adımı stderr de karşılaştırır.
+- **Testler:** `tests/cli/optional_narrowing_safety_test.zig` (8 test: reddedilmesi gerekenler + geçerli kalıplar), `runtime/alloc/asap.zig` muhasebe testi, `frontend_diff.py --selftest`.
+- Ayrıntı ve kalan alt maddeler: `project/selfhost-sertlestirme-listesi-2026-11-23.md`.
+
 ## [2.2.45]
 
 Aşama 2 dogfood kapanışı: D2.3 (modül-düzeyi değişken çakışması) düzeltildi; D2.1/D2.2 D1.2 (v2.2.43) ile zaten kapanmıştı.

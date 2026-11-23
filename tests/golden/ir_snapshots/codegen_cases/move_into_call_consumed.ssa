@@ -3137,24 +3137,28 @@ export function l $Bag_add_checked(l %rt, l %p_self, l %p_leaf, l %p_limit) {
     %t34 =w csgel %t31, %t33
     jnz %t34, @append_grow9, @append_write10
 @append_write10
-    %t36 =l mul %t31, 8
-    %t37 =l add %t30, 16
-    %t38 =l loadl %t37
-    %t39 =l add %t38, %t36
-    storel %t25, %t39
-    %t40 =l add %t31, 1
-    storel %t40, %t30
-    %t41 =l loadl %t0
-    %t42 =l add %t41, 8
-    %t43 =l loadl %t42
+    %t37 =l mul %t31, 8
+    %t38 =l add %t30, 16
+    %t39 =l loadl %t38
+    %t40 =l add %t39, %t37
+    storel %t25, %t40
+    %t41 =l add %t31, 1
+    storel %t41, %t30
+    %t42 =l loadl %t0
+    %t43 =l add %t42, 8
     %t44 =l loadl %t43
-    ret %t44
-@after_return11
-@fn_end12
+    %t45 =l loadl %t44
+    ret %t45
+@after_return12
+@fn_end13
     ret 0
 @append_grow9
     %t35 =l call $nox_list_grow(l %rt, l %t30, l 8)
-    jmp @append_write10
+    %t36 =w ceql %t35, 0
+    jnz %t36, @append_oom11, @append_write10
+@append_oom11
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $Bag_add_or_first(l %rt, l %p_self, l %p_leaf, w %p_flag) {
 @start
@@ -3204,49 +3208,53 @@ export function l $Bag_add_or_first(l %rt, l %p_self, l %p_leaf, w %p_flag) {
     %t23 =w csgel %t20, %t22
     jnz %t23, @append_grow9, @append_write10
 @append_write10
-    %t25 =l mul %t20, 8
-    %t26 =l add %t19, 16
-    %t27 =l loadl %t26
-    %t28 =l add %t27, %t25
-    storel %t14, %t28
-    %t29 =l add %t20, 1
-    storel %t29, %t19
+    %t26 =l mul %t20, 8
+    %t27 =l add %t19, 16
+    %t28 =l loadl %t27
+    %t29 =l add %t28, %t26
+    storel %t14, %t29
+    %t30 =l add %t20, 1
+    storel %t30, %t19
     jmp @if_end3
 @if_else5
-    %t30 =l loadl %t0
-    %t31 =l loadl %t1
-    %t32 =w ceql %t31, 0
-    jnz %t32, @retain_skip12, @retain11
-@retain11
-    %t33 =l sub %t31, 8
-    %t34 =l loadl %t33
-    %t35 =l add %t34, 1
-    storel %t35, %t33
-    jmp @retain_done13
-@retain_skip12
-    jmp @retain_done13
-@retain_done13
-    %t36 =l add %t30, 16
-    %t37 =l loadl %t36
-    storel %t31, %t36
-    %t38 =w ceql %t37, 0
-    jnz %t38, @release_skip15, @release14
-@release14
-    call $Leaf_release(l %rt, l %t37)
-    jmp @release_done16
-@release_skip15
-    jmp @release_done16
-@release_done16
+    %t31 =l loadl %t0
+    %t32 =l loadl %t1
+    %t33 =w ceql %t32, 0
+    jnz %t33, @retain_skip13, @retain12
+@retain12
+    %t34 =l sub %t32, 8
+    %t35 =l loadl %t34
+    %t36 =l add %t35, 1
+    storel %t36, %t34
+    jmp @retain_done14
+@retain_skip13
+    jmp @retain_done14
+@retain_done14
+    %t37 =l add %t31, 16
+    %t38 =l loadl %t37
+    storel %t32, %t37
+    %t39 =w ceql %t38, 0
+    jnz %t39, @release_skip16, @release15
+@release15
+    call $Leaf_release(l %rt, l %t38)
+    jmp @release_done17
+@release_skip16
+    jmp @release_done17
+@release_done17
     jmp @if_end3
 @if_end3
-    %t39 =l loadl %t3
-    ret %t39
-@after_return17
-@fn_end18
+    %t40 =l loadl %t3
+    ret %t40
+@after_return18
+@fn_end19
     ret 0
 @append_grow9
     %t24 =l call $nox_list_grow(l %rt, l %t19, l 8)
-    jmp @append_write10
+    %t25 =w ceql %t24, 0
+    jnz %t25, @append_oom11, @append_write10
+@append_oom11
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $Bag_add_or_raise(l %rt, l %p_self, l %p_leaf, w %p_bad) {
 @start
@@ -3384,24 +3392,28 @@ export function l $Bag_add_or_raise(l %rt, l %p_self, l %p_leaf, w %p_bad) {
     %t59 =w csgel %t56, %t58
     jnz %t59, @append_grow27, @append_write28
 @append_write28
-    %t61 =l mul %t56, 8
-    %t62 =l add %t55, 16
-    %t63 =l loadl %t62
-    %t64 =l add %t63, %t61
-    storel %t50, %t64
-    %t65 =l add %t56, 1
-    storel %t65, %t55
-    %t66 =l loadl %t0
-    %t67 =l add %t66, 8
-    %t68 =l loadl %t67
+    %t62 =l mul %t56, 8
+    %t63 =l add %t55, 16
+    %t64 =l loadl %t63
+    %t65 =l add %t64, %t62
+    storel %t50, %t65
+    %t66 =l add %t56, 1
+    storel %t66, %t55
+    %t67 =l loadl %t0
+    %t68 =l add %t67, 8
     %t69 =l loadl %t68
-    ret %t69
-@after_return29
-@fn_end30
+    %t70 =l loadl %t69
+    ret %t70
+@after_return30
+@fn_end31
     ret 0
 @append_grow27
     %t60 =l call $nox_list_grow(l %rt, l %t55, l 8)
-    jmp @append_write28
+    %t61 =w ceql %t60, 0
+    jnz %t61, @append_oom29, @append_write28
+@append_oom29
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $Bag_total(l %rt, l %p_self) {
 @start
@@ -4872,21 +4884,25 @@ export function l $attach(l %rt, l %p_bag, l %p_leaf, l %p_rounds) {
     %t23 =w csgel %t20, %t22
     jnz %t23, @append_grow6, @append_write7
 @append_write7
-    %t25 =l mul %t20, 8
-    %t26 =l add %t19, 16
-    %t27 =l loadl %t26
-    %t28 =l add %t27, %t25
-    storel %t14, %t28
-    %t29 =l add %t20, 1
-    storel %t29, %t19
-    %t30 =l loadl %t3
-    ret %t30
-@after_return8
-@fn_end9
+    %t26 =l mul %t20, 8
+    %t27 =l add %t19, 16
+    %t28 =l loadl %t27
+    %t29 =l add %t28, %t26
+    storel %t14, %t29
+    %t30 =l add %t20, 1
+    storel %t30, %t19
+    %t31 =l loadl %t3
+    ret %t31
+@after_return9
+@fn_end10
     ret 0
 @append_grow6
     %t24 =l call $nox_list_grow(l %rt, l %t19, l 8)
-    jmp @append_write7
+    %t25 =w ceql %t24, 0
+    jnz %t25, @append_oom8, @append_write7
+@append_oom8
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $attach_read_first(l %rt, l %p_bag, l %p_leaf, l %p_rounds) {
 @start
@@ -4939,23 +4955,27 @@ export function l $attach_read_first(l %rt, l %p_bag, l %p_leaf, l %p_rounds) {
     %t27 =w csgel %t24, %t26
     jnz %t27, @append_grow6, @append_write7
 @append_write7
-    %t29 =l mul %t24, 8
-    %t30 =l add %t23, 16
-    %t31 =l loadl %t30
-    %t32 =l add %t31, %t29
-    storel %t18, %t32
-    %t33 =l add %t24, 1
-    storel %t33, %t23
-    %t34 =l loadl %t3
-    %t35 =l loadl %t4
-    %t36 =l add %t34, %t35
-    ret %t36
-@after_return8
-@fn_end9
+    %t30 =l mul %t24, 8
+    %t31 =l add %t23, 16
+    %t32 =l loadl %t31
+    %t33 =l add %t32, %t30
+    storel %t18, %t33
+    %t34 =l add %t24, 1
+    storel %t34, %t23
+    %t35 =l loadl %t3
+    %t36 =l loadl %t4
+    %t37 =l add %t35, %t36
+    ret %t37
+@after_return9
+@fn_end10
     ret 0
 @append_grow6
     %t28 =l call $nox_list_grow(l %rt, l %t23, l 8)
-    jmp @append_write7
+    %t29 =w ceql %t28, 0
+    jnz %t29, @append_oom8, @append_write7
+@append_oom8
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $run(l %rt) {
 @start
@@ -6661,44 +6681,48 @@ export function l $Bag_add_checked_c(l %rt, l %p_self, l %p_leaf, l %p_limit) {
     %t32 =w csgel %t29, %t31
     jnz %t32, @append_grow9, @append_write10
 @append_write10
-    %t34 =l mul %t29, 8
-    %t35 =l add %t28, 16
-    %t36 =l loadl %t35
-    %t37 =l add %t36, %t34
-    storel %t27, %t37
-    %t38 =l add %t29, 1
-    storel %t38, %t28
-    %t39 =l loadl %t0
-    %t40 =l add %t39, 8
-    %t41 =l loadl %t40
+    %t35 =l mul %t29, 8
+    %t36 =l add %t28, 16
+    %t37 =l loadl %t36
+    %t38 =l add %t37, %t35
+    storel %t27, %t38
+    %t39 =l add %t29, 1
+    storel %t39, %t28
+    %t40 =l loadl %t0
+    %t41 =l add %t40, 8
     %t42 =l loadl %t41
-    %t43 =l loadl %t1
-    %t44 =w ceql %t43, 0
-    jnz %t44, @release_skip12, @release11
-@release11
-    call $Leaf_release(l %rt, l %t43)
-    jmp @release_done13
-@release_skip12
-    jmp @release_done13
-@release_done13
+    %t43 =l loadl %t42
+    %t44 =l loadl %t1
+    %t45 =w ceql %t44, 0
+    jnz %t45, @release_skip13, @release12
+@release12
+    call $Leaf_release(l %rt, l %t44)
+    jmp @release_done14
+@release_skip13
+    jmp @release_done14
+@release_done14
     storel 0, %t1
-    ret %t42
-@after_return14
-    %t45 =l loadl %t1
-    %t46 =w ceql %t45, 0
-    jnz %t46, @release_skip16, @release15
-@release15
-    call $Leaf_release(l %rt, l %t45)
-    jmp @release_done17
-@release_skip16
-    jmp @release_done17
-@release_done17
+    ret %t43
+@after_return15
+    %t46 =l loadl %t1
+    %t47 =w ceql %t46, 0
+    jnz %t47, @release_skip17, @release16
+@release16
+    call $Leaf_release(l %rt, l %t46)
+    jmp @release_done18
+@release_skip17
+    jmp @release_done18
+@release_done18
     storel 0, %t1
-@fn_end18
+@fn_end19
     ret 0
 @append_grow9
     %t33 =l call $nox_list_grow(l %rt, l %t28, l 8)
-    jmp @append_write10
+    %t34 =w ceql %t33, 0
+    jnz %t34, @append_oom11, @append_write10
+@append_oom11
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $Bag_add_or_first_c(l %rt, l %p_self, l %p_leaf, w %p_flag) {
 @start
@@ -6748,59 +6772,63 @@ export function l $Bag_add_or_first_c(l %rt, l %p_self, l %p_leaf, w %p_flag) {
     %t23 =w csgel %t20, %t22
     jnz %t23, @append_grow9, @append_write10
 @append_write10
-    %t25 =l mul %t20, 8
-    %t26 =l add %t19, 16
-    %t27 =l loadl %t26
-    %t28 =l add %t27, %t25
-    storel %t14, %t28
-    %t29 =l add %t20, 1
-    storel %t29, %t19
+    %t26 =l mul %t20, 8
+    %t27 =l add %t19, 16
+    %t28 =l loadl %t27
+    %t29 =l add %t28, %t26
+    storel %t14, %t29
+    %t30 =l add %t20, 1
+    storel %t30, %t19
     jmp @if_end3
 @if_else5
-    %t30 =l loadl %t0
-    %t31 =l loadl %t1
+    %t31 =l loadl %t0
+    %t32 =l loadl %t1
     storel 0, %t1
-    %t32 =l add %t30, 16
-    %t33 =l loadl %t32
-    storel %t31, %t32
-    %t34 =w ceql %t33, 0
-    jnz %t34, @release_skip12, @release11
-@release11
-    call $Leaf_release(l %rt, l %t33)
-    jmp @release_done13
-@release_skip12
-    jmp @release_done13
-@release_done13
+    %t33 =l add %t31, 16
+    %t34 =l loadl %t33
+    storel %t32, %t33
+    %t35 =w ceql %t34, 0
+    jnz %t35, @release_skip13, @release12
+@release12
+    call $Leaf_release(l %rt, l %t34)
+    jmp @release_done14
+@release_skip13
+    jmp @release_done14
+@release_done14
     jmp @if_end3
 @if_end3
-    %t35 =l loadl %t3
-    %t36 =l loadl %t1
-    %t37 =w ceql %t36, 0
-    jnz %t37, @release_skip15, @release14
-@release14
-    call $Leaf_release(l %rt, l %t36)
-    jmp @release_done16
-@release_skip15
-    jmp @release_done16
-@release_done16
+    %t36 =l loadl %t3
+    %t37 =l loadl %t1
+    %t38 =w ceql %t37, 0
+    jnz %t38, @release_skip16, @release15
+@release15
+    call $Leaf_release(l %rt, l %t37)
+    jmp @release_done17
+@release_skip16
+    jmp @release_done17
+@release_done17
     storel 0, %t1
-    ret %t35
-@after_return17
-    %t38 =l loadl %t1
-    %t39 =w ceql %t38, 0
-    jnz %t39, @release_skip19, @release18
-@release18
-    call $Leaf_release(l %rt, l %t38)
-    jmp @release_done20
-@release_skip19
-    jmp @release_done20
-@release_done20
+    ret %t36
+@after_return18
+    %t39 =l loadl %t1
+    %t40 =w ceql %t39, 0
+    jnz %t40, @release_skip20, @release19
+@release19
+    call $Leaf_release(l %rt, l %t39)
+    jmp @release_done21
+@release_skip20
+    jmp @release_done21
+@release_done21
     storel 0, %t1
-@fn_end21
+@fn_end22
     ret 0
 @append_grow9
     %t24 =l call $nox_list_grow(l %rt, l %t19, l 8)
-    jmp @append_write10
+    %t25 =w ceql %t24, 0
+    jnz %t25, @append_oom11, @append_write10
+@append_oom11
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $Bag_add_or_raise_c(l %rt, l %p_self, l %p_leaf, w %p_bad) {
 @start
@@ -6948,44 +6976,48 @@ export function l $Bag_add_or_raise_c(l %rt, l %p_self, l %p_leaf, w %p_bad) {
     %t59 =w csgel %t56, %t58
     jnz %t59, @append_grow30, @append_write31
 @append_write31
-    %t61 =l mul %t56, 8
-    %t62 =l add %t55, 16
-    %t63 =l loadl %t62
-    %t64 =l add %t63, %t61
-    storel %t54, %t64
-    %t65 =l add %t56, 1
-    storel %t65, %t55
-    %t66 =l loadl %t0
-    %t67 =l add %t66, 8
-    %t68 =l loadl %t67
+    %t62 =l mul %t56, 8
+    %t63 =l add %t55, 16
+    %t64 =l loadl %t63
+    %t65 =l add %t64, %t62
+    storel %t54, %t65
+    %t66 =l add %t56, 1
+    storel %t66, %t55
+    %t67 =l loadl %t0
+    %t68 =l add %t67, 8
     %t69 =l loadl %t68
-    %t70 =l loadl %t1
-    %t71 =w ceql %t70, 0
-    jnz %t71, @release_skip33, @release32
-@release32
-    call $Leaf_release(l %rt, l %t70)
-    jmp @release_done34
-@release_skip33
-    jmp @release_done34
-@release_done34
+    %t70 =l loadl %t69
+    %t71 =l loadl %t1
+    %t72 =w ceql %t71, 0
+    jnz %t72, @release_skip34, @release33
+@release33
+    call $Leaf_release(l %rt, l %t71)
+    jmp @release_done35
+@release_skip34
+    jmp @release_done35
+@release_done35
     storel 0, %t1
-    ret %t69
-@after_return35
-    %t72 =l loadl %t1
-    %t73 =w ceql %t72, 0
-    jnz %t73, @release_skip37, @release36
-@release36
-    call $Leaf_release(l %rt, l %t72)
-    jmp @release_done38
-@release_skip37
-    jmp @release_done38
-@release_done38
+    ret %t70
+@after_return36
+    %t73 =l loadl %t1
+    %t74 =w ceql %t73, 0
+    jnz %t74, @release_skip38, @release37
+@release37
+    call $Leaf_release(l %rt, l %t73)
+    jmp @release_done39
+@release_skip38
+    jmp @release_done39
+@release_done39
     storel 0, %t1
-@fn_end39
+@fn_end40
     ret 0
 @append_grow30
     %t60 =l call $nox_list_grow(l %rt, l %t55, l 8)
-    jmp @append_write31
+    %t61 =w ceql %t60, 0
+    jnz %t61, @append_oom32, @append_write31
+@append_oom32
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $attach_c(l %rt, l %p_bag, l %p_leaf, l %p_rounds) {
 @start
@@ -7023,41 +7055,45 @@ export function l $attach_c(l %rt, l %p_bag, l %p_leaf, l %p_rounds) {
     %t19 =w csgel %t16, %t18
     jnz %t19, @append_grow3, @append_write4
 @append_write4
-    %t21 =l mul %t16, 8
-    %t22 =l add %t15, 16
-    %t23 =l loadl %t22
-    %t24 =l add %t23, %t21
-    storel %t14, %t24
-    %t25 =l add %t16, 1
-    storel %t25, %t15
-    %t26 =l loadl %t3
-    %t27 =l loadl %t1
-    %t28 =w ceql %t27, 0
-    jnz %t28, @release_skip6, @release5
-@release5
-    call $Leaf_release(l %rt, l %t27)
-    jmp @release_done7
-@release_skip6
-    jmp @release_done7
-@release_done7
+    %t22 =l mul %t16, 8
+    %t23 =l add %t15, 16
+    %t24 =l loadl %t23
+    %t25 =l add %t24, %t22
+    storel %t14, %t25
+    %t26 =l add %t16, 1
+    storel %t26, %t15
+    %t27 =l loadl %t3
+    %t28 =l loadl %t1
+    %t29 =w ceql %t28, 0
+    jnz %t29, @release_skip7, @release6
+@release6
+    call $Leaf_release(l %rt, l %t28)
+    jmp @release_done8
+@release_skip7
+    jmp @release_done8
+@release_done8
     storel 0, %t1
-    ret %t26
-@after_return8
-    %t29 =l loadl %t1
-    %t30 =w ceql %t29, 0
-    jnz %t30, @release_skip10, @release9
-@release9
-    call $Leaf_release(l %rt, l %t29)
-    jmp @release_done11
-@release_skip10
-    jmp @release_done11
-@release_done11
+    ret %t27
+@after_return9
+    %t30 =l loadl %t1
+    %t31 =w ceql %t30, 0
+    jnz %t31, @release_skip11, @release10
+@release10
+    call $Leaf_release(l %rt, l %t30)
+    jmp @release_done12
+@release_skip11
+    jmp @release_done12
+@release_done12
     storel 0, %t1
-@fn_end12
+@fn_end13
     ret 0
 @append_grow3
     %t20 =l call $nox_list_grow(l %rt, l %t15, l 8)
-    jmp @append_write4
+    %t21 =w ceql %t20, 0
+    jnz %t21, @append_oom5, @append_write4
+@append_oom5
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $attach_read_first_c(l %rt, l %p_bag, l %p_leaf, l %p_rounds) {
 @start
@@ -7100,43 +7136,47 @@ export function l $attach_read_first_c(l %rt, l %p_bag, l %p_leaf, l %p_rounds) 
     %t23 =w csgel %t20, %t22
     jnz %t23, @append_grow3, @append_write4
 @append_write4
-    %t25 =l mul %t20, 8
-    %t26 =l add %t19, 16
-    %t27 =l loadl %t26
-    %t28 =l add %t27, %t25
-    storel %t18, %t28
-    %t29 =l add %t20, 1
-    storel %t29, %t19
-    %t30 =l loadl %t3
-    %t31 =l loadl %t4
-    %t32 =l add %t30, %t31
-    %t33 =l loadl %t1
-    %t34 =w ceql %t33, 0
-    jnz %t34, @release_skip6, @release5
-@release5
-    call $Leaf_release(l %rt, l %t33)
-    jmp @release_done7
-@release_skip6
-    jmp @release_done7
-@release_done7
+    %t26 =l mul %t20, 8
+    %t27 =l add %t19, 16
+    %t28 =l loadl %t27
+    %t29 =l add %t28, %t26
+    storel %t18, %t29
+    %t30 =l add %t20, 1
+    storel %t30, %t19
+    %t31 =l loadl %t3
+    %t32 =l loadl %t4
+    %t33 =l add %t31, %t32
+    %t34 =l loadl %t1
+    %t35 =w ceql %t34, 0
+    jnz %t35, @release_skip7, @release6
+@release6
+    call $Leaf_release(l %rt, l %t34)
+    jmp @release_done8
+@release_skip7
+    jmp @release_done8
+@release_done8
     storel 0, %t1
-    ret %t32
-@after_return8
-    %t35 =l loadl %t1
-    %t36 =w ceql %t35, 0
-    jnz %t36, @release_skip10, @release9
-@release9
-    call $Leaf_release(l %rt, l %t35)
-    jmp @release_done11
-@release_skip10
-    jmp @release_done11
-@release_done11
+    ret %t33
+@after_return9
+    %t36 =l loadl %t1
+    %t37 =w ceql %t36, 0
+    jnz %t37, @release_skip11, @release10
+@release10
+    call $Leaf_release(l %rt, l %t36)
+    jmp @release_done12
+@release_skip11
+    jmp @release_done12
+@release_done12
     storel 0, %t1
-@fn_end12
+@fn_end13
     ret 0
 @append_grow3
     %t24 =l call $nox_list_grow(l %rt, l %t19, l 8)
-    jmp @append_write4
+    %t25 =w ceql %t24, 0
+    jnz %t25, @append_oom5, @append_write4
+@append_oom5
+    call $nox_out_of_memory()
+    ret 0
 }
 data $__nox_decorators = { l 0 }
 data $__nox_decorator_args = { l 0 }

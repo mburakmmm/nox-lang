@@ -4133,50 +4133,54 @@ export function l $evens(l %rt, l %p_n) {
     %t22 =w csgel %t19, %t21
     jnz %t22, @append_grow10, @append_write11
 @append_write11
-    %t24 =l mul %t19, 8
-    %t25 =l add %t17, 16
-    %t26 =l loadl %t25
-    %t27 =l add %t26, %t24
-    storel %t18, %t27
-    %t28 =l add %t19, 1
-    storel %t28, %t17
+    %t25 =l mul %t19, 8
+    %t26 =l add %t17, 16
+    %t27 =l loadl %t26
+    %t28 =l add %t27, %t25
+    storel %t18, %t28
+    %t29 =l add %t19, 1
+    storel %t29, %t17
     jmp @for_step9
 @for_step9
-    %t29 =l loadl %t2
-    %t30 =l add %t29, 2
-    storel %t30, %t2
+    %t30 =l loadl %t2
+    %t31 =l add %t30, 2
+    storel %t31, %t2
     jmp @for_cond6
 @for_end8
-    %t31 =l loadl %t1
-    ret %t31
-@after_return12
     %t32 =l loadl %t1
-    %t33 =w ceql %t32, 0
-    jnz %t33, @release_skip14, @release13
-@release13
-    %t34 =l sub %t32, 8
-    %t35 =l loadl %t34
-    %t36 =l sub %t35, 1
-    storel %t36, %t34
-    %t38 =l and %t36, 4294967295
-    %t37 =w ceql %t38, 0
-    jnz %t37, @list_free16, @list_free_skip17
-@list_free16
-    call $nox_list_free_payload(l %rt, l %t32, l 8)
-    jmp @list_free_done18
-@list_free_skip17
-    jmp @list_free_done18
-@list_free_done18
-    jmp @release_done15
-@release_skip14
-    jmp @release_done15
-@release_done15
+    ret %t32
+@after_return13
+    %t33 =l loadl %t1
+    %t34 =w ceql %t33, 0
+    jnz %t34, @release_skip15, @release14
+@release14
+    %t35 =l sub %t33, 8
+    %t36 =l loadl %t35
+    %t37 =l sub %t36, 1
+    storel %t37, %t35
+    %t39 =l and %t37, 4294967295
+    %t38 =w ceql %t39, 0
+    jnz %t38, @list_free17, @list_free_skip18
+@list_free17
+    call $nox_list_free_payload(l %rt, l %t33, l 8)
+    jmp @list_free_done19
+@list_free_skip18
+    jmp @list_free_done19
+@list_free_done19
+    jmp @release_done16
+@release_skip15
+    jmp @release_done16
+@release_done16
     storel 0, %t1
-@fn_end19
+@fn_end20
     ret 0
 @append_grow10
     %t23 =l call $nox_list_grow(l %rt, l %t17, l 8)
-    jmp @append_write11
+    %t24 =w ceql %t23, 0
+    jnz %t24, @append_oom12, @append_write11
+@append_oom12
+    call $nox_out_of_memory()
+    ret 0
 }
 export function w $main(w %argc, l %argv) {
 @start

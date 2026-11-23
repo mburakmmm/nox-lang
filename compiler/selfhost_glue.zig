@@ -44,8 +44,9 @@ pub const LexOut = lexer.HookResult;
 pub const Runtime = struct {
     rt: ?*anyopaque,
 
-    pub fn start() Runtime {
-        const rt = nox_runtime_init();
+    /// R1-P1.6: `nox_runtime_init` bellek yetersizliğinde null döner; null ile `nox_lib_init` çağrılırsa tanımsız davranış olurdu → kontrollü hata.
+    pub fn start() error{RuntimeInitFailed}!Runtime {
+        const rt = nox_runtime_init() orelse return error.RuntimeInitFailed;
         nox_lib_init(rt);
         return .{ .rt = rt };
     }
@@ -248,15 +249,21 @@ pub const BIG_STACK_BYTES: usize = 256 * 1024 * 1024;
 /// `f(ctx, runtime)`ü büyük yığınlı yeni bir iş parçacığında çalıştırır (`Runtime` o iş parçacığında kurulur/yıkılır; çalışma zamanı tek iş parçacığına aittir). `join` ile bekler.
 pub fn runOnBigStack(ctx: anytype, comptime f: fn (@TypeOf(ctx), Runtime) void) !void {
     const Ctx = @TypeOf(ctx);
+    const Shared = struct { ctx: Ctx, failed: bool = false };
+    var shared: Shared = .{ .ctx = ctx };
     const Thunk = struct {
-        fn entry(c: Ctx) void {
-            const nrt = Runtime.start();
+        fn entry(sh: *Shared) void {
+            const nrt = Runtime.start() catch {
+                sh.failed = true;
+                return;
+            };
             defer nrt.stop();
-            f(c, nrt);
+            f(sh.ctx, nrt);
         }
     };
-    const t = try std.Thread.spawn(.{ .stack_size = BIG_STACK_BYTES }, Thunk.entry, .{ctx});
+    const t = try std.Thread.spawn(.{ .stack_size = BIG_STACK_BYTES }, Thunk.entry, .{&shared});
     t.join();
+    if (shared.failed) return error.RuntimeInitFailed;
 }
 
 test "selfhost_glue: bileşen simgeleri bu birimde çözülmez (yalnızca nightly ikilisinde bağlanır)" {

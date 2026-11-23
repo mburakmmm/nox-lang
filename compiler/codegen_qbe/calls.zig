@@ -2762,13 +2762,22 @@ pub fn genListAppend(self: *Codegen, obj: Value, a: ast.Attribute, args: []const
     const cold_start = self.beginCold();
     try self.qbeLabel(grow_label);
     const esz_lit = try std.fmt.allocPrint(self.allocator, "{d}", .{elem_size});
+    // R1-P0.2: büyütme bellek yetersizliğinde null döner ve başlığa DOKUNMAZ (len == cap kalır); dönüş denetlenmeden yazmaya geçmek kapasitenin 1 eleman ötesine yazardı.
+    // Diğer tahsis yollarındaki (`nox_out_of_memory`) açık fail-stop politikasıyla aynı: null ise program durdurulur.
+    const grown = try self.newTemp();
     if (obj.growable_arena) |arena_handle| {
         // GG.18: arena listesi — yeni tampon arenadan alınır (eski tampon arena yıkılana kadar "çöp").
-        try self.qbeCall(.{ .name = try self.newTemp(), .ty = .l }, "$nox_arena_list_grow", &.{ .{ .ty = .l, .text = arena_handle }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = esz_lit } });
+        try self.qbeCall(.{ .name = grown, .ty = .l }, "$nox_arena_list_grow", &.{ .{ .ty = .l, .text = arena_handle }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = esz_lit } });
     } else {
-        try self.qbeCall(.{ .name = try self.newTemp(), .ty = .l }, "$nox_list_grow", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = esz_lit } });
+        try self.qbeCall(.{ .name = grown, .ty = .l }, "$nox_list_grow", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = list_text }, .{ .ty = .l, .text = esz_lit } });
     }
-    try self.qbeJmp(write_label);
+    const grow_failed = try self.newTemp();
+    try self.qbeOp2(grow_failed, .w, "ceql", grown, "0");
+    const oom_label = try self.newLabel("append_oom");
+    try self.qbeJnz(grow_failed, oom_label, write_label);
+    try self.qbeLabel(oom_label);
+    try self.qbeCall(null, "$nox_out_of_memory", &.{});
+    try self.emitDefaultReturn(self.current_ret_qtype);
     try self.stashCold(cold_start);
 
     try self.qbeLabel(write_label);

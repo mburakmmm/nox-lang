@@ -30184,3 +30184,11 @@ Sorun (§3.20 sınırlama 1-2): `list[T]` tek bir bloktu; büyüme yeni blok ay�
 
 İçe aktarılan bir modülün üst-düzey değişkenleri (`G: list[int] = ...`) artık fonksiyon/sınıf/tip takma adlarıyla AYNI biçimde modül önekiyle yeniden adlandırılır (`mangleWith`), böylece iki modüldeki aynı adlı değişken ayrı global yuvalarda yaşar (önceden ad-tabanlı tek blok yuvası paylaşılıyordu). Modül değişkenleri dışarıdan niteliksiz/nitelikli erişime zaten açık değildir (`mod.G` tanımsız); bu değişiklik görünür yüzeyi değiştirmez. `__all__` ve sınıf-sabit deposu (`__nox_cls_*`) hariç. `renameStmt` ayrıca `var_decl.infer_assign`/`is_match_temp` bayraklarını korur.
 
+### 3.483 Optional özellik-yolu daraltması: alias, yan etkili koşul ve alan-yazma etkisi (v2.2.46, GPT-6 R1-P0.3/P0.4/P0.5)
+
+Özellik-yolu daraltması (`a.b != None`, §3.478) nesne kimliği değil metinsel yol (`"a.b"`) izler; bu yüzden muhafazakâr kurallar: (1) `X.f = ...` ataması kök-olmayan adımı `f` olan tüm daraltmaları düşürür; (2) `A and B` / `A or B` için sağ operandın alan yazabilme olasılığı varsa sol operandın yol daraltmaları, koşul tamamlandıktan sonra yeniden üretilmez; (3) alan yazma kararı `typecheck/field_effects.zig` özetiyle verilir: serbest işlev/metot (ad bazlı, alt sınıf dahil) güvenlidir ancak alan atamadan (yalnızca `__init__`te `self.f = ...` hariç), `await/spawn/with/lowlevel` kullanmadan ve yalnızca güvenli hedefleri çağırarak yazılmışsa; (4) kullanıcı dunder'ı çağrılabilen ifade (`hasDunder`) sonrası yol daraltmaları düşer. Bilinen sınır: koşul İÇİNDEKİ dunder/`@property` yan etkisi ve closure `nonlocal` Optional yerelleri (şu an `nonlocal` Optional desteklenmiyor).
+
+### 3.484 Liste append büyütme bellek yetersizliği (v2.2.46, R1-P0.2)
+
+`nox_list_grow`/`nox_arena_list_grow` bellek yoksa null döner ve başlığa dokunmaz; `append` kodu artık dönüşü denetler ve null ise `nox_out_of_memory` ile durur (fail-stop). Diğer liste işlemlerinin (`copy/concat/slice/push/reserve`) null dönüşünü tüketen kod yolları null-deref çökmesidir (bozulma değil); tam denetim listede açık.
+

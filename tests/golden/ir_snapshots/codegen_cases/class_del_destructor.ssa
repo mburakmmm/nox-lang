@@ -3802,18 +3802,22 @@ export function $Keeper___del__(l %rt, l %p_self) {
     %t26 =w csgel %t23, %t25
     jnz %t26, @append_grow13, @append_write14
 @append_write14
-    %t28 =l mul %t23, 8
-    %t29 =l add %t17, 16
-    %t30 =l loadl %t29
-    %t31 =l add %t30, %t28
-    storel %t18, %t31
-    %t32 =l add %t23, 1
-    storel %t32, %t17
-@fn_end15
+    %t29 =l mul %t23, 8
+    %t30 =l add %t17, 16
+    %t31 =l loadl %t30
+    %t32 =l add %t31, %t29
+    storel %t18, %t32
+    %t33 =l add %t23, 1
+    storel %t33, %t17
+@fn_end16
     ret
 @append_grow13
     %t27 =l call $nox_list_grow(l %rt, l %t17, l 8)
-    jmp @append_write14
+    %t28 =w ceql %t27, 0
+    jnz %t28, @append_oom15, @append_write14
+@append_oom15
+    call $nox_out_of_memory()
+    ret
 }
 export function $Keeper_release(l %rt, l %p) {
 @start

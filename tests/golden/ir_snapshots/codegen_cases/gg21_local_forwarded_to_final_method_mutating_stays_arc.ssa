@@ -2894,18 +2894,22 @@ export function $Helper_store_it(l %rt, l %p_self, l %p_xs) {
     %t13 =w csgel %t10, %t12
     jnz %t13, @append_grow3, @append_write4
 @append_write4
-    %t15 =l mul %t10, 8
-    %t16 =l add %t4, 16
-    %t17 =l loadl %t16
-    %t18 =l add %t17, %t15
-    storel %t5, %t18
-    %t19 =l add %t10, 1
-    storel %t19, %t4
-@fn_end5
+    %t16 =l mul %t10, 8
+    %t17 =l add %t4, 16
+    %t18 =l loadl %t17
+    %t19 =l add %t18, %t16
+    storel %t5, %t19
+    %t20 =l add %t10, 1
+    storel %t20, %t4
+@fn_end6
     ret
 @append_grow3
     %t14 =l call $nox_list_grow(l %rt, l %t4, l 8)
-    jmp @append_write4
+    %t15 =w ceql %t14, 0
+    jnz %t15, @append_oom5, @append_write4
+@append_oom5
+    call $nox_out_of_memory()
+    ret
 }
 export function $Helper_release(l %rt, l %p) {
 @start

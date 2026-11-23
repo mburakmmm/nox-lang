@@ -4198,36 +4198,40 @@ export function l $make(l %rt, l %p_n) {
     %t28 =w csgel %t25, %t27
     jnz %t28, @append_grow13, @append_write14
 @append_write14
-    %t30 =l mul %t25, 8
-    %t31 =l add %t12, 16
-    %t32 =l loadl %t31
-    %t33 =l add %t32, %t30
-    storel %t16, %t33
-    %t34 =l add %t25, 1
-    storel %t34, %t12
-    %t35 =l loadl %t2
-    %t36 =l add %t35, 1
-    storel %t36, %t2
+    %t31 =l mul %t25, 8
+    %t32 =l add %t12, 16
+    %t33 =l loadl %t32
+    %t34 =l add %t33, %t31
+    storel %t16, %t34
+    %t35 =l add %t25, 1
+    storel %t35, %t12
+    %t36 =l loadl %t2
+    %t37 =l add %t36, 1
+    storel %t37, %t2
     jmp @while_cond3
 @while_end5
-    %t37 =l loadl %t1
-    ret %t37
-@after_return15
     %t38 =l loadl %t1
-    %t39 =w ceql %t38, 0
-    jnz %t39, @release_skip17, @release16
-@release16
-    call $List_str_release(l %rt, l %t38)
-    jmp @release_done18
-@release_skip17
-    jmp @release_done18
-@release_done18
+    ret %t38
+@after_return16
+    %t39 =l loadl %t1
+    %t40 =w ceql %t39, 0
+    jnz %t40, @release_skip18, @release17
+@release17
+    call $List_str_release(l %rt, l %t39)
+    jmp @release_done19
+@release_skip18
+    jmp @release_done19
+@release_done19
     storel 0, %t1
-@fn_end19
+@fn_end20
     ret 0
 @append_grow13
     %t29 =l call $nox_list_grow(l %rt, l %t12, l 8)
-    jmp @append_write14
+    %t30 =w ceql %t29, 0
+    jnz %t30, @append_oom15, @append_write14
+@append_oom15
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $find(l %rt, l %p_n) {
 @start

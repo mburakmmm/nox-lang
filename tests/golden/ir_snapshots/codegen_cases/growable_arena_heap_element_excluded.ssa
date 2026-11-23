@@ -3912,60 +3912,68 @@ export function l $compute(l %rt) {
     %t12 =w csgel %t9, %t11
     jnz %t12, @append_grow3, @append_write4
 @append_write4
-    %t14 =l mul %t9, 8
-    %t15 =l add %t7, 16
-    %t16 =l loadl %t15
-    %t17 =l add %t16, %t14
-    storel %t8, %t17
-    %t18 =l add %t9, 1
-    storel %t18, %t7
-    %t19 =l loadl %t0
-    %t20 =l add $str6, 16
-    %t21 =l loadl %t19
-    %t22 =l add %t19, 8
-    %t23 =l loadl %t22
-    %t24 =w csgel %t21, %t23
-    jnz %t24, @append_grow5, @append_write6
-@append_write6
-    %t26 =l mul %t21, 8
-    %t27 =l add %t19, 16
-    %t28 =l loadl %t27
-    %t29 =l add %t28, %t26
-    storel %t20, %t29
-    %t30 =l add %t21, 1
-    storel %t30, %t19
-    %t31 =l loadl %t0
-    %t32 =l loadl %t31
+    %t15 =l mul %t9, 8
+    %t16 =l add %t7, 16
+    %t17 =l loadl %t16
+    %t18 =l add %t17, %t15
+    storel %t8, %t18
+    %t19 =l add %t9, 1
+    storel %t19, %t7
+    %t20 =l loadl %t0
+    %t21 =l add $str6, 16
+    %t22 =l loadl %t20
+    %t23 =l add %t20, 8
+    %t24 =l loadl %t23
+    %t25 =w csgel %t22, %t24
+    jnz %t25, @append_grow6, @append_write7
+@append_write7
+    %t28 =l mul %t22, 8
+    %t29 =l add %t20, 16
+    %t30 =l loadl %t29
+    %t31 =l add %t30, %t28
+    storel %t21, %t31
+    %t32 =l add %t22, 1
+    storel %t32, %t20
     %t33 =l loadl %t0
-    %t34 =w ceql %t33, 0
-    jnz %t34, @release_skip8, @release7
-@release7
-    call $List_str_release(l %rt, l %t33)
-    jmp @release_done9
-@release_skip8
-    jmp @release_done9
-@release_done9
-    storel 0, %t0
-    ret %t32
-@after_return10
+    %t34 =l loadl %t33
     %t35 =l loadl %t0
     %t36 =w ceql %t35, 0
-    jnz %t36, @release_skip12, @release11
-@release11
+    jnz %t36, @release_skip10, @release9
+@release9
     call $List_str_release(l %rt, l %t35)
-    jmp @release_done13
-@release_skip12
-    jmp @release_done13
-@release_done13
+    jmp @release_done11
+@release_skip10
+    jmp @release_done11
+@release_done11
     storel 0, %t0
-@fn_end14
+    ret %t34
+@after_return12
+    %t37 =l loadl %t0
+    %t38 =w ceql %t37, 0
+    jnz %t38, @release_skip14, @release13
+@release13
+    call $List_str_release(l %rt, l %t37)
+    jmp @release_done15
+@release_skip14
+    jmp @release_done15
+@release_done15
+    storel 0, %t0
+@fn_end16
     ret 0
 @append_grow3
     %t13 =l call $nox_list_grow(l %rt, l %t7, l 8)
-    jmp @append_write4
-@append_grow5
-    %t25 =l call $nox_list_grow(l %rt, l %t19, l 8)
-    jmp @append_write6
+    %t14 =w ceql %t13, 0
+    jnz %t14, @append_oom5, @append_write4
+@append_oom5
+    call $nox_out_of_memory()
+    ret 0
+@append_grow6
+    %t26 =l call $nox_list_grow(l %rt, l %t20, l 8)
+    %t27 =w ceql %t26, 0
+    jnz %t27, @append_oom8, @append_write7
+@append_oom8
+    call $nox_out_of_memory()
+    ret 0
 }
 export function w $main(w %argc, l %argv) {
 @start

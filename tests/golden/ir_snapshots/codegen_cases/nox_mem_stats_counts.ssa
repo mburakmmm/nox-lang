@@ -4280,7 +4280,7 @@ export function w $main(w %argc, l %argv) {
     %t17 =l alloc8 8
     %t40 =l alloc8 8
     %t77 =l alloc8 8
-    %t108 =l alloc8 8
+    %t109 =l alloc8 8
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
@@ -4497,137 +4497,141 @@ export function w $main(w %argc, l %argv) {
     %t95 =w csgel %t92, %t94
     jnz %t95, @append_grow37, @append_write38
 @append_write38
-    %t97 =l mul %t92, 8
-    %t98 =l add %t74, 16
-    %t99 =l loadl %t98
-    %t100 =l add %t99, %t97
-    storel %t89, %t100
-    %t101 =l add %t92, 1
-    storel %t101, %t74
-    %t102 =l loadl %t2
-    %t103 =l add %t102, 1
-    storel %t103, %t2
+    %t98 =l mul %t92, 8
+    %t99 =l add %t74, 16
+    %t100 =l loadl %t99
+    %t101 =l add %t100, %t98
+    storel %t89, %t101
+    %t102 =l add %t92, 1
+    storel %t102, %t74
+    %t103 =l loadl %t2
+    %t104 =l add %t103, 1
+    storel %t104, %t2
     jmp @while_cond30
 @while_end32
-    %t104 =l call $nox_mem_stat(l %rt, l 0)
-    %t105 =l call $nox_mem_stat(l %rt, l 1)
-    %t106 =l call $nox_mem_stat(l %rt, l 2)
-    %t109 =l sub %rt, 24
-    %t110 =l loadl %t109
-    %t111 =w ceql %t110, 0
-    jnz %t111, @calloc_slow40, @calloc_chk41
-@calloc_chk41
-    %t112 =l sub %rt, 32
-    %t113 =l loadl %t112
-    %t114 =l add %t113, 16
-    %t115 =l loadl %t114
-    %t116 =w cnel %t115, 0
-    jnz %t116, @calloc_pop42, @calloc_slow40
-@calloc_pop42
-    %t117 =l loadl %t115
-    storel %t117, %t114
-    storel 1, %t115
-    %t118 =l add %t115, 8
-    storel %t118, %t108
-    jmp @calloc_done43
-@calloc_slow40
-    %t119 =l call $nox_rc_alloc(l %rt, l 40)
-    storel %t119, %t108
-    jmp @calloc_done43
-@calloc_done43
-    %t120 =l loadl %t108
-    storel 3, %t120
-    %t121 =l add %t120, 8
-    storel 0, %t121
-    %t122 =l add %t120, 16
+    %t105 =l call $nox_mem_stat(l %rt, l 0)
+    %t106 =l call $nox_mem_stat(l %rt, l 1)
+    %t107 =l call $nox_mem_stat(l %rt, l 2)
+    %t110 =l sub %rt, 24
+    %t111 =l loadl %t110
+    %t112 =w ceql %t111, 0
+    jnz %t112, @calloc_slow41, @calloc_chk42
+@calloc_chk42
+    %t113 =l sub %rt, 32
+    %t114 =l loadl %t113
+    %t115 =l add %t114, 16
+    %t116 =l loadl %t115
+    %t117 =w cnel %t116, 0
+    jnz %t117, @calloc_pop43, @calloc_slow41
+@calloc_pop43
+    %t118 =l loadl %t116
+    storel %t118, %t115
+    storel 1, %t116
+    %t119 =l add %t116, 8
+    storel %t119, %t109
+    jmp @calloc_done44
+@calloc_slow41
+    %t120 =l call $nox_rc_alloc(l %rt, l 40)
+    storel %t120, %t109
+    jmp @calloc_done44
+@calloc_done44
+    %t121 =l loadl %t109
+    storel 3, %t121
+    %t122 =l add %t121, 8
     storel 0, %t122
-    %t123 =l add %t120, 24
+    %t123 =l add %t121, 16
     storel 0, %t123
-    %t124 =l add %t120, 32
+    %t124 =l add %t121, 24
     storel 0, %t124
-    call $nox_mem_MemStats___init__(l %rt, l %t120, l %t104, l %t105, l %t106)
-    storel %t120, %t6
-    jmp @inline_done39
-@after_inline_return44
-    jmp @inline_done39
-@inline_done39
-    %t125 =l loadl %t6
-    %t126 =l loadl %t3
-    %t127 =w ceql %t126, 0
-    jnz %t127, @release_skip46, @release45
-@release45
-    call $nox_mem_MemStats_release(l %rt, l %t126)
-    jmp @release_done47
-@release_skip46
-    jmp @release_done47
-@release_done47
+    %t125 =l add %t121, 32
+    storel 0, %t125
+    call $nox_mem_MemStats___init__(l %rt, l %t121, l %t105, l %t106, l %t107)
+    storel %t121, %t6
+    jmp @inline_done40
+@after_inline_return45
+    jmp @inline_done40
+@inline_done40
+    %t126 =l loadl %t6
+    %t127 =l loadl %t3
+    %t128 =w ceql %t127, 0
+    jnz %t128, @release_skip47, @release46
+@release46
+    call $nox_mem_MemStats_release(l %rt, l %t127)
+    jmp @release_done48
+@release_skip47
+    jmp @release_done48
+@release_done48
     storel 0, %t3
-    storel %t125, %t3
-    %t128 =l loadl %t3
-    %t129 =l add %t128, 24
-    %t130 =l loadl %t129
-    %t131 =w csgel %t130, 50
-    %t132 =l loadl %t3
-    %t133 =l add %t132, 8
-    %t134 =l loadl %t133
-    %t135 =l loadl %t1
-    %t136 =l add %t135, 8
-    %t137 =l loadl %t136
-    %t138 =w csgtl %t134, %t137
-    jnz %t131, @print_true48, @print_false49
-@print_true48
+    storel %t126, %t3
+    %t129 =l loadl %t3
+    %t130 =l add %t129, 24
+    %t131 =l loadl %t130
+    %t132 =w csgel %t131, 50
+    %t133 =l loadl %t3
+    %t134 =l add %t133, 8
+    %t135 =l loadl %t134
+    %t136 =l loadl %t1
+    %t137 =l add %t136, 8
+    %t138 =l loadl %t137
+    %t139 =w csgtl %t135, %t138
+    jnz %t132, @print_true49, @print_false50
+@print_true49
     call $printf(l $fmt_bool_true_frag)
-    jmp @print_done50
-@print_false49
+    jmp @print_done51
+@print_false50
     call $printf(l $fmt_bool_false_frag)
-    jmp @print_done50
-@print_done50
+    jmp @print_done51
+@print_done51
     call $printf(l $fmt_lit2)
-    jnz %t138, @print_true51, @print_false52
-@print_true51
+    jnz %t139, @print_true52, @print_false53
+@print_true52
     call $printf(l $fmt_bool_true_frag)
-    jmp @print_done53
-@print_false52
+    jmp @print_done54
+@print_false53
     call $printf(l $fmt_bool_false_frag)
-    jmp @print_done53
-@print_done53
+    jmp @print_done54
+@print_done54
     call $printf(l $fmt_lit3)
-    %t139 =l loadl %t1
-    %t140 =w ceql %t139, 0
-    jnz %t140, @release_skip55, @release54
-@release54
-    call $nox_mem_MemStats_release(l %rt, l %t139)
-    jmp @release_done56
-@release_skip55
-    jmp @release_done56
-@release_done56
+    %t140 =l loadl %t1
+    %t141 =w ceql %t140, 0
+    jnz %t141, @release_skip56, @release55
+@release55
+    call $nox_mem_MemStats_release(l %rt, l %t140)
+    jmp @release_done57
+@release_skip56
+    jmp @release_done57
+@release_done57
     storel 0, %t1
-    %t141 =l loadl %t0
-    %t142 =w ceql %t141, 0
-    jnz %t142, @release_skip58, @release57
-@release57
-    call $List_Node_release(l %rt, l %t141)
-    jmp @release_done59
-@release_skip58
-    jmp @release_done59
-@release_done59
+    %t142 =l loadl %t0
+    %t143 =w ceql %t142, 0
+    jnz %t143, @release_skip59, @release58
+@release58
+    call $List_Node_release(l %rt, l %t142)
+    jmp @release_done60
+@release_skip59
+    jmp @release_done60
+@release_done60
     storel 0, %t0
-    %t143 =l loadl %t3
-    %t144 =w ceql %t143, 0
-    jnz %t144, @release_skip61, @release60
-@release60
-    call $nox_mem_MemStats_release(l %rt, l %t143)
-    jmp @release_done62
-@release_skip61
-    jmp @release_done62
-@release_done62
+    %t144 =l loadl %t3
+    %t145 =w ceql %t144, 0
+    jnz %t145, @release_skip62, @release61
+@release61
+    call $nox_mem_MemStats_release(l %rt, l %t144)
+    jmp @release_done63
+@release_skip62
+    jmp @release_done63
+@release_done63
     storel 0, %t3
     call $nox_runtime_deinit(l %rt)
-@fn_end63
+@fn_end64
     ret 0
 @append_grow37
     %t96 =l call $nox_list_grow(l %rt, l %t74, l 8)
-    jmp @append_write38
+    %t97 =w ceql %t96, 0
+    jnz %t97, @append_oom39, @append_write38
+@append_oom39
+    call $nox_out_of_memory()
+    ret 0
 }
 export function $List_Node_release(l %rt, l %p) {
 @start

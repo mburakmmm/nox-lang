@@ -2970,36 +2970,40 @@ export function $Board_add_row(l %rt, l %p_self, l %p_v) {
     %t43 =w csgel %t40, %t42
     jnz %t43, @append_grow13, @append_write14
 @append_write14
-    %t45 =l mul %t40, 8
-    %t46 =l add %t30, 16
-    %t47 =l loadl %t46
-    %t48 =l add %t47, %t45
-    storel %t19, %t48
-    %t49 =l add %t40, 1
-    storel %t49, %t30
-    jnz %t34, @dyn_hold_unlock15, @dyn_done16
-@dyn_hold_unlock15
+    %t46 =l mul %t40, 8
+    %t47 =l add %t30, 16
+    %t48 =l loadl %t47
+    %t49 =l add %t48, %t46
+    storel %t19, %t49
+    %t50 =l add %t40, 1
+    storel %t50, %t30
+    jnz %t34, @dyn_hold_unlock16, @dyn_done17
+@dyn_hold_unlock16
     call $nox_obj_unlock(l %t30)
-    jmp @dyn_done16
-@dyn_done16
-    jnz %t29, @dyn_hold_unlock17, @dyn_done18
-@dyn_hold_unlock17
+    jmp @dyn_done17
+@dyn_done17
+    jnz %t29, @dyn_hold_unlock18, @dyn_done19
+@dyn_hold_unlock18
     call $nox_obj_unlock(l %t12)
-    jmp @dyn_done18
-@dyn_done18
-    %t50 =w ceql %t8, 0
-    jnz %t50, @release_skip20, @release19
-@release19
+    jmp @dyn_done19
+@dyn_done19
+    %t51 =w ceql %t8, 0
+    jnz %t51, @release_skip21, @release20
+@release20
     call $List_List_priml_release(l %rt, l %t8)
-    jmp @release_done21
-@release_skip20
-    jmp @release_done21
-@release_done21
-@fn_end22
+    jmp @release_done22
+@release_skip21
+    jmp @release_done22
+@release_done22
+@fn_end23
     ret
 @append_grow13
     %t44 =l call $nox_list_grow(l %rt, l %t30, l 8)
-    jmp @append_write14
+    %t45 =w ceql %t44, 0
+    jnz %t45, @append_oom15, @append_write14
+@append_oom15
+    call $nox_out_of_memory()
+    ret
 }
 export function $Board_set_row(l %rt, l %p_self, l %p_i, l %p_v) {
 @start
@@ -3848,46 +3852,50 @@ export function $Board_add_tag(l %rt, l %p_self, l %p_k) {
     %t54 =w csgel %t51, %t53
     jnz %t54, @append_grow24, @append_write25
 @append_write25
-    %t56 =l mul %t51, 8
-    %t57 =l add %t42, 16
-    %t58 =l loadl %t57
-    %t59 =l add %t58, %t56
-    storel %t37, %t59
-    %t60 =l add %t51, 1
-    storel %t60, %t42
-    jnz %t46, @dyn_hold_unlock26, @dyn_done27
-@dyn_hold_unlock26
+    %t57 =l mul %t51, 8
+    %t58 =l add %t42, 16
+    %t59 =l loadl %t58
+    %t60 =l add %t59, %t57
+    storel %t37, %t60
+    %t61 =l add %t51, 1
+    storel %t61, %t42
+    jnz %t46, @dyn_hold_unlock27, @dyn_done28
+@dyn_hold_unlock27
     call $nox_obj_unlock(l %t42)
-    jmp @dyn_done27
-@dyn_done27
-    jnz %t41, @dyn_hold_unlock28, @dyn_done29
-@dyn_hold_unlock28
+    jmp @dyn_done28
+@dyn_done28
+    jnz %t41, @dyn_hold_unlock29, @dyn_done30
+@dyn_hold_unlock29
     call $nox_obj_unlock(l %t35)
-    jmp @dyn_done29
-@dyn_done29
-    %t61 =w ceql %t31, 0
-    jnz %t61, @release_skip31, @release30
-@release30
+    jmp @dyn_done30
+@dyn_done30
+    %t62 =w ceql %t31, 0
+    jnz %t62, @release_skip32, @release31
+@release31
     call $List_dict_release(l %rt, l %t31)
-    jmp @release_done32
-@release_skip31
-    jmp @release_done32
-@release_done32
-    %t62 =l loadl %t2
-    %t63 =w ceql %t62, 0
-    jnz %t63, @release_skip34, @release33
-@release33
-    call $nox_dict_release(l %rt, l %t62, w 1, w 0, w 0)
-    jmp @release_done35
-@release_skip34
-    jmp @release_done35
-@release_done35
+    jmp @release_done33
+@release_skip32
+    jmp @release_done33
+@release_done33
+    %t63 =l loadl %t2
+    %t64 =w ceql %t63, 0
+    jnz %t64, @release_skip35, @release34
+@release34
+    call $nox_dict_release(l %rt, l %t63, w 1, w 0, w 0)
+    jmp @release_done36
+@release_skip35
+    jmp @release_done36
+@release_done36
     storel 0, %t2
-@fn_end36
+@fn_end37
     ret
 @append_grow24
     %t55 =l call $nox_list_grow(l %rt, l %t42, l 8)
-    jmp @append_write25
+    %t56 =w ceql %t55, 0
+    jnz %t56, @append_oom26, @append_write25
+@append_oom26
+    call $nox_out_of_memory()
+    ret
 }
 export function l $Board_tag_total(l %rt, l %p_self) {
 @start

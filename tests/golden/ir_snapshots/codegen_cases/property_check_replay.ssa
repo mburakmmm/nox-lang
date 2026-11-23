@@ -3545,48 +3545,52 @@ export function l $nox_property_Rng_int_list(l %rt, l %p_self, l %p_max_len, l %
     %t60 =w csgel %t57, %t59
     jnz %t60, @append_grow31, @append_write32
 @append_write32
-    %t62 =l mul %t57, 8
-    %t63 =l add %t38, 16
-    %t64 =l loadl %t63
-    %t65 =l add %t64, %t62
-    storel %t42, %t65
-    %t66 =l add %t57, 1
-    storel %t66, %t38
-    %t67 =l loadl %t6
-    %t68 =l add %t67, 1
-    storel %t68, %t6
+    %t63 =l mul %t57, 8
+    %t64 =l add %t38, 16
+    %t65 =l loadl %t64
+    %t66 =l add %t65, %t63
+    storel %t42, %t66
+    %t67 =l add %t57, 1
+    storel %t67, %t38
+    %t68 =l loadl %t6
+    %t69 =l add %t68, 1
+    storel %t69, %t6
     jmp @while_cond17
 @while_end19
-    %t69 =l loadl %t5
-    ret %t69
-@after_return33
     %t70 =l loadl %t5
-    %t71 =w ceql %t70, 0
-    jnz %t71, @release_skip35, @release34
-@release34
-    %t72 =l sub %t70, 8
-    %t73 =l loadl %t72
-    %t74 =l sub %t73, 1
-    storel %t74, %t72
-    %t76 =l and %t74, 4294967295
-    %t75 =w ceql %t76, 0
-    jnz %t75, @list_free37, @list_free_skip38
-@list_free37
-    call $nox_list_free_payload(l %rt, l %t70, l 8)
-    jmp @list_free_done39
-@list_free_skip38
-    jmp @list_free_done39
-@list_free_done39
-    jmp @release_done36
-@release_skip35
-    jmp @release_done36
-@release_done36
+    ret %t70
+@after_return34
+    %t71 =l loadl %t5
+    %t72 =w ceql %t71, 0
+    jnz %t72, @release_skip36, @release35
+@release35
+    %t73 =l sub %t71, 8
+    %t74 =l loadl %t73
+    %t75 =l sub %t74, 1
+    storel %t75, %t73
+    %t77 =l and %t75, 4294967295
+    %t76 =w ceql %t77, 0
+    jnz %t76, @list_free38, @list_free_skip39
+@list_free38
+    call $nox_list_free_payload(l %rt, l %t71, l 8)
+    jmp @list_free_done40
+@list_free_skip39
+    jmp @list_free_done40
+@list_free_done40
+    jmp @release_done37
+@release_skip36
+    jmp @release_done37
+@release_done37
     storel 0, %t5
-@fn_end40
+@fn_end41
     ret 0
 @append_grow31
     %t61 =l call $nox_list_grow(l %rt, l %t38, l 8)
-    jmp @append_write32
+    %t62 =w ceql %t61, 0
+    jnz %t62, @append_oom33, @append_write32
+@append_oom33
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $nox_property_Rng_ascii_str(l %rt, l %p_self, l %p_max_len) {
 @start

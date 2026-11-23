@@ -3917,55 +3917,59 @@ export function l $build_sum(l %rt, l %p_n) {
     %t19 =w csgel %t16, %t18
     jnz %t19, @append_grow3, @append_write4
 @append_write4
-    %t21 =l mul %t16, 8
-    %t22 =l add %t14, 16
-    %t23 =l loadl %t22
-    %t24 =l add %t23, %t21
-    storel %t15, %t24
-    %t25 =l add %t16, 1
-    storel %t25, %t14
-    %t26 =l loadl %t3
-    %t27 =l add %t26, 1
-    storel %t27, %t3
+    %t22 =l mul %t16, 8
+    %t23 =l add %t14, 16
+    %t24 =l loadl %t23
+    %t25 =l add %t24, %t22
+    storel %t15, %t25
+    %t26 =l add %t16, 1
+    storel %t26, %t14
+    %t27 =l loadl %t3
+    %t28 =l add %t27, 1
+    storel %t28, %t3
     jmp @while_cond0
 @while_end2
     storel 0, %t4
     storel 0, %t6
-    %t28 =l loadl %t2
-    %t29 =l loadl %t28
-    jmp @forlist_cond5
-@forlist_cond5
-    %t30 =l loadl %t6
-    %t31 =w csltl %t30, %t29
-    jnz %t31, @forlist_body6, @forlist_end7
-@forlist_body6
-    %t32 =l shl %t30, 3
-    %t33 =l add %t28, 16
-    %t34 =l loadl %t33
-    %t35 =l add %t34, %t32
-    %t36 =l loadl %t35
-    storel %t36, %t5
-    %t37 =l loadl %t4
-    %t38 =l loadl %t5
-    %t39 =l add %t37, %t38
-    storel %t39, %t4
-    jmp @forlist_step8
-@forlist_step8
-    %t40 =l loadl %t6
-    %t41 =l add %t40, 1
-    storel %t41, %t6
-    jmp @forlist_cond5
-@forlist_end7
-    %t42 =l loadl %t4
+    %t29 =l loadl %t2
+    %t30 =l loadl %t29
+    jmp @forlist_cond6
+@forlist_cond6
+    %t31 =l loadl %t6
+    %t32 =w csltl %t31, %t30
+    jnz %t32, @forlist_body7, @forlist_end8
+@forlist_body7
+    %t33 =l shl %t31, 3
+    %t34 =l add %t29, 16
+    %t35 =l loadl %t34
+    %t36 =l add %t35, %t33
+    %t37 =l loadl %t36
+    storel %t37, %t5
+    %t38 =l loadl %t4
+    %t39 =l loadl %t5
+    %t40 =l add %t38, %t39
+    storel %t40, %t4
+    jmp @forlist_step9
+@forlist_step9
+    %t41 =l loadl %t6
+    %t42 =l add %t41, 1
+    storel %t42, %t6
+    jmp @forlist_cond6
+@forlist_end8
+    %t43 =l loadl %t4
     call $nox_arena_destroy(l %rt, l %t0)
-    ret %t42
-@after_return9
+    ret %t43
+@after_return10
     call $nox_arena_destroy(l %rt, l %t0)
-@fn_end10
+@fn_end11
     ret 0
 @append_grow3
     %t20 =l call $nox_arena_list_grow(l %t0, l %t14, l 8)
-    jmp @append_write4
+    %t21 =w ceql %t20, 0
+    jnz %t21, @append_oom5, @append_write4
+@append_oom5
+    call $nox_out_of_memory()
+    ret 0
 }
 export function l $compute(l %rt, l %p_rounds) {
 @start

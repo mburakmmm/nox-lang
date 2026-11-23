@@ -3126,18 +3126,22 @@ export function $Container_add(l %rt, l %p_self, l %p_it) {
     %t16 =w csgel %t13, %t15
     jnz %t16, @append_grow3, @append_write4
 @append_write4
-    %t18 =l mul %t13, 8
-    %t19 =l add %t12, 16
-    %t20 =l loadl %t19
-    %t21 =l add %t20, %t18
-    storel %t7, %t21
-    %t22 =l add %t13, 1
-    storel %t22, %t12
-@fn_end5
+    %t19 =l mul %t13, 8
+    %t20 =l add %t12, 16
+    %t21 =l loadl %t20
+    %t22 =l add %t21, %t19
+    storel %t7, %t22
+    %t23 =l add %t13, 1
+    storel %t23, %t12
+@fn_end6
     ret
 @append_grow3
     %t17 =l call $nox_list_grow(l %rt, l %t12, l 8)
-    jmp @append_write4
+    %t18 =w ceql %t17, 0
+    jnz %t18, @append_oom5, @append_write4
+@append_oom5
+    call $nox_out_of_memory()
+    ret
 }
 export function l $Container_total(l %rt, l %p_self) {
 @start
