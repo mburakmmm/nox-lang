@@ -11,6 +11,18 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.49]
+
+GPT-6 sağlamlaştırma listesi — toplu tur 2: parser/oracle/biçimlendirici denetimleri, daraltma varyantları, liste başlığı denetimi, ReleaseFast ölçümü.
+
+- **Parser hatası (R1-P1.10 oracle buldu):** `f"{a b}"` artık sözdizimi hatası (önceden `b` sessizce atılıyor, `fmt` kaynağı `f"{a}"`ya çeviriyordu). Zig + Nox parser, tanılama bayt-bayt aynı.
+- **R1-P0.5/P0.3 kalan:** yazan dunder'a sahip programlarda `print/str/len/...` artık saf sayılmaz (aynı koşuldaki `str(n)` ve dolaylı `print(n)` yapan işlev); closure/çıplak `print(n)`/f-string/birleştirme varyant testleri.
+- **R1-P0.1 kalan:** modüller arası aynı adlı `type Id` + modül değişkeni + closure izolasyonu testi (llvm + qbe).
+- **R1-P1.10:** `scripts/fixture_oracle.py` (precheck'te): pozitif fixture ayrışır/tekrar yok/CRLF, negatif hata konumu+iletisi sabit (`expected_errors.txt`, 48 fixture).
+- **R1-P1.12:** `scripts/fmt_properties.py`: idempotence + semantik koruma + CRLF; **73 bilinen biçimlendirici ihlali bulundu** (64 idempotence/boş satır, 5 semantik, 4 CRLF) ve taban dosyasına alındı; yeni ihlal `frontend-diff-test`i kırar.
+- **R1-P1.1–P1.3:** `project/liste-basligi-denetimi-2026-11-24.md` (doğrulanan gerçekler, kilitsiz büyüme tasarım sınırı, eksik testler).
+- **R2-N1.a:** ReleaseFast tabanı ölçüldü; **art arda çağrılarda Nox selfhost belleği geri vermiyor** (aşağıda liste). Süre: parse 1,62×, fmt 2,07× (≈1 MiB korpus).
+
 ## [2.2.48]
 
 GPT-6 sağlamlaştırma listesi — Zig↔Nox sınırı sözleşmesi + ölçüm kapısı (tek toplu tur).

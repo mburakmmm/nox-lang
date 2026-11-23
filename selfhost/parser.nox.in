@@ -1459,6 +1459,8 @@ def parse_fstring_lit(p: P, s: int, e: int) -> int:
             sub: P = P(a, toks)
             sp_n: int = len(a.sp_ids)
             sub_expr: int = parse_expr(sub)
+            if not chk(sub, {{K:newline}}) and not chk(sub, {{K:eof}}):
+                bad_str(p, {{K:fstring_lit}}, "")
             while len(a.sp_ids) > sp_n:
                 a.sp_ids.pop()
                 a.sp_vals.pop()

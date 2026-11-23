@@ -20,6 +20,8 @@ pub const Summary = struct {
     /// Bu adlı en az bir kullanıcı tanımı var mı (`f:ad` / `m:ad` / sınıf adı)?
     defined: std.StringHashMapUnmanaged(void),
     classes: std.StringHashMapUnmanaged(void),
+    /// R1-P0.5 (v2.2.48): kullanıcı dunder'ı (`__str__`/`__len__`/... `__init__` hariç) bir alan yazıyorsa dunder'ı örtük çağıran yerleşikler (`print/str/len/...`) artık yan etkisiz SAYILMAZ.
+    unsafe_dunders: std.StringHashMapUnmanaged(void) = .empty,
 
     const pure_builtins = [_][]const u8{
         "len",   "str",  "int",  "float",  "bool",      "print", "abs", "min", "max",        "round", "sum", "repr", "ord", "chr", "range",
@@ -27,6 +29,30 @@ pub const Summary = struct {
     };
 
     fn isPureBuiltin(name: []const u8) bool {
+        return isPureBuiltinWith(name, null);
+    }
+
+    /// Yerleşiğin örtük çağırabileceği dunder'lar (yalnızca bunlardan biri alan yazıyorsa yerleşik güvensizdir).
+    fn relatedDunders(name: []const u8) []const []const u8 {
+        const eq = std.mem.eql;
+        if (eq(u8, name, "str") or eq(u8, name, "print") or eq(u8, name, "repr")) return &.{ "__str__", "__repr__" };
+        if (eq(u8, name, "len")) return &.{"__len__"};
+        if (eq(u8, name, "bool") or eq(u8, name, "any") or eq(u8, name, "all")) return &.{ "__bool__", "__len__", "__iter__", "__next__" };
+        if (eq(u8, name, "int")) return &.{ "__int__", "__index__" };
+        if (eq(u8, name, "float")) return &.{"__float__"};
+        if (eq(u8, name, "abs")) return &.{"__abs__"};
+        if (eq(u8, name, "round")) return &.{"__round__"};
+        if (eq(u8, name, "min") or eq(u8, name, "max") or eq(u8, name, "sorted")) return &.{ "__lt__", "__gt__", "__le__", "__ge__", "__eq__", "__iter__", "__next__" };
+        if (eq(u8, name, "sum")) return &.{ "__add__", "__radd__", "__iter__", "__next__" };
+        if (eq(u8, name, "list") or eq(u8, name, "dict") or eq(u8, name, "enumerate") or eq(u8, name, "zip")) return &.{ "__iter__", "__next__", "__getitem__", "__len__" };
+        return &.{};
+    }
+
+    /// `unsafe`: alan yazan kullanıcı dunder adları; yerleşiğin ilgili dunder'larından biri kümedeyse saf SAYILMAZ.
+    fn isPureBuiltinWith(name: []const u8, unsafe: ?*const std.StringHashMapUnmanaged(void)) bool {
+        if (unsafe) |set| {
+            for (relatedDunders(name)) |d| if (set.contains(d)) return false;
+        }
         for (pure_builtins) |n| if (std.mem.eql(u8, n, name)) return true;
         return std.mem.startsWith(u8, name, "__nox_");
     }
@@ -37,7 +63,7 @@ pub const Summary = struct {
             .identifier => |n| {
                 if (self.defined.contains(n)) return self.isBad("f", n);
                 if (self.classes.contains(n)) return self.isBad("m", "__init__");
-                return !isPureBuiltin(n);
+                return !isPureBuiltinWith(n, &self.unsafe_dunders);
             },
             .attribute => |a| {
                 if (self.defined.contains(a.attr)) return self.isBad("m", a.attr);
@@ -61,6 +87,7 @@ pub const Summary = struct {
 
 const Builder = struct {
     allocator: std.mem.Allocator,
+    unsafe_dunders: ?*const std.StringHashMapUnmanaged(void) = null,
     seeds: std.ArrayListUnmanaged(NodeKey) = .empty,
     reverse: effect_graph.ReverseEdges = .empty,
     defined: std.StringHashMapUnmanaged(void) = .empty,
@@ -205,7 +232,7 @@ const Builder = struct {
                     try self.edge(try self.key("f", n));
                 } else if (self.classes.contains(n)) {
                     try self.edge(try self.key("m", "__init__"));
-                } else if (!Summary.isPureBuiltin(n)) {
+                } else if (!Summary.isPureBuiltinWith(n, self.unsafe_dunders)) {
                     try self.seed(); // çözülemeyen ad: işlev değeri/closure parametresi/dış simge
                 }
             },
@@ -278,14 +305,27 @@ const Builder = struct {
 
 /// `body` (içe aktarılan modüller dahil birleştirilmiş modül gövdesi) için özet kurar. Bellek `allocator`dadır (derleme boyunca yaşar; arena beklenir).
 pub fn build(allocator: std.mem.Allocator, body: []const ast.Stmt) !Summary {
-    var b: Builder = .{ .allocator = allocator };
-    try b.collectDefs(body);
-    try b.scanTop(body);
-    // `extern def` adları: çağrıları dış koddur → güvensiz tohum (`defined`da olduklarından kenarsız kalmasın)
-    for (body) |*st| switch (st.kind) {
-        .extern_def => |ed| try b.seeds.append(allocator, try b.key("f", ed.name)),
-        else => {},
-    };
-    const bad = try effect_graph.propagateBad(allocator, &b.reverse, b.seeds.items);
-    return .{ .allocator = allocator, .bad = bad, .defined = b.defined, .classes = b.classes };
+    var unsafe: std.StringHashMapUnmanaged(void) = .empty;
+    var pass: u8 = 0;
+    while (true) : (pass += 1) {
+        var b: Builder = .{ .allocator = allocator, .unsafe_dunders = if (pass == 0) null else &unsafe };
+        try b.collectDefs(body);
+        try b.scanTop(body);
+        // `extern def` adları: çağrıları dış koddur → güvensiz tohum (`defined`da olduklarından kenarsız kalmasın)
+        for (body) |*st| switch (st.kind) {
+            .extern_def => |ed| try b.seeds.append(allocator, try b.key("f", ed.name)),
+            else => {},
+        };
+        const bad = try effect_graph.propagateBad(allocator, &b.reverse, b.seeds.items);
+        var sum: Summary = .{ .allocator = allocator, .bad = bad, .defined = b.defined, .classes = b.classes, .unsafe_dunders = unsafe };
+        // 1. geçiş: yerleşikler saf varsayılır; alan yazan dunder'lar (`m:__x__`, `__init__` hariç) toplanır. Varsa 2. geçiş ilgili yerleşikleri güvensiz sayarak yeniden kurar.
+        if (pass == 0) {
+            var it = b.defined.keyIterator();
+            while (it.next()) |k| {
+                if (k.len > 4 and std.mem.startsWith(u8, k.*, "__") and std.mem.endsWith(u8, k.*, "__") and !std.mem.eql(u8, k.*, "__init__") and sum.isBad("m", k.*)) try unsafe.put(allocator, k.*, {});
+            }
+            if (unsafe.count() > 0) continue;
+        }
+        return sum;
+    }
 }

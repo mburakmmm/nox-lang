@@ -213,3 +213,65 @@ test "P0.4: alan yazmayan metot çağrısı daraltmayı korur, alan yazan (dolay
         \\
     );
 }
+
+// R1-P0.3/P0.5 kalan varyantlar (v2.2.48).
+test "P0.3: iç içe def kapanışı alanı yazıp çağrılınca daraltma düşer" {
+    try expectRejected(
+        \\def f(n: Node) -> int:
+        \\    def g() -> None:
+        \\        n.left = None
+        \\    if n.left != None:
+        \\        g()
+        \\        return n.left.value
+        \\    return 0
+        \\
+    );
+}
+
+test "P0.5: çıplak print(n), f-string ve birleştirme dolaylı __str__ ile daraltmayı düşürür" {
+    try expectRejected(
+        \\def f(n: Node) -> int:
+        \\    if n.left != None:
+        \\        print(n)
+        \\        return n.left.value
+        \\    return 0
+        \\
+    );
+    try expectRejected(
+        \\def f(n: Node) -> int:
+        \\    if n.left != None:
+        \\        s: str = f"{n}"
+        \\        return n.left.value
+        \\    return 0
+        \\
+    );
+    try expectRejected(
+        \\def f(n: Node) -> int:
+        \\    if n.left != None:
+        \\        s: str = "a" + str(n)
+        \\        return n.left.value
+        \\    return 0
+        \\
+    );
+}
+
+test "P0.5: aynı koşul içindeki str(n) ve dolaylı print(n) yapan işlev çağrısı daraltmayı düşürür" {
+    try expectRejected(
+        \\def f(n: Node) -> int:
+        \\    if n.left != None and str(n) != "":
+        \\        return n.left.value
+        \\    return 0
+        \\
+    );
+    try expectRejected(
+        \\def print_ok(n: Node) -> bool:
+        \\    print(n)
+        \\    return True
+        \\
+        \\def f(n: Node) -> int:
+        \\    if n.left != None and print_ok(n):
+        \\        return n.left.value
+        \\    return 0
+        \\
+    );
+}

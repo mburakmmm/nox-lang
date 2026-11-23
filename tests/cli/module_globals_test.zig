@@ -33,3 +33,31 @@ test "modul-duzeyi degiskenler modul basina ayridir (qbe)" {
     defer arena.deinit();
     try runWith(arena.allocator(), std.testing.io, "qbe");
 }
+
+// R1-P0.1 kalan (v2.2.48): aynı adlı tür takma adı (`type Id`) ve modül değişkeni (`G`) iki modülde farklı tiplerle; iç içe def (closure) kendi modülünün `G`sini okur — modüller birbirinin tipini/yuvasını ezmez.
+fn runAliasClosure(a: std.mem.Allocator, io: std.Io, backend: []const u8) !void {
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root = try absPath(io, proj.dir, &buf);
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"proj\",\"entry\":\"main.nox\"}" });
+    try proj.dir.writeFile(io, .{ .sub_path = "ta.nox", .data = "type Id = int\nG: Id = 1\n\ndef get() -> Id:\n    def inner() -> Id:\n        return G + 10\n    return inner()\n" });
+    try proj.dir.writeFile(io, .{ .sub_path = "tb.nox", .data = "type Id = str\nG: Id = \"x\"\n\ndef get() -> Id:\n    def inner() -> Id:\n        return G + \"y\"\n    return inner()\n" });
+    try proj.dir.writeFile(io, .{ .sub_path = "main.nox", .data = "import ta\nimport tb\n\nprint(ta.get())\nprint(tb.get())\n" });
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{root});
+    const r = try std.process.run(a, io, .{ .argv = &.{ "zig-out/bin/noxc", "run", "--backend", backend, main_path } });
+    try std.testing.expect(r.term == .exited and r.term.exited == 0);
+    try std.testing.expectEqualStrings("11\nxy\n", r.stdout);
+}
+
+test "tur takma adi + closure modul izolasyonu (llvm)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    try runAliasClosure(arena.allocator(), std.testing.io, "llvm");
+}
+
+test "tur takma adi + closure modul izolasyonu (qbe)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    try runAliasClosure(arena.allocator(), std.testing.io, "qbe");
+}

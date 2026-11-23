@@ -3253,6 +3253,11 @@ pub const Parser = struct {
                 };
                 var sub_parser = Parser.init(self.allocator, sub_tokens);
                 var sub_expr = try sub_parser.parseExpr();
+                // R1-P1.10 (v2.2.48): alan ifadesi TÜM metni tüketmeli — `f"{a b}"` önceden `b`yi sessizce atıp `a`yı kabul ediyordu (biçimlendirici de `f"{a}"` yazıyordu).
+                if (sub_parser.pos < sub_tokens.len and sub_tokens[sub_parser.pos].kind != .newline and sub_tokens[sub_parser.pos].kind != .eof) {
+                    self.last_diagnostic = .{ .found = .fstring_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]) };
+                    return error.UnexpectedToken;
+                }
                 if (want_repr) {
                     const rargs = try self.allocator.alloc(ast.Expr, 1);
                     rargs[0] = sub_expr;
