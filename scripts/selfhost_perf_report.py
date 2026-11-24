@@ -117,7 +117,8 @@ def main():
             zl, zp, zf = med["lex-bench"][0], med["parse-bench"][0], med["fmt-bench"][0]
             if all(isinstance(v, (int, float)) for v in (nl, npz, nf, zl, zp, zf)):
                 lines.append(f"| {name} | | yalnız parse (parse−lexer) | {zp - zl} | {npz - nl} | {(npz - nl) / max(1, zp - zl):.2f}× | | |")
-                lines.append(f"| {name} | | yalnız biçimleme (fmt−parse) | {zf - zp} | {nf - npz} | {(nf - npz) / max(1, zf - zp):.2f}× | | |")
+                # UYARI: fmt hattı trivia'lı sözcükleme + çıktı kopyası + AST serbest bırakma içerir; fark GERÇEK biçimleme süresi değildir (profilde biçimleme işlevleri görünmez). Karar için tüm hat oranına bakın.
+                lines.append(f"| {name} | | fmt−parse (YAKLAŞIK: trivia+çıktı kopyası dahil; yalnız biçimleme DEĞİL) | {zf - zp} | {nf - npz} | ({(nf - npz) / max(1, zf - zp):.2f}×) | | |")
             conv = stat(res["lex-bench"][2])[0]
             if isinstance(conv, (int, float)) and isinstance(nl, (int, float)):
                 lines.append(f"| {name} | | köprü (Token dönüşümü) | | +{conv - nl} | | | |")

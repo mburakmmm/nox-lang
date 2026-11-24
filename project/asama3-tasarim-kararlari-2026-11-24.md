@@ -10,6 +10,9 @@ Kaynak: `project/rapor2-sonuc-2026-11-24.md` ölçümleri; kararlar kullanıcıd
 | R2-C.1/C.2 enum | **Tahsissiz skaler etiket** (karar: uygula; ayrı özellik fazı) | Aşağıdaki plan. |
 | R2-L kalıcı kapılar | **`lang_perf` Nox/C kapısı** | `benchmarks/lang_perf/run.py --check` (tolerans 1,25×, yalnızca macOS nightly; taban çizgisi oran ölçütleri). Aether/Nyx ve GC duraklama kapıları AYRI iş. |
 
+## Enum: kapsam ölçümü (v2.2.60) — ayrı, temiz bir oturumda yapılacak
+Ölçüm (`enum_bench2`, 3 M işlem): ayırma 18 ms, **tekil örnek 15 ms (yalnız −%17)**, **skaler 1 ms (18×)** ⇒ tekil örnek denemeye değmez; kazanç yalnızca gerçek skaler temsilde. Kapsam: checker'da ≈135, codegen'de ≈45 `.class` dal noktası + `Type→TypeInfo` eşlemesi + `match` indirgemesi (`_tag`) + her iki backend + ARC (`heap = .none`) + FFI/reflect. Uzun bir oturum bağlamında yapılması token israfı/hata riski; bu bölümdeki aşamalı plan YENİ bir oturumda, sizin son onayınızla başlatılacak.
+
 ## Enum: tahsissiz skaler etiket — tasarım ve aşamalar
 Durum: enum parser'da sıradan sınıflara indirgenir (`enum_variants` + sentezlenmiş kurucular); her varyant inşası bir ARC nesnesidir (≈7,3 ns, düz tamsayıya göre ~10×; `enum_bench`: 3 M inşa+match = 22 ms).
 Hedef: **hiçbir varyantı alan taşımayan** ("düz") enumlar `int` etiketine derlenir; yük taşıyan enumlar nesne olarak kalır (davranış değişmez).

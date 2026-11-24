@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.60]
+
+Kalıcı kapılar ve ölçüm düzeltmeleri (kod değişikliği yok).
+
+- **CI (nightly.yml)**: GC duraklama kapısı `scripts/gc_pause_gate.py` (cycle_gc_pause: ort. ≤ 400 ns, en kötü ≤ 40 ms; ölçüm 145 ns / 9–10 ms).
+- **Ölçüm**: `selfhost_perf_report.py` "fmt−parse" satırı YAKLAŞIK olarak etiketlendi (trivia + çıktı kopyası dahil, gerçek biçimleme süresi değil; profilde biçimleme işlevleri görünmüyor); fmt hattı oranı 10 senaryonun 9'unda ≤ 1,0×.
+- **Ekosistem (R1-P3.2)**: Aether çok-worker (4) 15 000 istek, RSS 5→6 MiB (sızıntı yok). Nyx `use_listen_fd` eksik (proje tarafı).
+- **Enum skaler etiket**: ölçüm (ayırma 18 ms / tekil 15 ms / skaler 1 ms) ve kapsam notu; uygulama ayrı oturumda.
+
 ## [2.2.59]
 
 Rapor 2 kapanışı: ölçüm protokolü, biçimlendirici `list[u8]` çıktı, AST invariant denetimi, perf kapıları ve karar kayıtları. Nox/Zig: lexer 0,53×, parse 0,69×, fmt 0,70×; fmt tepe RSS 44 → 30 MiB.
