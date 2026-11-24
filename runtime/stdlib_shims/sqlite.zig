@@ -108,6 +108,7 @@ const FinalizeFn = *const fn (stmt: ?*anyopaque) callconv(.c) c_int;
 const ColumnCountFn = *const fn (stmt: ?*anyopaque) callconv(.c) c_int;
 const ColumnTypeFn = *const fn (stmt: ?*anyopaque, i: c_int) callconv(.c) c_int;
 const ColumnTextFn = *const fn (stmt: ?*anyopaque, i: c_int) callconv(.c) ?[*:0]const u8;
+const ColumnBytesFn = *const fn (stmt: ?*anyopaque, i: c_int) callconv(.c) c_int;
 const ColumnNameFn = *const fn (stmt: ?*anyopaque, i: c_int) callconv(.c) ?[*:0]const u8;
 const BindInt64Fn = *const fn (stmt: ?*anyopaque, idx: c_int, val: i64) callconv(.c) c_int;
 const BindDoubleFn = *const fn (stmt: ?*anyopaque, idx: c_int, val: f64) callconv(.c) c_int;
@@ -126,6 +127,7 @@ const Funcs = struct {
     column_count: ColumnCountFn,
     column_type: ColumnTypeFn,
     column_text: ColumnTextFn,
+    column_bytes: ColumnBytesFn,
     column_name: ColumnNameFn,
     bind_int64: BindInt64Fn,
     bind_double: BindDoubleFn,
@@ -164,6 +166,7 @@ fn loadAll() bool {
             extern fn sqlite3_column_count(stmt: ?*anyopaque) callconv(.c) c_int;
             extern fn sqlite3_column_type(stmt: ?*anyopaque, i: c_int) callconv(.c) c_int;
             extern fn sqlite3_column_text(stmt: ?*anyopaque, i: c_int) callconv(.c) ?[*:0]const u8;
+            extern fn sqlite3_column_bytes(stmt: ?*anyopaque, i: c_int) callconv(.c) c_int;
             extern fn sqlite3_column_name(stmt: ?*anyopaque, i: c_int) callconv(.c) ?[*:0]const u8;
             extern fn sqlite3_bind_int64(stmt: ?*anyopaque, idx: c_int, val: i64) callconv(.c) c_int;
             extern fn sqlite3_bind_double(stmt: ?*anyopaque, idx: c_int, val: f64) callconv(.c) c_int;
@@ -188,6 +191,7 @@ fn loadAll() bool {
             .column_count = linked.sqlite3_column_count,
             .column_type = linked.sqlite3_column_type,
             .column_text = linked.sqlite3_column_text,
+            .column_bytes = linked.sqlite3_column_bytes,
             .column_name = linked.sqlite3_column_name,
             .bind_int64 = linked.sqlite3_bind_int64,
             .bind_double = linked.sqlite3_bind_double,
@@ -209,6 +213,7 @@ fn loadAll() bool {
     const column_count_fn = lookupSym(&lib, ColumnCountFn, "sqlite3_column_count") orelse return false;
     const column_type_fn = lookupSym(&lib, ColumnTypeFn, "sqlite3_column_type") orelse return false;
     const column_text_fn = lookupSym(&lib, ColumnTextFn, "sqlite3_column_text") orelse return false;
+    const column_bytes_fn = lookupSym(&lib, ColumnBytesFn, "sqlite3_column_bytes") orelse return false;
     const column_name_fn = lookupSym(&lib, ColumnNameFn, "sqlite3_column_name") orelse return false;
     const bind_int64_fn = lookupSym(&lib, BindInt64Fn, "sqlite3_bind_int64") orelse return false;
     const bind_double_fn = lookupSym(&lib, BindDoubleFn, "sqlite3_bind_double") orelse return false;
@@ -229,6 +234,7 @@ fn loadAll() bool {
         .column_count = column_count_fn,
         .column_type = column_type_fn,
         .column_text = column_text_fn,
+        .column_bytes = column_bytes_fn,
         .column_name = column_name_fn,
         .bind_int64 = bind_int64_fn,
         .bind_double = bind_double_fn,
@@ -447,7 +453,9 @@ pub export fn nox_sqlite_column_text_raw(rt: ?*anyopaque, stmt: ?*anyopaque, i: 
     const active = stmt orelse return dupeEmpty(rt);
     if (!ensureLoaded()) return dupeEmpty(rt);
     const txt = g_funcs.column_text(active, @intCast(i)) orelse return dupeEmpty(rt);
-    return dupeToNoxStr(rt, std.mem.span(txt));
+    // v2.2.63 (Chronos NXL-009): metin NUL'da kesilmez — `sqlite3_column_bytes` (column_text'ten SONRA çağrılmalı) tam bayt sayısını verir; `str` uzunluk önekli olduğundan gömülü NUL korunur.
+    const n: usize = @intCast(@max(g_funcs.column_bytes(active, @intCast(i)), 0));
+    return dupeToNoxStr(rt, txt[0..n]);
 }
 
 pub export fn nox_sqlite_column_name_raw(rt: ?*anyopaque, stmt: ?*anyopaque, i: i64) callconv(.c) ?[*:0]u8 {

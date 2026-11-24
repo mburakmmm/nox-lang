@@ -996,6 +996,28 @@ pub fn genThreadHandleJoin(self: *Codegen, a: ast.Attribute) CodegenError!Value 
     return valueFromElemDescriptor(converted.text, converted.qtype, handle_val.elem_heap_info, handle_val.elem_is_str, handle_val.elem_fixed_int);
 }
 
+/// `CancelledError("gorev iptal edildi")` nesnesini kurup fırlatır (`await` öncesi iptal denetimi ve askıdayken iptal uyandırması ortak yolu).
+fn emitRaiseCancelled(self: *Codegen) CodegenError!void {
+    const msg_value = try self.emitStringLiteral("gorev iptal edildi");
+    const ce_cinfo = self.classes.get("CancelledError") orelse return error.Unsupported;
+    const ce_obj = try self.genConstructFromValues("CancelledError", ce_cinfo, &.{msg_value}, null);
+    try self.emitExceptionLineStore(ce_obj.text, "CancelledError", self.current_raise_line);
+    try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ce_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
+    try self.emitExceptionCheck();
+}
+
+/// İptal-uyandırılabilir bir bekleyişin (`nox_channel_recv_cancellable` / `nox_async_await_cancellable`) HEMEN ardından: bekleyiş `Task.cancel()` ile bozulduysa `CancelledError` fırlatır.
+fn emitCancelWokenCheck(self: *Codegen) CodegenError!void {
+    const woken_t = try self.newTemp();
+    try self.qbeCall(.{ .name = woken_t, .ty = .w }, "$nox_task_take_cancel_woken", &.{.{ .ty = .l, .text = RT_PARAM }});
+    const woken_label = try self.newLabel("wait_cancelled");
+    const ok_label = try self.newLabel("wait_not_cancelled");
+    try self.qbeJnz(woken_t, woken_label, ok_label);
+    try self.qbeLabel(woken_label);
+    try emitRaiseCancelled(self);
+    try self.qbeLabel(ok_label);
+}
+
 /// `await <ifade>` — checker ZATEN operandın ya bir `Task` değeri ya da
 /// bir `Channel.send`/`recv` çağrısı olduğunu doğruladı (bkz. checker'ın
 /// `.await_expr` dalı); codegen AYNI şekle bakarak dallanır.
@@ -1019,6 +1041,8 @@ pub fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
                 const cr = try self.genChannelOp(a, c.args, recv_val);
                 // Yuva bariyerli global kanal: okuma sahiplidir (retain) — işlem bittikten sonra bırakılır.
                 if (recv_val.always_fresh) try self.releaseNonArcIfTemporary(a.obj.*, recv_val);
+                // v2.2.63: boş kanalda askıdayken `Task.cancel()` ile bozulan alım `CancelledError` fırlatır (alınan değer sıfırdır, kullanılmaz).
+                if (std.mem.eql(u8, a.attr, "recv")) try emitCancelWokenCheck(self);
                 return cr;
             }
             // Faz BB.4: `ThreadHandle[T].join()` — `Channel.send`/`.recv`
@@ -1043,20 +1067,15 @@ pub fn genAwaitExpr(self: *Codegen, operand: ast.Expr) CodegenError!Value {
     const proceed_label = try self.newLabel("task_not_cancelled");
     try self.qbeJnz(cancelled_t, cancel_label, proceed_label);
     try self.qbeLabel(cancel_label);
-    {
-        const msg_value = try self.emitStringLiteral("gorev iptal edildi");
-        const ce_cinfo = self.classes.get("CancelledError") orelse return error.Unsupported;
-        const ce_obj = try self.genConstructFromValues("CancelledError", ce_cinfo, &.{msg_value}, null);
-        try self.emitExceptionLineStore(ce_obj.text, "CancelledError", self.current_raise_line);
-        try self.qbeCall(null, "$nox_raise", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ce_obj.text }, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{self.current_raise_line}) } });
-        try self.emitExceptionCheck();
-    }
+    try emitRaiseCancelled(self);
     try self.qbeLabel(proceed_label);
     const payload_t = try self.newTemp();
-    try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_async_await", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_val.text } });
+    try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_async_await_cancellable", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = task_val.text } });
     // `await spawn f(...)`: Task tutamağı TAZE bir geçicidir (hiçbir değişken sahibi değil) — sonuç alındıktan sonra burada yıkılır; aksi halde her
     // çağrıda bir Task sızardı. İstisna denetiminden ÖNCE yapılır ki hata yolu da serbest bırakmış olsun.
     if (operand == .spawn_expr and task_val.heap == .task) try self.destroyNonArcValue(task_val.text, .task) else if (task_val.always_fresh) try self.releaseNonArcIfTemporary(operand, task_val);
+    // v2.2.63 (Pulse NOX-ASYNC-001): bekleyiş `Task.cancel()` ile bozulduysa (askıdayken iptal) `CancelledError` fırlat; bekleme sonucu geçersiz/sıfırdır.
+    try emitCancelWokenCheck(self);
     // Faz SC.1: `nox_async_await` (bkz. `runtime/async_rt/bridge.zig`)
     // ARTIK sarmalanan `async def` gövdesinde YAKALANMAMIŞ bir istisna
     // VARSA çağıranın bağlamına YENİDEN fırlatır (`nox_raise`) — sıradan
@@ -1128,7 +1147,7 @@ pub fn genChannelOp(self: *Codegen, a: ast.Attribute, args: []const ast.Expr, ch
     if (std.mem.eql(u8, a.attr, "recv")) {
         if (args.len != 0) return error.Unsupported;
         const payload_t = try self.newTemp();
-        try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_channel_recv", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ch_val.text } });
+        try self.qbeCall(.{ .name = payload_t, .ty = .l }, "$nox_channel_recv_cancellable", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = ch_val.text } });
         const converted = try self.fromPayload(.{ .text = payload_t, .qtype = .l }, ch_val.elem_qtype);
         return valueFromElemDescriptor(converted.text, converted.qtype, ch_val.elem_heap_info, ch_val.elem_is_str, ch_val.elem_fixed_int);
     }

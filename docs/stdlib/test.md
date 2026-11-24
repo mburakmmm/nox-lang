@@ -19,6 +19,7 @@ Each function raises an exception when the check fails, ending the test program 
 | `assert_eq_str(actual, expected, msg)` | `str` equality |
 | `assert_eq_float(actual, expected, msg)` | exact `float` equality |
 | `assert_true(cond, msg)` | `cond` must be `True` |
+| `assert_false(cond, msg)` | `cond` must be `False` |
 
 `msg` names the check in the failure report. (There is one function per type because Nox has no overloading.)
 

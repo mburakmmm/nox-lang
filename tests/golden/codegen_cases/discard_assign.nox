@@ -1,0 +1,32 @@
+# v2.2.63 (Prism): `_ = ifade` — değer hesaplanır ve atılır; `_` her tipte ve her sayıda kullanılabilir, okunamaz.
+class Counter:
+    n: int
+
+    def __init__(self) -> None:
+        self.n = 0
+
+    def bump(self) -> int:
+        self.n = self.n + 1
+        return self.n
+
+def label() -> str:
+    return "text"
+
+c: Counter = Counter()
+_ = c.bump()
+_ = label()
+
+def run() -> None:
+    _ = c.bump()
+    _ = label()
+    _ = [1, 2, 3]
+    _ = c.bump() + 100
+    print("discarded", c.n)
+
+def typed() -> int:
+    _: int = 5
+    _ = 6
+    return _
+
+run()
+print(typed())

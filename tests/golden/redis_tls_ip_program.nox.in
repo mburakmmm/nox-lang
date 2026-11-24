@@ -1,0 +1,18 @@
+# v2.2.63 (Ember NX-006): IP sabit değeriyle TLS — sertifikanın `IP:127.0.0.1` SAN'ı doğrulanır; DNS adı olmayan IP için CN/DNS eşleştirilmez. scripts/redis_probe.py @PORT@ ve @CA@ doldurur.
+import nox.redis
+from nox.redis import Client, RedisError
+
+c: Client = nox.redis.connect("127.0.0.1", @PORT@, True, "", "", 0, "@CA@")
+c.set("ip-k", "ip-value")
+v: str | None = c.get("ip-k")
+if v is not None:
+    print(v)
+print(c.ping())
+c.close()
+d: Client = nox.redis.connect_url("rediss://127.0.0.1:@PORT@", "@CA@")
+print(d.ping())
+d.close()
+try:
+    nox.redis.connect("127.0.0.1", @PORT@, True)
+except RedisError as e:
+    print("untrusted rejected", e.is_connection_error())

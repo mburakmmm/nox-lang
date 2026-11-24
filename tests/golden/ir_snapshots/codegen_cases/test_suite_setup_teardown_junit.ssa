@@ -11281,6 +11281,106 @@ export function $nox_test_assert_true(l %rt, w %p_cond, l %p_msg) {
 @fn_end21
     ret
 }
+export function $nox_test_assert_false(l %rt, w %p_cond, l %p_msg) {
+@start
+    %t0 =l alloc4 4
+    %t1 =l alloc8 8
+    %t5 =l alloc8 8
+    storew %p_cond, %t0
+    storel %p_msg, %t1
+    %t2 =w loadw %t0
+    jnz %t2, @if_then1, @if_end0
+@if_then1
+    %t3 =l loadl %t1
+    %t6 =l sub %rt, 24
+    %t7 =l loadl %t6
+    %t8 =w ceql %t7, 0
+    jnz %t8, @calloc_slow2, @calloc_chk3
+@calloc_chk3
+    %t9 =l sub %rt, 32
+    %t10 =l loadl %t9
+    %t11 =l add %t10, 16
+    %t12 =l loadl %t11
+    %t13 =w cnel %t12, 0
+    jnz %t13, @calloc_pop4, @calloc_slow2
+@calloc_pop4
+    %t14 =l loadl %t12
+    storel %t14, %t11
+    storel 1, %t12
+    %t15 =l add %t12, 8
+    storel %t15, %t5
+    jmp @calloc_done5
+@calloc_slow2
+    %t16 =l call $nox_rc_alloc(l %rt, l 40)
+    storel %t16, %t5
+    jmp @calloc_done5
+@calloc_done5
+    %t17 =l loadl %t5
+    storel 3, %t17
+    %t18 =l add %t17, 8
+    storel $nox_test_AssertionError_vtable, %t18
+    %t19 =l add %t17, 16
+    storel 0, %t19
+    %t20 =l add %t17, 24
+    storel 0, %t20
+    %t21 =l add %t17, 32
+    storel 0, %t21
+    call $Exception___init__(l %rt, l %t17, l %t3)
+    %t22 =w call $nox_exception_pending(l %rt)
+    jnz %t22, @ctor_init_failed6, @ctor_init_cont7
+@ctor_init_failed6
+    %t23 =w ceql %t17, 0
+    jnz %t23, @release_skip9, @release8
+@release8
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t17)
+    jmp @release_done10
+@release_skip9
+    jmp @release_done10
+@release_done10
+    jmp @ctor_init_cont7
+@ctor_init_cont7
+    %t24 =l sub %rt, 48
+    %t25 =w loadub %t24
+    %t26 =l sub %rt, 64
+    %t27 =l loadl %t26
+    jnz %t25, @exc_slow11, @exc_fast12
+@exc_fast12
+    %t28 =w cnel %t27, 0
+    jmp @exc_done13
+@exc_slow11
+    %t29 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done13
+@exc_done13
+    %t30 =w phi @exc_fast12 %t28, @exc_slow11 %t29
+    jnz %t30, @exc_propagate14, @exc_continue15
+@exc_propagate14
+    ret
+@exc_continue15
+    %t31 =l add %t17, 24
+    storel 31, %t31
+    call $nox_raise(l %rt, l %t17, l 31)
+    %t32 =l sub %rt, 48
+    %t33 =w loadub %t32
+    %t34 =l sub %rt, 64
+    %t35 =l loadl %t34
+    jnz %t33, @exc_slow16, @exc_fast17
+@exc_fast17
+    %t36 =w cnel %t35, 0
+    jmp @exc_done18
+@exc_slow16
+    %t37 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done18
+@exc_done18
+    %t38 =w phi @exc_fast17 %t36, @exc_slow16 %t37
+    jnz %t38, @exc_propagate19, @exc_continue20
+@exc_propagate19
+    ret
+@exc_continue20
+    jmp @if_end0
+@if_end0
+@fn_end21
+    ret
+}
 export function l $nox_test__xml_escape(l %rt, l %p_s) {
 @start
     %t0 =l alloc8 8

@@ -1,0 +1,10 @@
+# v2.2.63 (Chronos NXL-009): SQLite metin okuması gömülü NUL baytında kesilmez (sqlite3_column_bytes); str uzunluk önekli.
+import nox.sqlite
+from nox.db import Row
+from nox.sqlite import Connection
+
+db: Connection = nox.sqlite.open(":memory:")
+rows: list[Row] = db.query("SELECT CAST(X'610062' AS TEXT), length(X'610062'), CAST(X'00ff61' AS TEXT)")
+s: str = rows[0].get_str(0)
+print(len(s), rows[0].get_int(1), len(rows[0].get_str(2)))
+db.close()

@@ -30258,3 +30258,21 @@ Biçimlendirici çıktı tamponu `list[u8]` (1 B/bayt). Stdlib/selfhost çalış
 ### 3.497 `nox_scan_str_end` (v2.2.62)
 
 Runtime iç ilkeli: `nox_scan_str_end(base, start, n, q)` bir dize gövdesinde `start`tan ilk kaçırılmamış `q` baytının dizinini döner (`\` sonraki baytı atlar; bulunamazsa `n`). Selfhost lexer tek/çift tırnaklı dize taramasını bununla yapar; üç tırnaklı dizeler satır sayımı gerektirdiğinden Nox döngüsünde kalır. Ölçüm: uzun dize senaryosunda lexer 2,06 → 0,62 ms.
+
+### 3.498 Çerçeve limitasyonlarının kapanışı (v2.2.63)
+
+`project/framework-limitasyon-dogrulama-2026-11-24.md` (Prism/Ember/Pulse/Chronos raporlarının güncel derleyicide doğrulaması) sonucu GERÇEK hata/eksik çıkan sekiz madde; hepsi iki backend'de ve golden/birim testle:
+
+- **`__all__` sabitleri ve yeniden dışa aktarım** (`checker.validateModuleExports`/`resolveReExportChains`): liste modül düzeyi değişken/sabitleri ve `from m import X` ile gelen sınıf/işlev/sabit adlarını da kabul eder (`collectModuleGlobals` bu geçişten sonra çalıştığından gövdedeki `var_decl`lar taranır). `import m; m.SABIT` niteleyicili okuma bu turda YOK.
+- **Sondaki virgül** (Zig `parser.zig` + `selfhost/parser.nox.in`): çağrı argümanları, `def`/`extern def` parametreleri, sınıf tabanları, dekoratör argümanları, jenerik kurucu. Biçimlendirici virgülü yazmaz; Zig↔Nox paritesi `frontend_diff`.
+- **`_ = ifade`** (`checkStmt` `.assign`): `_` bildirilmemişse (yerel/modül globali değil) deyim `expr_stmt`e indirgenir; `_: T = ...` ile bildirilmişse sıradan değişken.
+- **Akıcı zincir** (`tryResolveStaticMethodCall`): "alıcı yan etkili" hatası yalnızca alıcı sınıf zincirinde gerçekten aynı adlı static/classmethod varsa verilir.
+- **`nox.test.assert_false`**.
+- **`nox.zlib`** (`runtime/stdlib_shims/zlib.zig`, `stdlib/nox/zlib.nox`): zlib (RFC 1950) ve ham deflate (RFC 1951) kapları, `crc32` (IEEE), `adler32` (artımlı, `str` kolayları). `gzip.zig` kap-biçimli yolu (`compressWith`/`decompressWith`: `std.compress.flate`, büyük yığınlı iş parçacığı / çıplak çekirdek mini-fiber'ı) genelleştirildi; libdeflate yalnız gzip kabında kalır. Tüm hedefler, capability yok.
+- **`match` kol-kapsamlı bağlama** (`Checker.renameConflictingMatchBindings`, `ast_clone.renameStmts`): aynı bağlama adı önceki kolda farklı tiple bağlanmışsa kol gövdesi `<ad>__arm<i>` ile yeniden yazılır; aynı tipte ad paylaşımı ve `if/else` kapsamı değişmez (formatter çıktısı etkilenmez: yeniden yazım checker'da).
+- **Sınıf alanı bağlam yöneticisi** (`registration.inferWithCtxClassName`): `with self.guard as g:` / `with a.b.c:` alan yolları.
+- **`async def` sınıf metodunda `await`** (`checkMethodBody` `in_async = allow_await or is_async`): metot gövdesi `spawn obj.metot()` ile fiberde çalışır; spawn'sız doğrudan çağrı eskisi gibi sıradan metot çağrısıdır.
+- **Redis/TLS IP SAN** (`vendor/tls_client.zig` NOX PATCH `verifyHostNameOrIp`): host IP sabit değeriyse `subjectAltName` `iPAddress` girdileriyle eşleştirilir (RFC 6125 §6.4.4; DNS/CN eşleştirilmez).
+- **SQLite NUL** (`sqlite.zig`): `column_text` `sqlite3_column_bytes` ile tam uzunlukta okunur (`str` uzunluk önekli); `bind_text` yazma yönü NUL'da keser (belgeli).
+- **`Task.cancel()` uyandırması** (`fiber.CancelWait`/`CancelPark`, `Channel.recvCancellable`, `Task.awaitCancellable`, `nox_channel_recv_cancellable`/`nox_async_await_cancellable`/`nox_task_take_cancel_woken`; codegen `emitCancelWokenCheck`): iptal edilen görev askıdaki `await ch.recv()` / `await task` bekleyişinde kuyruktan çıkarılıp uyandırılır, `await` `CancelledError` fırlatır. Protokol: iptal eden `cancel_requested`i yazar, sonra kaydı ATOMİK sahiplenir (`reg.swap(null)`) ve `unpark` ile bekleyeni (kanal kuyruğu kilidi / hedef görev `state` CAS'ı altında) kaldırıp uyandırır; fiber askıya girmeden önce kaydı bırakır ve bayrağı yeniden kontrol eder (kayıp uyandırma yok); uyanan fiber sahiplenme sürüyorsa `done`ı bekler. Teslim edilmiş değer korunur (`unpark` `false`). Kapsam dışı: `await ch.send`, `ThreadChannel`, `ThreadHandle.join`, `Task.wait`, wasm köprüsü. Bellek: `Task.park` Task struct'ının alanıdır (fiber ömründen bağımsız).
+

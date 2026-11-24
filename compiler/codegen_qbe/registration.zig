@@ -2159,6 +2159,18 @@ pub fn inferWithCtxClassName(self: *Codegen, ctx_expr: ast.Expr, locals: []const
             if (info.heap != .class) return error.Unsupported;
             return info.class_name orelse return error.Unsupported;
         },
+        // v2.2.63 (Pulse NOX-CODEGEN-003): `with self.guard as held:` / `with a.b.c:` — sınıf tipli bir ALAN YOLU; kök yukarıdaki desenlerden biri
+        // (`self`, bilinen sınıf yereli, kurucu/fonksiyon çağrısı), her halka sınıf tipli bir alandır.
+        .attribute => |at| {
+            const owner = try inferWithCtxClassName(self, at.obj.*, locals);
+            const owner_info = self.classes.get(owner) orelse return error.Unsupported;
+            for (owner_info.fields.items) |f| {
+                if (!std.mem.eql(u8, f.name, at.attr)) continue;
+                if (f.info.heap != .class) return error.Unsupported;
+                return f.info.class_name orelse return error.Unsupported;
+            }
+            return error.Unsupported;
+        },
         else => return error.Unsupported,
     }
 }

@@ -1,0 +1,56 @@
+# v2.2.63 (Pulse NOX-CODEGEN-003): `with self.guard as held:` / `with a.b.c:` — sınıf alanı (yolu) bağlam yöneticisi.
+class Guard:
+    entered: int
+    exited: int
+
+    def __init__(self) -> None:
+        self.entered = 0
+        self.exited = 0
+
+    def __enter__(self) -> Guard:
+        self.entered = self.entered + 1
+        return self
+
+    def __exit__(self) -> None:
+        self.exited = self.exited + 1
+
+class Owner:
+    guard: Guard
+
+    def __init__(self) -> None:
+        self.guard = Guard()
+
+    def read(self) -> int:
+        with self.guard as held:
+            return held.entered * 10 + 2
+
+    def plain(self) -> None:
+        with self.guard:
+            pass
+
+    def raising(self) -> int:
+        try:
+            with self.guard:
+                raise ValueError("x")
+        except ValueError:
+            return self.guard.exited
+        return -1
+
+class Outer:
+    owner: Owner
+
+    def __init__(self) -> None:
+        self.owner = Owner()
+
+    def deep(self) -> int:
+        with self.owner.guard:
+            return self.owner.guard.entered
+
+owner: Owner = Owner()
+print(owner.read())
+owner.plain()
+print(owner.guard.entered, owner.guard.exited)
+print(owner.raising())
+outer: Outer = Outer()
+print(outer.deep())
+print(outer.owner.guard.exited)

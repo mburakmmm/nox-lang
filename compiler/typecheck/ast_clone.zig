@@ -7,6 +7,23 @@ const ast = @import("../parser/ast.zig");
 
 const Error = std.mem.Allocator.Error;
 
+/// v2.2.63: `match` kolu bağlamalarını kol-kapsamlı yapmak için (bkz. `Checker.renameConflictingMatchBindings`) kopya sırasında bir adı yeniden adlandırır:
+/// bildirim yerleri (`var_decl`, `for`, `with ... as`, `except ... as`, comprehension değişkeni) ve her `identifier` kullanımı. Kopya yalnızca bu çağrı süresince etkindir.
+const Rename = struct { from: []const u8, to: []const u8 };
+threadlocal var active_rename: ?Rename = null;
+
+fn rn(name: []const u8) []const u8 {
+    if (active_rename) |r| if (std.mem.eql(u8, name, r.from)) return r.to;
+    return name;
+}
+
+pub fn renameStmts(a: std.mem.Allocator, src: []const ast.Stmt, from: []const u8, to: []const u8) Error![]ast.Stmt {
+    const saved = active_rename;
+    active_rename = .{ .from = from, .to = to };
+    defer active_rename = saved;
+    return stmts(a, src);
+}
+
 pub fn stmts(a: std.mem.Allocator, src: []const ast.Stmt) Error![]ast.Stmt {
     const out = try a.alloc(ast.Stmt, src.len);
     for (src, 0..) |s, i| out[i] = try stmt(a, s);
@@ -24,6 +41,8 @@ pub fn stmt(a: std.mem.Allocator, s: ast.Stmt) Error!ast.Stmt {
         .var_decl => |v| blk: {
             var c = v;
             c.value = try expr(a, v.value);
+            // Ad dizesinin İŞARETÇİSİ checker yan tablolarının anahtarıdır (`infer_types`): yeniden adlandırılan bildirim kendi kopyasını alır.
+            if (active_rename != null and !std.mem.eql(u8, rn(v.name), v.name)) c.name = try a.dupe(u8, rn(v.name));
             break :blk .{ .var_decl = c };
         },
         .assign => |x| blk: {
@@ -45,6 +64,7 @@ pub fn stmt(a: std.mem.Allocator, s: ast.Stmt) Error!ast.Stmt {
         .while_stmt => |w| .{ .while_stmt = .{ .cond = try expr(a, w.cond), .body = try stmts(a, w.body) } },
         .for_stmt => |f| blk: {
             var c = f;
+            c.var_name = rn(f.var_name);
             c.iterable = try expr(a, f.iterable);
             c.body = try stmts(a, f.body);
             break :blk .{ .for_stmt = c };
@@ -66,12 +86,13 @@ pub fn stmt(a: std.mem.Allocator, s: ast.Stmt) Error!ast.Stmt {
             const ecs = try a.alloc(ast.ExceptClause, t.except_clauses.len);
             for (t.except_clauses, 0..) |ec, i| {
                 ecs[i] = ec;
+                if (ec.bind_name) |bn| ecs[i].bind_name = rn(bn);
                 ecs[i].body = try stmts(a, ec.body);
             }
             break :blk .{ .try_stmt = .{ .try_body = try stmts(a, t.try_body), .except_clauses = ecs, .finally_body = try optStmts(a, t.finally_body) } };
         },
         .lowlevel_stmt => |l| .{ .lowlevel_stmt = .{ .body = try stmts(a, l.body) } },
-        .with_stmt => |w| .{ .with_stmt = .{ .ctx_expr = try expr(a, w.ctx_expr), .binding = w.binding, .body = try stmts(a, w.body), .is_async = w.is_async } },
+        .with_stmt => |w| .{ .with_stmt = .{ .ctx_expr = try expr(a, w.ctx_expr), .binding = if (w.binding) |bn| rn(bn) else null, .body = try stmts(a, w.body), .is_async = w.is_async } },
         .defer_stmt => |d| .{ .defer_stmt = .{ .call = try callExpr(a, d.call) } },
         .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .pass_stmt, .type_alias, .break_stmt, .continue_stmt => s.kind,
     };
@@ -104,7 +125,7 @@ fn callExpr(a: std.mem.Allocator, c: ast.Call) Error!ast.Call {
 fn clauses(a: std.mem.Allocator, src: []const ast.CompClause) Error![]ast.CompClause {
     const out = try a.alloc(ast.CompClause, src.len);
     for (src, 0..) |cl, i| out[i] = switch (cl) {
-        .for_clause => |f| .{ .for_clause = .{ .var_name = f.var_name, .iterable = try expr(a, f.iterable) } },
+        .for_clause => |f| .{ .for_clause = .{ .var_name = rn(f.var_name), .iterable = try expr(a, f.iterable) } },
         .if_clause => |e| .{ .if_clause = try expr(a, e) },
     };
     return out;
@@ -112,7 +133,8 @@ fn clauses(a: std.mem.Allocator, src: []const ast.CompClause) Error![]ast.CompCl
 
 pub fn expr(a: std.mem.Allocator, e: ast.Expr) Error!ast.Expr {
     return switch (e) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => e,
+        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => e,
+        .identifier => |n| .{ .identifier = rn(n) },
         .unary => |u| .{ .unary = .{ .op = u.op, .operand = try box(a, u.operand.*) } },
         .binary => |b| blk: {
             var c = b;

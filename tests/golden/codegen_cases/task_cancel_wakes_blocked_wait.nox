@@ -1,0 +1,82 @@
+# v2.2.63 (Pulse NOX-ASYNC-001): `Task.cancel()` askıdaki bir kanal alımını / görev beklemesini bozar ve CancelledError fırlatır
+# (önceden "deadlock detected" ile ölüyordu). Alım tamamlanmışsa (değer teslim edildiyse) iptal bir sonraki denetim noktasına kalır.
+async def waiter(ready: Channel[int], ch: Channel[int]) -> int:
+    await ready.send(1)
+    return await ch.recv()
+
+async def str_waiter(ready: Channel[int], ch: Channel[str]) -> str:
+    await ready.send(1)
+    return await ch.recv()
+
+async def outer(ready: Channel[int], inner: Task[int]) -> int:
+    await ready.send(1)
+    return await inner
+
+async def run_probe() -> None:
+    # A: boş int kanalında askıdaki alıcı iptal edilir
+    ready: Channel[int] = Channel[int](1)
+    ch: Channel[int] = Channel[int](1)
+    a: Task[int] = spawn waiter(ready, ch)
+    _ = await ready.recv()
+    a.cancel()
+    try:
+        r: int = await a
+        print("A unexpected", r)
+    except CancelledError as e:
+        print("A cancelled")
+
+    # B: heap yüklü (str) kanal
+    ready_b: Channel[int] = Channel[int](1)
+    sch: Channel[str] = Channel[str](1)
+    b: Task[str] = spawn str_waiter(ready_b, sch)
+    _ = await ready_b.recv()
+    b.cancel()
+    try:
+        rs: str = await b
+        print("B unexpected", rs)
+    except CancelledError as e:
+        print("B cancelled")
+
+    # C: başka bir görevi bekleyen görev iptal edilir; iç görev ayrıca iptal edilip sonlandırılır
+    ready_i: Channel[int] = Channel[int](1)
+    ready_o: Channel[int] = Channel[int](1)
+    ich: Channel[int] = Channel[int](1)
+    inner_t: Task[int] = spawn waiter(ready_i, ich)
+    outer_t: Task[int] = spawn outer(ready_o, inner_t)
+    _ = await ready_i.recv()
+    _ = await ready_o.recv()
+    outer_t.cancel()
+    try:
+        ro: int = await outer_t
+        print("C unexpected", ro)
+    except CancelledError as e:
+        print("C outer cancelled")
+    inner_t.cancel()
+    try:
+        ri: int = await inner_t
+        print("C unexpected", ri)
+    except CancelledError as e:
+        print("C inner cancelled")
+
+    # D: değer önce teslim edildi, iptal sonra geldi: alım normal tamamlanır
+    ready_d: Channel[int] = Channel[int](1)
+    dch: Channel[int] = Channel[int](1)
+    d: Task[int] = spawn waiter(ready_d, dch)
+    _ = await ready_d.recv()
+    await dch.send(5)
+    d.cancel()
+    print("D", await d)
+
+    # E: görev başlamadan önce iptal edilir: alım kendini kuyruktan çıkarıp iptali gözlemler
+    ready_e: Channel[int] = Channel[int](1)
+    ech: Channel[int] = Channel[int](1)
+    e_t: Task[int] = spawn waiter(ready_e, ech)
+    e_t.cancel()
+    try:
+        re: int = await e_t
+        print("E unexpected", re)
+    except CancelledError as e:
+        print("E cancelled")
+
+probe: Task[None] = spawn run_probe()
+await probe

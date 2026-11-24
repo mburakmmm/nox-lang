@@ -770,6 +770,8 @@ def try_generic_tail(p: P, name: int) -> int:
     if not chk(p, {{K:r_paren}}):
         args.append(parse_call_arg(p, sw))
         while mtc(p, {{K:comma}}):
+            if chk(p, {{K:r_paren}}):
+                break
             args.append(parse_call_arg(p, sw))
     expect(p, {{K:r_paren}})
     tst: int = sl(a, targs)
@@ -798,6 +800,8 @@ def parse_postfix(p: P) -> int:
                     args[0] = mk_Expr_list_comp(a, mk_ListComp(a, args[0], cst, len(clauses), -1, 1))
                 reg_span(p, args[0], span_toks(p, st0, p.pos - 1))
                 while mtc(p, {{K:comma}}):
+                    if chk(p, {{K:r_paren}}):
+                        break
                     st1: int = p.pos
                     args.append(parse_call_arg(p, p.sw))
                     reg_span(p, args[len(args) - 1], span_toks(p, st1, p.pos - 1))
@@ -2835,6 +2839,8 @@ def parse_decorators(p: P) -> int:
             if not chk(p, {{K:r_paren}}):
                 args.append(parse_decorator_arg(p))
                 while mtc(p, {{K:comma}}):
+                    if chk(p, {{K:r_paren}}):
+                        break
                     args.append(parse_decorator_arg(p))
             expect(p, {{K:r_paren}})
         expect(p, {{K:newline}})
@@ -2940,6 +2946,8 @@ def parse_func_def(p: P, enclosing: int) -> int:
         if a.n[params[0] + {{O:Param.variadic}}] != 0:
             kw_only_mode = True
         while mtc(p, {{K:comma}}):
+            if chk(p, {{K:r_paren}}):
+                break
             if chk(p, {{K:star}}) and p.pos + 1 < p.ntk and nxt_kind(p) == {{K:comma}}:
                 adv(p)
                 kw_only_mode = True
@@ -3025,6 +3033,8 @@ def parse_extern_def(p: P) -> int:
     if not chk(p, {{K:r_paren}}):
         params.append(parse_param(p))
         while mtc(p, {{K:comma}}):
+            if chk(p, {{K:r_paren}}):
+                break
             params.append(parse_param(p))
     expect(p, {{K:r_paren}})
     expect(p, {{K:arrow}})
@@ -3069,6 +3079,8 @@ def parse_class_def(p: P) -> int:
                 base_args.append(parse_type_expr(p))
             expect(p, {{K:r_bracket}})
         while mtc(p, {{K:comma}}):
+            if chk(p, {{K:r_paren}}):
+                break
             eb: int = expect(p, {{K:identifier}})
             extra_bases.append(t_s(p, eb))
             extra_bases.append(t_e(p, eb))

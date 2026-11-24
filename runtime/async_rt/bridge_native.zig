@@ -329,7 +329,39 @@ pub export fn nox_task_retain(task: ?*anyopaque) void {
 /// (`genAwaitExpr`, bkz. `nox_task_check_cancelled`) devreye girer.
 pub export fn nox_task_cancel(task: ?*anyopaque) void {
     const t: *TaskI64 = @ptrCast(@alignCast(task orelse return));
-    t.cancel_requested.store(true, .release);
+    t.cancel_requested.store(true, .seq_cst);
+    // v2.2.63 (Pulse NOX-ASYNC-001): görev şu an bir kanal alımında / görev beklemesinde askıdaysa bekleyişi bozup uyandır. `park` Task struct'ının alanıdır (fiber'ın DEĞİL), bu yüzden
+    // fiber çoktan bitmiş olsa bile erişim güvenlidir; kaydı sahiplenmek ATOMİKtir (`reg.swap(null)`), uyanan fiber `done`u bekler.
+    const w = t.park.reg.swap(null, .seq_cst) orelse return;
+    _ = w.unpark(w.ctx, &t.park.woken);
+    w.done.store(true, .release);
+}
+
+/// ŞU AN çalışan fiber'ın son iptal-uyandırılabilir bekleyişi iptalle mi bozuldu? Bayrağı OKUR (tüketmez).
+fn cancelWokenPeek() bool {
+    const f = currentFiber() orelse return false;
+    const park = f.park orelse return false;
+    return park.woken.load(.acquire);
+}
+
+/// Derleyicinin `await` sonrası denetimi: son iptal-uyandırılabilir bekleyiş iptalle bozulduysa `1` döner ve bayrağı temizler (çağıran `CancelledError` fırlatır).
+pub export fn nox_task_take_cancel_woken(rt: ?*anyopaque) i32 {
+    _ = rt;
+    const f = currentFiber() orelse return 0;
+    const park = f.park orelse return 0;
+    return if (park.woken.swap(false, .acq_rel)) 1 else 0;
+}
+
+/// `nox_async_await`in iptal-uyandırılabilir sürümü (yalnızca `await task` ifadesi kullanır): bekleyen görev iptal edilirse 0 döner ve `nox_task_take_cancel_woken` `1` verir.
+pub export fn nox_async_await_cancellable(rt: ?*anyopaque, task: ?*anyopaque) i64 {
+    const t: *TaskI64 = @ptrCast(@alignCast(task.?));
+    const result = t.awaitCancellable();
+    if (cancelWokenPeek()) return 0; // hedefin sonucu/istisnası tüketilmez
+    if (t.exc_obj) |exc| {
+        t.exc_obj = null;
+        nox_raise(rt, exc, t.exc_line);
+    }
+    return result;
 }
 
 /// Görevin giriş fiber'ının iptal bayrağını `flag`a yönlendirir (`nox.thread.start`: çocuk iş parçacığının giriş görevi, `ThreadHandle.cancel()`in yazdığı bayrağı okur;
@@ -476,6 +508,13 @@ export fn nox_channel_recv(rt: ?*anyopaque, ch: ?*anyopaque) i64 {
     return c.recv();
 }
 
+/// `nox_channel_recv`in iptal-uyandırılabilir sürümü (yalnızca `await ch.recv()` ifadesi kullanır): alıcı görev iptal edilirse 0 döner ve `nox_task_take_cancel_woken` `1` verir.
+export fn nox_channel_recv_cancellable(rt: ?*anyopaque, ch: ?*anyopaque) i64 {
+    _ = rt;
+    const c: *ChannelI64 = @ptrCast(@alignCast(ch.?));
+    return c.recvCancellable();
+}
+
 test "nox_async_spawn + nox_async_await, i64 payload uçtan uca" {
     const rt = asap.nox_runtime_init() orelse return error.InitFailed;
     defer asap.nox_runtime_deinit(rt);
@@ -494,6 +533,64 @@ test "nox_async_spawn + nox_async_await, i64 payload uçtan uca" {
 
     const t: *TaskI64 = @ptrCast(@alignCast(task));
     allocatorFromRt(rt).destroy(t);
+    GSchedulerSlot.value.?.deinit();
+    GSchedulerSlot.value = null;
+}
+
+test "v2.2.63: Task.cancel() askıdaki kanal alımını bozar ve nox_task_take_cancel_woken 1 verir; teslim edilmiş değer iptalden etkilenmez" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    nox_async_init(rt);
+
+    const Ctx = struct {
+        var chan: ?*anyopaque = null;
+        var target: ?*anyopaque = null;
+        var woken: i32 = -1;
+        var got: i64 = -1;
+        fn waiter(arg: *anyopaque) callconv(.c) i64 {
+            _ = arg;
+            got = nox_channel_recv_cancellable(null, chan);
+            woken = nox_task_take_cancel_woken(null);
+            return got;
+        }
+        fn canceller(arg: *anyopaque) callconv(.c) i64 {
+            _ = arg;
+            nox_task_cancel(target);
+            return 0;
+        }
+        fn sender(arg: *anyopaque) callconv(.c) i64 {
+            _ = arg;
+            nox_channel_send(null, chan, 9);
+            nox_task_cancel(target); // değer teslim edildikten sonra iptal: alım normal tamamlanır
+            return 0;
+        }
+    };
+    var dummy: i64 = 0;
+
+    // 1) boş kanalda askıdaki alıcı iptal edilir
+    Ctx.chan = nox_channel_new(rt, 0).?;
+    Ctx.target = nox_async_spawn(rt, Ctx.waiter, &dummy).?;
+    const c1 = nox_async_spawn(rt, Ctx.canceller, &dummy).?;
+    try std.testing.expectEqual(@as(i32, 0), nox_async_run_to_completion(rt)); // deadlock yok
+    try std.testing.expectEqual(@as(i32, 1), Ctx.woken);
+    try std.testing.expectEqual(@as(i64, 0), Ctx.got);
+    allocatorFromRt(rt).destroy(@as(*TaskI64, @ptrCast(@alignCast(Ctx.target.?))));
+    allocatorFromRt(rt).destroy(@as(*TaskI64, @ptrCast(@alignCast(c1))));
+
+    // 2) önce teslim, sonra iptal: değer korunur, bekleyiş bozulmaz
+    Ctx.woken = -1;
+    Ctx.got = -1;
+    Ctx.target = nox_async_spawn(rt, Ctx.waiter, &dummy).?;
+    const s2 = nox_async_spawn(rt, Ctx.sender, &dummy).?;
+    try std.testing.expectEqual(@as(i32, 0), nox_async_run_to_completion(rt));
+    try std.testing.expectEqual(@as(i32, 0), Ctx.woken);
+    try std.testing.expectEqual(@as(i64, 9), Ctx.got);
+    allocatorFromRt(rt).destroy(@as(*TaskI64, @ptrCast(@alignCast(Ctx.target.?))));
+    allocatorFromRt(rt).destroy(@as(*TaskI64, @ptrCast(@alignCast(s2))));
+
+    const c: *ChannelI64 = @ptrCast(@alignCast(Ctx.chan.?));
+    c.deinit();
+    allocatorFromRt(rt).destroy(c);
     GSchedulerSlot.value.?.deinit();
     GSchedulerSlot.value = null;
 }

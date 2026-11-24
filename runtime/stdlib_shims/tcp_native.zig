@@ -323,3 +323,20 @@ test "tcp_native: randomFill her cagrida farkli, sifir olmayan bayt uretir" {
     try std.testing.expect(!std.mem.eql(u8, &a, &b));
     try std.testing.expect(!std.mem.allEqual(u8, &a, 0));
 }
+
+// v2.2.63 (Ember NX-006): IP SAN'lı sertifika (`DNS:localhost, IP:127.0.0.1, IP:::1`, openssl ile üretilmiş, ECDSA P-256) — IP sabit değeri `iPAddress` girdileriyle eşleşmeli.
+const ip_san_cert_b64 = "MIIBmDCCAT6gAwIBAgIUKRfYSdQfSJP50KfFh+TCVB/u6powCgYIKoZIzj0EAwIwGjEYMBYGA1UEAwwPbm94LWlwLXNhbi10ZXN0MCAXDTI2MTEyNDE1NTY0N1oYDzIxMjYxMDMxMTU1NjQ3WjAaMRgwFgYDVQQDDA9ub3gtaXAtc2FuLXRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQLCAD/NxCTA280iIzg+CodZDstZksROzWDu+du9m0b4wuxthSmNJW6BOtmC4wyhxHfmQgnvc3qb2y8arXO6/AFo2AwXjAdBgNVHQ4EFgQUpSa/nBfiGvSOW9a4qAfjnrF+Z8swDwYDVR0TAQH/BAUwAwEB/zAsBgNVHREEJTAjgglsb2NhbGhvc3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAEwCgYIKoZIzj0EAwIDSAAwRQIhAMTdkKosbYAd1klgBFwwfPOzoHHByVoEN1ibxNpkhDU2AiBaxl0W8vtUkHhQqgB/C+vNLx7VO/Sny9l2U3BcgQ+cLQ==";
+
+test "tls_client: IP sabit degeri sertifikanin iPAddress SAN girdisiyle eslesir, DNS adi ve baska IP reddedilir" {
+    var der: [512]u8 = undefined;
+    const n = try std.base64.standard.Decoder.calcSizeForSlice(ip_san_cert_b64);
+    try std.base64.standard.Decoder.decode(der[0..n], ip_san_cert_b64);
+    const cert: std.crypto.Certificate = .{ .buffer = der[0..n], .index = 0 };
+    const parsed = try cert.parse();
+    try TlsClient.verifyHostNameOrIp(parsed, "127.0.0.1");
+    try TlsClient.verifyHostNameOrIp(parsed, "::1");
+    try TlsClient.verifyHostNameOrIp(parsed, "localhost"); // DNS adı: std yoluna düşer (dNSName SAN)
+    try std.testing.expectError(error.CertificateHostMismatch, TlsClient.verifyHostNameOrIp(parsed, "127.0.0.2"));
+    try std.testing.expectError(error.CertificateHostMismatch, TlsClient.verifyHostNameOrIp(parsed, "::2"));
+    try std.testing.expectError(error.CertificateHostMismatch, TlsClient.verifyHostNameOrIp(parsed, "example.com"));
+}

@@ -95,6 +95,16 @@ try:
                     if r.returncode != 0 or r.stdout != texpected or r.stderr.strip():
                         print(f"[tls {backend}] beklenmeyen sonuç (çıkış {r.returncode})\n--- stdout\n{r.stdout}\n--- stderr\n{r.stderr}\n--- beklenen\n{texpected}")
                         sys.exit(1)
+                # --- IP SAN (v2.2.63, Ember NX-006): `127.0.0.1` ve `rediss://127.0.0.1` sertifikanın IP SAN'ıyla doğrulanır (yalnızca yerel; wasm sürücüsü DNS adı kullanır). ---
+                itemplate = open(os.path.join(ROOT, "tests/golden/redis_tls_ip_program.nox.in")).read()
+                iexpected = open(os.path.join(ROOT, "tests/golden/redis_tls_ip_program.expected")).read()
+                ipath = os.path.join(tdir, "tls_ip_program.nox")
+                open(ipath, "w").write(itemplate.replace("@PORT@", str(tport)).replace("@CA@", cert))
+                for backend in ("llvm", "qbe"):
+                    r = subprocess.run([noxc, "run", "--backend", backend, ipath], capture_output=True, text=True, timeout=300)
+                    if r.returncode != 0 or r.stdout != iexpected or r.stderr.strip():
+                        print(f"[tls-ip {backend}] beklenmeyen sonuç (çıkış {r.returncode})\n--- stdout\n{r.stdout}\n--- stderr\n{r.stderr}\n--- beklenen\n{iexpected}")
+                        sys.exit(1)
                 # --- mTLS: sunucu istemci sertifikası ister (--tls-auth-clients yes); ECDSA P-256/P-384, Ed25519 ve RSA-PSS (2048/4096 bit) istemci anahtarları ---
                 mtemplate = open(os.path.join(ROOT, "tests/golden/redis_mtls_program.nox.in")).read()
                 mexpected = open(os.path.join(ROOT, "tests/golden/redis_mtls_program.expected")).read()

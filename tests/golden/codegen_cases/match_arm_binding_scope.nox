@@ -1,0 +1,49 @@
+# v2.2.63 (Pulse NOX-TYPE-003): `case` bağlamaları kol-kapsamlıdır — aynı ad farklı kollarda farklı tiple bağlanabilir.
+enum Detail:
+    Text(value: str)
+    Count(value: int)
+    Flag(value: bool)
+
+enum Pair:
+    Left(n: int)
+    Right(n: int)
+
+def render(detail: Detail) -> str:
+    match detail:
+        case Detail.Text(payload):
+            return payload
+        case Detail.Count(payload) if payload > 100:
+            return "big"
+        case Detail.Count(payload):
+            return str(payload + 1)
+        case Detail.Flag(payload):
+            if payload:
+                return "yes"
+            return "no"
+
+def same_type(p: Pair) -> int:
+    total: int = 0
+    match p:
+        case Pair.Left(n):
+            total = n * 2
+        case Pair.Right(n):
+            total = n * 3
+    return total
+
+def scalar(x: int) -> str:
+    match x:
+        case 1:
+            return "one"
+        case other:
+            return "other:" + str(other)
+    return "unreachable"
+
+print(render(Detail.Text("hello")))
+print(render(Detail.Count(41)))
+print(render(Detail.Count(500)))
+print(render(Detail.Flag(True)))
+print(render(Detail.Flag(False)))
+print(same_type(Pair.Left(5)))
+print(same_type(Pair.Right(5)))
+print(scalar(1))
+print(scalar(9))

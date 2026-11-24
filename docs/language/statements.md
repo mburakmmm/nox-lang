@@ -23,6 +23,11 @@ Re-stating the same type on a later assignment in the same scope is allowed; re-
 compile error. A declaration without a value is not allowed for local variables (a class body may declare *fields* without a value —
 see [Classes](classes.md#fields)).
 
+### Discarding a value: `_ = expr`
+
+`_ = expr` evaluates `expr` and drops the result, as in Python. `_` is not a variable: it needs no type, it can be used any number of times with values of any type, and it cannot be read.
+(If you declare it yourself with `_: int = 5`, it is an ordinary variable from then on.)
+
 ### Unpacking with `*` and nested targets
 
 `a, *rest = xs` binds `a` to the first element and `rest` to a new list of the others; `*init, last = xs` and `first, *mid, last = xs` work too (one starred target at most). The right-hand side must be a `list` for a starred target (its length must cover the plain targets). Targets may nest tuples: `(a, b), c = (1, 2), 3`.

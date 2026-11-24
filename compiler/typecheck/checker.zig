@@ -49,6 +49,7 @@ const guard_normalize = @import("guard_normalize.zig");
 const nonlocal_desugar = @import("nonlocal_desugar.zig");
 const generator_desugar = @import("generator_desugar.zig");
 const field_effects = @import("field_effects.zig");
+const ast_clone = @import("ast_clone.zig");
 const type_alias = @import("type_alias.zig");
 const mixin_flatten = @import("mixin_flatten.zig");
 const class_attr_promote = @import("class_attr_promote.zig");
@@ -1598,6 +1599,8 @@ pub const Checker = struct {
         // PCRE2 JIT (sljit) çalışma zamanında makine kodu üretir: `--deny-capability dynamic_code` bu modülü reddeder (`nox.regex` kalır).
         .{ .name = "pcre2", .caps = &.{.dynamic_code} },
         .{ .name = "zip", .caps = &.{} },
+        // v2.2.63: `nox.zlib` — zlib/ham deflate + crc32/adler32 (saf hesaplama; gzip.zig kap yolu, tüm hedeflerde).
+        .{ .name = "zlib", .caps = &.{} },
         .{ .name = "terminal", .caps = &.{.process} },
         .{ .name = "random", .caps = &.{} },
         .{ .name = "property", .caps = &.{} },
@@ -1716,6 +1719,21 @@ pub const Checker = struct {
         return self.fail(error.UndefinedFunction, "'{s}' is not part of the public API of module '{s}' (it is not listed in that module's __all__)", .{ member, module_path });
     }
 
+    fn mangledFromImportName(self: *Checker, segments: []const []const u8, name: []const u8) TypeError![]const u8 {
+        var mangled_segments: std.ArrayListUnmanaged([]const u8) = .empty;
+        try mangled_segments.appendSlice(self.allocator, segments);
+        try mangled_segments.append(self.allocator, name);
+        return self.joinSegments(mangled_segments.items, '_');
+    }
+
+    /// Birleştirilmiş modül gövdesinde `mangled` adlı üst-düzey değişken/sabit bildirimi var mı (`collectModuleGlobals` henüz çalışmamışken kullanılır).
+    fn moduleDeclaresVar(module: ast.Module, mangled: []const u8) bool {
+        for (module.body) |st| {
+            if (st.kind == .var_decl and std.mem.eql(u8, st.kind.var_decl.name, mangled)) return true;
+        }
+        return false;
+    }
+
     /// `__all__` listesindeki her ad modülün üst-düzey bir fonksiyonu ya da sınıfı olmalı (yazım hatası sessizce bir şeyi dışarıda bırakmasın). Kayıt aşamalarından sonra çağrılır.
     fn validateModuleExports(self: *Checker, module: ast.Module) TypeError!void {
         for (module.exports) |ex| {
@@ -1726,10 +1744,22 @@ pub const Checker = struct {
                 }
                 const mangled = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ dotted_to_us, n });
                 if (self.functions.contains(mangled) or self.classes.contains(mangled) or self.generic_classes.contains(mangled) or self.generic_functions.contains(mangled)) continue;
+                // v2.2.63 (Prism): modül düzeyi değişken/sabit de dışa aktarılabilir (`MAX_K: int = 7` + `__all__ = ["MAX_K", ...]`).
                 var is_alias = false;
-                for (module.body) |st| if (st.kind == .type_alias and std.mem.eql(u8, st.kind.type_alias.name, mangled)) {
-                    is_alias = true;
-                };
+                for (module.body) |st| {
+                    if (st.kind == .type_alias and std.mem.eql(u8, st.kind.type_alias.name, mangled)) is_alias = true;
+                    // `collectModuleGlobals` bu geçişten SONRA çalışır: modül düzeyi bildirimler gövdeden okunur.
+                    if (st.kind == .var_decl and std.mem.eql(u8, st.kind.var_decl.name, mangled)) is_alias = true;
+                    // `from consts import MAX_K, Thing` + `__all__ = ["MAX_K", "Thing"]`: başka modülün sabitini/sınıfını/işlevini yeniden dışa aktarma (cephe/facade modülü).
+                    if (st.kind == .from_import_stmt) {
+                        for (st.kind.from_import_stmt.names) |nm| {
+                            if (!std.mem.eql(u8, nm.name, n)) continue;
+                            const src_mangled = try self.mangledFromImportName(st.kind.from_import_stmt.segments, nm.name);
+                            if (moduleDeclaresVar(module, src_mangled) or self.functions.contains(src_mangled) or self.classes.contains(src_mangled) or
+                                self.generic_classes.contains(src_mangled) or self.generic_functions.contains(src_mangled)) is_alias = true;
+                        }
+                    }
+                }
                 if (is_alias) continue;
                 return self.fail(error.UndefinedFunction, "__all__ of module '{s}' lists '{s}', which is not a function or class defined there", .{ ex.module, n });
             }
@@ -1815,7 +1845,7 @@ pub const Checker = struct {
                 try mangled_segments.appendSlice(self.allocator, fi.segments);
                 try mangled_segments.append(self.allocator, nm.name);
                 const mangled = try self.joinSegments(mangled_segments.items, '_');
-                if (self.classes.contains(mangled) or self.functions.contains(mangled)) {
+                if (self.classes.contains(mangled) or self.functions.contains(mangled) or moduleDeclaresVar(module, mangled)) {
                     try export_table.put(self.allocator, nm.name, mangled);
                 }
             }
@@ -1826,7 +1856,7 @@ pub const Checker = struct {
         var it = self.from_imports.iterator();
         while (it.next()) |entry| {
             const mangled = entry.value_ptr.*;
-            if (self.classes.contains(mangled) or self.functions.contains(mangled)) continue;
+            if (self.classes.contains(mangled) or self.functions.contains(mangled) or moduleDeclaresVar(module, mangled)) continue;
             const orig_name = self.from_imports_orig_name.get(entry.key_ptr.*) orelse continue;
             const corrected = export_table.get(orig_name) orelse continue;
             try fixups.append(self.allocator, .{ .key = entry.key_ptr.*, .value = corrected });
@@ -6177,7 +6207,7 @@ pub const Checker = struct {
         }
         const ret = try self.typeExprToType(m.return_type);
         const path = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ class_name, m.name });
-        var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .self_class = class_name, .is_init = is_init, .path = path, .in_async = m.allow_await };
+        var ctx: FnCtx = .{ .scope = &scope, .expected_return = ret, .self_class = class_name, .is_init = is_init, .path = path, .in_async = m.allow_await or m.is_async };
         for (m.body) |*s| try self.checkStmt(&ctx, s);
         if (ret != .none and !alwaysReturns(m.body)) {
             return self.fail(error.MissingReturn, "method '{s}.{s}' does not return a value on all paths", .{ class_name, m.name });
@@ -6355,8 +6385,22 @@ pub const Checker = struct {
                 }
                 try self.declareVar(ctx, v.name, declared);
             },
-            .assign => try self.checkAssign(ctx, &stmt.kind.assign),
-            .if_stmt => |f| {
+            .assign => |asg| {
+                // v2.2.63 (Prism): `_ = ifade` — Python'un at-gitsin ataması. `_` bu kapsamda BİLDİRİLMEMİŞSE (ne yerel ne modül globali) deyim, değeri hesaplayıp
+                // hemen bırakan bir ifade deyimine indirgenir (yeni bir ad bağlanmaz, her tip ve her sayıda kullanılabilir). `_: T = ...` ile gerçekten bildirilmişse
+                // alışıldık atama olarak kalır. `_` hiçbir zaman okunamaz.
+                if (asg.target == .identifier and asg.ann == null and std.mem.eql(u8, asg.target.identifier, "_") and
+                    (try ctx.scope.lookup(self.allocator, "_")) == null and !self.module_globals.contains("_"))
+                {
+                    @constCast(stmt).kind = .{ .expr_stmt = asg.value };
+                    return self.checkStmt(ctx, stmt);
+                }
+                try self.checkAssign(ctx, &stmt.kind.assign);
+            },
+            .if_stmt => |f0| {
+                // v2.2.63 (Pulse NOX-TYPE-003): `case` bağlamaları kol-kapsamlıdır (bkz. `renameConflictingMatchBindings`); gövde dilimleri yeniden yazılmış olabilir.
+                if (f0.match_origin != null) try self.renameConflictingMatchBindings(ctx, stmt);
+                const f = stmt.kind.if_stmt;
                 const ct = try self.checkExpr(ctx, f.cond);
                 if (ct != .boolean) return self.fail(error.TypeMismatch, "the 'if' condition must be a bool", .{});
                 // Faz FF.6 (bkz. nox-teknik-spesifikasyon.md §3.65): DAR,
@@ -12454,6 +12498,57 @@ pub const Checker = struct {
         return mangled;
     }
 
+    /// v2.2.63 (Pulse NOX-TYPE-003): `match` kolu bağlamaları KOL-KAPSAMLIDIR. Parser `match`i `if/elif` zincirine indirger ve her kolun başına `ad := değer` bağlamaları
+    /// koyar; Nox'ta yerel kapsam işlev boyunca tek olduğundan aynı bağlama adı iki kolda FARKLI tiple (`case Detail.Text(payload)` / `case Detail.Count(payload)`)
+    /// kullanılınca ikinci bildirim "already defined with type ..." hatası verirdi. Burada, aynı ad daha önceki bir kolda farklı tiple bağlanmışsa, bu kolun gövdesi
+    /// (bağlama dahil) o ada özel `<ad>__arm<i>` adıyla yeniden yazılır. Aynı tip korunursa ad değişmez (kollar arası/maç sonrası okuma davranışı aynı kalır).
+    fn renameConflictingMatchBindings(self: *Checker, ctx: *FnCtx, stmt: *const ast.Stmt) TypeError!void {
+        const f = stmt.kind.if_stmt;
+        const origin = f.match_origin orelse return;
+        const n_arms = 1 + f.elif_clauses.len;
+        // Ön tarama (yalnızca sözdizimsel): aynı bağlama adı İKİ ya da daha çok kolda geçmiyorsa hiçbir şey yapılmaz; böylece bağlama değerleri erkenden (yanlış satır bilgisiyle)
+        // denetlenmez ve olağan match'lerde sıfır maliyet/davranış farkı olur.
+        var name_arms: std.StringHashMapUnmanaged(usize) = .{};
+        var any_dup = false;
+        var a: usize = 0;
+        while (a < n_arms and a < origin.cases.len) : (a += 1) {
+            const arm: []ast.Stmt = if (a == 0) f.then_body else f.elif_clauses[a - 1].body;
+            const pre = @min(origin.cases[a].prefix, arm.len);
+            for (arm[0..pre]) |ps| {
+                if (ps.kind != .var_decl) continue;
+                const v = ps.kind.var_decl;
+                if (!(v.type_expr == .simple and std.mem.eql(u8, v.type_expr.simple, "__infer"))) continue;
+                const gop = try name_arms.getOrPut(self.allocator, v.name);
+                if (gop.found_existing) {
+                    if (gop.value_ptr.* != a) any_dup = true;
+                } else gop.value_ptr.* = a;
+            }
+        }
+        if (!any_dup) return;
+        var seen: std.StringHashMapUnmanaged(Type) = .{};
+        var i: usize = 0;
+        while (i < n_arms and i < origin.cases.len) : (i += 1) {
+            var body: []ast.Stmt = if (i == 0) f.then_body else f.elif_clauses[i - 1].body;
+            const prefix = @min(origin.cases[i].prefix, body.len);
+            var pi: usize = 0;
+            while (pi < prefix) : (pi += 1) {
+                if (body[pi].kind != .var_decl) continue;
+                const v = body[pi].kind.var_decl;
+                if (!(v.type_expr == .simple and std.mem.eql(u8, v.type_expr.simple, "__infer"))) continue;
+                const t = self.checkExpr(ctx, v.value) catch continue; // hata varsa olağan denetim doğru satırla bildirir
+                if (seen.get(v.name)) |prev| {
+                    if (types.eql(prev, t)) continue;
+                    const new_name = try std.fmt.allocPrint(self.allocator, "{s}__arm{d}", .{ v.name, i });
+                    body = try ast_clone.renameStmts(self.allocator, body, v.name, new_name);
+                    if (i == 0) @constCast(stmt).kind.if_stmt.then_body = body else f.elif_clauses[i - 1].body = body;
+                    try seen.put(self.allocator, new_name, t);
+                } else {
+                    try seen.put(self.allocator, v.name, t);
+                }
+            }
+        }
+    }
+
     /// `Sınıf.f(...)` / `nesne.f(...)` / `cls.f(...)` ile static/classmethod çağrısını serbest fonksiyon çağrısına yeniden yazar.
     fn tryResolveStaticMethodCall(self: *Checker, ctx: *FnCtx, c: ast.Call) TypeError!void {
         if (c.callee.* != .attribute) return;
@@ -12461,6 +12556,7 @@ pub const Checker = struct {
         if (!self.static_method_names.contains(at.attr)) return;
         if (at.obj.* == .call and at.obj.call.callee.* == .identifier and std.mem.eql(u8, at.obj.call.callee.identifier, "super")) return;
         var recv: []const u8 = undefined;
+        var recv_has_effects = false;
         if (try self.receiverClassName(ctx, at.obj.*)) |rc| {
             recv = rc;
         } else {
@@ -12469,14 +12565,18 @@ pub const Checker = struct {
                 .class => |n| n,
                 else => return,
             };
-            if (exprHasEffects(at.obj.*)) {
-                return self.fail(error.TypeMismatch, "call the static/class method '{s}' through the class name ('{s}.{s}(...)'): the receiver expression has side effects and would not be evaluated", .{ at.attr, recv, at.attr });
-            }
+            recv_has_effects = exprHasEffects(at.obj.*);
         }
         var cur: ?[]const u8 = recv;
         while (cur) |n| {
             const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ n, at.attr });
             if (self.static_methods.get(key)) |sm| {
+                // Hata yalnızca ALICI SINIFIN (ya da tabanlarının) gerçekten aynı adlı static/classmethod'u varsa verilir:
+                // `static_method_names` programdaki TÜM sınıfların adlarını tutar; başka bir sınıfın `crop` static'i,
+                // bu sınıfın örnek metodu `crop`u üzerindeki `Sinif.fabrika().crop(...)` zincirini engellememeli.
+                if (recv_has_effects) {
+                    return self.fail(error.TypeMismatch, "call the static/class method '{s}' through the class name ('{s}.{s}(...)'): the receiver expression has side effects and would not be evaluated", .{ at.attr, recv, at.attr });
+                }
                 const mangled = try self.ensureStaticInst(n, recv, sm);
                 c.callee.* = .{ .identifier = mangled };
                 return;

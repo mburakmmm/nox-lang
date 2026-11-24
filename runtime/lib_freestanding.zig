@@ -72,6 +72,7 @@ pub const json_shim = @import("stdlib_shims/json.zig");
 pub const regex_shim = @import("stdlib_shims/regex.zig");
 pub const path_shim = @import("stdlib_shims/path.zig");
 pub const gzip_shim = @import("stdlib_shims/gzip.zig");
+pub const zlib_shim = @import("stdlib_shims/zlib.zig");
 pub const csv_shim = @import("stdlib_shims/csv.zig");
 pub const crypto_shim = @import("stdlib_shims/crypto.zig");
 pub const os_shim = @import("stdlib_shims/os.zig");
@@ -562,6 +563,7 @@ comptime {
     _ = regex_shim;
     _ = path_shim;
     _ = gzip_shim;
+    _ = zlib_shim;
     _ = csv_shim;
     _ = crypto_shim;
     _ = os_shim;

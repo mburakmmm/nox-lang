@@ -438,6 +438,24 @@ pub fn printStackHwmMaxForResearch(rt: ?*anyopaque) void {
 
 pub const FiberFn = *const fn (*anyopaque) void;
 
+/// v2.2.63 (Pulse NOX-ASYNC-001, `Task.cancel()` uyandırması): bir fiber bir kanal alımında / bir görev beklemesinde askıya girerken bir `CancelWait` kaydı bırakır; `Task.cancel()`
+/// bu kaydı ATOMİK olarak sahiplenip (`reg.swap(null)`) `unpark` ile bekleyişi kaldırır (kanal kuyruğundan / hedef görevin bekleyen alanından çıkarır) ve fiber'ı uyandırır.
+/// Normal tamamlanma yolu (gönderici/görev bitişi) kaydı ELLEMEZ: fiber uyanınca kaydı geri almayı dener; bir iptal-sahiplenmesi sürüyorsa `done` bayrağını bekler (kaydın
+/// bulunduğu yığın çerçevesi, iptal eden taraf işini bitirmeden çözülmesin diye).
+pub const CancelWait = struct {
+    ctx: *anyopaque,
+    /// Bekleyişi kaldırmayı dener. Kaldırdıysa (`true`) `woken`ı `true` yapmış VE fiber'ı uyandırmış olmalıdır; bekleyiş zaten tüketildiyse (`false`) hiçbir şey yapmaz.
+    unpark: *const fn (ctx: *anyopaque, woken: *std.atomic.Value(bool)) bool,
+    done: std.atomic.Value(bool) = .init(false),
+};
+
+/// Bir Task'ın iptal-uyandırma durumu (Task struct'ının alanı: Task yaşadığı sürece geçerli, fiber'den bağımsız).
+pub const CancelPark = struct {
+    reg: std.atomic.Value(?*CancelWait) = .init(null),
+    /// Son bekleyiş iptal nedeniyle bozuldu (alınan değer geçersiz): derleyicinin `await` sonrası denetimi bunu tüketir (`nox_task_take_cancel_woken`).
+    woken: std.atomic.Value(bool) = .init(false),
+};
+
 pub const Fiber = struct {
     ctx: Context = .{},
     /// Bu fiber'ı `resume_` eden tarafın bağlamı — `yield`/bitişte buraya
@@ -480,6 +498,9 @@ pub const Fiber = struct {
     /// refcount protokolü) — bu YÜZDEN BU işaretçi fiber'ın KENDİ, TÜM
     /// çalışma ömrü BOYUNCA GÜVENLE geçerlidir.
     cancel_flag: ?*std.atomic.Value(bool) = null,
+    /// v2.2.63 (Pulse NOX-ASYNC-001): bu fiber (spawn edilmişse) KENDİ Task'ının iptal-uyandırma kaydına işaretçi (`CancelPark`); `cancel_flag` ile aynı yaşam süresi garantisi.
+    /// `null` = bu fiber bir Task'a ait değil ya da iptalle uyandırılamaz (`ThreadHandle` çocuğu).
+    park: ?*CancelPark = null,
     /// `net_dial.zig`'in DNS+bağlanma son tarihi (monoton ns; 0 = yok) ve "son tarih aşıldı" bayrağı. Zamanlayıcı iş parçacığındaki fiber'lar askıya alınınca birbirinin
     /// iş parçacığı-yerel durumunu ezmesin diye bu durum fiber'ın KENDİSİNDE tutulur (iş parçacığı-yerel yedek yalnızca fiber olmayan çağıranlar içindir).
     net_deadline_ns: i64 = 0,
@@ -690,6 +711,31 @@ pub const Fiber = struct {
     pub fn yield(self: *Fiber) void {
         if (comptime builtin.sanitize_thread) tsan.__tsan_switch_to_fiber(self.tsan_ret, 0);
         nox_swap_context(&self.ctx, self.return_ctx.?);
+    }
+
+    /// v2.2.63: iptal-uyandırılabilir bir bekleyişin KAYDI. Bekleyen kuyruk kilidi ALTINDA (bekleyiş kuyruğa eklendikten sonra, kilit bırakılmadan ÖNCE) çağrılır.
+    /// `park == null` (Task'a ait olmayan fiber) ise hiçbir şey yapmaz.
+    pub fn cancelWaitBegin(self: *Fiber, w: *CancelWait) void {
+        const park = self.park orelse return;
+        park.reg.store(w, .seq_cst);
+    }
+
+    /// Kuyruk kilidi bırakıldıktan sonra, askıya girmeden ÖNCE: iptal bu arada istenmişse (iptal eden `reg`i henüz sahiplenmediyse) bekleyişi kendimiz kaldırıp kendimizi
+    /// uyandırırız (iptal bayrağı `Task.cancel()`de kayıt sahiplenilmeden ÖNCE yazıldığından iki taraftan en az biri diğerini görür: kayıp uyandırma yok).
+    pub fn cancelWaitRecheck(self: *Fiber, w: *CancelWait) void {
+        const park = self.park orelse return;
+        const flag = self.cancel_flag orelse return;
+        if (!flag.load(.seq_cst)) return;
+        if (park.reg.swap(null, .seq_cst) == null) return; // iptal eden sahiplendi: o kaldırıp uyandıracak
+        _ = w.unpark(w.ctx, &park.woken);
+        w.done.store(true, .release);
+    }
+
+    /// Bekleyiş bittikten (uyandıktan) sonra: kaydı geri alır; bir iptal sahiplenmesi sürüyorsa bitmesini bekler (`w` bu çerçevede yaşar).
+    pub fn cancelWaitEnd(self: *Fiber, w: *CancelWait) void {
+        const park = self.park orelse return;
+        if (park.reg.swap(null, .seq_cst) != null) return;
+        while (!w.done.load(.acquire)) std.atomic.spinLoopHint();
     }
 };
 

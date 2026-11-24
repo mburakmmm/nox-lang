@@ -925,7 +925,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                                 // Verify the host on the first certificate.
                                 switch (options.host) {
                                     .no_verification => {},
-                                    .explicit => try subject.verifyHostName(host),
+                                    .explicit => try verifyHostNameOrIp(subject, host),
                                 }
 
                                 // Keep track of the public key for the
@@ -1890,6 +1890,35 @@ fn SchemeHash(comptime scheme: tls.SignatureScheme) type {
         => crypto.hash.Sha1,
         else => @compileError("bad scheme"),
     };
+}
+
+/// NOX PATCH (v2.2.63, Ember NX-006): `host` bir IP sabit değeri (`127.0.0.1`, `::1`) ise sunucu sertifikası `subjectAltName` içindeki `iPAddress` (GeneralName
+/// etiketi 7) girdileriyle bayt bayt karşılaştırılır (RFC 6125 §6.4.4/RFC 9110: IP için DNS adı ya da CN eşleştirilmez). Std'nin `verifyHostName`i yalnızca
+/// `dNSName`e bakar, bu yüzden `rediss://127.0.0.1` gibi IP SAN'lı bir sertifikayı reddediyordu. IP değilse davranış std ile aynıdır.
+pub fn verifyHostNameOrIp(subject: Certificate.Parsed, host: []const u8) Certificate.Parsed.VerifyHostNameError!void {
+    const ip = std.Io.net.IpAddress.parse(host, 0) catch return subject.verifyHostName(host);
+    var want_buf: [16]u8 = undefined;
+    const want: []const u8 = switch (ip) {
+        .ip4 => |a| blk: {
+            @memcpy(want_buf[0..4], &a.bytes);
+            break :blk want_buf[0..4];
+        },
+        .ip6 => |a| blk: {
+            @memcpy(want_buf[0..16], &a.bytes);
+            break :blk want_buf[0..16];
+        },
+    };
+    const san = subject.subjectAltName();
+    if (san.len == 0) return error.CertificateHostMismatch;
+    const names = try Certificate.der.Element.parse(san, 0);
+    var i = names.slice.start;
+    while (i < names.slice.end) {
+        const general_name = try Certificate.der.Element.parse(san, i);
+        i = general_name.slice.end;
+        if (@as(Certificate.GeneralNameTag, @enumFromInt(@intFromEnum(general_name.identifier.tag))) != .iPAddress) continue;
+        if (std.mem.eql(u8, san[general_name.slice.start..general_name.slice.end], want)) return;
+    }
+    return error.CertificateHostMismatch;
 }
 
 const CertificatePublicKey = struct {

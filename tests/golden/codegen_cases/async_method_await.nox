@@ -1,0 +1,30 @@
+# v2.2.63 (Prism): `async def` sınıf metotlarında `await` (spawn nesne.metot() ile başlatılan metot gövdesi bir fiberdir).
+async def leaf(x: int) -> int:
+    return x + 1
+
+class C:
+    base: int
+
+    def __init__(self, base: int) -> None:
+        self.base = base
+
+    async def m(self) -> int:
+        t: Task[int] = spawn leaf(self.base)
+        v: int = await t
+        return v * 10
+
+    async def pipe(self, ch: Channel[int]) -> int:
+        got: int = await ch.recv()
+        return got + self.base
+
+async def run() -> None:
+    c: C = C(4)
+    t: Task[int] = spawn c.m()
+    print(await t)
+    ch: Channel[int] = Channel[int](1)
+    p: Task[int] = spawn c.pipe(ch)
+    await ch.send(7)
+    print(await p)
+
+main_t: Task[None] = spawn run()
+await main_t

@@ -1448,6 +1448,7 @@ pub const Parser = struct {
                 if (!self.check(.r_paren)) {
                     try args.append(self.allocator, try self.parseDecoratorArg());
                     while (self.match(.comma)) {
+                        if (self.check(.r_paren)) break; // sondaki virgül (v2.2.63)
                         try args.append(self.allocator, try self.parseDecoratorArg());
                     }
                 }
@@ -1529,6 +1530,7 @@ pub const Parser = struct {
             try params.append(self.allocator, try self.parseFirstParam(enclosing_name));
             if (params.items[0].variadic) kw_only_mode = true;
             while (self.match(.comma)) {
+                if (self.check(.r_paren)) break; // sondaki virgül (v2.2.63): `def f(a, b,)`
                 // çıplak `*`: sonraki parametreler anahtar-sözcüğe-özeldir
                 if (self.check(.star) and self.pos + 1 < self.tokens.len and self.tokens[self.pos + 1].kind == .comma) {
                     _ = self.advance();
@@ -1616,6 +1618,7 @@ pub const Parser = struct {
         if (!self.check(.r_paren)) {
             try params.append(self.allocator, try self.parseParam());
             while (self.match(.comma)) {
+                if (self.check(.r_paren)) break; // sondaki virgül (v2.2.63)
                 try params.append(self.allocator, try self.parseParam());
             }
         }
@@ -1760,7 +1763,10 @@ pub const Parser = struct {
                 while (self.match(.comma)) try base_args.append(self.allocator, try self.parseTypeExpr());
                 _ = try self.expect(.r_bracket);
             }
-            while (self.match(.comma)) try extra_bases.append(self.allocator, (try self.expect(.identifier)).lexeme);
+            while (self.match(.comma)) {
+                if (self.check(.r_paren)) break; // sondaki virgül (v2.2.63)
+                try extra_bases.append(self.allocator, (try self.expect(.identifier)).lexeme);
+            }
             _ = try self.expect(.r_paren);
         }
 
@@ -2562,6 +2568,7 @@ pub const Parser = struct {
         if (!self.check(.r_paren)) {
             try args.append(self.allocator, try self.parseCallArg(&saw_kw));
             while (self.match(.comma)) {
+                if (self.check(.r_paren)) break; // sondaki virgül (v2.2.63)
                 try args.append(self.allocator, try self.parseCallArg(&saw_kw));
             }
         }
@@ -2649,6 +2656,7 @@ pub const Parser = struct {
                         try arg_spans.append(self.allocator, span_mod.fromTokens(arg_start, self.tokens[self.pos - 1]));
                     }
                     while (self.match(.comma)) {
+                        if (self.check(.r_paren)) break; // sondaki virgül (v2.2.63): `f(a, b,)`
                         const arg_start = self.cur();
                         try args.append(self.allocator, try self.parseCallArg(&saw_kw));
                         try arg_spans.append(self.allocator, span_mod.fromTokens(arg_start, self.tokens[self.pos - 1]));

@@ -216,7 +216,7 @@ Details:
 ## Server
 
 The `serve` family are language-level entry points: the handler must be a plain function name (or, for `serve` and `serve_fd`, a closure of type `(HttpRequest) -> HttpResponse`) and
-**cannot be `async`** — each connection already runs on its own task. They block forever (or until `max_connections` have been served, when that optional argument is given).
+**cannot be `async`** — each connection already runs on its own task. They block forever (or until `max_connections` connections have been **accepted**, when that optional argument is given: `serve` then returns while the last connections may still be handled; a handler is only joined by the graceful shutdown path — `shutdown()`/`SIGTERM` waits for in-flight requests up to `drain_timeout_ms` before `serve*` returns).
 
 | Call | Description |
 |---|---|

@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.63]
+
+Çerçeve limitasyon turu: Prism/Ember/Pulse/Chronos'un bildirdiği ~40 madde güncel derleyicide (LLVM+QBE) yeniden üretildi; sonuç tablosu `project/framework-limitasyon-dogrulama-2026-11-24.md` (çoğu BAYAT/TASARIM GEREĞİ; gerçek olanlar aşağıda).
+
+- **Dil/derleyici**: `__all__` modül sabitlerini ve `from m import X` yeniden dışa aktarımını listeleyebilir; çağrı/`def`/`extern def`/sınıf tabanı/dekoratör/jenerik kurucuda sondaki virgül (Zig + Nox parser paritesi); `_ = ifade` at-gitsin ataması; `Sinif.fabrika().yontem()` zinciri başka sınıfın aynı adlı static'i yüzünden reddedilmez; `match` case bağlamaları kol-kapsamlı (aynı ad farklı tiplerle); `with self.guard as g:` sınıf alanı bağlam yöneticisi; `async def` sınıf metodunda `await`.
+- **Runtime/stdlib**: `Task.cancel()` askıdaki `await ch.recv()` / `await task` bekleyişini uyandırır (`CancelledError`; önceden "deadlock detected"); yeni `nox.zlib` (zlib/ham deflate + `crc32`/`adler32`); `nox.test.assert_false`; SQLite metin okuması gömülü NUL'da kesilmez; TLS istemcisi IP sabit değerini sertifikanın `iPAddress` SAN'ıyla doğrular (`rediss://127.0.0.1`).
+- **Belge**: `docs/language/{concurrency,statements,enums,functions,modules,types}.md`, `docs/stdlib/{zlib,test,http,index}.md`; spesifikasyon §3.498.
+- **Test**: golden `parser_trailing_commas`, `discard_assign`, `match_arm_binding_scope`, `with_field_context_manager`, `nox_test_assert_false`, `zlib_roundtrip` (Python zlib ile çapraz doğrulanmış), `task_cancel_wakes_blocked_wait`; `local_import_test` (sabit/cephe `__all__`, akıcı zincir); Zig birim testleri (IP SAN doğrulama, zlib/crc32/adler32, kanal iptal uyandırması).
+
 ## [2.2.62]
 
 Dize ağırlıklı lexer: uzun dizelerde Nox lexer 2,06 → 0,62 ms (3,3×; Nox/Zig 1,35× → 0,41×); genel korpus aynı (0,52×).

@@ -193,7 +193,7 @@ class Hidden: ...
 From **another module**, `util.internal_only(...)`, `util.Hidden(...)`, an annotation `util.Hidden`, and `from util import internal_only` are then compile errors:
 `'internal_only' is not part of the public API of module 'util' (it is not listed in that module's __all__)`. The listed names work exactly as before.
 
-- The list applies to top-level **functions and classes** (the names the compiler qualifies by module). It is opt-in: a module without `__all__` keeps exporting everything, so existing code is unaffected.
-- Every listed name must be a function or class defined in that module; a typo is an error (`__all__ of module 'util' lists 'nope', which is not a function or class defined there`), not a silently hidden name.
+- The list applies to top-level **functions, classes and module-level variables/constants** (the names the compiler qualifies by module). It is opt-in: a module without `__all__` keeps exporting everything, so existing code is unaffected. A constant is read with `from util import MAX_K`.
+- Every listed name must be a function, class or variable defined in that module, or one it imports with `from other import name` (a facade module that re-exports names); a typo is an error (`__all__ of module 'util' lists 'nope', which is not a function or class defined there`), not a silently hidden name.
 - `__all__` must be a plain list of string literals; it is read at compile time and is not a runtime variable.
 - This is compile-time API hygiene, not a security boundary: it does not change what is linked into the program.

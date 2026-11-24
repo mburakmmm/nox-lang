@@ -22,7 +22,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 
 | Capability | Meaning | Modules |
 |---|---|---|
-| none | pure computation | `strings`, `mathx`, `bigint`, `decimal`, `fraction`, `argparse`, `fnmatch`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `tar`, `zip`, `zstd`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `ed25519`, `crypto`*, `time`* |
+| none | pure computation | `strings`, `mathx`, `bigint`, `decimal`, `fraction`, `argparse`, `fnmatch`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `zlib`, `tar`, `zip`, `zstd`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `ed25519`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `glob`, `tempfile`, `sqlite`, `timezone`, `wasm` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `redis_cluster`, `grpc`, `grpc_server`, `udp`, `dns`, `safehttp` |
 | `network` + `filesystem` | both | `transfer` |
@@ -89,7 +89,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.json`](json.md), [`nox.yyjson`](yyjson.md), [`nox.toml`](toml.md), [`nox.yaml`](yaml.md), [`nox.csv`](csv.md) | parsers and writers |
 | [`nox.validate`](validate.md) | validate JSON against a schema |
 | [`nox.url`](url.md) | URLs, percent-encoding, query strings |
-| [`nox.base64`](base64.md), [`nox.uuid`](uuid.md), [`nox.gzip`](gzip.md), [`nox.tar`](tar.md), [`nox.zip`](zip.md), [`nox.zstd`](zstd.md), [`nox.brotli`](brotli.md), [`nox.lz4`](lz4.md), [`nox.xxhash`](xxhash.md) | Base64, UUIDs, compression and archives |
+| [`nox.base64`](base64.md), [`nox.uuid`](uuid.md), [`nox.gzip`](gzip.md), [`nox.zlib`](zlib.md), [`nox.tar`](tar.md), [`nox.zip`](zip.md), [`nox.zstd`](zstd.md), [`nox.brotli`](brotli.md), [`nox.lz4`](lz4.md), [`nox.xxhash`](xxhash.md) | Base64, UUIDs, compression and archives |
 | [`nox.wasm`](wasm.md) | Run WebAssembly modules (embedded interpreter, sandboxed, fuel and memory limits) |
 | [`nox.ffi`](ffi.md) | `Callback[F]` handles: lambdas and closures as C callbacks |
 

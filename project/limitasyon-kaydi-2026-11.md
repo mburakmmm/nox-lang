@@ -54,3 +54,16 @@ Her madde `v2.1.1` derlemesinde yeniden üretildi ya da bayat çıktı. Durum: `
 - [-] aura L6 `isinstance`/`weakref` yok: tasarım kararı.
 - [-] nova 1-7, nyx bölüm 1/5: kapanmış.
 - [-] pulse QBE-001/002, MODULE-001, FIBER-001, FS-001, HTTP-001/002, JSON-001, STR-001, CLOCK-001, TASKLOCAL-002/003: belgelenmiş tasarım sınırları.
+
+## F. Çerçeve doğrulaması (Prism/Ember/Pulse/Chronos, 2026-11-24, v2.2.63)
+
+Tam tablo: `project/framework-limitasyon-dogrulama-2026-11-24.md`. Özet:
+
+- [x] **F1 Prism** `__all__` sabit + cephe yeniden dışa aktarım; sondaki virgül; `_ = ifade`; akıcı `Sinif.fabrika().yontem()`; `nox.test.assert_false`; `nox.zlib` (zlib/ham deflate/crc32/adler32) — **KAPANDI v2.2.63**.
+- [x] **F2 Ember NX-006** TLS IP SAN (`rediss://127.0.0.1`) — **KAPANDI v2.2.63** (`tls_client.zig` `verifyHostNameOrIp`).
+- [x] **F3 Pulse** NOX-TYPE-003 (`match` kol-kapsamlı bağlama), NOX-ASYNC-001 (`Task.cancel()` askıdaki recv/await'i uyandırır), NOX-CODEGEN-003 (`with self.alan`) — **KAPANDI v2.2.63**.
+- [x] **F4 Chronos NXL-009** SQLite NUL okuma — **KAPANDI v2.2.63** (yazma yönü `bind_text` NUL'da keser: açık).
+- [-] **F5 BAYAT** (yeniden üretilemedi/zaten kapalı): Chronos NXL-002/003/004/005/007/008/010, Prism NXL-003/005, Pulse FMT/CODEGEN-001/002/QBE-002; TEKRARLANAMADI: NXL-001.
+- [-] **F6 TASARIM GEREĞİ**: Pulse NOX-TYPE-002 (yalnız modül-düzeyi global; belge notu), NOX-HTTP-005 (`max_connections` erken dönüş; belge netleştirildi), Prism `\x80` kaçışı / `int(float)` / taşma sarma / işlev içi `import` / `list[Task[T]]`.
+- [ ] **F7 Açık (ayrı karar)**: `import m; m.SABIT` niteleyicili modül sabiti okuma ve `facade.helper()` niteleyicili yeniden-dışa-aktarım çağrısı; `nox.sqlite` `bind_text` NUL'da keser; `await ch.send`/`ThreadChannel`/`ThreadHandle.join` iptalle uyandırılmaz.
+

@@ -201,6 +201,16 @@ pub export fn nox_task_check_cancelled(rt: ?*anyopaque) i32 {
     return if (t.cancel_requested) 1 else 0;
 }
 
+/// v2.2.63: wasm'da bekleyiş döngüsel (`runOne`) olduğundan iptal-uyandırma yoktur; iptal bir sonraki `await`te gözlenir (yerel çalışma zamanındaki `Task.cancel()` uyandırması burada yok).
+pub export fn nox_task_take_cancel_woken(rt: ?*anyopaque) i32 {
+    _ = rt;
+    return 0;
+}
+
+pub export fn nox_async_await_cancellable(rt: ?*anyopaque, task: ?*anyopaque) i64 {
+    return nox_async_await(rt, task);
+}
+
 pub export fn nox_async_destroy_task(rt: ?*anyopaque, task: ?*anyopaque) void {
     const t: *Task = @ptrCast(@alignCast(task orelse return));
     t.refcount -= 1;
@@ -272,4 +282,8 @@ export fn nox_channel_recv(rt: ?*anyopaque, ch: ?*anyopaque) i64 {
         c.head = 0;
     }
     return v;
+}
+
+export fn nox_channel_recv_cancellable(rt: ?*anyopaque, ch: ?*anyopaque) i64 {
+    return nox_channel_recv(rt, ch);
 }

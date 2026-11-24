@@ -1009,6 +1009,72 @@ test "3.8b: __all__ bilinmeyen bir adı listelerse hata; liste olmayan modülde 
     try std.testing.expectEqualStrings("3\n", open.stdout);
 }
 
+const NamedSrc = struct { name: []const u8, data: []const u8 };
+
+/// `files` (biri `main.nox`) ile geçici bir proje kurar ve verilen arka uçla çalıştırır.
+fn runFiles(io: std.Io, a: std.mem.Allocator, files: []const NamedSrc, backend: []const u8) !struct { ok: bool, stderr: []const u8, stdout: []const u8 } {
+    var proj = std.testing.tmpDir(.{});
+    defer proj.cleanup();
+    var proj_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const proj_path = try absPath(io, proj.dir, &proj_buf);
+    try proj.dir.writeFile(io, .{ .sub_path = "nox.json", .data = "{\"name\":\"vis\",\"entry\":\"main.nox\"}" });
+    for (files) |f| try proj.dir.writeFile(io, .{ .sub_path = f.name, .data = f.data });
+    var home = std.testing.tmpDir(.{});
+    defer home.cleanup();
+    var home_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var env_map = try isolatedNoxHome(io, home.dir, &home_buf);
+    defer env_map.deinit();
+    const main_path = try std.fmt.allocPrint(a, "{s}/main.nox", .{proj_path});
+    const res = try std.process.run(a, io, .{ .argv = &.{ noxcPath(), "run", "--backend", backend, main_path }, .environ_map = &env_map });
+    return .{ .ok = res.term == .exited and res.term.exited == 0, .stderr = res.stderr, .stdout = res.stdout };
+}
+
+test "v2.2.63 (Prism): __all__ modul duzeyi sabitleri ve from-import yeniden disa aktarimi listeleyebilir (iki backend)" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const consts = "__all__: list[str] = [\"MAX_K\", \"NAME\", \"Thing\", \"helper\"]\nMAX_K: int = 7\nNAME: str = \"n\"\n\nclass Thing:\n    v: int\n\n    def __init__(self, v: int) -> None:\n        self.v = v\n\ndef helper() -> int:\n    return 1\n\ndef hidden() -> int:\n    return 2\n";
+    const facade = "from consts import MAX_K, Thing, helper\n\n__all__: list[str] = [\"MAX_K\", \"Thing\", \"helper\"]\n";
+    const main_src = "from consts import MAX_K, NAME, Thing, helper\n\nprint(MAX_K)\nprint(NAME)\nprint(Thing(3).v)\nprint(helper())\n";
+    const facade_main = "from facade import MAX_K, Thing, helper\n\nprint(MAX_K)\nprint(Thing(4).v)\nprint(helper())\n";
+    for ([_][]const u8{ "llvm", "qbe" }) |backend| {
+        const r = try runFiles(io, a, &.{ .{ .name = "consts.nox", .data = consts }, .{ .name = "main.nox", .data = main_src } }, backend);
+        if (!r.ok) std.debug.print("[{s}] beklenmedik hata: {s}\n", .{ backend, r.stderr });
+        try std.testing.expect(r.ok);
+        try std.testing.expectEqualStrings("7\nn\n3\n1\n", r.stdout);
+        const f = try runFiles(io, a, &.{ .{ .name = "consts.nox", .data = consts }, .{ .name = "facade.nox", .data = facade }, .{ .name = "main.nox", .data = facade_main } }, backend);
+        if (!f.ok) std.debug.print("[{s}] facade hata: {s}\n", .{ backend, f.stderr });
+        try std.testing.expect(f.ok);
+        try std.testing.expectEqualStrings("7\n4\n1\n", f.stdout);
+    }
+    // listede olmayan ad hâlâ reddedilir; var olmayan ad hâlâ yazım hatası olarak yakalanır.
+    const bad = try runFiles(io, a, &.{ .{ .name = "consts.nox", .data = consts }, .{ .name = "main.nox", .data = "from consts import hidden\nprint(hidden())\n" } }, "llvm");
+    try std.testing.expect(!bad.ok);
+    try std.testing.expect(std.mem.indexOf(u8, bad.stderr, "'hidden' is not part of the public API of module 'consts'") != null);
+}
+
+test "v2.2.63 (Prism): Sinif.fabrika().yontem() zinciri, baska sinifin ayni adli static metodu yuzunden reddedilmez (iki backend)" {
+    const io = std.testing.io;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const nodes = "class Node:\n    k: int\n\n    def __init__(self, k: int) -> None:\n        self.k = k\n\n    @staticmethod\n    def crop(x: int) -> Node:\n        return Node(x)\n";
+    const graph = "from nodes import Node\n\nclass Graph:\n    nodes: list[Node]\n\n    def __init__(self, nodes: list[Node]) -> None:\n        self.nodes = nodes\n\n    @staticmethod\n    def empty() -> Graph:\n        return Graph([])\n\n    def append(self, n: Node) -> Graph:\n        out: list[Node] = []\n        for m in self.nodes:\n            out.append(m)\n        out.append(n)\n        return Graph(out)\n\n    def crop(self, x: int) -> Graph:\n        return self.append(Node.crop(x))\n\n    def flip(self) -> Graph:\n        return self.append(Node.crop(0))\n";
+    const main_src = "from graph import Graph\n\ng: Graph = Graph.empty().crop(1).flip().crop(2)\nprint(len(g.nodes))\nh: Graph = Graph.empty()\nh = h.flip().crop(3)\nprint(len(h.nodes))\n";
+    for ([_][]const u8{ "llvm", "qbe" }) |backend| {
+        const r = try runFiles(io, a, &.{ .{ .name = "nodes.nox", .data = nodes }, .{ .name = "graph.nox", .data = graph }, .{ .name = "main.nox", .data = main_src } }, backend);
+        if (!r.ok) std.debug.print("[{s}] beklenmedik hata: {s}\n", .{ backend, r.stderr });
+        try std.testing.expect(r.ok);
+        try std.testing.expectEqualStrings("3\n2\n", r.stdout);
+    }
+    // Gerçek static metodu yan etkili bir alıcı üzerinden çağırmak hâlâ reddedilir.
+    const bad_src = "class G:\n    n: int\n\n    def __init__(self, n: int) -> None:\n        self.n = n\n\n    @staticmethod\n    def make(k: int) -> G:\n        return G(k)\n\ndef mk() -> G:\n    return G(1)\n\nprint(mk().make(2).n)\n";
+    const bad = try runFiles(io, a, &.{.{ .name = "main.nox", .data = bad_src }}, "llvm");
+    try std.testing.expect(!bad.ok);
+    try std.testing.expect(std.mem.indexOf(u8, bad.stderr, "the receiver expression has side effects") != null);
+}
+
 test "GPT-6 P1.9: type takma adlari MODUL KAPSAMLIDIR (iki modulde ayni ad, nitelikli/from/import-as erisim, iki backend)" {
     const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);

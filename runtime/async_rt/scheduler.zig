@@ -1085,6 +1085,8 @@ pub fn Task(comptime T: type) type {
         /// BAĞIMSIZ, HER ZAMAN GÜVENLE yazılabilir/okunabilir bir bayrak
         /// (Task struct'ı canlı olduğu SÜRECE — `t.fiber`e HİÇ DOKUNMAZ).
         cancel_requested: std.atomic.Value(bool) = .init(false),
+        /// v2.2.63: iptal-uyandırma durumu (bkz. `fiber_mod.CancelWait`); `Task.cancel()` askıdaki bir kanal alımını / görev beklemesini bununla bozar.
+        park: fiber_mod.CancelPark = .{},
 
         /// **v1.29.11 — GERÇEK, DIŞARIDAN bulunup DOĞRULANMIŞ bir hata
         /// İçİn eklendi.** ESKİDEN `detached: bool` (Faz S.1) `state`in
@@ -1186,6 +1188,43 @@ pub fn Task(comptime T: type) type {
             }
             return self.result;
         }
+
+        const AwaitUnpark = struct {
+            target: *Self,
+            waiter: *Waiter,
+
+            /// Hedef görevin bekleyen alanından BU bekleyiciyi (hâlâ oradaysa) geri alır: `state` hâlâ bekleyicinin işaretçisiyse `PENDING`e döndürür.
+            fn run(ctx: *anyopaque, woken: *std.atomic.Value(bool)) bool {
+                const u: *AwaitUnpark = @ptrCast(@alignCast(ctx));
+                const w = u.waiter;
+                const fiber = w.fiber;
+                const sched = w.scheduler;
+                if (u.target.state.cmpxchgStrong(@intFromPtr(w), PENDING, .acq_rel, .acquire) != null) return false; // hedef zaten tamamlandı (uyandırma yolda)
+                woken.store(true, .release);
+                sched.markReady(fiber);
+                return true;
+            }
+        };
+
+        /// `await_`in iptal-uyandırılabilir sürümü (`nox_async_await`): bekleyen fiber'ın görevi `cancel()` edilirse bekleyiş bozulur ve `park.woken` işaretlenir (dönen değer sıfırdır;
+        /// çağıran — derleyicinin `await` sonrası denetimi — `CancelledError` fırlatır). Task'a ait olmayan fiber'larda `await_` ile aynıdır.
+        pub fn awaitCancellable(self: *Self) T {
+            if (self.state.load(.acquire) == COMPLETED) return self.result;
+            const sched = currentScheduler().?;
+            const me = sched.current.?;
+            var waiter = Waiter{ .fiber = me, .scheduler = sched };
+            if (self.state.cmpxchgStrong(PENDING, @intFromPtr(&waiter), .acq_rel, .acquire) != null) return self.result;
+            var unpark = AwaitUnpark{ .target = self, .waiter = &waiter };
+            var cw = fiber_mod.CancelWait{ .ctx = &unpark, .unpark = AwaitUnpark.run };
+            me.cancelWaitBegin(&cw);
+            me.cancelWaitRecheck(&cw);
+            sched.suspendCurrent();
+            me.cancelWaitEnd(&cw);
+            if (me.park) |park| {
+                if (park.woken.load(.acquire)) return std.mem.zeroes(T);
+            }
+            return self.result;
+        }
     };
 }
 
@@ -1205,6 +1244,7 @@ pub fn spawn(scheduler: *Scheduler, comptime T: type, func: *const fn (TaskArg) 
     // `task.cancel_requested`i yazar), SADECE bu fiber'ın KENDİ kodu
     // (`genAwaitExpr`nin iptal-kontrolü) OKUR.
     task.fiber.cancel_flag = &task.cancel_requested;
+    task.fiber.park = &task.park;
     // Faz MN.4/5: havuzluysa YEREL `live_count` YERİNE (bkz. `run()`nin
     // tamamlanma dalındaki AYNI "KRİTİK" not) SADECE PAYLAŞILAN `pool_
     // live_count` artırılır — bir fiber BAŞKA bir worker TARAFINDAN
@@ -1283,6 +1323,7 @@ pub fn spawnPinnedSized(scheduler: *Scheduler, comptime T: type, func: *const fn
         return e;
     };
     task.fiber.cancel_flag = &task.cancel_requested;
+    task.fiber.park = &task.park;
     if (scheduler.pool_live_count) |plc| {
         _ = plc.fetchAdd(1, .monotonic);
     } else {

@@ -114,6 +114,7 @@ pub const websocket_server_shim = @import("stdlib_shims/websocket_server.zig");
 pub const shared_mem_shim = @import("stdlib_shims/shared_mem.zig");
 pub const atomic_shim = @import("stdlib_shims/atomic.zig");
 pub const gzip_shim = @import("stdlib_shims/gzip.zig");
+pub const zlib_shim = @import("stdlib_shims/zlib.zig");
 pub const csv_shim = @import("stdlib_shims/csv.zig");
 pub const base64_shim = @import("stdlib_shims/base64.zig");
 pub const bigint_shim = @import("stdlib_shims/bigint.zig");
@@ -206,6 +207,7 @@ comptime {
     _ = shared_mem_shim;
     _ = atomic_shim;
     _ = gzip_shim;
+    _ = zlib_shim;
     _ = csv_shim;
     _ = base64_shim;
     _ = bigint_shim;

@@ -1,0 +1,65 @@
+# nox.zlib — zlib (RFC 1950) ve ham deflate (RFC 1951) kapları + `crc32` (IEEE 802.3) ve `adler32` (RFC 1950) sağlama toplamları (v2.2.63).
+#
+# `nox.gzip` ile aynı sözleşme: ikili veri `list[int]` (her eleman 0-255) olarak taşınır, hata `ZlibError` ile bildirilir. Sağlama toplamları artımlıdır:
+# `crc32(data, prev)` / `adler32(data, prev)` önceki sonucu devam ettirir (`crc32` için başlangıç 0, `adler32` için 1).
+
+class ZlibError(Exception):
+    pass
+
+extern def nox_zlib_compress_raw(data: list[int], kind: int) -> list[int] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_zlib_decompress_raw(data: list[int], kind: int) -> list[int] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_zlib_crc32_raw(data: list[int], prev: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_zlib_adler32_raw(data: list[int], prev: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_zlib_crc32_str_raw(s: str, prev: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_zlib_adler32_str_raw(s: str, prev: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_zlib_last_op_ok() -> int from "zig-out/lib/noxrt.o"
+
+# `data`yı zlib kabında (2 baytlık başlık + deflate + Adler-32) sıkıştırır.
+def compress(data: list[int]) -> list[int]:
+    result: list[int] = nox_zlib_compress_raw(data, 1)
+    if nox_zlib_last_op_ok() == 0:
+        raise ZlibError("compression failed (invalid byte list or allocation failure)")
+    return result
+
+# zlib kabını açar; bozuk/kesik veri ya da Adler-32 uyuşmazlığı `ZlibError` fırlatır.
+def decompress(data: list[int]) -> list[int]:
+    result: list[int] = nox_zlib_decompress_raw(data, 1)
+    if nox_zlib_last_op_ok() == 0:
+        raise ZlibError("invalid zlib data")
+    return result
+
+# `data`yı ham deflate akışı olarak sıkıştırır (başlık/sağlama toplamı yok; ZIP/PNG-IDAT parçaları gibi).
+def deflate(data: list[int]) -> list[int]:
+    result: list[int] = nox_zlib_compress_raw(data, 0)
+    if nox_zlib_last_op_ok() == 0:
+        raise ZlibError("compression failed (invalid byte list or allocation failure)")
+    return result
+
+# Ham deflate akışını açar.
+def inflate(data: list[int]) -> list[int]:
+    result: list[int] = nox_zlib_decompress_raw(data, 0)
+    if nox_zlib_last_op_ok() == 0:
+        raise ZlibError("invalid deflate data")
+    return result
+
+# IEEE 802.3 CRC-32 (gzip/PNG/ZIP): 32 bitlik işaretsiz değer `int` olarak. `prev` önceki sonuçtur (yeni toplam için 0).
+def crc32(data: list[int], prev: int = 0) -> int:
+    value: int = nox_zlib_crc32_raw(data, prev)
+    if nox_zlib_last_op_ok() == 0:
+        raise ZlibError("data must be a list of byte values (0-255)")
+    return value
+
+# `str`nin UTF-8 baytlarının CRC-32'si.
+def crc32_str(text: str, prev: int = 0) -> int:
+    return nox_zlib_crc32_str_raw(text, prev)
+
+# RFC 1950 Adler-32. `prev` önceki sonuçtur (yeni toplam için 1).
+def adler32(data: list[int], prev: int = 1) -> int:
+    value: int = nox_zlib_adler32_raw(data, prev)
+    if nox_zlib_last_op_ok() == 0:
+        raise ZlibError("data must be a list of byte values (0-255)")
+    return value
+
+# `str`nin UTF-8 baytlarının Adler-32'si.
+def adler32_str(text: str, prev: int = 1) -> int:
+    return nox_zlib_adler32_str_raw(text, prev)

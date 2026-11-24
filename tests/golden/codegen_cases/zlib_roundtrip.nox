@@ -1,0 +1,51 @@
+# v2.2.63 (Prism): nox.zlib — zlib/ham deflate kapları (Python zlib ile çapraz doğrulanmış akışlar) + crc32/adler32.
+import nox.zlib
+from nox.zlib import ZlibError
+
+# Python: zlib.compress(b"hello hello hello hello", 9) ve ham deflate (wbits=-15)
+py_zlib: list[int] = [120, 218, 203, 72, 205, 201, 201, 87, 200, 64, 39, 1, 104, 3, 8, 177]
+py_raw: list[int] = [203, 72, 205, 201, 201, 87, 200, 64, 39, 1]
+expected: list[int] = [104, 101, 108, 108, 111, 32, 104, 101, 108, 108, 111, 32, 104, 101, 108, 108, 111, 32, 104, 101, 108, 108, 111]
+
+print(nox.zlib.decompress(py_zlib) == expected)
+print(nox.zlib.inflate(py_raw) == expected)
+
+print(nox.zlib.crc32_str("123456789"), nox.zlib.adler32_str("123456789"))
+print(nox.zlib.crc32_str("hello world"), nox.zlib.adler32_str("hello world"))
+part: int = nox.zlib.crc32_str("hello ")
+print(nox.zlib.crc32_str("world", part))
+apart: int = nox.zlib.adler32_str("hello ")
+print(nox.zlib.adler32_str("world", apart))
+none: list[int] = []
+print(nox.zlib.crc32(none), nox.zlib.adler32(none))
+
+big: list[int] = []
+i: int = 0
+while i < 3000:
+    big.append((i * 7 + i // 13) % 256)
+    i = i + 1
+print(nox.zlib.crc32(big), nox.zlib.adler32(big))
+
+z: list[int] = nox.zlib.compress(big)
+print(z[0], z[1], len(z) < len(big))
+print(nox.zlib.decompress(z) == big)
+r: list[int] = nox.zlib.deflate(big)
+print(nox.zlib.inflate(r) == big)
+print(len(nox.zlib.decompress(nox.zlib.compress(none))))
+
+bad: list[int] = [120, 218, 1, 2, 3]
+try:
+    nox.zlib.decompress(bad)
+    print("no error")
+except ZlibError:
+    print("bad zlib")
+try:
+    nox.zlib.inflate(z[0:6])
+    print("no error")
+except ZlibError:
+    print("bad deflate")
+try:
+    nox.zlib.compress([1, 256])
+    print("no error")
+except ZlibError:
+    print("bad byte")

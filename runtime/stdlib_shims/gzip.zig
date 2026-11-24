@@ -25,7 +25,7 @@ const FIELD_SLOT_SIZE = abi_layout.FIELD_SLOT_SIZE;
 
 const LastOkSlot = scratch_util.TlsSlot(bool, true);
 
-fn buildIntList(rt: ?*anyopaque, bytes: []const u8) ?*anyopaque {
+pub fn buildIntList(rt: ?*anyopaque, bytes: []const u8) ?*anyopaque {
     const raw = arc.nox_list_new(rt, bytes.len, FIELD_SLOT_SIZE) orelse return null;
     const base: [*]u8 = @ptrCast(raw);
     @as(*align(1) i64, @ptrCast(base)).* = @intCast(bytes.len);
@@ -40,7 +40,7 @@ fn buildIntList(rt: ?*anyopaque, bytes: []const u8) ?*anyopaque {
 /// `list_ptr`teki HER slotu okuyup bir bayt dilimine çevirir — 0-255
 /// dışı bir değer VARSA (kullanıcı GEÇERSİZ bir liste verdiyse) `null`
 /// döner (çağıran taraf `g_last_op_ok`i düşürür).
-fn readIntListAsBytes(list_ptr: ?*anyopaque) ?[]u8 {
+pub fn readIntListAsBytes(list_ptr: ?*anyopaque) ?[]u8 {
     const p = list_ptr orelse return null;
     const base: [*]u8 = @ptrCast(p);
     const len: usize = @intCast(@as(*align(1) i64, @ptrCast(base)).*);
@@ -62,14 +62,18 @@ fn readIntListAsBytes(list_ptr: ?*anyopaque) ?[]u8 {
 /// olmayan hedeflerde — WASM — doğrudan, oradaki yığın ayrıdır).
 const compress_thread_stack: usize = 2 * 1024 * 1024;
 
+/// v2.2.63: `nox.zlib` (RFC 1950 zlib ve RFC 1951 ham deflate) aynı sıkıştırıcı/açıcı yığın düzenini paylaşır; kap biçimi (`container`) işe taşınır.
+pub const Container = std.compress.flate.Container;
+
 const CompressJob = struct {
     allocator: std.mem.Allocator,
     data: []const u8,
+    container: Container = .gzip,
     result: ?([]u8) = null,
 };
 
 fn compressJobMain(job: *CompressJob) void {
-    job.result = gzipCompressInline(job.allocator, job.data) catch null;
+    job.result = compressInline(job.allocator, job.data, job.container) catch null;
 }
 
 // v2.1.57: çıplak çekirdek (freestanding, wasm DEĞİL): iş parçacığı yok ve fiber yığınları (192 KiB) sıkıştırıcı durumuna (~290 KB) yetmez. İş, statik büyük yığınlı bir mini-fiber üzerinde
@@ -85,19 +89,20 @@ const BareJob = struct {
     allocator: std.mem.Allocator,
     data: []const u8,
     compress: bool,
+    container: Container = .gzip,
     result: ?[]u8 = null,
 };
 
 fn bareEntry(arg: *anyopaque) void {
     const job: *BareJob = @ptrCast(@alignCast(arg));
-    job.result = (if (job.compress) gzipCompressInline(job.allocator, job.data) else gzipDecompressInline(job.allocator, job.data)) catch null;
+    job.result = (if (job.compress) compressInline(job.allocator, job.data, job.container) else decompressInline(job.allocator, job.data, job.container)) catch null;
 }
 
-fn bareRun(allocator: std.mem.Allocator, data: []const u8, compress: bool) ![]u8 {
+fn bareRun(allocator: std.mem.Allocator, data: []const u8, compress: bool, container: Container) ![]u8 {
     if (BareStack.busy) return error.OutOfMemory;
     BareStack.busy = true;
     defer BareStack.busy = false;
-    var job = BareJob{ .allocator = allocator, .data = data, .compress = compress };
+    var job = BareJob{ .allocator = allocator, .data = data, .compress = compress, .container = container };
     var ctx: fiber_mod.Context = .{};
     const f = try fiber_mod.Fiber.createWithStack(allocator, bareEntry, &job, &BareStack.mem);
     f.resume_(&ctx);
@@ -115,6 +120,10 @@ const ld = if (use_libdeflate) struct {
     extern fn libdeflate_free_compressor(c: *Compressor) void;
     extern fn libdeflate_gzip_compress_bound(c: *Compressor, in_nbytes: usize) usize;
     extern fn libdeflate_gzip_compress(c: *Compressor, in: [*]const u8, in_nbytes: usize, out: [*]u8, out_nbytes_avail: usize) usize;
+    extern fn libdeflate_deflate_compress_bound(c: *Compressor, in_nbytes: usize) usize;
+    extern fn libdeflate_deflate_compress(c: *Compressor, in: [*]const u8, in_nbytes: usize, out: [*]u8, out_nbytes_avail: usize) usize;
+    extern fn libdeflate_deflate_decompress_ex(d: *Decompressor, in: [*]const u8, in_nbytes: usize, out: [*]u8, out_nbytes_avail: usize, actual_in_nbytes_ret: ?*usize, actual_out_nbytes_ret: ?*usize) c_int;
+    extern fn libdeflate_adler32(adler: u32, buf: ?*const anyopaque, len: usize) u32;
     extern fn libdeflate_alloc_decompressor() ?*Decompressor;
     extern fn libdeflate_free_decompressor(d: *Decompressor) void;
     extern fn libdeflate_gzip_decompress_ex(d: *Decompressor, in: [*]const u8, in_nbytes: usize, out: [*]u8, out_nbytes_avail: usize, actual_in_nbytes_ret: ?*usize, actual_out_nbytes_ret: ?*usize) c_int;
@@ -159,26 +168,90 @@ fn ldDecompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
     }
 }
 
+const ZLIB_HEADER = [2]u8{ 0x78, 0x9C }; // deflate, 32 KiB pencere, varsayılan düzey (6)
+
+/// gzip dışı kaplar libdeflate'in ham deflate'i üzerine kurulur (zlib kabı: 2 bayt başlık + deflate + Adler-32 BE; `zlib_*.c` vendor edilmedi).
+fn ldCompressContainer(allocator: std.mem.Allocator, data: []const u8, container: Container) ![]u8 {
+    if (container == .gzip) return ldCompress(allocator, data);
+    const c = ld.libdeflate_alloc_compressor(6) orelse return error.OutOfMemory;
+    defer ld.libdeflate_free_compressor(c);
+    const extra: usize = if (container == .zlib) 6 else 0;
+    const bound = ld.libdeflate_deflate_compress_bound(c, data.len);
+    const out = try allocator.alloc(u8, bound + extra);
+    errdefer allocator.free(out);
+    const body = out[if (container == .zlib) 2 else 0..];
+    const n = ld.libdeflate_deflate_compress(c, data.ptr, data.len, body.ptr, bound);
+    if (n == 0) return error.OutOfMemory;
+    if (container == .zlib) {
+        out[0] = ZLIB_HEADER[0];
+        out[1] = ZLIB_HEADER[1];
+        std.mem.writeInt(u32, out[2 + n ..][0..4], ld.libdeflate_adler32(1, data.ptr, data.len), .big);
+        return allocator.realloc(out, n + 6) catch out[0 .. n + 6];
+    }
+    return allocator.realloc(out, n) catch out[0..n];
+}
+
+fn ldDecompressContainer(allocator: std.mem.Allocator, data: []const u8, container: Container) ![]u8 {
+    if (container == .gzip) return ldDecompress(allocator, data);
+    var body: []const u8 = data;
+    if (container == .zlib) {
+        // RFC 1950: CMF (CM=8, CINFO<=7), FLG ((CMF*256+FLG) % 31 == 0, FDICT=0), deflate, Adler-32 (BE).
+        if (data.len < 6) return error.BadZlibData;
+        if (data[0] & 0x0F != 8 or (data[0] >> 4) > 7) return error.BadZlibData;
+        if ((@as(u32, data[0]) * 256 + data[1]) % 31 != 0 or data[1] & 0x20 != 0) return error.BadZlibData;
+        body = data[2..];
+    }
+    const d = ld.libdeflate_alloc_decompressor() orelse return error.OutOfMemory;
+    defer ld.libdeflate_free_decompressor(d);
+    var cap: usize = @min(@max(body.len *| 4, 4096), MAX_DECOMPRESSED);
+    while (true) {
+        const out = try allocator.alloc(u8, cap);
+        var actual_in: usize = 0;
+        var actual_out: usize = 0;
+        const rc = ld.libdeflate_deflate_decompress_ex(d, body.ptr, body.len, out.ptr, out.len, &actual_in, &actual_out);
+        if (rc == ld.SUCCESS) {
+            if (container == .zlib) {
+                const trailer_at = actual_in;
+                if (body.len < trailer_at + 4 or std.mem.readInt(u32, body[trailer_at..][0..4], .big) != ld.libdeflate_adler32(1, out.ptr, actual_out)) {
+                    allocator.free(out);
+                    return error.BadZlibData;
+                }
+            }
+            return allocator.realloc(out, actual_out) catch out[0..actual_out];
+        }
+        allocator.free(out);
+        if (rc != ld.INSUFFICIENT_SPACE) return error.BadDeflateData;
+        if (cap >= MAX_DECOMPRESSED) return error.OutOfMemory;
+        cap = @min(cap *| 2, MAX_DECOMPRESSED);
+    }
+}
+
 pub fn gzipCompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
     if (comptime use_libdeflate) return ldCompress(allocator, data);
-    if (comptime scratch_util.bare_kernel) return bareRun(allocator, data, true);
+    return compressWith(allocator, data, .gzip);
+}
+
+/// Kap biçimli (gzip/zlib/ham deflate) sıkıştırma: macOS/Linux'ta libdeflate, diğer hedeflerde `std.compress.flate` (gerektiğinde büyük yığınlı iş parçacığı / çıplak çekirdek mini-fiber'ı üzerinde).
+pub fn compressWith(allocator: std.mem.Allocator, data: []const u8, container: Container) ![]u8 {
+    if (comptime use_libdeflate) return ldCompressContainer(allocator, data, container);
+    if (comptime scratch_util.bare_kernel) return bareRun(allocator, data, true, container);
     if (comptime builtin.single_threaded or builtin.os.tag == .freestanding or builtin.os.tag == .wasi) {
-        return gzipCompressInline(allocator, data);
+        return compressInline(allocator, data, container);
     }
-    var job = CompressJob{ .allocator = allocator, .data = data };
+    var job = CompressJob{ .allocator = allocator, .data = data, .container = container };
     const t = std.Thread.spawn(.{ .stack_size = compress_thread_stack }, compressJobMain, .{&job}) catch return error.OutOfMemory;
     t.join();
     return job.result orelse error.OutOfMemory;
 }
 
-fn gzipCompressInline(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+fn compressInline(allocator: std.mem.Allocator, data: []const u8, container: Container) ![]u8 {
     // `Compress.init`nin KENDİ ön-koşulu: `assert(output.buffer.len > 8);`
     // — `Writer.Allocating.init` BOŞ (`&.{}`) bir buffer İLE başlar,
     // BU YÜZDEN `initCapacity` (N > 8) KULLANILMALI.
     var out: std.Io.Writer.Allocating = try .initCapacity(allocator, 4096);
     errdefer out.deinit();
     var window_buf: [std.compress.flate.max_window_len]u8 = undefined;
-    var compress = try std.compress.flate.Compress.init(&out.writer, &window_buf, .gzip, .default);
+    var compress = try std.compress.flate.Compress.init(&out.writer, &window_buf, container, .default);
     try compress.writer.writeAll(data);
     try compress.finish();
     return out.toOwnedSlice();
@@ -186,20 +259,44 @@ fn gzipCompressInline(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
 
 pub fn gzipDecompress(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
     if (comptime use_libdeflate) return ldDecompress(allocator, data);
-    if (comptime scratch_util.bare_kernel) return bareRun(allocator, data, false);
-    return gzipDecompressInline(allocator, data);
+    return decompressWith(allocator, data, .gzip);
 }
 
-fn gzipDecompressInline(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
-    var in_reader = std.Io.Reader.fixed(data);
+/// `compressWith`in tersi. Hata ya da bozuk/kesik girdi her hedefte hata döner (asla çökmez); std yolunda zlib Adler-32 ve gzip CRC-32/uzunluk altbilgisi de doğrulanır.
+pub fn decompressWith(allocator: std.mem.Allocator, data: []const u8, container: Container) ![]u8 {
+    if (comptime use_libdeflate) return ldDecompressContainer(allocator, data, container);
+    if (comptime scratch_util.bare_kernel) return bareRun(allocator, data, false, container);
+    return decompressInline(allocator, data, container);
+}
+
+/// Zig 0.16 `std.compress.flate.Decompress`, girdi bir sembolün ORTASINDA bittiğinde (kesik akış) `assert(r.seek <= r.end)` ile çöker (ReleaseFast'ta tanımsız davranış). Girdinin sonuna 16 sıfır
+/// bayt (en uzun Huffman kodu + ek bitler < 5 bayt) eklenir: kesik akış güvenli biçimde hata olarak biter; altbilgi (CRC/Adler) doğrulaması gerçek baytlardan yapılır.
+const INPUT_PAD = 16;
+
+fn decompressInline(allocator: std.mem.Allocator, data: []const u8, container: Container) ![]u8 {
+    const padded = try allocator.alloc(u8, data.len + INPUT_PAD);
+    defer allocator.free(padded);
+    @memcpy(padded[0..data.len], data);
+    @memset(padded[data.len..], 0);
+    var in_reader = std.Io.Reader.fixed(padded);
     const window_buf = try allocator.alloc(u8, std.compress.flate.max_window_len);
     defer allocator.free(window_buf);
     const decompress = try allocator.create(std.compress.flate.Decompress);
     defer allocator.destroy(decompress);
-    decompress.* = std.compress.flate.Decompress.init(&in_reader, .gzip, window_buf);
+    decompress.* = std.compress.flate.Decompress.init(&in_reader, container, window_buf);
     var out: std.Io.Writer.Allocating = try .initCapacity(allocator, 4096);
     errdefer out.deinit();
     _ = try decompress.reader.streamRemaining(&out.writer);
+    // std altbilgiyi (zlib Adler-32 / gzip CRC-32 + uzunluk) okur ama DOĞRULAMAZ: burada doğrulanır (libdeflate yolu zaten doğrular).
+    const written = out.written();
+    switch (container) {
+        .zlib => if (decompress.container_metadata.zlib.adler != std.hash.Adler32.hash(written)) return error.BadChecksum,
+        .gzip => {
+            const m = decompress.container_metadata.gzip;
+            if (m.crc != std.hash.Crc32.hash(written) or m.count != @as(u32, @truncate(written.len))) return error.BadChecksum;
+        },
+        .raw => {},
+    }
     return out.toOwnedSlice();
 }
 
@@ -329,11 +426,11 @@ test "v2.1.63: libdeflate ile sıkıştırılan, Zig std.compress.flate ile aç�
         // libdeflate -> std flate
         const z = try ldCompress(a, data);
         defer a.free(z);
-        const back = try gzipDecompressInline(a, z);
+        const back = try decompressInline(a, z, .gzip);
         defer a.free(back);
         try std.testing.expectEqualSlices(u8, data, back);
         // std flate -> libdeflate
-        const z2 = try gzipCompressInline(a, data);
+        const z2 = try compressInline(a, data, .gzip);
         defer a.free(z2);
         const back2 = try ldDecompress(a, z2);
         defer a.free(back2);
@@ -363,5 +460,39 @@ test "v2.1.63: libdeflate açma — bozuk veri hata verir, ISIZE yalanı (büyü
             defer a.free(out);
             try std.testing.expectEqualStrings(text, out);
         } else |_| {}
+    }
+}
+
+// v2.2.63: std yolu (Windows/WASM/mobil/çıplak çekirdek) kesik akışta çökmemeli ve altbilgi bozukluğunu yakalamalı.
+test "v2.2.63: std flate yolu — kesik girdi her kesme noktasında hata verir, bozuk Adler-32/CRC-32 reddedilir, tam akış gidiş-dönüş yapar" {
+    const a = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0x2263);
+    const rand = prng.random();
+    const data = try a.alloc(u8, 5000);
+    defer a.free(data);
+    for (data, 0..) |*b, i| b.* = if ((i / 61) % 2 == 0) @truncate(i *% 7) else rand.int(u8);
+    for ([_]Container{ .raw, .zlib, .gzip }) |c| {
+        const z = try compressInline(a, data, c);
+        defer a.free(z);
+        const back = try decompressInline(a, z, c);
+        defer a.free(back);
+        try std.testing.expectEqualSlices(u8, data, back);
+        var cut: usize = 0;
+        while (cut < z.len) : (cut += 1) {
+            // Sıfır dolgu, akışın eksik SON baytı zaten sıfırsa (EOB kodunun kuyruğu) onu birebir tamamlayabilir: bu durumda çıktı TAM veri olmalı; asla kısmi/yanlış veri değil.
+            if (decompressInline(a, z[0..cut], c)) |o| {
+                defer a.free(o);
+                try std.testing.expectEqualSlices(u8, data, o);
+            } else |_| {}
+        }
+        if (c != .raw) {
+            const bad = try a.dupe(u8, z);
+            defer a.free(bad);
+            bad[bad.len - 6] ^= 0xFF; // altbilgi: Adler-32 / CRC-32
+            if (decompressInline(a, bad, c)) |o| {
+                a.free(o);
+                return error.CorruptChecksumAccepted;
+            } else |_| {}
+        }
     }
 }

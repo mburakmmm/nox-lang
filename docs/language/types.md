@@ -200,6 +200,8 @@ print(length_or_zero(None), length_or_zero("abc"))
 
 A field can be narrowed too, as long as the optional holds a class, list, dict or `str` (`n.next != None`, `a.b.c is None`): inside the branch (and after a guard that exits) `n.next` is a plain `T`. The narrowing is dropped as soon as the compiler can no longer prove it: an assignment to the field or to any name on its path (`n.next = x`, `n = other`), a call to your own function or method (it might clear the field), or an `await`. Scalar optionals (`int | None`) are not narrowed through a field; copy the field into a local first.
 
+The guard form (`if x is None: raise ...` / `return`) narrows function and method locals and parameters. It does not narrow **module-level** variables in top-level script code (they are program-wide globals): wrap the code in a function or use the `if x is not None:` form there.
+
 Using an un-narrowed optional where a plain `T` is needed is a compile error. `print(x)` shows `None` or the value; `str(x)` and
 f-strings need a narrowed value. A scalar optional (`int | None`) is boxed internally — this is invisible to the program.
 

@@ -25,6 +25,8 @@ print(await a + await b)
 
 A call to an async function without `spawn` is a compile error: starting a task is always explicit.
 
+An `async def` **method** may `await` too, and `spawn obj.method(args)` starts it as a task (its body runs on the task's fiber).
+
 ### Nested `async def`
 
 An `async def` may be written inside another function, which keeps small task bodies next to the code that starts them:
@@ -87,7 +89,10 @@ nobody awaits is not reported, so use this only for work that handles its own er
 ### Cancellation
 
 `task.cancel()` requests cancellation. It is **cooperative**: it sets a flag, and the cancelled task gets a `CancelledError` the next time
-*it* awaits another task. A task that never awaits (pure computation) is not interrupted by itself: put `nox.tasks.checkpoint()` inside the CPU loop
+*it* awaits another task. If the task is **already suspended** in `await ch.recv()` (an empty channel) or in `await other_task`, the wait is broken immediately:
+the receiver leaves the channel's queue (no value is lost or delivered to it) and the `await` raises `CancelledError`. A value that was already delivered before
+the cancel is kept (that receive completes normally and the flag is seen at the next `await`). `await ch.send(...)`, `ThreadChannel`, `ThreadHandle.join()` and
+`Task.wait`/`Channel.wait` are not interrupted this way. A task that never awaits (pure computation) is not interrupted by itself: put `nox.tasks.checkpoint()` inside the CPU loop
 (it raises `CancelledError` when cancellation was requested; `nox.tasks.is_cancelled()` asks without raising), and call `nox.time.sleep_ms(0)` now and then so
 other tasks and timers can run. `h.cancel()` on a `ThreadHandle` sets the same flag for the thread's entry task. The `CancelledError` can be caught inside the
 task; if it is not, it reaches whoever awaits the task.

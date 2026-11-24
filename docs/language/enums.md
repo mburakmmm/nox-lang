@@ -71,6 +71,7 @@ match subject:
 - The subject is evaluated once. It must be a value of an enum.
 - A pattern names the variant with its enum, `Shape.Circle`. The enum can be imported and qualified like any class: `shapes.Shape.Circle(r)`; a generic enum is named the same way in an annotation (`o: shapes.Option[int]`).
 - **Binding.** Inside the parentheses each name receives that field's value, in declaration order, with the field's type. `_` ignores a field. Naming fields works too: `Shape.Rect(h=height, w=width)`. When a pattern has parentheses it must account for every field (use `_`); without parentheses (`Shape.Rect:`) the fields are ignored.
+- **Binding scope.** A name bound by one `case` lives in that case only, so different cases may bind the same name to different types (`case Detail.Text(payload)` / `case Detail.Count(payload)`). Cases that bind the same name to the *same* type share it, as before.
 - `case _:` matches anything not matched above and must come last.
 - Cases are tried top to bottom and the first one that fits runs. There is no fall-through, so no `break` is needed.
 

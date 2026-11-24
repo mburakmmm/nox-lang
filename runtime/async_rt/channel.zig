@@ -167,6 +167,69 @@ pub fn Channel(comptime T: type) type {
             return slot.result;
         }
 
+        const RecvUnpark = struct {
+            chan: *Self,
+            slot: *RecvSlot,
+
+            /// Bekleyen alıcıyı kanalın kuyruğundan (hâlâ oradaysa) çıkarıp sonucu sıfırlayarak uyandırır (iptal yolu, bkz. `recvCancellable`).
+            fn run(ctx: *anyopaque, woken: *std.atomic.Value(bool)) bool {
+                const u: *RecvUnpark = @ptrCast(@alignCast(ctx));
+                const self = u.chan;
+                self.mutex.lock();
+                var found: ?usize = null;
+                for (self.recv_waiters.items, 0..) |s, i| {
+                    if (s == u.slot) {
+                        found = i;
+                        break;
+                    }
+                }
+                const idx = found orelse {
+                    self.mutex.unlock(); // bir gönderici slotu zaten aldı: değer teslim edildi, uyandırma onun işi
+                    return false;
+                };
+                _ = self.recv_waiters.orderedRemove(idx);
+                const fiber = u.slot.fiber;
+                const sched = u.slot.scheduler;
+                u.slot.result = std.mem.zeroes(T);
+                woken.store(true, .release);
+                self.mutex.unlock();
+                sched.markReady(fiber);
+                return true;
+            }
+        };
+
+        /// `recv`in iptal-uyandırılabilir sürümü (`nox_channel_recv_cancellable`, derleyicinin `await ch.recv()`i): alıcı fiber'ın görevi `cancel()` edilirse bekleyiş kuyruktan çıkarılır,
+        /// sıfır değer döner ve `park.woken` işaretlenir; çağıran (derleyicinin `await` sonrası denetimi) `CancelledError` fırlatır. Görev dışı fiber'larda `recv` ile aynıdır.
+        pub fn recvCancellable(self: *Self) T {
+            const sched = scheduler_mod.currentScheduler().?;
+            self.mutex.lock();
+            if (self.buffer.items.len > 0) {
+                const value = self.buffer.orderedRemove(0);
+                const woken = self.wakeOneSenderLocked();
+                self.mutex.unlock();
+                if (woken) |s| s.scheduler.markReady(s.fiber);
+                return value;
+            }
+            if (self.send_waiters.items.len > 0) {
+                const slot = self.send_waiters.orderedRemove(0);
+                const value = slot.value;
+                self.mutex.unlock();
+                slot.scheduler.markReady(slot.fiber);
+                return value;
+            }
+            const me = sched.current.?;
+            var slot = RecvSlot{ .fiber = me, .scheduler = sched };
+            self.recv_waiters.append(self.allocator, &slot) catch @panic("OOM: could not grow the channel receiver queue");
+            var unpark = RecvUnpark{ .chan = self, .slot = &slot };
+            var cw = fiber_mod.CancelWait{ .ctx = &unpark, .unpark = RecvUnpark.run };
+            me.cancelWaitBegin(&cw); // kuyruk kilidi altında: iptal eden `unpark` kilidi bekler
+            self.mutex.unlock();
+            me.cancelWaitRecheck(&cw);
+            sched.suspendCurrent();
+            me.cancelWaitEnd(&cw);
+            return slot.result;
+        }
+
         pub fn send(self: *Self, value: T) void {
             const sched = scheduler_mod.currentScheduler().?;
             self.mutex.lock();
