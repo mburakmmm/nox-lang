@@ -488,6 +488,25 @@ pub export fn nox_list_extend_from_bytes(rt: ?*anyopaque, list: ?*anyopaque, bas
     abi_layout.listSetLen(b, need);
 }
 
+/// R2-E.2 (v2.2.58): `list[int]`e 5 değeri tek çağrıda ekler (sözcük/trivia kaydı `emit` — beş ayrı `append`in beş kapasite denetimi/başlık yazımı yerine bir tane).
+pub export fn nox_list_append5(rt: ?*anyopaque, list: ?*anyopaque, v0: i64, v1: i64, v2: i64, v3: i64, v4: i64) void {
+    const b: [*]u8 = @ptrCast(list orelse return);
+    const len = abi_layout.listLen(b);
+    var data = abi_layout.listData(b);
+    if (len + 5 > abi_layout.listCap(b)) {
+        var cap = abi_layout.listCap(b);
+        while (cap < len + 5) cap = listNextCap(cap);
+        data = @ptrCast(nox_list_reserve_cap(rt, b, cap, 8) orelse @panic("OOM: list append5"));
+    }
+    const dst: [*]align(1) i64 = @ptrCast(data + len * 8);
+    dst[0] = v0;
+    dst[1] = v1;
+    dst[2] = v2;
+    dst[3] = v3;
+    dst[4] = v4;
+    abi_layout.listSetLen(b, len + 5);
+}
+
 /// Kapasiteyi (en az) `new_cap` elemana çıkarır (küçültmez); YENİ `data` göstericisini döner, bellek yoksa null (başlığa dokunulmaz).
 pub fn nox_list_reserve_cap(rt: ?*anyopaque, b: [*]u8, new_cap: usize, esz: usize) ?*anyopaque {
     const cap = abi_layout.listCap(b);

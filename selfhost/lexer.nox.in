@@ -126,20 +126,15 @@ def uni_len(base: int, n: int, i: int, is_start: bool) -> int:
 {{KEYWORD_FN}}
 
 # Not: liste büyürken yeniden tahsis edilebildiğinden (yerel bir takma ad bayatlar) token arabelleğine HER ZAMAN `st.out` alanı üzerinden eklenir.
+# R2-E.2 (v2.2.58): sözcük kaydı (5 `i64`) tek çalışma zamanı çağrısıyla yazılır (kapasite denetimi/başlık güncellemesi beş yerine bir kez).
+extern def nox_list_append5(out: list[int], v0: int, v1: int, v2: int, v3: int, v4: int) -> None from "zig-out/lib/noxrt.o" with_rt
+
 def emit(st: Lx, kind: int, line: int, col: int, start: int, end: int) -> None:
-    st.out.append(kind)
-    st.out.append(line)
-    st.out.append(col)
-    st.out.append(start)
-    st.out.append(end)
+    nox_list_append5(st.out, kind, line, col, start, end)
 
 # Trivia kaydı (formatter): [tür (0 yorum, 1 boş satır), satır, sonda mı (yalnızca yorum), başlangıç, bitiş]; yalnızca `want_trivia` iken yazılır.
 def emit_trivia(st: Lx, kind: int, line: int, trailing: int, start: int, end: int) -> None:
-    st.trivia.append(kind)
-    st.trivia.append(line)
-    st.trivia.append(trailing)
-    st.trivia.append(start)
-    st.trivia.append(end)
+    nox_list_append5(st.trivia, kind, line, trailing, start, end)
 
 # Yorum metninin sonundaki CRLF `\r`si yorumun parçası değildir (Zig `trimCr`).
 def trim_cr_end(base: int, start: int, end: int) -> int:

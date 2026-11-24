@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.58]
+
+Lexer sözcük kaydı toplu yazım: lexer 3,34 → 2,80 ms (−%16). Nox/Zig: lexer 0,53×, parse 0,69×, fmt 0,70× (992 KB, ReleaseFast).
+
+- **Runtime**: `nox_list_append5` (5 değeri tek çağrıda `list[int]`e ekler).
+- **Selfhost lexer**: `emit`/`emit_trivia` beş ayrı `append` yerine tek çağrı; çıktı bayt-eşdeğer (Zig↔Nox lexer paritesi farksız).
+- **Liste**: R2-D.4 (köprü maliyeti ≈ %24 ölçüldü, iyileştirme gerekmez), R2-E.3 (span dizini v2.2.52'de), R2-L (kısmi) işaretleri güncellendi.
+
 ## [2.2.57]
 
 Ayrıştırıcı sözcük-türü önbelleği (parse 9,59 → 8,70 ms, −%9) ve kalıcı perf kapıları. Nox/Zig: lexer 0,62×, parse 0,73×, fmt 0,74×.

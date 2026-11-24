@@ -30228,3 +30228,7 @@ Runtime iki iç ilkel sunar (dil yüzeyi DEĞİL; selfhost `extern def … from 
 ### 3.493 Ayrıştırıcı sözcük-türü önbelleği; kalıcı perf kapıları (v2.2.57, R2-H, R2-L)
 
 Selfhost Nox ayrıştırıcısında `P.cur`, `tk[pos * 5]` (geçerli sözcük türü) değerinin önbelleğidir; konumu değiştiren her yer `adv` ya da `set_pos` kullanır (geri sarma dahil). `nightly.yml` hız kapıları (Nox/Zig süre oranı): lexer ≤ 1,2×, parse ≤ 1,3×, fmt ≤ 1,3×; RSS-büyüme kapısı ≤ 2× (`scripts/selfhost_bench.sh`). Ölçüm (992 KB, ReleaseFast): lexer 0,62×, parse 0,73×, fmt 0,74×.
+
+### 3.494 `nox_list_append5` (v2.2.58, R2-E.2)
+
+Runtime iç ilkeli: `nox_list_append5(list, v0..v4)` beş `i64` değeri tek kapasite denetimiyle `list[int]`e ekler (büyüme `listNextCap`; bellek yetersizliğinde durur). Selfhost lexer `emit`/`emit_trivia` kullanır; çıktı bayt-eşdeğer. Ölçüm: lexer 3,34 → 2,80 ms; Nox/Zig lexer 0,53×, parse 0,69×, fmt 0,70×.
