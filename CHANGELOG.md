@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.57]
+
+Ayrıştırıcı sözcük-türü önbelleği (parse 9,59 → 8,70 ms, −%9) ve kalıcı perf kapıları. Nox/Zig: lexer 0,62×, parse 0,73×, fmt 0,74×.
+
+- **Selfhost parser**: `P.cur` geçerli sözcük türünü tutar (`adv`/`set_pos`); `chk/mtc/kd/expect` sınır denetimli liste okumasından kurtuldu.
+- **CI (nightly.yml)**: lexer ≤ 1,2×, parse ≤ 1,3×, fmt ≤ 1,3× Zig hız kapıları (eski bütçe 3×); parse/fmt için RSS-büyüme kapısı (`selfhost_bench.sh`).
+
 ## [2.2.56]
 
 Biçimlendirici toplu yazım: fmt hattı 15,4 → 12,8 ms (992 KB, ReleaseFast); Nox/Zig oranı lexer 0,63×, parse 0,80×, fmt 0,79×.

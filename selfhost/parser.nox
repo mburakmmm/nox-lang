@@ -57,6 +57,8 @@ class P:
     cov: list[int]
     # R2-D (v2.2.55): çağrı ayrıştırmasının "anahtar sözcüklü/yıldızlı argüman görüldü" bayrağı (`sw[0]`); her çağrıda yerel `[0]` listesi tahsis etmek yerine ayrıştırıcıda tek liste.
     sw: list[int]
+    # R2-H (v2.2.56): `tk[pos * 5]` (geçerli sözcük türü) önbelleği; bkz. `set_pos`/`adv`.
+    cur: int
     # `parse_int_lexeme` çıkış parametresi (her tamsayı sabiti için yerel `[0]` tahsis etmek yerine tek liste; işlev ilk iş `ok[0] = 0` yazar).
     okl: list[int]
 
@@ -65,6 +67,9 @@ class P:
         self.tk = tk
         self.sw = [0]
         self.okl = [0]
+        self.cur = 0
+        if len(tk) > 0:
+            self.cur = tk[0]
         self.pos = 0
         self.ntk = len(tk) // 5
         self.depth = 0
@@ -152,7 +157,7 @@ def sl(a: Ast, xs: list[int]) -> int:
 
 # --- belirteç erişimi (belirteç başına 5 tamsayı: tür, satır, sütun, başlangıç, bitiş) ---
 def kd(p: P) -> int:
-    return p.tk[p.pos * 5]
+    return p.cur
 
 def kd_at(p: P, i: int) -> int:
     return p.tk[i * 5]
@@ -173,13 +178,19 @@ def adv(p: P) -> int:
     i: int = p.pos
     if p.pos + 1 < p.ntk:
         p.pos = p.pos + 1
+        p.cur = p.tk[p.pos * 5]
     return i
 
+# R2-H (v2.2.56): konumu değiştiren HER yer `set_pos`/`adv` kullanır; `p.cur` o konumdaki sözcük türünün önbelleğidir (chk/mtc/kd her çağrıda sınır denetimli liste okuması yapmaz).
+def set_pos(p: P, i: int) -> None:
+    p.pos = i
+    p.cur = p.tk[i * 5]
+
 def chk(p: P, k: int) -> bool:
-    return p.tk[p.pos * 5] == k
+    return p.cur == k
 
 def mtc(p: P, k: int) -> bool:
-    if p.tk[p.pos * 5] == k:
+    if p.cur == k:
         adv(p)
         return True
     return False
@@ -211,7 +222,7 @@ def fail_cur(p: P, note: str) -> int:
     return 0
 
 def expect(p: P, k: int) -> int:
-    if p.tk[p.pos * 5] == k:
+    if p.cur == k:
         return adv(p)
     set_diag(p, k, kd(p), p.pos, "")
     raise ErrUnexpected("")
@@ -728,16 +739,16 @@ def try_generic_tail(p: P, name: int) -> int:
     except ErrNumber:
         ok = False
     if not ok:
-        p.pos = checkpoint
+        set_pos(p, checkpoint)
         p.depth = saved_depth
         return -1
-    # R2-D (v2.2.55): sıradan indeks `xs[i]` bu yola da girer; tek tip argümanı `] (` ile devam etmiyorsa liste hiç tahsis edilmeden geri sarılır (davranış aynı: `p.pos = checkpoint`).
+    # R2-D (v2.2.55): sıradan indeks `xs[i]` bu yola da girer; tek tip argümanı `] (` ile devam etmiyorsa liste hiç tahsis edilmeden geri sarılır (davranış aynı: `set_pos(p, checkpoint)`).
     if not chk(p, 47):
         if not chk(p, 52):
-            p.pos = checkpoint
+            set_pos(p, checkpoint)
             return -1
         if p.pos + 1 >= p.ntk or kd_at(p, p.pos + 1) != 49:
-            p.pos = checkpoint
+            set_pos(p, checkpoint)
             return -1
     targs: list[int] = [first_targ]
     committed: bool = False
@@ -747,13 +758,13 @@ def try_generic_tail(p: P, name: int) -> int:
     if not chk(p, 52):
         if committed:
             raise ErrUnexpected("")
-        p.pos = checkpoint
+        set_pos(p, checkpoint)
         return -1
     adv(p)
     if not chk(p, 49):
         if committed:
             raise ErrUnexpected("")
-        p.pos = checkpoint
+        set_pos(p, checkpoint)
         return -1
     expect(p, 49)
     args: list[int] = []
@@ -1610,7 +1621,7 @@ def parse_module_body(p: P) -> int:
     a: Ast = p.a
     p.tk = normalize_tokens(p)
     p.ntk = len(p.tk) // 5
-    p.pos = 0
+    set_pos(p, 0)
     stmts: list[int] = []
     while not chk(p, 92):
         stmts.append(parse_stmt(p))

@@ -30224,3 +30224,7 @@ Atama hedefi `xs[i] = v` / `d[k] = v` (ve `xs[i] += v`, bu `xs[i] = xs[i] + v`ye
 ### 3.492 Toplu bayt ekleme ilkelleri ve `ord` ASCII hızlı yolu (v2.2.56, R2-F)
 
 Runtime iki iç ilkel sunar (dil yüzeyi DEĞİL; selfhost `extern def … from "zig-out/lib/noxrt.o" with_rt` ile kullanır): `nox_list_extend_from_bytes(list, base, n)` — `base` adresindeki `n` baytı işaretsiz değerleriyle `list[int]`e ekler (büyüme `listNextCap`, bellek yetersizliğinde durur); `nox_list_extend_from_str(list, s)` — `s`in tüm UTF-8 baytlarını ekler. `nox_ord_raw`: ilk bayt 1..0x7F ise doğrudan o değerle döner (diğer yollarla aynı sonuç). Biçimlendirici `w/ws` ve yorum kopyası bu ilkelleri kullanır; çıktı bayt-eşdeğerdir (tüm `w(pr, …)` argümanları ASCII).
+
+### 3.493 Ayrıştırıcı sözcük-türü önbelleği; kalıcı perf kapıları (v2.2.57, R2-H, R2-L)
+
+Selfhost Nox ayrıştırıcısında `P.cur`, `tk[pos * 5]` (geçerli sözcük türü) değerinin önbelleğidir; konumu değiştiren her yer `adv` ya da `set_pos` kullanır (geri sarma dahil). `nightly.yml` hız kapıları (Nox/Zig süre oranı): lexer ≤ 1,2×, parse ≤ 1,3×, fmt ≤ 1,3×; RSS-büyüme kapısı ≤ 2× (`scripts/selfhost_bench.sh`). Ölçüm (992 KB, ReleaseFast): lexer 0,62×, parse 0,73×, fmt 0,74×.

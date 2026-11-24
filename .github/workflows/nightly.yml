@@ -54,10 +54,18 @@ jobs:
         run: ./zig-out/bin/noxc-nightly selfhost-info compiler/main.zig
       - name: "Farksal test koşucusu (Zig ↔ Nox: lexer, parser, biçimlendirici; depo + mutasyonlu girdiler)"
         run: zig build frontend-diff-test
-      - name: Nox lexer hız bütçesi (≤ 3× Zig, plan §10)
+      # R2-L (v2.2.56): kalıcı perf kapıları. v2.2.55/56 ölçümleri (992 KB korpus, ReleaseFast): lexer 0,63×, parse 0,80×, fmt 0,79× (Nox/Zig). Eşikler CI koşucusu gürültüsü için
+      # bol paylı (ölçülenin ~1,6-2×'i) ama eski 3× bütçeden sıkıdır: bir tahsis/arena/algoritma gerilemesi (ör. bayt başına arena çifti = 1,9× lexer) kırmızı yapar.
+      - name: Nox lexer/parse/fmt hız bütçesi (lexer ≤ 1,2×, parse ≤ 1,3×, fmt ≤ 1,3× Zig)
         run: |
-          cat stdlib/nox/*.nox > "$RUNNER_TEMP/big.nox"
-          ./zig-out/bin/noxc-nightly lex-bench "$RUNNER_TEMP/big.nox" 20 --max-ratio=3.0
+          cat stdlib/nox/*.nox selfhost/lexer.nox selfhost/parser.nox selfhost/formatter.nox > "$RUNNER_TEMP/big.nox"
+          ./zig-out/bin/noxc-nightly lex-bench "$RUNNER_TEMP/big.nox" 20 --max-ratio=1.2
+          ./zig-out/bin/noxc-nightly parse-bench "$RUNNER_TEMP/big.nox" 20 --max-ratio=1.3
+          ./zig-out/bin/noxc-nightly fmt-bench "$RUNNER_TEMP/big.nox" 20 --max-ratio=1.3
+      - name: Nox bellek kapıları (art arda çağrıda RSS büyümesi ≤ 2×; ayrı süreç tepe RSS)
+        run: |
+          NOXC_NIGHTLY=./zig-out/bin/noxc-nightly sh scripts/selfhost_bench.sh parse-bench "$RUNNER_TEMP/big.nox" 20
+          NOXC_NIGHTLY=./zig-out/bin/noxc-nightly sh scripts/selfhost_bench.sh fmt-bench "$RUNNER_TEMP/big.nox" 20
       - name: Derleyici-türü kıyas seti (Nox ↔ Zig)
         run: benchmarks/compiler_bench/run.sh
       - name: Artifact adı
