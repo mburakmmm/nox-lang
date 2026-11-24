@@ -1713,6 +1713,9 @@ pub const Codegen = struct {
     /// `true` İSE `genLowLevel` `nox_arena_create`/`destroy` çiftini
     /// TAMAMEN ATLAR.
     lowlevel_arena_elidable: std.AutoHashMapUnmanaged(usize, bool) = .empty,
+    /// R2-A (v2.2.55): `scanStackConstructSites` taraması sırasında geçici bayrak — gövdede arenayı tüketebilecek HİÇBİR yapı yoksa (sınıf kurucusu, liste/tuple literali, kullanıcı çağrısı …)
+    /// `true` kalır ve `genLowLevel` arena çiftini atlar (ör. `at()` gibi yalnızca `ptr_read` yapan bloklar; önceden bayt başına `nox_arena_create/destroy` çağrılıyordu).
+    scan_plain: bool = true,
     /// GG.15: `genConstruct`ın (AST düğümü İLE `genConstructFromValues`
     /// ARASINDAKİ TEK köprü) `stack_construct_sites`de BULDUĞU bir slotu
     /// GEÇİCİ olarak taşır — `genConstructFromValues` BUNU TÜKETİP

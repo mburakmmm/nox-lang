@@ -1,0 +1,46 @@
+# R2-A (v2.2.55): arenayı tüketebilecek hiçbir yapı içermeyen ("düz") `lowlevel:` bloğu için `nox_arena_create/destroy` çifti atlanır (ör. bayt başına çağrılan `at()`);
+# liste literali, sınıf kurucusu ve kullanıcı işlevi çağrısı içeren bloklar arenayı KORUR. Davranış her iki durumda aynı olmalı (IR anlık görüntüsü farkı da bunu kilitler).
+class Box:
+    v: int
+
+    def __init__(self: Box, v: int) -> None:
+        self.v = v
+
+def plain_read(xs: list[int]) -> int:
+    total: int = 0
+    lowlevel:
+        p: ptr = ptr_from_int(ptr_to_int(ptr_of(xs)))
+        total = ptr_to_int(p) - ptr_to_int(p) + 7
+    return total
+
+def keeps_arena_list() -> int:
+    total: int = 0
+    lowlevel:
+        ys: list[int] = [1, 2, 3]
+        total = ys[0] + ys[1] + ys[2]
+    return total
+
+def keeps_arena_class() -> int:
+    total: int = 0
+    lowlevel:
+        b: Box = Box(5)
+        total = b.v
+    return total
+
+def helper(a: int) -> int:
+    return a + 1
+
+def keeps_arena_call() -> int:
+    total: int = 0
+    lowlevel:
+        total = helper(41)
+    return total
+
+xs: list[int] = [10, 20, 30]
+acc: int = 0
+for i in range(1000):
+    acc = acc + plain_read(xs)
+print(acc)
+print(keeps_arena_list())
+print(keeps_arena_class())
+print(keeps_arena_call())

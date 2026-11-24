@@ -931,8 +931,10 @@ pub fn collectInlineSitesExpr(self: *Codegen, expr: ast.Expr) CodegenError!void 
 pub fn scanStackConstructSites(self: *Codegen, ll_body: []const ast.Stmt) CodegenError!void {
     var all_ok = true;
     var any = false;
+    self.scan_plain = true;
     try scanStackConstructsStmts(self, ll_body, &all_ok, &any);
-    try self.lowlevel_arena_elidable.put(self.allocator, @intFromPtr(ll_body.ptr), any and all_ok);
+    // `plain`: arenayı tüketebilecek HİÇBİR yapı yok (bkz. `scan_plain`) → arena hiç kullanılmaz, çifti atla.
+    try self.lowlevel_arena_elidable.put(self.allocator, @intFromPtr(ll_body.ptr), (any and all_ok) or self.scan_plain);
 }
 
 fn scanStackConstructsStmts(self: *Codegen, stmts: []const ast.Stmt, all_ok: *bool, any: *bool) CodegenError!void {
@@ -969,7 +971,10 @@ fn scanStackConstructsStmts(self: *Codegen, stmts: []const ast.Stmt, all_ok: *bo
             // `lowlevel:` örneğinin arena elenmesi İPTAL edilir (`all_ok
             // = false`), ama fonksiyonun GERİ KALANI/DİĞER `lowlevel`
             // örnekleri ETKİLENMEZ.
-            .try_stmt, .lowlevel_stmt, .func_def, .with_stmt, .defer_stmt => all_ok.* = false,
+            .try_stmt, .lowlevel_stmt, .func_def, .with_stmt, .defer_stmt => {
+                all_ok.* = false;
+                self.scan_plain = false;
+            },
             .pass_stmt, .break_stmt, .continue_stmt, .class_def, .protocol_def, .extern_def, .import_stmt, .from_import_stmt, .type_alias => {},
         }
     }
@@ -1023,6 +1028,8 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
         },
         .call => |c| {
             for (c.args) |a| try scanStackConstructsExpr(self, a, all_ok, any);
+            // R2-A: yalnızca yerleşik/iç çağrılar (`int`, `ptr_read`, ...) arenasız kalabilir; kullanıcı işlevi/metodu/değer çağrısı muhafazakâr olarak arenayı korur.
+            if (c.callee.* != .identifier or self.classes.contains(c.callee.identifier) or self.functions.contains(c.callee.identifier) or self.inlinable_funcs.contains(c.callee.identifier) or self.extern_functions.contains(c.callee.identifier)) self.scan_plain = false;
             if (c.callee.* == .identifier) {
                 if (self.classes.get(c.callee.identifier)) |cinfo| {
                     any.* = true;
@@ -1038,6 +1045,7 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
         },
         .attribute => |a| try scanStackConstructsExpr(self, a.obj.*, all_ok, any),
         .list_comp => |lc| {
+            self.scan_plain = false;
             try scanStackConstructsExpr(self, lc.elem.*, all_ok, any);
             for (lc.clauses) |cl| switch (cl) {
                 .for_clause => |fc| try scanStackConstructsExpr(self, fc.iterable, all_ok, any),
@@ -1045,6 +1053,7 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
             };
         },
         .dict_comp => |dc| {
+            self.scan_plain = false;
             try scanStackConstructsExpr(self, dc.key.*, all_ok, any);
             try scanStackConstructsExpr(self, dc.value.*, all_ok, any);
             for (dc.clauses) |cl| switch (cl) {
@@ -1053,6 +1062,7 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
             };
         },
         .lambda => |lam| {
+            self.scan_plain = false;
             try scanStackConstructsExpr(self, lam.body.*, all_ok, any);
         },
         .slice => |sl| {
@@ -1067,6 +1077,7 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
         },
         .list_lit => |elems| {
             any.* = true;
+            self.scan_plain = false;
             if (simpleLiteralListQtype(elems)) |elem_qtype| {
                 const elem_size = qbeSizeOf(elem_qtype);
                 const payload_size = LIST_HEADER_SIZE + elem_size * elems.len;
@@ -1084,6 +1095,7 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
         },
         .tuple_lit => |elems| {
             any.* = true;
+            self.scan_plain = false;
             if (simpleLiteralListQtype(elems)) |elem_qtype| {
                 const elem_size = qbeSizeOf(elem_qtype);
                 const payload_size = LIST_HEADER_SIZE + elem_size * elems.len;
@@ -1101,18 +1113,25 @@ fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *
         },
         .dict_lit => |pairs| {
             all_ok.* = false;
+            self.scan_plain = false;
             for (pairs) |p| {
                 try scanStackConstructsExpr(self, p.key, all_ok, any);
                 try scanStackConstructsExpr(self, p.value, all_ok, any);
             }
         },
-        .await_expr => |op| try scanStackConstructsExpr(self, op.*, all_ok, any),
+        .await_expr => |op| {
+            self.scan_plain = false;
+            try scanStackConstructsExpr(self, op.*, all_ok, any);
+        },
         .spawn_expr => |op| {
             all_ok.* = false;
+            self.scan_plain = false;
             try scanStackConstructsExpr(self, op.*, all_ok, any);
         },
         .generic_construct => |g| {
             all_ok.* = false;
+            // `ptr[T](x)` yalnızca bir tür dönüşümüdür (tahsis yok); diğer jenerik inşalar arenayı tüketebilir.
+            if (!std.mem.eql(u8, g.name, "ptr")) self.scan_plain = false;
             for (g.args) |a| try scanStackConstructsExpr(self, a, all_ok, any);
         },
     }

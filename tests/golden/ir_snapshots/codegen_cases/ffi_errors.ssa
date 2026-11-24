@@ -6193,11 +6193,8 @@ export function $nox_ffi_release(l %rt, l %p_p) {
 }
 export function l $nox_ffi_null(l %rt) {
 @start
-    %t0 =l call $nox_arena_create(l %rt)
-    call $nox_arena_destroy(l %rt, l %t0)
     ret 0
 @after_return0
-    call $nox_arena_destroy(l %rt, l %t0)
 @fn_end1
     ret 0
 }
@@ -6205,13 +6202,10 @@ export function w $nox_ffi_is_null(l %rt, l %p_p) {
 @start
     %t0 =l alloc8 8
     storel %p_p, %t0
-    %t1 =l call $nox_arena_create(l %rt)
-    %t2 =l loadl %t0
-    %t3 =w ceql %t2, 0
-    call $nox_arena_destroy(l %rt, l %t1)
-    ret %t3
+    %t1 =l loadl %t0
+    %t2 =w ceql %t1, 0
+    ret %t2
 @after_return0
-    call $nox_arena_destroy(l %rt, l %t1)
 @fn_end1
     ret 0
 }
@@ -6714,8 +6708,8 @@ export function l $__ffi_err_fopen(l %rt, l %p_path, l %p_mode) {
     %t4 =l alloc8 8
     %t5 =l alloc8 8
     %t6 =l alloc8 8
-    %t25 =l alloc8 48
-    %t51 =l alloc8 8
+    %t24 =l alloc8 48
+    %t50 =l alloc8 8
     storel 0, %t4
     storel 0, %t5
     storel 0, %t6
@@ -6726,38 +6720,36 @@ export function l $__ffi_err_fopen(l %rt, l %p_path, l %p_mode) {
     %t9 =l call $fopen(l %t7, l %t8)
     storel %t9, %t2
     storew 0, %t3
-    %t10 =l call $nox_arena_create(l %rt)
-    %t11 =l loadl %t2
-    %t12 =w ceql %t11, 0
-    storew %t12, %t3
-    call $nox_arena_destroy(l %rt, l %t10)
-    %t13 =w loadw %t3
-    jnz %t13, @if_then1, @if_end0
+    %t10 =l loadl %t2
+    %t11 =w ceql %t10, 0
+    storew %t11, %t3
+    %t12 =w loadw %t3
+    jnz %t12, @if_then1, @if_end0
 @if_then1
-    %t14 =l call $nox_ffi_errno_text_raw(l %rt)
-    storel %t14, %t6
+    %t13 =l call $nox_ffi_errno_text_raw(l %rt)
+    storel %t13, %t6
     jmp @inline_done2
 @after_inline_return3
     jmp @inline_done2
 @inline_done2
-    %t15 =l loadl %t6
-    %t16 =l loadl %t4
-    %t17 =w ceql %t16, 0
-    jnz %t17, @release_skip5, @release4
+    %t14 =l loadl %t6
+    %t15 =l loadl %t4
+    %t16 =w ceql %t15, 0
+    jnz %t16, @release_skip5, @release4
 @release4
-    %t18 =l sub %t16, 16
-    %t19 =l loadl %t18
-    %t20 =w csgel %t19, 536870912
-    jnz %t20, @str_free_done9, @str_rel_atomic10
+    %t17 =l sub %t15, 16
+    %t18 =l loadl %t17
+    %t19 =w csgel %t18, 536870912
+    jnz %t19, @str_free_done9, @str_rel_atomic10
 @str_rel_atomic10
-    %t21 =l sub %t16, 16
-    %t22 =l loadl %t21
-    %t23 =l sub %t22, 1
-    storel %t23, %t21
-    %t24 =w cslel %t23, 0
-    jnz %t24, @str_free7, @str_free_skip8
+    %t20 =l sub %t15, 16
+    %t21 =l loadl %t20
+    %t22 =l sub %t21, 1
+    storel %t22, %t20
+    %t23 =w cslel %t22, 0
+    jnz %t23, @str_free7, @str_free_skip8
 @str_free7
-    call $nox_str_free_now(l %rt, l %t16)
+    call $nox_str_free_now(l %rt, l %t15)
     jmp @str_free_done9
 @str_free_skip8
     jmp @str_free_done9
@@ -6767,39 +6759,39 @@ export function l $__ffi_err_fopen(l %rt, l %p_path, l %p_mode) {
     jmp @release_done6
 @release_done6
     storel 0, %t4
-    storel %t15, %t4
-    %t26 =l add $str27, 16
-    %t27 =l add %t25, 0
-    storel 0, %t27
-    %t28 =l add %t25, 8
-    storel %t26, %t28
-    %t29 =l add %t25, 16
-    storel 1, %t29
-    %t30 =l add %t25, 24
-    storel 0, %t30
-    %t31 =l add $str28, 16
-    %t32 =l add %t25, 32
-    storel 0, %t32
-    %t33 =l add %t25, 40
-    storel %t31, %t33
-    %t34 =l call $nox_str_concat_n(l %rt, l %t25, l 3)
-    %t35 =l loadl %t5
-    %t36 =w ceql %t35, 0
-    jnz %t36, @release_skip12, @release11
+    storel %t14, %t4
+    %t25 =l add $str27, 16
+    %t26 =l add %t24, 0
+    storel 0, %t26
+    %t27 =l add %t24, 8
+    storel %t25, %t27
+    %t28 =l add %t24, 16
+    storel 1, %t28
+    %t29 =l add %t24, 24
+    storel 0, %t29
+    %t30 =l add $str28, 16
+    %t31 =l add %t24, 32
+    storel 0, %t31
+    %t32 =l add %t24, 40
+    storel %t30, %t32
+    %t33 =l call $nox_str_concat_n(l %rt, l %t24, l 3)
+    %t34 =l loadl %t5
+    %t35 =w ceql %t34, 0
+    jnz %t35, @release_skip12, @release11
 @release11
-    %t37 =l sub %t35, 16
-    %t38 =l loadl %t37
-    %t39 =w csgel %t38, 536870912
-    jnz %t39, @str_free_done16, @str_rel_atomic17
+    %t36 =l sub %t34, 16
+    %t37 =l loadl %t36
+    %t38 =w csgel %t37, 536870912
+    jnz %t38, @str_free_done16, @str_rel_atomic17
 @str_rel_atomic17
-    %t40 =l sub %t35, 16
-    %t41 =l loadl %t40
-    %t42 =l sub %t41, 1
-    storel %t42, %t40
-    %t43 =w cslel %t42, 0
-    jnz %t43, @str_free14, @str_free_skip15
+    %t39 =l sub %t34, 16
+    %t40 =l loadl %t39
+    %t41 =l sub %t40, 1
+    storel %t41, %t39
+    %t42 =w cslel %t41, 0
+    jnz %t42, @str_free14, @str_free_skip15
 @str_free14
-    call $nox_str_free_now(l %rt, l %t35)
+    call $nox_str_free_now(l %rt, l %t34)
     jmp @str_free_done16
 @str_free_skip15
     jmp @str_free_done16
@@ -6809,93 +6801,93 @@ export function l $__ffi_err_fopen(l %rt, l %p_path, l %p_mode) {
     jmp @release_done13
 @release_done13
     storel 0, %t5
-    storel %t34, %t5
-    %t44 =l add $str29, 16
-    %t45 =l loadl %t4
-    %t46 =l loadl %t5
+    storel %t33, %t5
+    %t43 =l add $str29, 16
+    %t44 =l loadl %t4
+    %t45 =l loadl %t5
+    %t46 =l call $nox_str_append(l %rt, l %t45, l %t43)
     %t47 =l call $nox_str_append(l %rt, l %t46, l %t44)
-    %t48 =l call $nox_str_append(l %rt, l %t47, l %t45)
-    storel %t48, %t5
-    %t49 =l loadl %t5
-    %t52 =l sub %rt, 24
-    %t53 =l loadl %t52
-    %t54 =w ceql %t53, 0
-    jnz %t54, @calloc_slow18, @calloc_chk19
+    storel %t47, %t5
+    %t48 =l loadl %t5
+    %t51 =l sub %rt, 24
+    %t52 =l loadl %t51
+    %t53 =w ceql %t52, 0
+    jnz %t53, @calloc_slow18, @calloc_chk19
 @calloc_chk19
-    %t55 =l sub %rt, 32
-    %t56 =l loadl %t55
-    %t57 =l add %t56, 16
-    %t58 =l loadl %t57
-    %t59 =w cnel %t58, 0
-    jnz %t59, @calloc_pop20, @calloc_slow18
+    %t54 =l sub %rt, 32
+    %t55 =l loadl %t54
+    %t56 =l add %t55, 16
+    %t57 =l loadl %t56
+    %t58 =w cnel %t57, 0
+    jnz %t58, @calloc_pop20, @calloc_slow18
 @calloc_pop20
-    %t60 =l loadl %t58
-    storel %t60, %t57
-    storel 1, %t58
-    %t61 =l add %t58, 8
-    storel %t61, %t51
+    %t59 =l loadl %t57
+    storel %t59, %t56
+    storel 1, %t57
+    %t60 =l add %t57, 8
+    storel %t60, %t50
     jmp @calloc_done21
 @calloc_slow18
-    %t62 =l call $nox_rc_alloc(l %rt, l 40)
-    storel %t62, %t51
+    %t61 =l call $nox_rc_alloc(l %rt, l 40)
+    storel %t61, %t50
     jmp @calloc_done21
 @calloc_done21
-    %t63 =l loadl %t51
-    storel 2, %t63
-    %t64 =l add %t63, 8
-    storel $SysError_vtable, %t64
-    %t65 =l add %t63, 16
+    %t62 =l loadl %t50
+    storel 2, %t62
+    %t63 =l add %t62, 8
+    storel $SysError_vtable, %t63
+    %t64 =l add %t62, 16
+    storel 0, %t64
+    %t65 =l add %t62, 24
     storel 0, %t65
-    %t66 =l add %t63, 24
+    %t66 =l add %t62, 32
     storel 0, %t66
-    %t67 =l add %t63, 32
-    storel 0, %t67
-    call $Exception___init__(l %rt, l %t63, l %t49)
-    %t68 =w call $nox_exception_pending(l %rt)
-    jnz %t68, @ctor_init_failed22, @ctor_init_cont23
+    call $Exception___init__(l %rt, l %t62, l %t48)
+    %t67 =w call $nox_exception_pending(l %rt)
+    jnz %t67, @ctor_init_failed22, @ctor_init_cont23
 @ctor_init_failed22
-    %t69 =w ceql %t63, 0
-    jnz %t69, @release_skip25, @release24
+    %t68 =w ceql %t62, 0
+    jnz %t68, @release_skip25, @release24
 @release24
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t63)
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t62)
     jmp @release_done26
 @release_skip25
     jmp @release_done26
 @release_done26
     jmp @ctor_init_cont23
 @ctor_init_cont23
-    %t70 =l sub %rt, 48
-    %t71 =w loadub %t70
-    %t72 =l sub %rt, 64
-    %t73 =l loadl %t72
-    jnz %t71, @exc_slow27, @exc_fast28
+    %t69 =l sub %rt, 48
+    %t70 =w loadub %t69
+    %t71 =l sub %rt, 64
+    %t72 =l loadl %t71
+    jnz %t70, @exc_slow27, @exc_fast28
 @exc_fast28
-    %t74 =w cnel %t73, 0
+    %t73 =w cnel %t72, 0
     jmp @exc_done29
 @exc_slow27
-    %t75 =w call $nox_exception_pending(l %rt)
+    %t74 =w call $nox_exception_pending(l %rt)
     jmp @exc_done29
 @exc_done29
-    %t76 =w phi @exc_fast28 %t74, @exc_slow27 %t75
-    jnz %t76, @exc_propagate30, @exc_continue31
+    %t75 =w phi @exc_fast28 %t73, @exc_slow27 %t74
+    jnz %t75, @exc_propagate30, @exc_continue31
 @exc_propagate30
-    %t77 =l loadl %t4
-    %t78 =w ceql %t77, 0
-    jnz %t78, @release_skip33, @release32
+    %t76 =l loadl %t4
+    %t77 =w ceql %t76, 0
+    jnz %t77, @release_skip33, @release32
 @release32
-    %t79 =l sub %t77, 16
-    %t80 =l loadl %t79
-    %t81 =w csgel %t80, 536870912
-    jnz %t81, @str_free_done37, @str_rel_atomic38
+    %t78 =l sub %t76, 16
+    %t79 =l loadl %t78
+    %t80 =w csgel %t79, 536870912
+    jnz %t80, @str_free_done37, @str_rel_atomic38
 @str_rel_atomic38
-    %t82 =l sub %t77, 16
-    %t83 =l loadl %t82
-    %t84 =l sub %t83, 1
-    storel %t84, %t82
-    %t85 =w cslel %t84, 0
-    jnz %t85, @str_free35, @str_free_skip36
+    %t81 =l sub %t76, 16
+    %t82 =l loadl %t81
+    %t83 =l sub %t82, 1
+    storel %t83, %t81
+    %t84 =w cslel %t83, 0
+    jnz %t84, @str_free35, @str_free_skip36
 @str_free35
-    call $nox_str_free_now(l %rt, l %t77)
+    call $nox_str_free_now(l %rt, l %t76)
     jmp @str_free_done37
 @str_free_skip36
     jmp @str_free_done37
@@ -6905,23 +6897,23 @@ export function l $__ffi_err_fopen(l %rt, l %p_path, l %p_mode) {
     jmp @release_done34
 @release_done34
     storel 0, %t4
-    %t86 =l loadl %t5
-    %t87 =w ceql %t86, 0
-    jnz %t87, @release_skip40, @release39
+    %t85 =l loadl %t5
+    %t86 =w ceql %t85, 0
+    jnz %t86, @release_skip40, @release39
 @release39
-    %t88 =l sub %t86, 16
-    %t89 =l loadl %t88
-    %t90 =w csgel %t89, 536870912
-    jnz %t90, @str_free_done44, @str_rel_atomic45
+    %t87 =l sub %t85, 16
+    %t88 =l loadl %t87
+    %t89 =w csgel %t88, 536870912
+    jnz %t89, @str_free_done44, @str_rel_atomic45
 @str_rel_atomic45
-    %t91 =l sub %t86, 16
-    %t92 =l loadl %t91
-    %t93 =l sub %t92, 1
-    storel %t93, %t91
-    %t94 =w cslel %t93, 0
-    jnz %t94, @str_free42, @str_free_skip43
+    %t90 =l sub %t85, 16
+    %t91 =l loadl %t90
+    %t92 =l sub %t91, 1
+    storel %t92, %t90
+    %t93 =w cslel %t92, 0
+    jnz %t93, @str_free42, @str_free_skip43
 @str_free42
-    call $nox_str_free_now(l %rt, l %t86)
+    call $nox_str_free_now(l %rt, l %t85)
     jmp @str_free_done44
 @str_free_skip43
     jmp @str_free_done44
@@ -6933,41 +6925,41 @@ export function l $__ffi_err_fopen(l %rt, l %p_path, l %p_mode) {
     storel 0, %t5
     ret 0
 @exc_continue31
-    %t95 =l add %t63, 24
-    storel 10, %t95
-    call $nox_raise(l %rt, l %t63, l 10)
-    %t96 =l sub %rt, 48
-    %t97 =w loadub %t96
-    %t98 =l sub %rt, 64
-    %t99 =l loadl %t98
-    jnz %t97, @exc_slow46, @exc_fast47
+    %t94 =l add %t62, 24
+    storel 10, %t94
+    call $nox_raise(l %rt, l %t62, l 10)
+    %t95 =l sub %rt, 48
+    %t96 =w loadub %t95
+    %t97 =l sub %rt, 64
+    %t98 =l loadl %t97
+    jnz %t96, @exc_slow46, @exc_fast47
 @exc_fast47
-    %t100 =w cnel %t99, 0
+    %t99 =w cnel %t98, 0
     jmp @exc_done48
 @exc_slow46
-    %t101 =w call $nox_exception_pending(l %rt)
+    %t100 =w call $nox_exception_pending(l %rt)
     jmp @exc_done48
 @exc_done48
-    %t102 =w phi @exc_fast47 %t100, @exc_slow46 %t101
-    jnz %t102, @exc_propagate49, @exc_continue50
+    %t101 =w phi @exc_fast47 %t99, @exc_slow46 %t100
+    jnz %t101, @exc_propagate49, @exc_continue50
 @exc_propagate49
-    %t103 =l loadl %t4
-    %t104 =w ceql %t103, 0
-    jnz %t104, @release_skip52, @release51
+    %t102 =l loadl %t4
+    %t103 =w ceql %t102, 0
+    jnz %t103, @release_skip52, @release51
 @release51
-    %t105 =l sub %t103, 16
-    %t106 =l loadl %t105
-    %t107 =w csgel %t106, 536870912
-    jnz %t107, @str_free_done56, @str_rel_atomic57
+    %t104 =l sub %t102, 16
+    %t105 =l loadl %t104
+    %t106 =w csgel %t105, 536870912
+    jnz %t106, @str_free_done56, @str_rel_atomic57
 @str_rel_atomic57
-    %t108 =l sub %t103, 16
-    %t109 =l loadl %t108
-    %t110 =l sub %t109, 1
-    storel %t110, %t108
-    %t111 =w cslel %t110, 0
-    jnz %t111, @str_free54, @str_free_skip55
+    %t107 =l sub %t102, 16
+    %t108 =l loadl %t107
+    %t109 =l sub %t108, 1
+    storel %t109, %t107
+    %t110 =w cslel %t109, 0
+    jnz %t110, @str_free54, @str_free_skip55
 @str_free54
-    call $nox_str_free_now(l %rt, l %t103)
+    call $nox_str_free_now(l %rt, l %t102)
     jmp @str_free_done56
 @str_free_skip55
     jmp @str_free_done56
@@ -6977,23 +6969,23 @@ export function l $__ffi_err_fopen(l %rt, l %p_path, l %p_mode) {
     jmp @release_done53
 @release_done53
     storel 0, %t4
-    %t112 =l loadl %t5
-    %t113 =w ceql %t112, 0
-    jnz %t113, @release_skip59, @release58
+    %t111 =l loadl %t5
+    %t112 =w ceql %t111, 0
+    jnz %t112, @release_skip59, @release58
 @release58
-    %t114 =l sub %t112, 16
-    %t115 =l loadl %t114
-    %t116 =w csgel %t115, 536870912
-    jnz %t116, @str_free_done63, @str_rel_atomic64
+    %t113 =l sub %t111, 16
+    %t114 =l loadl %t113
+    %t115 =w csgel %t114, 536870912
+    jnz %t115, @str_free_done63, @str_rel_atomic64
 @str_rel_atomic64
-    %t117 =l sub %t112, 16
-    %t118 =l loadl %t117
-    %t119 =l sub %t118, 1
-    storel %t119, %t117
-    %t120 =w cslel %t119, 0
-    jnz %t120, @str_free61, @str_free_skip62
+    %t116 =l sub %t111, 16
+    %t117 =l loadl %t116
+    %t118 =l sub %t117, 1
+    storel %t118, %t116
+    %t119 =w cslel %t118, 0
+    jnz %t119, @str_free61, @str_free_skip62
 @str_free61
-    call $nox_str_free_now(l %rt, l %t112)
+    call $nox_str_free_now(l %rt, l %t111)
     jmp @str_free_done63
 @str_free_skip62
     jmp @str_free_done63
@@ -7007,24 +6999,24 @@ export function l $__ffi_err_fopen(l %rt, l %p_path, l %p_mode) {
 @exc_continue50
     jmp @if_end0
 @if_end0
-    %t121 =l loadl %t2
-    %t122 =l loadl %t4
-    %t123 =w ceql %t122, 0
-    jnz %t123, @release_skip66, @release65
+    %t120 =l loadl %t2
+    %t121 =l loadl %t4
+    %t122 =w ceql %t121, 0
+    jnz %t122, @release_skip66, @release65
 @release65
-    %t124 =l sub %t122, 16
-    %t125 =l loadl %t124
-    %t126 =w csgel %t125, 536870912
-    jnz %t126, @str_free_done70, @str_rel_atomic71
+    %t123 =l sub %t121, 16
+    %t124 =l loadl %t123
+    %t125 =w csgel %t124, 536870912
+    jnz %t125, @str_free_done70, @str_rel_atomic71
 @str_rel_atomic71
-    %t127 =l sub %t122, 16
-    %t128 =l loadl %t127
-    %t129 =l sub %t128, 1
-    storel %t129, %t127
-    %t130 =w cslel %t129, 0
-    jnz %t130, @str_free68, @str_free_skip69
+    %t126 =l sub %t121, 16
+    %t127 =l loadl %t126
+    %t128 =l sub %t127, 1
+    storel %t128, %t126
+    %t129 =w cslel %t128, 0
+    jnz %t129, @str_free68, @str_free_skip69
 @str_free68
-    call $nox_str_free_now(l %rt, l %t122)
+    call $nox_str_free_now(l %rt, l %t121)
     jmp @str_free_done70
 @str_free_skip69
     jmp @str_free_done70
@@ -7034,23 +7026,23 @@ export function l $__ffi_err_fopen(l %rt, l %p_path, l %p_mode) {
     jmp @release_done67
 @release_done67
     storel 0, %t4
-    %t131 =l loadl %t5
-    %t132 =w ceql %t131, 0
-    jnz %t132, @release_skip73, @release72
+    %t130 =l loadl %t5
+    %t131 =w ceql %t130, 0
+    jnz %t131, @release_skip73, @release72
 @release72
-    %t133 =l sub %t131, 16
-    %t134 =l loadl %t133
-    %t135 =w csgel %t134, 536870912
-    jnz %t135, @str_free_done77, @str_rel_atomic78
+    %t132 =l sub %t130, 16
+    %t133 =l loadl %t132
+    %t134 =w csgel %t133, 536870912
+    jnz %t134, @str_free_done77, @str_rel_atomic78
 @str_rel_atomic78
-    %t136 =l sub %t131, 16
-    %t137 =l loadl %t136
-    %t138 =l sub %t137, 1
-    storel %t138, %t136
-    %t139 =w cslel %t138, 0
-    jnz %t139, @str_free75, @str_free_skip76
+    %t135 =l sub %t130, 16
+    %t136 =l loadl %t135
+    %t137 =l sub %t136, 1
+    storel %t137, %t135
+    %t138 =w cslel %t137, 0
+    jnz %t138, @str_free75, @str_free_skip76
 @str_free75
-    call $nox_str_free_now(l %rt, l %t131)
+    call $nox_str_free_now(l %rt, l %t130)
     jmp @str_free_done77
 @str_free_skip76
     jmp @str_free_done77
@@ -7060,25 +7052,25 @@ export function l $__ffi_err_fopen(l %rt, l %p_path, l %p_mode) {
     jmp @release_done74
 @release_done74
     storel 0, %t5
-    ret %t121
+    ret %t120
 @after_return79
-    %t140 =l loadl %t4
-    %t141 =w ceql %t140, 0
-    jnz %t141, @release_skip81, @release80
+    %t139 =l loadl %t4
+    %t140 =w ceql %t139, 0
+    jnz %t140, @release_skip81, @release80
 @release80
-    %t142 =l sub %t140, 16
-    %t143 =l loadl %t142
-    %t144 =w csgel %t143, 536870912
-    jnz %t144, @str_free_done85, @str_rel_atomic86
+    %t141 =l sub %t139, 16
+    %t142 =l loadl %t141
+    %t143 =w csgel %t142, 536870912
+    jnz %t143, @str_free_done85, @str_rel_atomic86
 @str_rel_atomic86
-    %t145 =l sub %t140, 16
-    %t146 =l loadl %t145
-    %t147 =l sub %t146, 1
-    storel %t147, %t145
-    %t148 =w cslel %t147, 0
-    jnz %t148, @str_free83, @str_free_skip84
+    %t144 =l sub %t139, 16
+    %t145 =l loadl %t144
+    %t146 =l sub %t145, 1
+    storel %t146, %t144
+    %t147 =w cslel %t146, 0
+    jnz %t147, @str_free83, @str_free_skip84
 @str_free83
-    call $nox_str_free_now(l %rt, l %t140)
+    call $nox_str_free_now(l %rt, l %t139)
     jmp @str_free_done85
 @str_free_skip84
     jmp @str_free_done85
@@ -7088,23 +7080,23 @@ export function l $__ffi_err_fopen(l %rt, l %p_path, l %p_mode) {
     jmp @release_done82
 @release_done82
     storel 0, %t4
-    %t149 =l loadl %t5
-    %t150 =w ceql %t149, 0
-    jnz %t150, @release_skip88, @release87
+    %t148 =l loadl %t5
+    %t149 =w ceql %t148, 0
+    jnz %t149, @release_skip88, @release87
 @release87
-    %t151 =l sub %t149, 16
-    %t152 =l loadl %t151
-    %t153 =w csgel %t152, 536870912
-    jnz %t153, @str_free_done92, @str_rel_atomic93
+    %t150 =l sub %t148, 16
+    %t151 =l loadl %t150
+    %t152 =w csgel %t151, 536870912
+    jnz %t152, @str_free_done92, @str_rel_atomic93
 @str_rel_atomic93
-    %t154 =l sub %t149, 16
-    %t155 =l loadl %t154
-    %t156 =l sub %t155, 1
-    storel %t156, %t154
-    %t157 =w cslel %t156, 0
-    jnz %t157, @str_free90, @str_free_skip91
+    %t153 =l sub %t148, 16
+    %t154 =l loadl %t153
+    %t155 =l sub %t154, 1
+    storel %t155, %t153
+    %t156 =w cslel %t155, 0
+    jnz %t156, @str_free90, @str_free_skip91
 @str_free90
-    call $nox_str_free_now(l %rt, l %t149)
+    call $nox_str_free_now(l %rt, l %t148)
     jmp @str_free_done92
 @str_free_skip91
     jmp @str_free_done92

@@ -55,10 +55,16 @@ class P:
     lp_bn: list[int]
     lp_bv: list[int]
     cov: list[int]
+    # R2-D (v2.2.55): çağrı ayrıştırmasının "anahtar sözcüklü/yıldızlı argüman görüldü" bayrağı (`sw[0]`); her çağrıda yerel `[0]` listesi tahsis etmek yerine ayrıştırıcıda tek liste.
+    sw: list[int]
+    # `parse_int_lexeme` çıkış parametresi (her tamsayı sabiti için yerel `[0]` tahsis etmek yerine tek liste; işlev ilk iş `ok[0] = 0` yazar).
+    okl: list[int]
 
     def __init__(self, a: Ast, tk: list[int]) -> None:
         self.a = a
         self.tk = tk
+        self.sw = [0]
+        self.okl = [0]
         self.pos = 0
         self.ntk = len(tk) // 5
         self.depth = 0
@@ -713,10 +719,10 @@ def try_generic_tail(p: P, name: int) -> int:
     checkpoint: int = p.pos
     saved_depth: int = p.depth
     expect(p, 51)
-    targs: list[int] = []
+    first_targ: int = 0
     ok: bool = True
     try:
-        targs.append(parse_type_expr(p))
+        first_targ = parse_type_expr(p)
     except ErrUnexpected:
         ok = False
     except ErrNumber:
@@ -725,6 +731,15 @@ def try_generic_tail(p: P, name: int) -> int:
         p.pos = checkpoint
         p.depth = saved_depth
         return -1
+    # R2-D (v2.2.55): sıradan indeks `xs[i]` bu yola da girer; tek tip argümanı `] (` ile devam etmiyorsa liste hiç tahsis edilmeden geri sarılır (davranış aynı: `p.pos = checkpoint`).
+    if not chk(p, 47):
+        if not chk(p, 52):
+            p.pos = checkpoint
+            return -1
+        if p.pos + 1 >= p.ntk or kd_at(p, p.pos + 1) != 49:
+            p.pos = checkpoint
+            return -1
+    targs: list[int] = [first_targ]
     committed: bool = False
     while mtc(p, 47):
         committed = True
@@ -760,27 +775,25 @@ def parse_postfix(p: P) -> int:
             at_: int = expect(p, 4)
             expr = ex_attr(a, expr, tstr(p, at_))
         elif mtc(p, 49):
+            # R2-D (v2.2.55): `arg_first/arg_last/sw` yerel listeleri (çağrı başına 3 liste + büyütme tamponları ≈ 6 blok) kaldırıldı; argüman aralığı `reg_span` ile hemen kaydedilir,
+            # bayrak iç içe çağrılara karşı kaydet/geri yükle ile ayrıştırıcı alanında tutulur.
             args: list[int] = []
-            arg_first: list[int] = []
-            arg_last: list[int] = []
-            sw: list[int] = [0]
+            saved_sw: int = p.sw[0]
+            p.sw[0] = 0
             if not chk(p, 50):
                 st0: int = p.pos
-                args.append(parse_call_arg(p, sw))
-                if chk(p, 11) and sw[0] == 0:
+                args.append(parse_call_arg(p, p.sw))
+                if chk(p, 11) and p.sw[0] == 0:
                     clauses: list[int] = parse_comp_clauses(p)
                     cst: int = sl(a, clauses)
                     args[0] = mk_Expr_list_comp(a, mk_ListComp(a, args[0], cst, len(clauses), -1, 1))
-                arg_first.append(st0)
-                arg_last.append(p.pos - 1)
+                reg_span(p, args[0], span_toks(p, st0, p.pos - 1))
                 while mtc(p, 47):
                     st1: int = p.pos
-                    args.append(parse_call_arg(p, sw))
-                    arg_first.append(st1)
-                    arg_last.append(p.pos - 1)
+                    args.append(parse_call_arg(p, p.sw))
+                    reg_span(p, args[len(args) - 1], span_toks(p, st1, p.pos - 1))
             expect(p, 50)
-            for ai in range(len(args)):
-                reg_span(p, args[ai], span_toks(p, arg_first[ai], arg_last[ai]))
+            p.sw[0] = saved_sw
             et: int = a.n[expr]
             is_fmt: bool = False
             if et == 9:
@@ -930,7 +943,7 @@ def parse_primary(p: P) -> int:
     k: int = kd(p)
     if k == 0:
         t: int = adv(p)
-        ok: list[int] = [0]
+        ok: list[int] = p.okl
         v: int = parse_int_lexeme(a, t_s(p, t), t_e(p, t), ok)
         if ok[0] == 0:
             set_diag(p, -1, kd_at(p, t), t, "")

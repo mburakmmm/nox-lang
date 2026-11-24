@@ -457,7 +457,7 @@ test "nox.http.serve_multicore: bağlantılar birden fazla worker'a dağılır (
         \\    t0: int = nox.time.monotonic_ns()
         \\    h: int = 7
         \\    i: int = 0
-        \\    while i < 300000:
+        \\    while i < 2000000:
         \\        h = (h * 31 + i) % 1000003
         \\        i = i + 1
         \\    t1: int = nox.time.monotonic_ns()

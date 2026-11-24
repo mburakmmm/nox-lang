@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.55]
+
+Nox selfhost bileşenleri için kanıtlı hızlanma: lexer 10,1 → 3,3 ms, parse 18,9 → 9,9 ms, fmt hattı 27,0 → 15,5 ms (992 KB, ReleaseFast); Nox artık Zig'e oranla lexer 0,62×, parse 0,81×, fmt 0,97×.
+
+- **Codegen**: tahsis içermeyen ("düz") `lowlevel:` blokları artık `nox_arena_create/destroy` çifti yürütmez (`scanStackConstructSites` + `scan_plain`); bayt başına `at()` çağrısı yapan kod (lexer, AST dökümü) büyük kazandı. Arenayı tüketebilecek yapılar (sınıf/liste/tuple literali, kullanıcı çağrısı, `ptr` dışı generic, sözlük, lambda, comprehension, spawn/await, try/with/defer) arenayı korur. 16 IR anlık görüntüsü güncellendi; yeni golden `lowlevel_plain_arena_elided`.
+- **Runtime**: `listNextCap` ≥32768 elemanlı listelerde ×4 büyür (saf append: −%29 süre, −%40 tepe RSS).
+- **Parser (selfhost)**: çağrı başına 4 yerel liste, indekste boş `targs` listesi ve her tamsayı sabiti için `ok` listesi kaldırıldı (çağrı 8 → 3 blok).
+- **CI kararlılığı (R1-P3.1)**: `serve_multicore` dağılım testi işleyicisi ~7× uzatıldı (çakışma sinyali güçlendi); HTTP/3 QUIC testi istemcisi bağlantı+isteği 8 kez dener ve her hatayı yazdırır (önceden sessizce boş durum).
+
 ## [2.2.54]
 
 Rapor 1 kapanışı (J, L) ve Rapor 2 lexer ölçüm bulguları.

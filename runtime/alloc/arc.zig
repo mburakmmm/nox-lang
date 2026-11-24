@@ -453,7 +453,7 @@ fn refcountOf(ptr: *anyopaque) *i64 {
 /// büyümeyi görür. `len == cap` iken `append` tarafından çağrılır; YENİ `data` göstericisini döner (bellek yoksa null, başlığa dokunulmaz).
 /// Ayrı tampon düzeni `[stash][elemanlar]` (bkz. `abi_layout` notu): `stash` = listenin satır içi kapasitesi (başlık bloğunun serbest bırakma boyutu).
 pub fn listNextCap(cap: usize) usize {
-    return if (cap < 4) 4 else cap * 2;
+    return if (cap < 4) 4 else if (cap >= 32768) cap * 4 else cap * 2;
 }
 
 /// Listenin SATIR İÇİ kapasitesi (başlık bloğunun `LIST_HEADER_SIZE + inline_cap*esz` boyutu için): hiç büyümemişse `cap`, büyümüşse tampon başlığındaki kayıt.

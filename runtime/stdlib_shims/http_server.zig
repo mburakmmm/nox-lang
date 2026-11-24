@@ -3330,24 +3330,31 @@ test "HTTP/3: serve_tls + set_http3 aynı handler'ı QUIC (UDP) üzerinden çağ
             var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
             defer arena_state.deinit();
             const a = arena_state.allocator();
-            var cctx = quic.newClientCtx("runtime/stdlib_shims/testdata/quic_test_cert.pem", true) catch return;
+            var cctx = quic.newClientCtx("runtime/stdlib_shims/testdata/quic_test_cert.pem", true) catch |e| {
+                std.debug.print("HTTP/3 testi: istemci bağlamı kurulamadı: {s}\n", .{@errorName(e)});
+                return;
+            };
             defer cctx.deinit();
-            // Sunucu fiber'ı başlayana kadar yeniden dene.
-            var conn: quic.Conn = undefined;
+            // R1-P3.1 (v2.2.54): UDP/QUIC yüklü CI koşucusunda (macOS) ilk el sıkışma/istek kaybolabilir; önceden hata sessizce yutulup durum boş kalıyordu. Bağlantı + istek birlikte
+            // yeniden denenir ve her başarısızlık yazdırılır; sunucu YALNIZCA bir kez isteği işler (başarısız denemeler işleyiciye ulaşmaz).
             var attempt: usize = 0;
-            while (true) : (attempt += 1) {
-                if (quic.Conn.connect(&cctx, .{ .v4 = .{ 127, 0, 0, 1 } }, p, "localhost", 3000)) |c| {
-                    conn = c;
-                    break;
-                } else |_| {}
-                if (attempt >= 5) return;
+            while (attempt < 8) : (attempt += 1) {
+                var conn = quic.Conn.connect(&cctx, .{ .v4 = .{ 127, 0, 0, 1 } }, p, "localhost", 3000) catch |e| {
+                    std.debug.print("HTTP/3 testi: bağlantı denemesi {d} başarısız: {s}\n", .{ attempt, @errorName(e) });
+                    continue;
+                };
+                defer conn.deinit();
+                const r = h3srv.testRequest(a, &conn, "GET", "/h3", "") catch |e| {
+                    std.debug.print("HTTP/3 testi: istek denemesi {d} başarısız: {s}\n", .{ attempt, @errorName(e) });
+                    continue;
+                };
+                status_len = @min(r.status.len, status.len);
+                @memcpy(status[0..status_len], r.status[0..status_len]);
+                body_len = @min(r.body.len, body.len);
+                @memcpy(body[0..body_len], r.body[0..body_len]);
+                return;
             }
-            defer conn.deinit();
-            const r = h3srv.testRequest(a, &conn, "GET", "/h3", "") catch return;
-            status_len = @min(r.status.len, status.len);
-            @memcpy(status[0..status_len], r.status[0..status_len]);
-            body_len = @min(r.body.len, body.len);
-            @memcpy(body[0..body_len], r.body[0..body_len]);
+            std.debug.print("HTTP/3 testi: 8 denemenin hiçbiri başarılı olmadı\n", .{});
         }
     };
     const t = try std.Thread.spawn(.{}, Client.run, .{port});

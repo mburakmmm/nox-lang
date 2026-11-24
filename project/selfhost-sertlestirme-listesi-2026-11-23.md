@@ -52,7 +52,7 @@ Kaynak: `~/Desktop/nox-1.md` (Aşama 1/2: sağlamlaştırma, ref. v2.2.44) ve `~
 ### N.2 Düşük riskli iyileştirmeler
 - [x] **R2-D.1** (v2.2.54: ÖLÇÜLDÜ, UYGULANMADI — 5 M `append` vs önceden boyutlandırılmış indeks yazma mikro-ölçümü: 8,25 vs 7,25 ms, büyütme maliyeti ≈%12; lexer 10 ms ≈ 10 ns/bayt, token başı 5 append toplamın <%20'si; toplu yazım için yeni public API gerekir ve kazanç küçük) Lexer token başına 5 `append` → toplu yazım (9 alternatif ölç; yeni public API ekleme; genel optimizasyon, selfhost'a özgü kural yok).
 - [x] **R2-D.2** (v2.2.54: LLVM IR (`noxc build --selfhost-obj selfhost/lexer.nox` → `.ll`) incelendi: `lex` içinde 116 `emit/peek/at` çağrısının HİÇBİRİNİ istisna kontrolü izlemiyor (`computeMustNotRaise` işliyor); kalan 144 kontrol hızlı yol/yavaş yol (bayrak testi satır içi, `nox_exception_pending` yalnız yavaş yolda) → ucuz; arena YOK (`indent_stack` yığın listesi); `at` IR'da 37 çağrı (LLVM -O2 satır içine alır), `emit` 58, `peek` 21 çağrı noktası — gerçek satır içi durumu bağlı ikilide etiketli yerel simgeler nedeniyle belirlenemedi; lexer ≈ 10 ns/bayt saf tarama; v2.2.53 notu: `lexer_at/peek/emit` nesnede global `T` simge olarak da var; `lexer_lex` içinde 260 `bl` var ama hedefler nesne dosyasında çözümsüz yeniden konumlandırma → satır içi mi değil mi belirlenemedi; LLVM IR/asm bağlanmış ikiliden incelenmeli) `at()/peek()/emit()` inlining analizi (LLVM IR + asm; bayt başına çağrı kalıyor mu; zorla inline yok).
-- [ ] **R2-D.3** Lexer veri yerleşimi: gerçek uygulama vs eşdeğer (aynı düz tampon) karşılaştırması.
+- [x] **R2-D.3** (v2.2.55: lexer veri yerleşimi değil `at()`'in arena çifti baskındı; düzeltilince lexer 0,62× Zig) Lexer veri yerleşimi: gerçek uygulama vs eşdeğer (aynı düz tampon) karşılaştırması.
 - [ ] **R2-D.4** Lexer köprüsü maliyetini doğrudan ölç (kopya, Token dönüşümü allocation).
 - [ ] **R2-E.2** `mk_*` oluşturucularında toplu yazım (üretici `gen_selfhost_ast.py`).
 - [ ] **R2-E.3** Span araması (R1-P2.1 ile aynı iş; performans+bellek etkisi ölç).
@@ -62,7 +62,7 @@ Kaynak: `~/Desktop/nox-1.md` (Aşama 1/2: sağlamlaştırma, ref. v2.2.44) ve `~
 
 ### N.3 Derleyici optimizasyonları
 - [ ] **R2-H.1/H.2/H.3** Inlining, bounds check, redundant load/store, TBAA/alias, cold path; LLVM vs QBE farkı (gerçek parser/formatter dispatch'i ölç); `--selfhost-obj` makine kodu kalitesi (visibility, init/fini, runtime parametresi, link/DCE).
-- [ ] **R2-B.2/B.5** ASAP gerçek kullanım oranı (stack/arena/ARC sınıflandırma + neden); borrowed parametre/gereksiz retain-release; `_c` consuming clone etkisi.
+- [~] **R2-B.2/B.5** (v2.2.55 KISMİ: `lowlevel` arena elemesi (düz bloklar) + parser yerel liste tahsisleri kaldırıldı; ASAP sınıflandırma oranı tablosu (stack/arena/ARC + neden) ve borrowed parametre/retain-release analizi AÇIK) ASAP gerçek kullanım oranı (stack/arena/ARC sınıflandırma + neden); borrowed parametre/gereksiz retain-release; `_c` consuming clone etkisi.
 - [ ] **R2-G.3** Kararlı liste başlığı perf doğrulaması (append yerel/alan/parametre/iç içe, sabit genişlikli, heap elemanlı, traversal, sieve, matmul, sort, copy; lexer/parser/formatter); alias doğruluğundan geri dönülmez.
 
 ### N.4 Araştırma — her biri ölçümlü tasarım raporu + KULLANICI KARARI (otomatik uygulanmaz)
@@ -93,7 +93,7 @@ Kaynak: `~/Desktop/nox-1.md` (Aşama 1/2: sağlamlaştırma, ref. v2.2.44) ve `~
 - 2026-11-24: v2.2.52: R1-P1.7c/P1.5/P2.1/P2.2 kapandı; H/I/J/L kısmi (rapor1-asama1-sonuc). YENİ açık: **R1-P1.7d** `x = .{ ..., x ... }` sonuç-konumu örtüşmesi kalıbı için depo taraması.
 - [x] **R1-P1.7d** (v2.2.53: depo taraması 0 bulgu; `scripts/check_zig_result_alias.py` precheck'e eklendi) `x = .{ ... x ... }` (hedefi kendi başlatmasında okuyan Zig struct ataması) kalıbı için depo taraması + düzeltme.
 
-- [ ] **R1-P3.1** macOS CI kararsız ağ/zamanlama testleri (`http_serve_multicore_golden_test` "çakışan yürütme aralıkları", HTTP/3 QUIC yerel istemci): üç ardışık sürümde macOS kırmızı; yeniden deneme/zaman penceresi ya da runner yükü incelenecek.
+- [~] **R1-P3.1** (v2.2.55: `serve_multicore` işleyici yükü 300 000→2 000 000 döngü (çakışma sinyali); HTTP/3 testi istemcisi bağlantı+isteği 8 kez dener, hataları yazdırır; macOS CI sonucu bekleniyor — kırmızı kalırsa günlük artık nedeni gösterir) macOS CI kararsız ağ/zamanlama testleri (`http_serve_multicore_golden_test` "çakışan yürütme aralıkları", HTTP/3 QUIC yerel istemci): üç ardışık sürümde macOS kırmızı; yeniden deneme/zaman penceresi ya da runner yükü incelenecek.
 - [ ] **R1-P3.2** Ekosistem çok-worker/sızıntı/perf koşuları (Nyx `use_listen_fd` düzelince; Aether/Aura/Nox paketleri için yük + sızıntı).
 
 ## R2-N1.a taban ölçümü (2026-11-24, v2.2.48 kaynak, aarch64-macos, ReleaseFast derleyici + çalışma zamanı, `zig build nightly -Doptimize=ReleaseFast --prefix`)
@@ -119,6 +119,17 @@ Aşama süreleri (Nox / Zig): lexer 9,96 ms (2,01×); parse (lex+parse) 18,8 ms 
 `sample` (üst-yığın, tek iş parçacığı ~3100 örnek): `nox_list_free_payload` %23, `nox_arena_create` %9, `nox_arena_destroy` %6, `lexer_lex` %7, `formatter_is_generic_enum_ctor` (düzeltildi). ARC: 20 tekrarda ≈ 2,5 M blok (≈126 bin blok/tekrar), 786–1133 MB toplam tahsis. ÇAĞIRAN zincirleri güvenilmez (çerçeve işaretçisi yok); `list_free_payload`/`arena_*` yükünü doğru bir kaynağa bağlamak için derleyici tarafı çerçeve işaretçisi ya da sayaç bazlı ölçüm gerekir (R2-A.1 devamı).
 Sıradaki aday: lexer (10 ms) ve liste/arena yaşam döngüsü (blok sayısı).
 
-### v2.2.54 ek bulgular (lexer)
+### v2.2.55 — KANITLI HIZLANMA (düzeltme: v2.2.54 notlarındaki "arena yok / yanlış atıf" sonucu YANLIŞTI)
+Gerçek kök neden: `lowlevel:` bloğu içeren küçük işlevler (`lexer_at`, `ast_schema_at`, …) her çağrıda `nox_arena_create/destroy` çifti yürütüyordu (codegen bloğa koşulsuz arena açıyor; mevcut GG.15 elemesi yalnızca ≥1 yığına dönüşebilir inşa varsa devreye giriyordu). `at()` lexer'da bayt başına çağrıldığından profildeki `nox_arena_*`/`nox_list_free_payload` yükü GERÇEKTİ (sembol aralığı doğrulandı; `nox_list_free_payload` 1,4 KB'lık satır içi havuz serbest bırakma). `sample` etiketleri doğruydu; benim "yanlış atıf" yorumum ve `indent_stack` deneyi yanlış varsayıma dayanıyordu.
+Düzeltme (`compiler/codegen_qbe/inlining.zig` `scanStackConstructSites` + `Codegen.scan_plain`): gövdede arenayı tüketebilecek hiçbir yapı yoksa (sınıf kurucusu, liste/tuple literali, kullanıcı/dış işlev ve metot çağrısı, `ptr` dışı generic inşa, sözlük/lambda/comprehension, spawn/await, try/with/defer) arena çifti elenir. Ek: parser çağrı/indeks/int-literal yollarında yerel liste tahsisleri kaldırıldı (çağrı başına 8→3 blok; tüm korpusta 2,53 M→1,37 M blok/20 tekrar); `listNextCap` büyük listelerde (≥32768) ×4 büyür (saf append mikro-ölçümü −%29 süre, −%40 tepe RSS).
+| (992 KB korpus, ReleaseFast, 30 tekrar) | Zig | Nox önce (v2.2.54) | Nox sonra | oran sonra |
+|---|---|---|---|---|
+| lexer | 5,35 ms | 10,1 ms (1,9×) | **3,33 ms** | **0,62×** |
+| parse (lex+parse) | 12,2 ms | 18,9 ms (1,62×) | **9,88 ms** | **0,81×** |
+| fmt hattı | 16,1 ms | 27,0 ms (1,77×) | **15,5 ms** | **0,97×** |
+| fmt tepe RSS (ayrı süreç) | 60,8 MiB | — | 44,4 MiB | 0,73× |
+Doğrulama: tam test-fast 875/875, Zig↔Nox lexer/parser/astdump/fmt farksal paritesi farksız, 16 IR anlık görüntüsü yalnızca arena çifti kalkması + geçici numaralandırma farkı, yeni golden `lowlevel_plain_arena_elided`. R2-A.1/D.1–D.3/F.1/H.1/B.2 bu bulguyla ilerledi (aşağıda).
+
+### v2.2.54 ek bulgular (lexer) — YUKARIDAKİ v2.2.55 ile DÜZELTİLDİ
 - Profil atıf hatası: `sample` çıktısında `nox_arena_create/destroy` ve `nox_list_free_payload` (~%35) lexer'da gerçek maliyet DEĞİL; `cmdLexBench → nox_arena_create` gibi imkânsız çağrılar sembolsüz kodun yanlış atfını gösterir. Deney: `indent_stack` yerel listesini (arena) `Lx` alanına taşımak lexer süresini değiştirmedi (10,05 ms) → geri alındı.
 - Liste büyütme maliyeti ≈%12 (mikro-ölçüm); lexer ≈ 10 ns/bayt = saf tarama mantığı. Sonraki ölçüm adayı: `at(base, i)` (her baytta `lowlevel` ptr_read çağrısı) ve `emit` satır içi olup olmadığı (bağlı ikilide `otool -rv`/LLVM IR ile).

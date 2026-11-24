@@ -4062,13 +4062,10 @@ export function l $data_ptr(l %rt, l %p_raw) {
 @start
     %t0 =l alloc8 8
     storel %p_raw, %t0
-    %t1 =l call $nox_arena_create(l %rt)
-    %t2 =l loadl %t0
-    %t3 =l add %t2, 16
-    call $nox_arena_destroy(l %rt, l %t1)
-    ret %t3
+    %t1 =l loadl %t0
+    %t2 =l add %t1, 16
+    ret %t2
 @after_return0
-    call $nox_arena_destroy(l %rt, l %t1)
 @fn_end1
     ret 0
 }
@@ -4513,31 +4510,29 @@ export function $nox_mem_copy__int(l %rt, l %p_dst, l %p_src, l %p_count) {
     storel %p_dst, %t0
     storel %p_src, %t1
     storel %p_count, %t2
-    %t4 =l call $nox_arena_create(l %rt)
     storel 0, %t3
     jmp @while_cond0
 @while_cond0
-    %t5 =l loadl %t3
-    %t6 =l loadl %t2
-    %t7 =w csltl %t5, %t6
-    jnz %t7, @while_body1, @while_end2
+    %t4 =l loadl %t3
+    %t5 =l loadl %t2
+    %t6 =w csltl %t4, %t5
+    jnz %t6, @while_body1, @while_end2
 @while_body1
-    %t8 =l loadl %t0
-    %t9 =l loadl %t3
-    %t10 =l mul %t9, 8
-    %t11 =l add %t8, %t10
-    %t12 =l loadl %t1
-    %t13 =l loadl %t3
-    %t14 =l mul %t13, 8
-    %t15 =l add %t12, %t14
-    %t16 =l loadl %t15
-    storel %t16, %t11
-    %t17 =l loadl %t3
-    %t18 =l add %t17, 1
-    storel %t18, %t3
+    %t7 =l loadl %t0
+    %t8 =l loadl %t3
+    %t9 =l mul %t8, 8
+    %t10 =l add %t7, %t9
+    %t11 =l loadl %t1
+    %t12 =l loadl %t3
+    %t13 =l mul %t12, 8
+    %t14 =l add %t11, %t13
+    %t15 =l loadl %t14
+    storel %t15, %t10
+    %t16 =l loadl %t3
+    %t17 =l add %t16, 1
+    storel %t17, %t3
     jmp @while_cond0
 @while_end2
-    call $nox_arena_destroy(l %rt, l %t4)
 @fn_end3
     ret
 }
@@ -4550,27 +4545,25 @@ export function $nox_mem_set__int(l %rt, l %p_dst, l %p_value, l %p_count) {
     storel %p_dst, %t0
     storel %p_value, %t1
     storel %p_count, %t2
-    %t4 =l call $nox_arena_create(l %rt)
     storel 0, %t3
     jmp @while_cond0
 @while_cond0
-    %t5 =l loadl %t3
-    %t6 =l loadl %t2
-    %t7 =w csltl %t5, %t6
-    jnz %t7, @while_body1, @while_end2
+    %t4 =l loadl %t3
+    %t5 =l loadl %t2
+    %t6 =w csltl %t4, %t5
+    jnz %t6, @while_body1, @while_end2
 @while_body1
-    %t8 =l loadl %t0
-    %t9 =l loadl %t3
-    %t10 =l mul %t9, 8
-    %t11 =l add %t8, %t10
-    %t12 =l loadl %t1
-    storel %t12, %t11
-    %t13 =l loadl %t3
-    %t14 =l add %t13, 1
-    storel %t14, %t3
+    %t7 =l loadl %t0
+    %t8 =l loadl %t3
+    %t9 =l mul %t8, 8
+    %t10 =l add %t7, %t9
+    %t11 =l loadl %t1
+    storel %t11, %t10
+    %t12 =l loadl %t3
+    %t13 =l add %t12, 1
+    storel %t13, %t3
     jmp @while_cond0
 @while_end2
-    call $nox_arena_destroy(l %rt, l %t4)
 @fn_end3
     ret
 }
@@ -4584,34 +4577,33 @@ export function $nox_mem_move__int(l %rt, l %p_dst, l %p_src, l %p_count) {
     storel %p_dst, %t0
     storel %p_src, %t1
     storel %p_count, %t2
-    %t5 =l call $nox_arena_create(l %rt)
-    %t6 =l loadl %t0
-    %t7 =l loadl %t1
-    %t8 =w csgtl %t6, %t7
-    jnz %t8, @if_then1, @if_else2
+    %t5 =l loadl %t0
+    %t6 =l loadl %t1
+    %t7 =w csgtl %t5, %t6
+    jnz %t7, @if_then1, @if_else2
 @if_then1
-    %t9 =l loadl %t2
-    %t10 =l sub %t9, 1
-    storel %t10, %t3
+    %t8 =l loadl %t2
+    %t9 =l sub %t8, 1
+    storel %t9, %t3
     jmp @while_cond3
 @while_cond3
-    %t11 =l loadl %t3
-    %t12 =w csgel %t11, 0
-    jnz %t12, @while_body4, @while_end5
+    %t10 =l loadl %t3
+    %t11 =w csgel %t10, 0
+    jnz %t11, @while_body4, @while_end5
 @while_body4
-    %t13 =l loadl %t0
-    %t14 =l loadl %t3
-    %t15 =l mul %t14, 8
-    %t16 =l add %t13, %t15
-    %t17 =l loadl %t1
-    %t18 =l loadl %t3
-    %t19 =l mul %t18, 8
-    %t20 =l add %t17, %t19
-    %t21 =l loadl %t20
-    storel %t21, %t16
-    %t22 =l loadl %t3
-    %t23 =l sub %t22, 1
-    storel %t23, %t3
+    %t12 =l loadl %t0
+    %t13 =l loadl %t3
+    %t14 =l mul %t13, 8
+    %t15 =l add %t12, %t14
+    %t16 =l loadl %t1
+    %t17 =l loadl %t3
+    %t18 =l mul %t17, 8
+    %t19 =l add %t16, %t18
+    %t20 =l loadl %t19
+    storel %t20, %t15
+    %t21 =l loadl %t3
+    %t22 =l sub %t21, 1
+    storel %t22, %t3
     jmp @while_cond3
 @while_end5
     jmp @if_end0
@@ -4619,29 +4611,28 @@ export function $nox_mem_move__int(l %rt, l %p_dst, l %p_src, l %p_count) {
     storel 0, %t4
     jmp @while_cond6
 @while_cond6
-    %t24 =l loadl %t4
-    %t25 =l loadl %t2
-    %t26 =w csltl %t24, %t25
-    jnz %t26, @while_body7, @while_end8
+    %t23 =l loadl %t4
+    %t24 =l loadl %t2
+    %t25 =w csltl %t23, %t24
+    jnz %t25, @while_body7, @while_end8
 @while_body7
-    %t27 =l loadl %t0
-    %t28 =l loadl %t4
-    %t29 =l mul %t28, 8
-    %t30 =l add %t27, %t29
-    %t31 =l loadl %t1
-    %t32 =l loadl %t4
-    %t33 =l mul %t32, 8
-    %t34 =l add %t31, %t33
-    %t35 =l loadl %t34
-    storel %t35, %t30
-    %t36 =l loadl %t4
-    %t37 =l add %t36, 1
-    storel %t37, %t4
+    %t26 =l loadl %t0
+    %t27 =l loadl %t4
+    %t28 =l mul %t27, 8
+    %t29 =l add %t26, %t28
+    %t30 =l loadl %t1
+    %t31 =l loadl %t4
+    %t32 =l mul %t31, 8
+    %t33 =l add %t30, %t32
+    %t34 =l loadl %t33
+    storel %t34, %t29
+    %t35 =l loadl %t4
+    %t36 =l add %t35, 1
+    storel %t36, %t4
     jmp @while_cond6
 @while_end8
     jmp @if_end0
 @if_end0
-    call $nox_arena_destroy(l %rt, l %t5)
 @fn_end9
     ret
 }
@@ -4651,11 +4642,9 @@ export function $nox_mem_write_volatile__int(l %rt, l %p_p, l %p_value) {
     %t1 =l alloc8 8
     storel %p_p, %t0
     storel %p_value, %t1
-    %t2 =l call $nox_arena_create(l %rt)
-    %t3 =l loadl %t0
-    %t4 =l loadl %t1
-    storel %t4, %t3
-    call $nox_arena_destroy(l %rt, l %t2)
+    %t2 =l loadl %t0
+    %t3 =l loadl %t1
+    storel %t3, %t2
 @fn_end0
     ret
 }
@@ -4663,13 +4652,10 @@ export function l $nox_mem_read_volatile__int(l %rt, l %p_p) {
 @start
     %t0 =l alloc8 8
     storel %p_p, %t0
-    %t1 =l call $nox_arena_create(l %rt)
-    %t2 =l loadl %t0
-    %t3 =l loadl %t2
-    call $nox_arena_destroy(l %rt, l %t1)
-    ret %t3
+    %t1 =l loadl %t0
+    %t2 =l loadl %t1
+    ret %t2
 @after_return0
-    call $nox_arena_destroy(l %rt, l %t1)
 @fn_end1
     ret 0
 }
