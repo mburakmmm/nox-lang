@@ -127,7 +127,10 @@ pub fn reportParseFailure(sink: report_sink.Sink, source: []const u8, label: []c
     var diag: ?parser.ParserDiagnostic = last_diagnostic;
     if (e == error.UnexpectedToken) {
         if (diag == null or diag.?.span.start_byte != cur.start_byte) {
-            diag = .{ .found = cur.kind, .span = span_mod.fromToken(cur), .note = if (diag) |old| old.note else null };
+            // R1-P1.7c (v2.2.52): `old` önce yerel değişkene alınır. Önceki biçim (`diag = .{ ..., .note = if (diag) |old| old.note else null }`) hedefi kendi başlatma ifadesinde
+            // okuyordu (sonuç-konumu örtüşmesi): ReleaseFast'te alanlar yerinde yazılırken `old.note` çöp okunuyor ve hata iletisi bellek çöpü basıyordu.
+            const old_note: ?[]const u8 = if (diag) |old| old.note else null;
+            diag = .{ .found = cur.kind, .span = span_mod.fromToken(cur), .note = old_note };
         }
     }
     if (diag) |d| {

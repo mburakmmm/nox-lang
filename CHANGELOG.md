@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.52]
+
+Rapor 1 (selfhost sağlamlaştırma) kalan maddeleri: P1.7c, P1.5, P2.1, P2.2 kapandı; H/I/J/L için sonuç raporu.
+
+- **R1-P1.7c**: ReleaseFast `noxc-nightly parse-nox` hata iletisindeki bellek çöpünün kök nedeni Nox değil, `syntax_report.zig`'de hedefi kendi başlatma ifadesinde okuyan struct ataması (Zig sonuç-konumu örtüşmesi); düzeltildi. Zig↔Nox parser paritesi 4 dosya farkından 0'a.
+- **R1-P1.5**: paralel/sıralı cycle collector'ın collect aşamasında kaydedilemeyen beyaz düğümler `dropped_whites` ile sayılır (yalnız sızıntı; erken serbest bırakma yok); fault-injection testi.
+- **R1-P2.1**: AST döküm üreticisi yoğun düğüm→span dizini kullanır (bayt-eşdeğer; 759 KB kaynakta 0,09 → 0,04 s).
+- **R1-P2.2**: nightly dağıtım/platform sözleşmesi belgesi; Windows'ta `zig build nightly` açık hata verir; `selfhost-info` platform doğrulama durumunu yazar.
+- Rapor: `project/rapor1-asama1-sonuc-2026-11-24.md`. Nyx örneği `use_listen_fd` eksikliği Nyx tarafında (derleyici regresyonu değil).
+
 ## [2.2.51]
 
 GPT-6 sağlamlaştırma listesi — `[~]` maddelerinin kapatılması: Optional daraltma varyantları, liste başlığı denetimi, ölçüm kapıları, biçimlendirici CRLF.

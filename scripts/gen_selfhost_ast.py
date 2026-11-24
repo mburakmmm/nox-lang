@@ -186,6 +186,8 @@ class Ast:
     sb: list[int]
     sp_ids: list[int]
     sp_vals: list[int]
+    sp_idx: list[int]
+    sp_idx_n: int
     o: list[int]
 
     def __init__(self, src: int, src_len: int) -> None:
@@ -196,6 +198,8 @@ class Ast:
         self.sb = []
         self.sp_ids = []
         self.sp_vals = []
+        self.sp_idx = []
+        self.sp_idx_n = -1
         self.o = []
 
 # --- çıktı yardımcıları (Zig `ast_dump_full.zig` ile aynı kaçışlama) ---
@@ -287,9 +291,23 @@ def put_str(a: Ast, x: int, y: int) -> None:
             put_byte_escaped(a, a.sb[base + i])
     a.o.append(34)
 
-def put_span_suffix(a: Ast, id: int) -> None:
+# R1-P2.1 (v2.2.52): düğüm kimliği -> sp tablosu konumu yoğun dizini (ilk eşleşme kazanır); önceki doğrusal tarama dökümde O(düğüm x span) idi.
+def build_sp_idx(a: Ast) -> None:
+    a.sp_idx = []
+    for k in range(len(a.n) + 1):
+        a.sp_idx.append(-1)
     for i in range(len(a.sp_ids)):
-        if a.sp_ids[i] == id:
+        sid: int = a.sp_ids[i]
+        if sid >= 0 and sid < len(a.sp_idx) and a.sp_idx[sid] == -1:
+            a.sp_idx[sid] = i
+    a.sp_idx_n = len(a.sp_ids)
+
+def put_span_suffix(a: Ast, id: int) -> None:
+    if a.sp_idx_n != len(a.sp_ids) or len(a.sp_idx) != len(a.n) + 1:
+        build_sp_idx(a)
+    if id >= 0 and id < len(a.sp_idx):
+        i: int = a.sp_idx[id]
+        if i >= 0:
             sp: int = a.sp_vals[i]
             put(a, "@")
             put_int(a, a.n[sp + 2])

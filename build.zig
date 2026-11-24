@@ -808,7 +808,13 @@ pub fn build(b: *std.Build) void {
     noxc_nightly.step.dependOn(&nightly_stage0.step);
     const install_nightly = b.addInstallArtifact(noxc_nightly, .{});
     const nightly_step = b.step("nightly", "noxc-nightly: noxc + Nox ile yazılmış bileşenler (selfhost/) -> zig-out/bin/noxc-nightly");
-    nightly_step.dependOn(&install_nightly.step);
+    // R1-P2.2 (v2.2.52): Windows'ta nightly DESTEKLENMEZ (build adımı `mkdir -p`/stage0 kabuk komutlarına ve POSIX yollarına dayanır; CI matrisi yalnızca ubuntu+macos). Belirsiz bir
+    // bağlama hatası yerine açık hata verilir; "doğrulandı" raporlanmaz.
+    if (target.result.os.tag == .windows) {
+        nightly_step.dependOn(&b.addFail("noxc-nightly Windows'ta desteklenmiyor (bkz. project/nightly-dagitim-sozlesmesi-2026-11-24.md); kararlı noxc kullanın").step);
+    } else {
+        nightly_step.dependOn(&install_nightly.step);
+    }
 
     // noxc-nightly Aşama 0.6: farksal test koşucusu. `frontend-diff-test` koşucunun kendi sağlamlık denetimini (fark yakalama + küçültme) ve Zig↔Zig özdeşlik koşusunu çalıştırır; Nox bileşenleri
     // (Aşama 1+) geldikçe `--component lexer` Zig'i `noxc-nightly --frontend nox` ile karşılaştırır (`scripts/frontend_diff.py`). Opt-in: `zig build test`in parçası değildir.

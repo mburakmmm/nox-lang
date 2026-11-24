@@ -215,6 +215,8 @@ const CycleGc = struct {
     par_runs: usize = 0,
     /// YALNIZCA test derlemesi (GPT-6 P0.2): `N != 0` ise işaretleme/tarama iş listesinin N'inci itişi `error.OutOfMemory` ile başarısız olur (bellek-yetersizliği enjeksiyonu).
     test_fail_pushes: usize = 0,
+    /// R1-P1.5 (v2.2.52): collect aşamasında kaydedilemeyen (OOM) beyaz düğüm sayısı (sızar, serbest bırakılmaz); tanılama/test.
+    dropped_whites: usize = 0,
     /// P1.4: bayt baskısı adımı (bkz. `rearmPressure`).
     pressure_step: usize = asap.GC_PRESSURE_BASE,
 
@@ -791,6 +793,8 @@ const ParShared = struct {
     qalloc: std.mem.Allocator,
     /// GPT-6 P0.2: mark/scan aşamalarında bir iş listesi büyütülemedi ⇒ işaretleme tutarsız; `parPhase` join'den sonra `fatalOom` verir.
     oom: std.atomic.Value(bool) = .init(false),
+    /// R1-P1.5 (v2.2.52): collect aşamasında kaydedilemeyen (OOM) beyaz düğüm sayısı; bu düğümler yalnızca SIZAR (serbest bırakılmaz), asla erken serbest bırakılmaz. `parPhase` sonunda `gc.dropped_whites`e eklenir.
+    dropped: std.atomic.Value(usize) = .init(0),
 };
 
 const ParPhase = enum { mark, scan, collect };
@@ -806,7 +810,7 @@ const ParWorker = struct {
     fn push(self: *ParWorker, v: usize) void {
         self.stack.append(self.sh.qalloc, v) catch {
             // mark/scan'de atlanan düğüm sayaçları tutarsız bırakır (fatal); collect'te yalnızca bir beyaz düğümün alt-ağacı toplanmadan (sızıntı) kalır.
-            if (self.phase != .collect) self.sh.oom.store(true, .release);
+            if (self.phase != .collect) self.sh.oom.store(true, .release) else _ = self.sh.dropped.fetchAdd(1, .monotonic);
         };
     }
 
@@ -901,7 +905,10 @@ const ParWorker = struct {
         for (children.items) |maybe_child| {
             const child = abi_ptr.slotPtr(maybe_child) orelse continue;
             if (claimWhite(child)) {
-                self.whites.append(self.sh.qalloc, child) catch continue;
+                self.whites.append(self.sh.qalloc, child) catch {
+                    _ = self.sh.dropped.fetchAdd(1, .monotonic); // kaydedilemedi: alt-ağaç sızar, asla serbest bırakılmaz
+                    continue;
+                };
                 self.push(@intFromPtr(child));
             }
         }
@@ -939,7 +946,10 @@ const ParWorker = struct {
                         // `collectRootsDiscover` ile aynı: tampon bayrakları temizlenir, renk korunur; yalnız beyaz kökler toplanır.
                         const was_white = colorOf(hdrAtomic(ptr).fetchAnd(~(BUFFERED_BIT | IDX_MASK), .monotonic)) == .white;
                         if (was_white and claimWhite(ptr)) {
-                            self.whites.append(self.sh.qalloc, ptr) catch continue;
+                            self.whites.append(self.sh.qalloc, ptr) catch {
+                                _ = self.sh.dropped.fetchAdd(1, .monotonic);
+                                continue;
+                            };
                             self.push(@intFromPtr(ptr));
                         }
                     },
@@ -974,8 +984,11 @@ fn parPhase(state: *asap.RuntimeState, gc: *CycleGc, phase: ParPhase, n: usize, 
     if (phase == .mark) {
         for (0..n) |i| gc.visited_in_collect += workers[i].visited;
     }
+    gc.dropped_whites += sh.dropped.load(.monotonic);
     for (0..n) |i| {
-        if (whites_out) |out| out.appendSlice(state.allocator(), workers[i].whites.items) catch {};
+        if (whites_out) |out| out.appendSlice(state.allocator(), workers[i].whites.items) catch {
+            gc.dropped_whites += workers[i].whites.items.len; // birleştirilemedi: bu beyazlar sızar (serbest bırakılmaz)
+        };
         workers[i].whites.deinit(sh.qalloc);
     }
 }
@@ -1010,6 +1023,16 @@ fn collectRoots(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc) void {
     collectRootsFinish(rt, state, gc, &whites);
 }
 
+/// R1-P1.5 (v2.2.52): beyaz keşif aşaması (serbest bırakmadan ÖNCE; sayaçlar zaten tutarlı) iş listesi itişi. Başarısızlık sessizce yutulmaz: `dropped_whites` artar, düğüm (ve
+/// alt-ağacı) yalnızca SIZAR — asla erken serbest bırakılmaz (mark/scan OOM'undan farklı olarak sayaçlar bozulmaz).
+fn discoverPush(state: *asap.RuntimeState, gc: *CycleGc, list: *std.ArrayListUnmanaged(*anyopaque), item: *anyopaque) bool {
+    wlPush(state, gc, list, item) catch {
+        gc.dropped_whites += 1;
+        return false;
+    };
+    return true;
+}
+
 fn collectRootsDiscover(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc, whites_out: *std.ArrayListUnmanaged(*anyopaque)) void {
     const whites = whites_out;
     var stack: std.ArrayListUnmanaged(*anyopaque) = .empty;
@@ -1025,8 +1048,7 @@ fn collectRootsDiscover(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc
         h.* &= ~(BUFFERED_BIT | IDX_MASK);
         if (!was_white) continue;
         setColor(ptr, .black);
-        stack.append(state.allocator(), ptr) catch continue;
-        whites.append(state.allocator(), ptr) catch continue;
+        if (!discoverPush(state, gc, &stack, ptr) or !discoverPush(state, gc, whites, ptr)) continue;
         while (stack.pop()) |cur| {
             var children = traceChildren(rt, cur);
             defer children.deinit(state);
@@ -1034,8 +1056,7 @@ fn collectRootsDiscover(rt: ?*anyopaque, state: *asap.RuntimeState, gc: *CycleGc
                 const child = abi_ptr.slotPtr(maybe_child) orelse continue;
                 if (getColor(child) != .white) continue;
                 setColor(child, .black);
-                stack.append(state.allocator(), child) catch continue;
-                whites.append(state.allocator(), child) catch continue;
+                if (!discoverPush(state, gc, &stack, child) or !discoverPush(state, gc, whites, child)) continue;
             }
         }
     }
@@ -1779,4 +1800,38 @@ test "F: paralel işaretleme/tarama, sıralı toplayıcıyla AYNI nesneleri serb
             try testing.expectEqual(seq.visited, par.visited);
         }
     }
+}
+
+test "R1-P1.5 (v2.2.52): beyaz keşifte OOM yutulmaz — dropped_whites artar, düğüm sızar ama erken serbest bırakılmaz; kayıtlı beyazlar tutarlı kalır" {
+    injectFakeDispatchDiamond();
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt));
+    const gc = getGc(state);
+
+    // r -> d -> e hepsi beyaz (çöp zinciri); keşif itişleri: r(stack 1, whites 2), d(stack 3, whites 4 → ENJEKTE), e(stack 5, whites 6)
+    const e = newFakeObject(rt);
+    const d = newFakeObject(rt);
+    wireField(d, e);
+    const r = newFakeObject(rt);
+    wireField(r, d);
+    for ([_]*anyopaque{ r, d, e }) |nd| setColor(nd, .white);
+    try gc.roots.append(state.allocator(), r);
+
+    var whites: std.ArrayListUnmanaged(*anyopaque) = .empty;
+    gc.test_fail_pushes = 4;
+    collectRootsDiscover(rt, state, gc, &whites);
+    gc.test_fail_pushes = 0;
+
+    try testing.expectEqual(@as(usize, 1), gc.dropped_whites); // sessizce yutulmadı
+    try testing.expectEqual(@as(usize, 2), whites.items.len); // r ve e kayıtlı; d sızar
+    for (whites.items) |w| try testing.expect(w != d);
+    try testing.expectEqual(Color.black, getColor(d)); // boyandı ama listede yok → asla serbest bırakılmaz
+
+    // `collectRootsFinish` ÇAĞRILMAZ (kayıtlı beyazları serbest bırakırdı); test düğümleri elle bırakır.
+    whites.deinit(state.allocator());
+    gc.roots.clearRetainingCapacity();
+    arc.nox_rc_free_payload(rt, r, FAKE_PAYLOAD_SIZE);
+    arc.nox_rc_free_payload(rt, d, FAKE_PAYLOAD_SIZE);
+    arc.nox_rc_free_payload(rt, e, FAKE_PAYLOAD_SIZE);
+    try deinitRuntimeExpectNoLeak(rt);
 }

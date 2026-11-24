@@ -18,6 +18,10 @@ Nox dil/derleyici geliştirme kuralları (değişmez ilkeler, test/DoD, sürüml
 4. Kodu değiştirdikten sonra, grafı sorgulamadan önce ve **her commit'ten önce**: `sh scripts/graphify_refresh.sh --wait` (~15 sn).
 5. graphify'ın kendi `update`/`install` hook'unu KULLANMA (Nox ek çıkarımını siler; `AGENTS.md` §0). `selfhost/*.nox` üretilmiştir; düzenleme `.nox.in` + `scripts/gen_selfhost_*.py`'de, sonra grafı yenile.
 
+6. **İş bitirirken graf güncellemesi ZORUNLU:** her iş paketinin sonunda (commit'ten önce) `sh scripts/graphify_refresh.sh --wait`; sonra yeni/değişen sembolü `graphify explain "<ad>"` ile bir kez sorgulayıp grafın güncel olduğunu doğrula. Graf güncel değilse sonraki oturumda graphify işe yaramaz.
+7. **Arama sırası:** sembol/dosya yeri için `graphify explain`/`query` → dosya:satır → dar `Read`. `rtk grep` yalnızca (a) metin kalıbı/hata iletisi aramak, (b) graf kapsamı dışı (yeni kod, `.md`, betik) için. Aynı oturumda 3'ten fazla art arda grep gerekiyorsa dur ve `graphify query "<soru>" --seed <dosya>` dene.
+8. **Kod düzenleme araçları:** kaynak dosyada değişiklik `Edit`/`Write` ile yapılır. Python/sed ile toplu kod yazımı yalnızca gerçekten mekanik, çok dosyalı dönüşümlerde (ör. aynı kalıbı 10+ yerde değiştirmek) ve betik scratchpad'de tutulur; tek/iki yerlik değişiklik için betik YAZMA.
+
 ## 2. Terminal komutları (rtk)
 
 Hook durumu: kullanıcı-düzeyi `~/.claude/settings.json` içinde `PreToolUse/Bash → rtk hook claude` AKTİF; proje düzeyinde ayrı hook YOK (çift hook çakışır — ekleme). Hook şunları OTOMATİK yeniden yazar: `git`, `grep`, `rg`, `cat`, `head`, `tail`, `ls`, `find`, `diff`, `wc`, `gh`, `curl`, `docker`. Yine de komutu doğrudan rtk biçiminde yaz:

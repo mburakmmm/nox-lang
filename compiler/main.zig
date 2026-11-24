@@ -1143,6 +1143,9 @@ fn cmdSelfhostInfo(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !
     var w = std.Io.File.stdout().writer(io, &stdout_buf);
     const count: usize = if (out.tokens) |t| t.len else 0;
     try w.interface.print("noxc-nightly {s}: Nox components linked: lexer (nox_lex_run); default frontend: {s}\n{s}: {d} bytes, {d} tokens{s}\n", .{ build_options.version, if (g_frontend_nox) "nox" else "zig", path, src.len, count, if (out.err != null) " (lex error)" else "" });
+    // R1-P2.2 (v2.2.52): platform durumu AÇIKÇA raporlanır; CI'da doğrulanmayan platform "doğrulandı" sayılmaz (bkz. project/nightly-dagitim-sozlesmesi-2026-11-24.md).
+    const ci_verified = (builtin.os.tag == .linux and builtin.cpu.arch == .x86_64) or (builtin.os.tag == .macos and builtin.cpu.arch == .aarch64);
+    try w.interface.print("platform: {s}-{s}; nightly CI doğrulaması: linux-x86_64, macos-aarch64 → bu platform {s}\n", .{ @tagName(builtin.os.tag), @tagName(builtin.cpu.arch), if (ci_verified) "DOĞRULANMIŞ" else "DOĞRULANMAMIŞ (desteklenmiyor olabilir)" });
     try w.interface.flush();
 }
 
