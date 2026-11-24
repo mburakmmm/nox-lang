@@ -95,6 +95,63 @@ jobs:
           done
           exit "$fail"
 
+  # R2-L / R1-P3.2 (v2.2.65): Aether çok-worker yük + sızıntı kapısı (4 worker, 16 kalıcı bağlantı, 96 000 istek; hata oranı, RSS büyümesi, temiz kapanış).
+  # Önceki adımın testlerinden SONRA ayrı iş olarak koşar; throughput eşiği yok (CI donanımı gürültülü), yalnızca doğruluk + bellek.
+  aether-load:
+    name: Aether (v0.7.2) — çok-worker yük + sızıntı kapısı
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: nox-lang
+
+      - uses: actions/checkout@v5
+        with:
+          repository: mburakmmm/aether
+          ref: v0.7.2
+          path: aether
+
+      - name: Zig kur
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
+          tar xf /tmp/zig.tar.xz -C /tmp
+          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+
+      - name: noxc'yi kaynaktan derle (ReleaseFast, LLVM varsayılan backend)
+        working-directory: nox-lang
+        run: |
+          zig build -Doptimize=ReleaseFast
+          echo "$GITHUB_WORKSPACE/nox-lang/zig-out/bin" >>"$GITHUB_PATH"
+
+      - name: Paketi yerel checkout'a işaret ettir
+        working-directory: aether
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          ws = os.path.join(os.environ["GITHUB_WORKSPACE"], "aether")
+          sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ws).decode().strip()
+          data = {
+            "name": "aether",
+            "entry": "examples/hello_api/main.nox",
+            "bin": {"name": "aether", "path": "cli.nox"},
+            "requires": [{"alias": "aether", "repo": ws, "ref": "master"}],
+          }
+          with open("nox.json", "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+          lock = {"packages": [{"alias": "aether", "repo": ws, "ref": "master", "resolved": sha}]}
+          with open("nox.lock", "w") as f:
+              json.dump(lock, f, indent=2)
+              f.write("\n")
+          PY
+
+      - name: Yük + sızıntı kapısı
+        working-directory: aether
+        run: |
+          noxc fetch
+          python3 "$GITHUB_WORKSPACE/nox-lang/scripts/aether_load_gate.py" "$GITHUB_WORKSPACE/aether" --noxc "$GITHUB_WORKSPACE/nox-lang/zig-out/bin/noxc"
+
   nyx:
     name: Nyx (v0.22.0) — gerçek framework test paketi
     runs-on: ubuntu-latest
@@ -149,6 +206,20 @@ jobs:
           with open("nox.lock", "w") as f:
               json.dump(lock, f, indent=2)
               f.write("\n")
+          PY
+
+      # v2.2.63 (Ember NX-006): TLS istemcisi IP sabit değerini sertifikanın `iPAddress` SAN girdileriyle eşleştirir (RFC 6125). Nyx v0.22.0'ın sahte SMTP sertifikası (CN=127.0.0.1,
+      # SAN IP:127.0.0.1) eskiden std'nin yalnız-dNSName denetimiyle `CertificateHostMismatch` veriyordu ve testin beklentisi bu HATALI davranışı kodlamıştı; artık ana bilgisayar eşleşir
+      # ve düşüş zincir doğrulamasında (kendinden imzalı) olur. Pin'li testin tek assert'i "herhangi bir Certificate* hatası"na gevşetilir; Nyx'in kendi güncellemesi ayrı iştir.
+      - name: Nyx v18_smtp_test beklentisini IP SAN düzeltmesine uyarla
+        working-directory: nyx
+        run: |
+          python3 - <<'PY'
+          p = "tests/v18_smtp_test.nox"
+          s = open(p, encoding="utf-8").read()
+          old = 'nox.strings.contains(err_msg, "CertificateHostMismatch")'
+          assert old in s, "beklenen assert bulunamadı (Nyx pin'i değişti mi?)"
+          open(p, "w", encoding="utf-8").write(s.replace(old, 'nox.strings.contains(err_msg, "Certificate")'))
           PY
 
       - name: Fetch & test (nyx'in KENDİ 45 test dosyası — postgres-gerektiren pg_smoke HARİÇ)

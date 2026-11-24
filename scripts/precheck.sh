@@ -9,6 +9,7 @@ step() { echo; echo "== $* =="; }
 [ -x zig-out/bin/noxc ] || { echo "zig-out/bin/noxc yok: önce 'zig build'" >&2; exit 1; }
 
 step "kod grafı yenile (graphify, arka planda ~15 sn; yoksa sessizce atlanır)"; sh scripts/graphify_refresh.sh || true
+step "iş akışı YAML geçerliliği (.github/workflows)";        "$PY" scripts/check_workflows.py
 step "dokümanlar (bağlantılar + kod blokları + toc)";  "$PY" scripts/check_docs.py
 step "global durum izin listesi";                       "$PY" scripts/check_global_state.py
 step "belge sözleşmesi (sürümler, hedefler)";           "$PY" scripts/check_doc_contracts.py

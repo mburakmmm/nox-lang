@@ -53,4 +53,5 @@ Kurallar:
 
 - **Zorlayan:** yalnızca kullanıcı-düzeyi rtk `PreToolUse` Bash hook'u (otomatik yeniden yazım).
 - **Yönlendiren (zorlamaz):** bu dosya + `AGENTS.md` + global `~/.claude/CLAUDE.md` (`@RTK.md`, graphify skill). graphify için hook YOK; kullanımı talimata dayanır.
-- Kapsam dışı/çakışma riski: proje düzeyine ikinci bir rtk veya graphify hook'u eklenmez. Zorlama sertleştirilecekse önce kullanıcıya sor.
+- **Proje düzeyi hook'lar (`.claude/settings.json`, kullanıcı onayıyla 2026-11-24; alt oturumlara da uygulanır):** `SessionStart` → `scripts/hooks/session_rules.sh` (6 satırlık kural özeti enjekte eder); `PostToolUse` (Read|Grep|Glob|Bash) → `scripts/hooks/token_audit_hook.py` YALNIZ KAYIT yapar (`.claude/token-audit/*.jsonl`), asla engellemez. Özet: `python3 scripts/token_audit.py [--days N]` (aralıksız büyük Read, tekrar okuma, rtk'siz ham Bash, alt oturum payı). `.claude/` git'te değildir; hook betikleri `scripts/hooks/` altında sürümlüdür.
+- Kapsam dışı/çakışma riski: proje düzeyine ikinci bir rtk veya graphify hook'u (yeniden yazan/engelleyen) eklenmez. Seçici engelleme (ör. aralıksız büyük `Read` reddi) yalnızca `token_audit.py` verisi israfı kanıtladıktan sonra ve kullanıcı onayıyla eklenir.

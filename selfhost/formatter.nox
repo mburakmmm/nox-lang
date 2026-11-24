@@ -1805,8 +1805,8 @@ def print_string_lit(pr: Pr, v: int) -> None:
     w(pr, "\"")
 
 # --- giriş noktaları ---
-G_FOUT: list[u8] = []
-G_FMEM: int = 0
+G_OUT: list[u8] = []
+G_MEM: int = 0
 
 def print_module(pr: Pr, body: int) -> None:
     print_stmts(pr, body, 0)
@@ -1814,7 +1814,7 @@ def print_module(pr: Pr, body: int) -> None:
 
 # Dönüş: 0 tamam; 1..4 sözcük hatası; 10..12 ayrıştırma hatası. Çıktı `nox_fmt_out_buffer`/`nox_fmt_len`.
 def nox_fmt_run(base: int, n: int) -> int:
-    global G_FOUT, G_FMEM
+    global G_OUT, G_MEM
     lx: Lx = Lx(base, n, True)
     code: int = lex(lx)
     if code != 0:
@@ -1833,15 +1833,15 @@ def nox_fmt_run(base: int, n: int) -> int:
         return 12
     pr: Pr = Pr(a, tr)
     print_module(pr, body)
-    G_FOUT = pr.out
-    G_FMEM = (len(a.n) + len(a.l) + len(a.sb) + len(a.sp_ids) + len(a.sp_vals) + len(lx.out) + len(tr)) * 8 + len(pr.out)
+    G_OUT = pr.out
+    G_MEM = (len(a.n) + len(a.l) + len(a.sb) + len(a.sp_ids) + len(a.sp_vals) + len(lx.out) + len(tr)) * 8 + len(pr.out)
     return 0
 
 def nox_fmt_len() -> int:
-    return len(G_FOUT)
+    return len(G_OUT)
 
 def nox_fmt_out_buffer() -> int:
-    xs: list[u8] = G_FOUT
+    xs: list[u8] = G_OUT
     q: int = 0
     lowlevel:
         q = ptr_to_int(ptr_of(xs))
@@ -1849,4 +1849,4 @@ def nox_fmt_out_buffer() -> int:
 
 # Son biçimlendirmenin canlı verisi (bayt): AST tabloları + token/trivia arabelleği + çıktı.
 def nox_fmt_mem() -> int:
-    return G_FMEM
+    return G_MEM

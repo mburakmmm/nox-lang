@@ -274,6 +274,12 @@ pub fn decompressWith(allocator: std.mem.Allocator, data: []const u8, container:
 const INPUT_PAD = 16;
 
 fn decompressInline(allocator: std.mem.Allocator, data: []const u8, container: Container) ![]u8 {
+    // std zlib başlığını (CMF/FLG) doğrulamaz; libdeflate yolundakiyle AYNI RFC 1950 denetimi: CM=8, CINFO<=7, (CMF*256+FLG)%31==0, FDICT=0.
+    if (container == .zlib) {
+        if (data.len < 6) return error.BadZlibData;
+        if (data[0] & 0x0F != 8 or (data[0] >> 4) > 7) return error.BadZlibData;
+        if ((@as(u32, data[0]) * 256 + data[1]) % 31 != 0 or data[1] & 0x20 != 0) return error.BadZlibData;
+    }
     const padded = try allocator.alloc(u8, data.len + INPUT_PAD);
     defer allocator.free(padded);
     @memcpy(padded[0..data.len], data);

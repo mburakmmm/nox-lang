@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.65]
+
+Aşama 3 öncesi kapanış turu: CI kırmızılarının kök nedenleri, kalan sağlamlaştırma artıkları ve kalıcı Aether yük kapısı.
+
+- **CI düzeltmeleri:** (1) `nightly.yml` yine geçersiz YAML'di (v2.2.60'ın GC kapısı adımından beri; `name:` içinde `cycle_gc_pause: ort.` düz ifadesi → her push'ta "workflow file issue"; v2.2.57–60'ın selfhost/lang_perf/GC kapıları CI'da hiç koşmadı) → alıntılandı; **tekrarı önlemek için** `scripts/check_workflows.py` (`.github/workflows/*.yml` ayrıştırma + `jobs` denetimi) `precheck.sh`e eklendi; (2) Windows (ve std-flate kullanan tüm hedefler: WASM/mobil/çıplak çekirdek) `nox.zlib` kabı bozulmuş CMF/FLG başlığını **kabul ediyordu** (`BadHeaderAccepted`; std zlib başlığını doğrulamıyor, libdeflate yolu doğruluyordu) → `gzip.zig` `decompressInline`a aynı RFC 1950 denetimi (CM=8, CINFO≤7, `(CMF*256+FLG)%31==0`, FDICT=0) eklendi; (3) Nyx v0.22.0 `v18_smtp_test`: v2.2.63'ün TLS IP SAN düzeltmesi (CN=127.0.0.1 / SAN IP:127.0.0.1 sertifikası artık eşleşir) testin eski HATALI beklentisini (`CertificateHostMismatch`) kırdı; düzeltme doğru olduğundan `external-fixtures.yml` pin'li testin tek assert'ini "herhangi bir `Certificate*` hatası"na yamalar (Nyx'in kendi güncellemesi ayrı iştir).
+- **Sağlamlaştırma artıkları (R1-P0.1/P0.2):** formatter'ın geçici global adları `G_OUT`/`G_MEM`e geri alındı (lexer'in `G_OUT: list[int]`ı ile aynı derlemede; frontend_diff 1354 dosya farksız); `list_ops.zig` `newList`/`nox_list_push` bellek yokken null dönmek yerine codegen'in append yoluyla aynı fail-stop (`nox_out_of_memory`) yapar; `nox_list_reserve_cap` OOM'da başlığa dokunmaz (yeni birim testi).
+- **R2-L / R1-P3.2:** `scripts/aether_load_gate.py` + `external-fixtures.yml` `aether-load` işi: Aether `hello_api`, 4 worker, 16 kalıcı bağlantı, 96 000 istek; hata oranı ≤ %0,1, RSS büyümesi ≤ max(8 MiB, %50), temiz SIGTERM kapanışı (yerelde 0 hata, RSS 4→5 MiB).
+
 ## [2.2.64]
 
 Native runtime readiness (R0–R3): Nox'un runtime'ını Nox ile yazmaya **hazır** olduğunun kanıt programı (runtime portu DEĞİL). Görev: `project/native-runtime-readiness-gorev-belgesi-2026-11.md`; çıktılar `project/native-runtime-{capability-audit,architecture,abi,migration-plan,performance,dependencies}.md` + makine-okunur `native-runtime-{symbols,layout}.tsv`.

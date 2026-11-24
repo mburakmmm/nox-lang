@@ -632,6 +632,31 @@ test "v2.1.87: nox_list_realloc içerik ve başlık sayacını korur (havuz ayn�
     nox_rc_free_payload(rt, p, hdr + cap * 8);
 }
 
+test "R1-P0.2: nox_list_reserve_cap bellek yetersizliğinde null döner ve listeye (len/cap/data/elemanlar) dokunmaz (satır içi + ayrı tampon)" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const huge: usize = 1 << 50; // 8 PB eleman tamponu: hiçbir tahsisçi karşılayamaz, çarpım taşmaz
+    for ([_]bool{ true, false }) |grow_first| {
+        const list = nox_list_new(rt, 4, 8) orelse return error.AllocFailed;
+        const b: [*]u8 = @ptrCast(list);
+        var k: usize = 0;
+        while (k < 4) : (k += 1) @as(*align(1) i64, @ptrCast(abi_layout.listData(b) + k * 8)).* = @intCast(k + 100);
+        abi_layout.listSetLen(b, 4);
+        if (grow_first) { // ayrı tampona geçmiş liste yolu
+            _ = nox_list_reserve_cap(rt, b, 64, 8) orelse return error.AllocFailed;
+        }
+        const cap0 = abi_layout.listCap(b);
+        const data0 = abi_layout.listData(b);
+        try std.testing.expect(nox_list_reserve_cap(rt, b, huge, 8) == null);
+        try std.testing.expectEqual(cap0, abi_layout.listCap(b));
+        try std.testing.expectEqual(data0, abi_layout.listData(b));
+        k = 0;
+        while (k < 4) : (k += 1) try std.testing.expectEqual(@as(i64, @intCast(k + 100)), @as(*align(1) const i64, @ptrCast(abi_layout.listData(b) + k * 8)).*);
+        try std.testing.expectEqual(@as(usize, 4), abi_layout.listLen(b));
+        nox_list_free_payload(rt, b, 8);
+    }
+}
+
 // GG.24 (bkz. plan dosyası "genClassRelease'in özyineleme derinliği
 // sertleştirmesi"): derinlik-eşiği KARMA yaklaşımı — `compiler/codegen_qbe/
 // layout.zig`nin `genClassRelease`i, bir sınıf-tipli alanı serbest
