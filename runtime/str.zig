@@ -1261,6 +1261,22 @@ pub export fn nox_u8list_extend_from_str(rt: ?*anyopaque, list: ?*anyopaque, s: 
     arc.nox_u8list_extend_from_bytes(rt, list, @intCast(@intFromPtr(p)), n);
 }
 
+/// R2 (v2.2.62): lexer tek/çift tırnaklı dize gövdesi taraması. `start` konumundan başlayıp ilk KAÇIRILMAMIŞ `q` baytının dizinini döner; kaçış (`\`) sonraki baytı atlar; bulunamazsa `n` (veya taşma
+/// durumunda `n`ye indirgenmiş değer). Önceki Nox döngüsüyle (bayt başına `at()`) aynı anlam; uzun dizelerde bayt başına çağrı yerine vektörlü arama.
+pub export fn nox_scan_str_end(base: i64, start: i64, n: i64, q: i64) i64 {
+    const end: usize = @intCast(n);
+    var i: usize = @intCast(start);
+    const p: [*]const u8 = @ptrFromInt(@as(usize, @intCast(base)));
+    const qb: u8 = @intCast(q);
+    while (i < end) {
+        const k = std.mem.indexOfAny(u8, p[i..end], &[_]u8{ qb, '\\' }) orelse return n;
+        i += k;
+        if (p[i] == qb) return @intCast(i);
+        i += if (i + 1 < end) 2 else 1; // sondaki tek `\`: önceki döngüyle aynı (i+1 → döngü biter)
+    }
+    return @intCast(@min(i, end));
+}
+
 /// v1.162.0: `ord(s)` — `s`in ilk kod noktası; boş `str` için -1.
 pub export fn nox_ord_raw(s: ?[*:0]const u8) i64 {
     const p = s orelse return -1;

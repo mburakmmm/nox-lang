@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.62]
+
+Dize ağırlıklı lexer: uzun dizelerde Nox lexer 2,06 → 0,62 ms (3,3×; Nox/Zig 1,35× → 0,41×); genel korpus aynı (0,52×).
+
+- **Runtime**: `nox_scan_str_end(base, start, n, q)` — kaçışı (`\`) atlayarak ilk kaçırılmamış tırnağı vektörlü arar (önceki Nox döngüsüyle aynı anlam).
+- **Selfhost lexer**: tek/çift tırnaklı dize gövdesi taraması bu ilkeli kullanır; Zig↔Nox lexer/parser/astdump/fmt paritesi farksız.
+
 ## [2.2.61]
 
 Düz enum = tahsissiz skaler etiket (R2-C.1/C.2; kullanıcı kararı, `project/asama3-tasarim-kararlari-2026-11-24.md`). Hiçbir varyantı alan taşımayan enumlar ARC nesnesi yerine `int` etiketine derlenir; yük taşıyan enumlar ve tip sistemi (nominal) DEĞİŞMEDİ.

@@ -416,6 +416,9 @@ def kw_lookup(base: int, start: int, end: int) -> int:
 # R2-E.2 (v2.2.58): sözcük kaydı (5 `i64`) tek çalışma zamanı çağrısıyla yazılır (kapasite denetimi/başlık güncellemesi beş yerine bir kez).
 extern def nox_list_append5(out: list[int], v0: int, v1: int, v2: int, v3: int, v4: int) -> None from "zig-out/lib/noxrt.o" with_rt
 
+# R2 (v2.2.62): tek/çift tırnaklı dize gövdesini çalışma zamanında vektörlü tarar (bayt başına `at()` döngüsü yerine).
+extern def nox_scan_str_end(base: int, start: int, n: int, q: int) -> int from "zig-out/lib/noxrt.o"
+
 def emit(st: Lx, kind: int, line: int, col: int, start: int, end: int) -> None:
     nox_list_append5(st.out, kind, line, col, start, end)
 
@@ -686,12 +689,7 @@ def lex(st: Lx) -> int:
 
         if sc == 39 or sc == 34:
             qstart: int = i
-            i = i + raw_off + 1
-            while i < n and at(base, i) != sc:
-                if at(base, i) == 92 and i + 1 < n:
-                    i = i + 2
-                else:
-                    i = i + 1
+            i = nox_scan_str_end(base, i + raw_off + 1, n, sc)
             if i >= n:
                 return fail(st, 2, line, qstart, line_start)
             i = i + 1

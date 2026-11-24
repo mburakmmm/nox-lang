@@ -30254,3 +30254,7 @@ Biçimlendirici çıktı tamponu `list[u8]` (1 B/bayt). Stdlib/selfhost çalış
 **Gözlenebilir davranış farkı**: `print(x)` / `str(x)` / f-string / liste ya da sınıf `repr`'i artık etiketi (`1`) yazar; eskiden uygulama sızıntısı olan `Kind(_tag=1)` yazılıyordu (hiçbir test/belge buna dayanmıyordu).
 
 **Performans** (`enum_flat_bench`, aarch64-macos, ReleaseFast, LLVM; eski nesne temsili ↔ skaler, süreç başlangıcı dahil medyan): kaçmayan döngü (inşa+`match`, 100 M) 305 → 80 ms (3,8×; eski temsil LLVM'de satır içine alınıp havuzdan tahsis edildiği için zaten ≈ 3 ns/işlem, skaler ≈ 0,8 ns — düz tamsayı tabanına yakın); listede saklanan `list[Kind]` (AST düğüm etiketi biçimi, 10 M) 161 → 26 ms (6,2×); `Node(kind, v)` alanlı karışık yük (tahsis `Node` için kalır) 2,2×. Golden: `enum_flat_scalar` (metod/alan/liste/dict/Optional/closure/global), `enum_flat_edge` (`@property`/`@staticmethod`/jenerik düz enum/liste arama/derin eşitlik/`spawn`/bağlı metod değeri), `enum_flat_bench`; ikisi de backend'de (LLVM + QBE) eski nesne temsiliyle bayt-özdeş çıktı.
+
+### 3.497 `nox_scan_str_end` (v2.2.62)
+
+Runtime iç ilkeli: `nox_scan_str_end(base, start, n, q)` bir dize gövdesinde `start`tan ilk kaçırılmamış `q` baytının dizinini döner (`\` sonraki baytı atlar; bulunamazsa `n`). Selfhost lexer tek/çift tırnaklı dize taramasını bununla yapar; üç tırnaklı dizeler satır sayımı gerektirdiğinden Nox döngüsünde kalır. Ölçüm: uzun dize senaryosunda lexer 2,06 → 0,62 ms.
