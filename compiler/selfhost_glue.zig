@@ -30,6 +30,7 @@ extern fn parser_nox_parse_run(rt: ?*anyopaque, base: i64, n: i64) i64;
 extern fn parser_nox_parse_dump(rt: ?*anyopaque) i64;
 extern fn parser_nox_parse_out_buffer(rt: ?*anyopaque) i64;
 extern fn parser_nox_parse_mem(rt: ?*anyopaque) i64;
+extern fn parser_nox_parse_validate(rt: ?*anyopaque) i64;
 extern fn parser_nox_parse_dg(rt: ?*anyopaque, i: i64) i64;
 extern fn parser_nox_parse_dg_note_len(rt: ?*anyopaque) i64;
 extern fn parser_nox_parse_dg_note_byte(rt: ?*anyopaque, i: i64) i64;
@@ -88,9 +89,9 @@ pub const Runtime = struct {
         code.* = formatter_nox_fmt_run(self.rt, @intCast(@intFromPtr(src.ptr)), @intCast(src.len));
         if (code.* != 0) return error.FormatFailed;
         const len: usize = @intCast(formatter_nox_fmt_len(self.rt));
-        const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(formatter_nox_fmt_out_buffer(self.rt))));
+        const buf: [*]const u8 = @ptrFromInt(@as(usize, @intCast(formatter_nox_fmt_out_buffer(self.rt))));
         const out = try a.alloc(u8, len);
-        for (out, 0..) |*b, k| b.* = @intCast(buf[k]);
+        @memcpy(out, buf[0..len]);
         return out;
     }
 
@@ -110,6 +111,11 @@ pub const Runtime = struct {
     }
 
     /// Son ayrıştırmanın canlı Nox verisi (bayt).
+    /// R2-E.1: son ayrıştırmanın düz dizi AST invariant denetimi (0 = tamam; bkz. `nox_parse_validate`).
+    pub fn parseValidate(self: Runtime) i64 {
+        return parser_nox_parse_validate(self.rt);
+    }
+
     pub fn parseMem(self: Runtime) i64 {
         return parser_nox_parse_mem(self.rt);
     }

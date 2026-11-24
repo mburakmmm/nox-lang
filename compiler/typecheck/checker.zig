@@ -2086,7 +2086,10 @@ pub const Checker = struct {
             // yönünde de AYNEN geçerlidir.
             // v2.1.61: yalnızca stdlib'in kendi çalışma zamanı kabukları (`with_rt`) sınıf-tipli parametre alabilir (ör. `nox_json_dump_raw(v: JsonValue)`): işaretçi ÖDÜNÇ geçer (çağıran sahibi kalır, `retains` yok),
             // kullanıcı kodu için kural DEĞİŞMEDİ (sınıflar C ABI sınırından geçmez).
-            if (!isFfiSafeType(pt) and !isFfiSafeListType(pt) and !(ed.needs_rt and isFfiSafeClassReturnType(pt))) {
+            // R2-E.5 (v2.2.59): stdlib/selfhost çalışma zamanı kabukları (`with_rt`) `list[u8]` gibi sabit genişlikli tamsayı listelerini de ÖDÜNÇ işaretçi olarak alabilir (çalışma zamanı eleman genişliğini bilir);
+            // kullanıcı kodu için kural DEĞİŞMEDİ.
+            const rt_fixed_list = ed.needs_rt and pt == .list and pt.list.* == .fixed_int;
+            if (!isFfiSafeType(pt) and !isFfiSafeListType(pt) and !rt_fixed_list and !(ed.needs_rt and isFfiSafeClassReturnType(pt))) {
                 return self.fail(error.TypeMismatch, "extern function '{s}': parameter '{s}' has an unsupported type (only int/float/bool/str/None/list[str]/list[int] can cross the C ABI boundary in v0.1)", .{ ed.name, p.name });
             }
             params[i] = pt;

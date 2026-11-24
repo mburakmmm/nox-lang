@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.59]
+
+Rapor 2 kapanışı: ölçüm protokolü, biçimlendirici `list[u8]` çıktı, AST invariant denetimi, perf kapıları ve karar kayıtları. Nox/Zig: lexer 0,53×, parse 0,69×, fmt 0,70×; fmt tepe RSS 44 → 30 MiB.
+
+- **Biçimlendirici**: çıktı tamponu `list[u8]` (RSS −%32); extern `with_rt` kabuklarına `list[u8]` parametre izni (kullanıcı kodu kuralı aynı); `nox_u8list_extend_from_bytes/_from_str`.
+- **Selfhost**: `nox_parse_validate` (düz dizi AST invariant'ları; `parse-bench` her tekrarda doğrular).
+- **Ölçüm**: `scripts/selfhost_perf_report.py` (10 senaryo, medyan/min/yayılım, aşama aşama süre, RSS, ARC blok); `NOX_CLANG_EXTRA` ölçüm bayrağı (`-O3`/inline eşiği etkisiz bulundu).
+- **CI**: `lang_perf` Nox/C kapısı (nightly macOS, tolerans 1,25×; baseline güncellendi, mutlak süre girdileri çıkarıldı).
+- **Belgeler**: `project/rapor2-sonuc-2026-11-24.md`, `project/asama3-tasarim-kararlari-2026-11-24.md` (B.6 yapılmayacak; SymbolId + derleme-ömürlü havuz; enum için tahsissiz skaler etiket tasarımı), `project/selfhost-perf-raporu-2026-11-24.md`.
+
 ## [2.2.58]
 
 Lexer sözcük kaydı toplu yazım: lexer 3,34 → 2,80 ms (−%16). Nox/Zig: lexer 0,53×, parse 0,69×, fmt 0,70× (992 KB, ReleaseFast).

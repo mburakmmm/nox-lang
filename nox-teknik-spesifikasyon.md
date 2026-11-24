@@ -30232,3 +30232,7 @@ Selfhost Nox ayrıştırıcısında `P.cur`, `tk[pos * 5]` (geçerli sözcük t�
 ### 3.494 `nox_list_append5` (v2.2.58, R2-E.2)
 
 Runtime iç ilkeli: `nox_list_append5(list, v0..v4)` beş `i64` değeri tek kapasite denetimiyle `list[int]`e ekler (büyüme `listNextCap`; bellek yetersizliğinde durur). Selfhost lexer `emit`/`emit_trivia` kullanır; çıktı bayt-eşdeğer. Ölçüm: lexer 3,34 → 2,80 ms; Nox/Zig lexer 0,53×, parse 0,69×, fmt 0,70×.
+
+### 3.495 `list[u8]` çıktı tamponu; AST invariant denetimi (v2.2.59, R2-E.1/E.5)
+
+Biçimlendirici çıktı tamponu `list[u8]` (1 B/bayt). Stdlib/selfhost çalışma zamanı kabukları (`extern def ... with_rt`) sabit genişlikli tamsayı listelerini (`list[u8]` ...) ÖDÜNÇ liste işaretçisi olarak alabilir; kullanıcı kodu için C ABI sınırı kuralı değişmedi. `nox_u8list_extend_from_bytes/_from_str` bayt dizisini toplu kopyalar. Selfhost parser `nox_parse_validate()`: span tablosu kimlik/değer sınırları, modül gövde dilimi ve deyim kimlikleri `n`/`l` sınırları içinde olmalı (0 = tamam).

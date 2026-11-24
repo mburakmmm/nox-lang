@@ -941,6 +941,11 @@ fn cmdParseBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !vo
                 std.process.exit(1);
             }
             nox_mem = nrt.parseMem();
+            const inv = nrt.parseValidate(); // R2-E.1: düz dizi AST invariant'ları (her tekrarda; süre ölçümünün DIŞINDA)
+            if (inv != 0) {
+                printErr("parse-bench: AST invariant ihlali (kod {d})\n", .{inv});
+                std.process.exit(1);
+            }
         }
     }
     if (side == 0) benchSane("parse-bench", best_zig, best_nox, zig_mem, nox_mem);
@@ -4182,12 +4187,16 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
         const obj_path = try std.fmt.allocPrint(a, "{s}.o", .{base});
         // R2-A.1 (v2.2.54): `NOX_FRAME_POINTERS=1` ile çerçeve işaretçileri korunur (profilleyici çağıran zincirleri için; yalnızca ölçüm — varsayılan kod üretimi DEĞİŞMEZ).
-        const fp_flag: []const u8 = if (std.c.getenv("NOX_FRAME_POINTERS") != null) "-fno-omit-frame-pointer" else "-O2";
-        const argv: []const []const u8 = if (ccDriver(gpa, io) == .zig_cc)
-            &.{ "zig", "cc", "-c", "-O2", fp_flag, "-Wno-override-module", "-fPIC", "-o", obj_path, ll_path }
-        else
-            &.{ "clang", "-c", "-O2", fp_flag, "-Wno-override-module", "-fPIC", "-o", obj_path, ll_path };
-        try runTool(gpa, io, argv);
+        // R2-H (v2.2.58): `NOX_CLANG_EXTRA` (boşlukla ayrılmış ek clang bayrakları, ör. `-O3` / `-mllvm -inline-threshold=400`) YALNIZCA ölçüm/deney içindir; varsayılan davranış değişmez.
+        var argv_list: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (ccDriver(gpa, io) == .zig_cc) try argv_list.appendSlice(a, &.{ "zig", "cc", "-c", "-O2" }) else try argv_list.appendSlice(a, &.{ "clang", "-c", "-O2" });
+        if (std.c.getenv("NOX_FRAME_POINTERS") != null) try argv_list.append(a, "-fno-omit-frame-pointer");
+        if (std.c.getenv("NOX_CLANG_EXTRA")) |extra| {
+            var it = std.mem.tokenizeScalar(u8, std.mem.span(extra), ' ');
+            while (it.next()) |tok| try argv_list.append(a, tok);
+        }
+        try argv_list.appendSlice(a, &.{ "-Wno-override-module", "-fPIC", "-o", obj_path, ll_path });
+        try runTool(gpa, io, argv_list.items);
         return obj_path;
     }
     // Faz LL.6 (bkz. nox-teknik-spesifikasyon.md §3.71): MinGW'in `cc`si,

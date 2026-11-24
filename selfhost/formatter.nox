@@ -8,7 +8,8 @@ from parser import P, pk, pkx, pky, sref_len, sref_byte, sref_eq, sref_eq2, pars
 
 class Pr:
     a: Ast
-    out: list[int]
+    # R2-E.5 (v2.2.59): çıktı tamponu bayt başına 1 B (`list[u8]`); önceden `list[int]` (8 B/bayt) idi — büyük çıktıda sayfa hatası/bant genişliği maliyeti.
+    out: list[u8]
     tr: list[int]
     ti: int
     ntr: int
@@ -27,37 +28,37 @@ class Pr:
 # --- yazma yardımcıları ---
 # R2-F (v2.2.55): dize tek toplu kopya (önceden karakter başına `append(ord(s[i]))`). Tüm `w(pr, ...)` argümanları ASCII'dir (literaller ve `str(float)`), bu yüzden bayt dizisi birebir aynıdır;
 # ASCII dışı bir argüman artık kod noktası değil UTF-8 baytları yazar (doğru olan budur).
-extern def nox_list_extend_from_str(out: list[int], s: str) -> None from "zig-out/lib/noxrt.o" with_rt
+extern def nox_u8list_extend_from_str(out: list[u8], s: str) -> None from "zig-out/lib/noxrt.o" with_rt
 
 def w(pr: Pr, s: str) -> None:
-    nox_list_extend_from_str(pr.out, s)
+    nox_u8list_extend_from_str(pr.out, s)
 
 def wb(pr: Pr, c: int) -> None:
-    pr.out.append(c)
+    pr.out.append(u8(c))
 
 # Paketli dize başvurusunu yazar.
 # R2-F (v2.2.55): kaynak metin aralığı (yorumlar, tanımlayıcılar, sayılar) bayt başına `append` yerine tek toplu kopya (`nox_list_extend_from_bytes`; çalışma zamanı ilkeli).
-extern def nox_list_extend_from_bytes(out: list[int], base: int, n: int) -> None from "zig-out/lib/noxrt.o" with_rt
+extern def nox_u8list_extend_from_bytes(out: list[u8], base: int, n: int) -> None from "zig-out/lib/noxrt.o" with_rt
 
 def ws(pr: Pr, v: int) -> None:
     a: Ast = pr.a
     n: int = sref_len(v)
     x: int = pkx(v)
     if x >= 0:
-        nox_list_extend_from_bytes(pr.out, a.src + x, n)
+        nox_u8list_extend_from_bytes(pr.out, a.src + x, n)
         return
     for i in range(n):
-        pr.out.append(sref_byte(a, v, i))
+        wb(pr, sref_byte(a, v, i))
 
 def wint(pr: Pr, v: int) -> None:
     if v < 0:
-        pr.out.append(45)
+        wb(pr, 45)
         if v == -9223372036854775807 - 1:
             w(pr, "9223372036854775808")
             return
         v = 0 - v
     if v == 0:
-        pr.out.append(48)
+        wb(pr, 48)
         return
     digits: list[int] = []
     while v > 0:
@@ -65,7 +66,7 @@ def wint(pr: Pr, v: int) -> None:
         v = v // 10
     k: int = len(digits) - 1
     while k >= 0:
-        pr.out.append(digits[k])
+        wb(pr, digits[k])
         k = k - 1
 
 def indent_to(pr: Pr, depth: int) -> None:
@@ -76,13 +77,13 @@ def hex2(pr: Pr, c: int) -> None:
     d1: int = c >> 4
     d2: int = c & 15
     if d1 < 10:
-        pr.out.append(48 + d1)
+        wb(pr, 48 + d1)
     else:
-        pr.out.append(87 + d1)
+        wb(pr, 87 + d1)
     if d2 < 10:
-        pr.out.append(48 + d2)
+        wb(pr, 48 + d2)
     else:
-        pr.out.append(87 + d2)
+        wb(pr, 87 + d2)
 
 # Kontrol baytı kaçışı; yazdıysa True.
 def write_control_escape(pr: Pr, c: int) -> bool:
@@ -178,7 +179,7 @@ def emit_leading_trivia(pr: Pr, depth: int, upto_line: int) -> None:
                 pr.last_blank = True
         else:
             indent_to(pr, depth)
-            nox_list_extend_from_bytes(pr.out, a.src + pr.tr[b + 3], pr.tr[b + 4] - pr.tr[b + 3])
+            nox_u8list_extend_from_bytes(pr.out, a.src + pr.tr[b + 3], pr.tr[b + 4] - pr.tr[b + 3])
             wb(pr, 10)
             pr.last_blank = False
         pr.ti = pr.ti + 1
@@ -192,7 +193,7 @@ def line(pr: Pr, source_line: int) -> None:
         b: int = pr.ti * 5
         if pr.tr[b] == 0 and pr.tr[b + 2] != 0 and pr.tr[b + 1] == source_line:
             w(pr, "  ")
-            nox_list_extend_from_bytes(pr.out, a.src + pr.tr[b + 3], pr.tr[b + 4] - pr.tr[b + 3])
+            nox_u8list_extend_from_bytes(pr.out, a.src + pr.tr[b + 3], pr.tr[b + 4] - pr.tr[b + 3])
             pr.ti = pr.ti + 1
     wb(pr, 10)
     pr.last_blank = False
@@ -1804,7 +1805,7 @@ def print_string_lit(pr: Pr, v: int) -> None:
     w(pr, "\"")
 
 # --- giriş noktaları ---
-G_FOUT: list[int] = []
+G_FOUT: list[u8] = []
 G_FMEM: int = 0
 
 def print_module(pr: Pr, body: int) -> None:
@@ -1833,14 +1834,14 @@ def nox_fmt_run(base: int, n: int) -> int:
     pr: Pr = Pr(a, tr)
     print_module(pr, body)
     G_FOUT = pr.out
-    G_FMEM = (len(a.n) + len(a.l) + len(a.sb) + len(a.sp_ids) + len(a.sp_vals) + len(lx.out) + len(tr) + len(pr.out)) * 8
+    G_FMEM = (len(a.n) + len(a.l) + len(a.sb) + len(a.sp_ids) + len(a.sp_vals) + len(lx.out) + len(tr)) * 8 + len(pr.out)
     return 0
 
 def nox_fmt_len() -> int:
     return len(G_FOUT)
 
 def nox_fmt_out_buffer() -> int:
-    xs: list[int] = G_FOUT
+    xs: list[u8] = G_FOUT
     q: int = 0
     lowlevel:
         q = ptr_to_int(ptr_of(xs))

@@ -3536,6 +3536,29 @@ def nox_parse_run(base: int, n: int) -> int:
     G_DG_NOTE = p.dg_note
     return err
 
+# R2-E.1 (v2.2.59): düz dizi AST invariant denetimi (hata ayıklama/farksal test kapısı; üretim yolunda ÇAĞRILMAZ). 0 = tamam; 1 = span tablosu kimliği/dizin sınır dışı; 2 = span kaydı `n` dışına taşıyor;
+# 3 = modül gövde dilimi `l` dışında; 4 = gövde deyim kimliği `n` dışında; 5 = span tablosu uzunlukları uyumsuz.
+def nox_parse_validate() -> int:
+    a: Ast = G_AST
+    nn: int = len(a.n)
+    nl: int = len(a.l)
+    if len(a.sp_ids) != len(a.sp_vals):
+        return 5
+    for i in range(len(a.sp_ids)):
+        sid: int = a.sp_ids[i]
+        if sid < 0 or sid >= nn:
+            return 1
+        sv: int = a.sp_vals[i]
+        if sv < 0 or sv + 6 > nn:
+            return 2
+    if G_BODY_LEN > 0 and (G_BODY_START < 0 or G_BODY_START + G_BODY_LEN > nl):
+        return 3
+    for j in range(G_BODY_LEN):
+        sid2: int = a.l[G_BODY_START + j]
+        if sid2 < 0 or sid2 >= nn:
+            return 4
+    return 0
+
 def nox_parse_dump() -> int:
     dump_module(G_AST, G_BODY_START, G_BODY_LEN, 0, 0)
     return len(G_AST.o)

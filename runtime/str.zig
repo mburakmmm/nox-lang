@@ -1255,10 +1255,10 @@ test "nox_int_to_base_raw Python hex/oct/bin ile birebir" {
 
 /// R2-F (v2.2.55): `list[int]`e `s`in TÜM baytlarını (her biri 8 baytlık elemana genişletilerek) tek çağrıda ekler — biçimlendirici `w(pr, "...")` karakter başına `append(ord(s[i]))` yerine.
 /// Büyüme/OOM davranışı `arc.nox_list_extend_from_bytes` ile aynıdır.
-pub export fn nox_list_extend_from_str(rt: ?*anyopaque, list: ?*anyopaque, s: ?[*:0]const u8) void {
+pub export fn nox_u8list_extend_from_str(rt: ?*anyopaque, list: ?*anyopaque, s: ?[*:0]const u8) void {
     const p = s orelse return;
     const n: i64 = @intCast(strByteLen(p));
-    arc.nox_list_extend_from_bytes(rt, list, @intCast(@intFromPtr(p)), n);
+    arc.nox_u8list_extend_from_bytes(rt, list, @intCast(@intFromPtr(p)), n);
 }
 
 /// v1.162.0: `ord(s)` — `s`in ilk kod noktası; boş `str` için -1.

@@ -66,6 +66,10 @@ jobs:
         run: |
           NOXC_NIGHTLY=./zig-out/bin/noxc-nightly sh scripts/selfhost_bench.sh parse-bench "$RUNNER_TEMP/big.nox" 20
           NOXC_NIGHTLY=./zig-out/bin/noxc-nightly sh scripts/selfhost_bench.sh fmt-bench "$RUNNER_TEMP/big.nox" 20
+      # R2-L (v2.2.59): dil çekirdeği Nox/C kapısı. Ölçüt donanımdan bağımsız llvm/c oranıdır (aynı koşucuda C ile ölçülür); taban çizgisi macOS aarch64'te alındığından yalnızca macOS'ta kapı, tolerans 1,25×.
+      - name: Dil çekirdeği Nox/C kapısı (lang_perf, macOS)
+        if: runner.os == 'macOS'
+        run: python3 benchmarks/lang_perf/run.py --no-python --no-qbe --repeat 3 --check benchmarks/lang_perf/baseline.json --tolerance 1.25
       - name: Derleyici-türü kıyas seti (Nox ↔ Zig)
         run: benchmarks/compiler_bench/run.sh
       - name: Artifact adı
