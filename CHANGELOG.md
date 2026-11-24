@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.50]
+
+GPT-6 sağlamlaştırma listesi — toplu tur 3: macOS bellek tutulması kök nedeni (R1-P1.7b) ve biçimlendirici düzeltmeleri (R1-P1.12).
+
+- **R1-P1.7b**: art arda selfhost çağrılarında tutulan bellek Nox sızıntısı değil, macOS libmalloc'un `realloc` ile büyütülen büyük blokları tutmasıydı; `nox_list_realloc` macOS'ta malloc+kopya+free kullanır. 20 tekrar tepe RSS: parse 292 → 35,5 MiB, fmt 445 → 46,2 MiB.
+- **R1-P1.12**: `FuncDef.line` eklendi; metot önündeki yorum/boş satır trivia'sı artık sonraki metodun gövdesine sızmıyor (idempotence); gerekli parantezler korunur (`(a % b).m()`, `(await t).x`, `(a < b) < c`, `(lambda)()`); `class Ad(Taban)[T]` sırası parser ile uyumlu. `fmt_properties` bilinen ihlal 73 → 4 (yalnız CRLF/üç tırnaklı string kararı). Zig↔Nox fmt/astdump paritesi farksız.
+- Açık: R1-P1.7c — ReleaseFast nightly'de bazı `parse-nox` hata iletileri bellek çöpü basıyor (eski ikili de aynı).
+
 ## [2.2.49]
 
 GPT-6 sağlamlaştırma listesi — toplu tur 2: parser/oracle/biçimlendirici denetimleri, daraltma varyantları, liste başlığı denetimi, ReleaseFast ölçümü.

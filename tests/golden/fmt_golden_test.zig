@@ -677,3 +677,20 @@ test "fmt: dil yüzeyi 2 (v2.2.22) — `type Ad = Tip` yazılan biçimde korunur
     const once = try formatSource(allocator, source);
     try std.testing.expectEqualStrings(source, once);
 }
+
+test "fmt: R1-P1.12 (v2.2.50) — metot önü trivia, gerekli parantezler ve `class Ad(Taban)[T]` sırası korunur, işlem idempotenttir" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const cases = [_][]const u8{
+        "class C:\n    x: int\n\n    # about f\n    def f(self) -> int:\n        return 1\n\n    # about g\n\n    def g(self) -> int:\n        return 2\n\nprotocol P:\n    # m doc\n    def m(self) -> int:\n        pass\n",
+        "def h(a: int, b: int, c: int, t: Task[Node]) -> None:\n    f = (a < b) < c\n    g = (a % b).bit_length()\n    n = (await t).name\n    q = (lambda x: x)(1)\n    r = (-a).bit_length()\n    u = a < b < c\n",
+        "class Base:\n    pass\n\nclass Box(Base)[T]:\n    def __init__(self: Box, value: T) -> None:\n        self.value = value\n",
+    };
+    for (cases) |s| {
+        const once = try formatSource(allocator, s);
+        try std.testing.expectEqualStrings(s, once);
+        const twice = try formatSource(allocator, once);
+        try std.testing.expectEqualStrings(once, twice);
+    }
+}

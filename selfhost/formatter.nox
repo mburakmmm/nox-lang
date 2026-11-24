@@ -545,7 +545,6 @@ def print_enum(pr: Pr, c: int, line_no: int, depth: int) -> None:
                 print_type(pr, a.n[fd + 2])
             w(pr, ")")
         line(pr, a.n[v + 6])
-    first_user: bool = True
     methods: int = sl_at(a, c, 16)
     for mi in range(sl_len(methods)):
         m: int = sl_get(a, methods, mi)
@@ -558,14 +557,8 @@ def print_enum(pr: Pr, c: int, line_no: int, depth: int) -> None:
                 is_variant = True
         if is_variant:
             continue
-        mbody: int = sl_at(a, m, 8)
-        if first_user and sl_len(mbody) > 0:
-            bl: int = s_line(a, sl_get(a, mbody, 0))
-            while pr.ti < pr.ntr and pr.tr[pr.ti * 5 + 1] < bl:
-                pr.ti = pr.ti + 1
         wb(pr, 10)
         pr.last_blank = True
-        first_user = False
         print_func_def_no_leading(pr, m, depth + 1)
 
 def print_stmt(pr: Pr, st: int, depth: int) -> None:
@@ -1001,10 +994,6 @@ def print_class(pr: Pr, c: int, sline: int, depth: int) -> None:
     w(pr, "class ")
     ws(pr, sref_at(a, c, 0))
     tps: int = sl_at(a, c, 14)
-    if sl_len(tps) > 0:
-        w(pr, "[")
-        print_name_list(pr, tps)
-        w(pr, "]")
     base: int = opt_at(a, c, 6)
     if base != -1:
         w(pr, "(")
@@ -1022,6 +1011,11 @@ def print_class(pr: Pr, c: int, sline: int, depth: int) -> None:
             w(pr, ", ")
             ws(pr, pk(a.l[pkx(ebs) + j * 2], a.l[pkx(ebs) + j * 2 + 1]))
         w(pr, ")")
+    # R1-P1.12 (v2.2.50): parser yalnızca `class Ad(Taban)[T]` sırasını kabul eder; tip parametreleri tabandan SONRA yazılır (önceden `class Ad[T](Taban)` → çıktı yeniden ayrışmıyordu).
+    if sl_len(tps) > 0:
+        w(pr, "[")
+        print_name_list(pr, tps)
+        w(pr, "]")
     w(pr, ":")
     line(pr, sline)
     doc: int = opt_at(a, c, 4)
@@ -1053,12 +1047,6 @@ def print_class(pr: Pr, c: int, sline: int, depth: int) -> None:
         line(pr, a.n[fd + 3])
     methods: int = sl_at(a, c, 16)
     nfc: int = sl_len(fields) + sl_len(consts)
-    if nfc > 0 and sl_len(methods) > 0:
-        m0b: int = sl_at(a, sl_get(a, methods, 0), 8)
-        if sl_len(m0b) > 0:
-            next_line: int = s_line(a, sl_get(a, m0b, 0))
-            while pr.ti < pr.ntr and pr.tr[pr.ti * 5 + 1] < next_line:
-                pr.ti = pr.ti + 1
     for mi in range(sl_len(methods)):
         if mi > 0 or nfc > 0:
             wb(pr, 10)
@@ -1097,8 +1085,23 @@ def print_func_def(pr: Pr, fd: int, depth: int, source_line: int) -> None:
     print_decl_list(pr, "global ", sl_at(a, fd, 17), depth + 1)
     print_stmts(pr, sl_at(a, fd, 8), depth + 1)
 
+# R1-P1.12 (v2.2.50): metodun (varsa ilk dekoratörün) ÖNÜNDEKİ yorum/boş satır trivia'sı metodun önüne basılır (Zig `emitMethodLeadingTrivia` ile aynı).
+def emit_method_leading_trivia(pr: Pr, fd: int, depth: int) -> None:
+    a: Ast = pr.a
+    start: int = a.n[fd + 20]
+    decos: int = sl_at(a, fd, 11)
+    if sl_len(decos) > 0:
+        dl: int = a.n[sl_get(a, decos, 0) + 4]
+        if dl != 0 and (start == 0 or dl < start):
+            start = dl
+    if start == 0:
+        return
+    pr.last_blank = True
+    emit_leading_trivia(pr, depth, start)
+
 def print_func_def_no_leading(pr: Pr, fd: int, depth: int) -> None:
     a: Ast = pr.a
+    emit_method_leading_trivia(pr, fd, depth)
     print_decorators(pr, sl_at(a, fd, 11), depth)
     indent_to(pr, depth)
     print_func_header(pr, fd)
@@ -1421,6 +1424,8 @@ def print_expr_at(pr: Pr, e: int, ctx_prec: int, side: int) -> None:
         if op == 6:
             left_side = 1
             right_side = 0
+        elif my_prec == bin_prec(9):
+            left_side = 1
         print_expr_at(pr, left, my_prec, left_side)
         if is_form and a.n[right] == 4 and (op == 7 or op == 8):
             if op == 7:
@@ -1478,6 +1483,23 @@ def print_expr_at(pr: Pr, e: int, ctx_prec: int, side: int) -> None:
         if need_u:
             w(pr, ")")
         return
+    # R1-P1.12 (v2.2.50): son-ek bağlamında (ctx_prec >= 13) `(await t).x` / `(spawn f()).x`; lambda herhangi bir operatör bağlamında parantezlenir (Zig `printExprAt` ile aynı).
+    if t == 13 or t == 14:
+        need_a: bool = ctx_prec >= 13
+        if need_a:
+            w(pr, "(")
+        print_primary(pr, e)
+        if need_a:
+            w(pr, ")")
+        return
+    if t == 19:
+        need_l: bool = ctx_prec > 0
+        if need_l:
+            w(pr, "(")
+        print_primary(pr, e)
+        if need_l:
+            w(pr, ")")
+        return
     print_primary(pr, e)
 
 def print_primary(pr: Pr, e: int) -> None:
@@ -1509,7 +1531,7 @@ def print_primary(pr: Pr, e: int) -> None:
         return
     if t == 9:
         ap: int = a.n[e + 1]
-        print_expr_at(pr, a.n[ap + 0], 0, 0)
+        print_expr_at(pr, a.n[ap + 0], 13, 0)
         w(pr, ".")
         ws(pr, sref_at(a, ap, 1))
         return
@@ -1544,7 +1566,7 @@ def print_primary(pr: Pr, e: int) -> None:
         return
     if t == 18:
         sp: int = a.n[e + 1]
-        print_expr_at(pr, a.n[sp + 0], 0, 0)
+        print_expr_at(pr, a.n[sp + 0], 13, 0)
         w(pr, "[")
         lo: int = a.n[sp + 1]
         hi: int = a.n[sp + 2]
@@ -1561,7 +1583,7 @@ def print_primary(pr: Pr, e: int) -> None:
         return
     if t == 10:
         ip: int = a.n[e + 1]
-        print_expr_at(pr, a.n[ip + 0], 0, 0)
+        print_expr_at(pr, a.n[ip + 0], 13, 0)
         w(pr, "[")
         print_expr(pr, a.n[ip + 1])
         w(pr, "]")
@@ -1654,7 +1676,7 @@ def print_call_expr(pr: Pr, e: int) -> None:
             print_comp_clauses(pr, sl_at(a, lc, 1))
         w(pr, "}")
         return
-    print_expr_at(pr, callee, 0, 0)
+    print_expr_at(pr, callee, 13, 0)
     w(pr, "(")
     if nargs == 1:
         a1: int = sl_get(a, args, 0)

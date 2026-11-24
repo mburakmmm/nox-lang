@@ -2178,7 +2178,7 @@ def is_enum_start(p: P) -> bool:
 # Varsayılanlı FuncDef: type_params=[], ret_omitted=false, is_async=false, decorators=[], link_name=null, nonlocals=[], globals=[], allow_await=false.
 def new_func(a: Ast, name: int, tparams: int, params: int, ret: int, body: int) -> int:
     e: int = sl_empty(a)
-    return mk_FuncDef(a, pkx(name), pky(name), pkx(tparams), pky(tparams), pkx(params), pky(params), ret, 0, pkx(body), pky(body), 0, pkx(e), pky(e), {{NONE}}, 0, pkx(e), pky(e), pkx(e), pky(e), 0)
+    return mk_FuncDef(a, pkx(name), pky(name), pkx(tparams), pky(tparams), pkx(params), pky(params), ret, 0, pkx(body), pky(body), 0, pkx(e), pky(e), {{NONE}}, 0, pkx(e), pky(e), pkx(e), pky(e), 0, 0)
 
 def new_param(a: Ast, name: int, type_expr: int, self_inferred: int) -> int:
     return mk_Param(a, pkx(name), pky(name), 0, 0, 0, 0, type_expr, self_inferred, -1)
@@ -2867,6 +2867,7 @@ def parse_first_param(p: P, enclosing: int) -> int:
 
 def parse_func_def(p: P, enclosing: int) -> int:
     a: Ast = p.a
+    def_line: int = p.tk[p.pos * 5 + 1]
     is_async: int = 1 if mtc(p, {{K:kw_async}}) else 0
     expect(p, {{K:kw_def}})
     nt: int = expect(p, {{K:identifier}})
@@ -2958,6 +2959,7 @@ def parse_func_def(p: P, enclosing: int) -> int:
     p.ex_synth = saved_synth
     fd: int = new_func(a, name, sl2_of(a, type_params), sl_of(a, params), return_type, body)
     a.n[fd + {{O:FuncDef.ret_omitted}}] = ret_omitted
+    a.n[fd + {{O:FuncDef.line}}] = def_line
     a.n[fd + {{O:FuncDef.is_async}}] = is_async
     set_sl(a, fd, {{O:FuncDef.nonlocals}}, nls)
     set_sl(a, fd, {{O:FuncDef.globals}}, gls)

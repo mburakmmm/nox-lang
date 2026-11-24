@@ -552,7 +552,9 @@ pub export fn nox_list_realloc(rt: ?*anyopaque, old_ptr: ?*anyopaque, old_payloa
             }
         }
     }
-    if (comptime asap.use_libc_large) {
+    // R1-P1.7b (v2.2.50): macOS libmalloc büyük blokların `realloc` ile büyütülmesinde eski eşlemeleri tutar (60×8 MiB liste → 484 MiB tepe RSS; düz C ile de
+    // yeniden üretildi) — `malloc+memcpy+free` 17,5 MiB ve daha hızlıdır. Bu yüzden macOS'ta libc `realloc` yolu KULLANILMAZ (aşağıdaki tahsis+kopya+bırakma yolu).
+    if (comptime asap.use_libc_large and builtin.os.tag != .macos) {
         const pooled_old = use_pool and poolClassIndex(old_total) != null;
         if (!pooled_old and old_total >= asap.LIBC_LARGE_MIN and new_total >= asap.LIBC_LARGE_MIN) {
             const bytes: [*]u8 = @ptrCast(old);

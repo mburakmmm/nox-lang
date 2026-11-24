@@ -1506,6 +1506,7 @@ pub const Parser = struct {
     /// `self` OLUP OLAMAYACAĞINI belirlemek İçin kullanılır (bkz.
     /// `parseFirstParam`, Faz FF.4, nox-teknik-spesifikasyon.md §3.63).
     fn parseFuncDef(self: *Parser, enclosing_name: ?[]const u8) ParseError!ast.FuncDef {
+        const def_line: u32 = @intCast(self.cur().line);
         const is_async = self.match(.kw_async);
         _ = try self.expect(.kw_def);
         const name = (try self.expect(.identifier)).lexeme;
@@ -1599,6 +1600,7 @@ pub const Parser = struct {
             .is_async = is_async,
             .nonlocals = try nonlocals.toOwnedSlice(self.allocator),
             .globals = try globals.toOwnedSlice(self.allocator),
+            .line = def_line,
         };
     }
 

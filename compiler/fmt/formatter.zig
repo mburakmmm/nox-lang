@@ -73,6 +73,9 @@ pub fn formatModule(allocator: std.mem.Allocator, module: ast.Module, trivia: []
 /// (bitwise operatörler) İLE comparison(4)/add-sub(eski 5) ARASINA 4 yeni
 /// kademe (bit_or/bit_xor/bit_and/shift) EKLENDİĞİNDEN TÜM sayılar
 /// (eski göreli SIRA KORUNARAK) YENİDEN numaralandırıldı.
+/// R1-P1.12 (v2.2.50): son-ek bağlamı (çağrılan, `.öznitelik` nesnesi, `[...]`/dilim nesnesi) — hiçbir ikili/tekli/üçlü/await/lambda parantezsiz yazılamaz.
+const POSTFIX_PREC: u8 = 13;
+
 fn binPrec(op: ast.BinaryOp) u8 {
     return switch (op) {
         .or_ => 1,
@@ -402,7 +405,6 @@ const Printer = struct {
             }
             try self.line(v.line);
         }
-        var first_user = true;
         for (c.methods) |m| {
             if (std.mem.eql(u8, m.name, "__init__")) continue;
             var is_variant = false;
@@ -410,12 +412,8 @@ const Printer = struct {
                 is_variant = true;
             };
             if (is_variant) continue;
-            if (first_user and m.body.len > 0) {
-                while (self.trivia_idx < self.trivia.len and self.trivia[self.trivia_idx].line < m.body[0].line) self.trivia_idx += 1;
-            }
             try self.writer.writeAll("\n");
             self.last_was_blank = true;
-            first_user = false;
             try self.printFuncDefNoLeading(m, depth + 1);
         }
     }
@@ -569,14 +567,6 @@ const Printer = struct {
                 // Pulse NOX-FMT-001: `class Box[T]` tip parametreleri SİLİNİRSE
                 // biçimlendirilmiş kaynak `UnknownType: T` ile derlenmez.
                 try self.writer.print("class {s}", .{c.name});
-                if (c.type_params.len > 0) {
-                    try self.writer.writeAll("[");
-                    for (c.type_params, 0..) |tp, idx| {
-                        if (idx > 0) try self.writer.writeAll(", ");
-                        try self.writer.writeAll(tp);
-                    }
-                    try self.writer.writeAll("]");
-                }
                 if (c.base) |b| {
                     try self.writer.print("({s}", .{b});
                     if (c.base_args.len > 0) {
@@ -589,6 +579,15 @@ const Printer = struct {
                     }
                     for (c.extra_bases) |eb| try self.writer.print(", {s}", .{eb});
                     try self.writer.writeAll(")");
+                }
+                // R1-P1.12 (v2.2.50): parser yalnızca `class Ad(Taban)[T]` sırasını kabul eder; tip parametreleri tabandan SONRA yazılır.
+                if (c.type_params.len > 0) {
+                    try self.writer.writeAll("[");
+                    for (c.type_params, 0..) |tp, idx| {
+                        if (idx > 0) try self.writer.writeAll(", ");
+                        try self.writer.writeAll(tp);
+                    }
+                    try self.writer.writeAll("]");
                 }
                 try self.writer.writeAll(":");
                 try self.line(stmt.line);
@@ -623,26 +622,8 @@ const Printer = struct {
                     try self.printType(fd.type_expr);
                     try self.line(fd.line);
                 }
-                // Alanlar VARSA VE en az bir metod TAKİP EDİYORSA: alan/metod
-                // GEÇİŞ bölgesindeki (kaynakta orada OLABİLECEK boş satır/
-                // yorum) tüketilmemiş trivia'yı, AŞAĞIDAKİ döngünün ZATEN
-                // KOŞULSUZ eklediği TEK ayırıcı boş satırla ÇAKIŞMAMASI İçin
-                // SESSİZCE (basmadan) İLERİ SARAR — metodlar ARASI boşluğun
-                // (bkz. aşağıdaki `idx > 0` dalı) KENDİSİ de trivia'ya HİÇ
-                // bakmadan HER ZAMAN TEK bir boş satır ZORLADIĞINDAN, bu
-                // TUTARLI bir davranıştır (bkz. `printStmts`in AKSİNE, metod
-                // listesi ZATEN trivia-duyarlı DEĞİLDİR). `fd.line`in
-                // `ast.Stmt`ten BAĞIMSIZ, SENTETİK bir alan olması nedeniyle
-                // (bkz. `ast.FieldDecl`nin belge notu) BU BURADA GEREKİR —
-                // aksi halde bu trivia, `__init__`in gövdesindeki İLK
-                // deyimin KENDİ `emitLeadingTrivia`sına SIZAR (GERÇEKTEN
-                // gözlemlenen bir biçimlendirme hatasıydı).
-                if ((c.fields.len + c.consts.len) > 0 and c.methods.len > 0 and c.methods[0].body.len > 0) {
-                    const next_line = c.methods[0].body[0].line;
-                    while (self.trivia_idx < self.trivia.len and self.trivia[self.trivia_idx].line < next_line) {
-                        self.trivia_idx += 1;
-                    }
-                }
+                // R1-P1.12 (v2.2.50): alan/metot ve metotlar arası trivia ARTIK silinmez ya da bir sonraki metodun gövdesine sızmaz; her metodun önünde `emitMethodLeadingTrivia`
+                // ile (yorumlar metodun önüne, boş satırlar aşağıdaki TEK ayırıcı boş satıra indirgenerek) basılır.
                 for (c.methods, 0..) |m, idx| {
                     if (idx > 0 or (c.fields.len + c.consts.len) > 0) {
                         try self.writer.writeAll("\n");
@@ -880,6 +861,17 @@ const Printer = struct {
         try self.printStmts(fd.body, depth + 1);
     }
 
+    /// R1-P1.12 (v2.2.50): metodun (varsa ilk dekoratörün) ÖNÜNDEKİ yorum ve boş satır trivia'sını metodun önüne basar. Önceden bu trivia metodun GÖVDESİNİN ilk deyiminin
+    /// önüne sızıyordu (`def f():` altında boş satır/yorum; ikinci geçişte tekrar boş satır → biçimlendirici idempotent değildi). Çağıran ayırıcı boş satırı (varsa) zaten yazmıştır;
+    /// başlığın hemen ardından gelen boş satır bastırılır (`last_was_blank = true`).
+    fn emitMethodLeadingTrivia(self: *Printer, m: ast.FuncDef, depth: usize) FormatError!void {
+        var start: u32 = m.line;
+        if (m.decorators.len > 0 and m.decorators[0].line != 0 and (start == 0 or m.decorators[0].line < start)) start = m.decorators[0].line;
+        if (start == 0) return;
+        self.last_was_blank = true;
+        try self.emitLeadingTrivia(depth, start);
+    }
+
     /// `class_def`/`protocol_def` içindeki metodlar KENDİ `ast.Stmt`
     /// SARMALAYICISINA sahip DEĞİLDİR (`ast.FuncDef` çıplak, bkz.
     /// `ClassDef.methods: []FuncDef`) — bu yüzden metod başlığının satırı
@@ -887,6 +879,7 @@ const Printer = struct {
     /// ATLANIR (metod gövdesinin İLK deyiminin ÖNÜNDEKİ trivia YİNE DE
     /// standalone olarak doğru basılır).
     fn printFuncDefNoLeading(self: *Printer, fd: ast.FuncDef, depth: usize) FormatError!void {
+        try self.emitMethodLeadingTrivia(fd, depth);
         try self.printDecorators(fd.decorators, depth);
         try self.indentTo(depth);
         try self.printFuncHeader(fd);
@@ -1182,7 +1175,8 @@ const Printer = struct {
                 const need_parens = my_prec < ctx_prec or (my_prec == ctx_prec and side == .strict);
                 if (need_parens) try self.writer.writeAll("(");
                 const right_assoc = b.op == .pow;
-                const left_side: Side = if (right_assoc) .strict else .loose;
+                // Karşılaştırmalar Python'da zincirlenir: `(a < b) < c` parantezsiz `a < b < c` (= `a < b and b < c`) olurdu → karşılaştırmanın sol operandı da `strict`.
+                const left_side: Side = if (right_assoc or my_prec == binPrec(.lt)) .strict else .loose;
                 const right_side: Side = if (right_assoc) .loose else .strict;
                 try self.printExprAt(b.left.*, my_prec, left_side);
                 if (b.is_form and b.right.* == .none_lit and (b.op == .eq or b.op == .ne)) {
@@ -1225,6 +1219,19 @@ const Printer = struct {
                     .invert => try self.writer.writeAll("~"),
                 }
                 try self.printExprAt(u.operand.*, my_prec, .loose);
+                if (need_parens) try self.writer.writeAll(")");
+            },
+            .await_expr, .spawn_expr => {
+                // `(await t).x` / `(spawn f()).x`: son-ek bağlamında parantez zorunlu.
+                const need_parens = ctx_prec >= POSTFIX_PREC;
+                if (need_parens) try self.writer.writeAll("(");
+                try self.printPrimary(e);
+                if (need_parens) try self.writer.writeAll(")");
+            },
+            .lambda => {
+                const need_parens = ctx_prec > 0;
+                if (need_parens) try self.writer.writeAll("(");
+                try self.printPrimary(e);
                 if (need_parens) try self.writer.writeAll(")");
             },
             else => try self.printPrimary(e),
@@ -1279,7 +1286,7 @@ const Printer = struct {
                     try self.writer.writeAll("}");
                     return;
                 }
-                try self.printExprAt(c.callee.*, 0, .loose);
+                try self.printExprAt(c.callee.*, POSTFIX_PREC, .loose);
                 try self.writer.writeAll("(");
                 // v1.162.0: tek argümanlı üreteç ifadesi (`sum(x for x in xs)`) köşeli parantezsiz yazılır.
                 if (c.args.len == 1 and c.args[0] == .list_comp and c.args[0].list_comp.is_genexpr) {
@@ -1295,7 +1302,7 @@ const Printer = struct {
                 try self.writer.writeAll(")");
             },
             .attribute => |a| {
-                try self.printExprAt(a.obj.*, 0, .loose);
+                try self.printExprAt(a.obj.*, POSTFIX_PREC, .loose);
                 try self.writer.print(".{s}", .{a.attr});
             },
             .list_comp => |lc| {
@@ -1322,7 +1329,7 @@ const Printer = struct {
                 try self.printExpr(lam.body.*);
             },
             .slice => |sl| {
-                try self.printExprAt(sl.obj.*, 0, .loose);
+                try self.printExprAt(sl.obj.*, POSTFIX_PREC, .loose);
                 try self.writer.writeAll("[");
                 if (sl.lo) |x| try self.printExpr(x.*);
                 try self.writer.writeAll(":");
@@ -1334,7 +1341,7 @@ const Printer = struct {
                 try self.writer.writeAll("]");
             },
             .index => |idx| {
-                try self.printExprAt(idx.obj.*, 0, .loose);
+                try self.printExprAt(idx.obj.*, POSTFIX_PREC, .loose);
                 try self.writer.writeAll("[");
                 try self.printExpr(idx.index.*);
                 try self.writer.writeAll("]");

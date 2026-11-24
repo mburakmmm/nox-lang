@@ -543,7 +543,6 @@ def print_enum(pr: Pr, c: int, line_no: int, depth: int) -> None:
                 print_type(pr, a.n[fd + {{O:FieldDecl.type_expr}}])
             w(pr, ")")
         line(pr, a.n[v + {{O:EnumVariant.line}}])
-    first_user: bool = True
     methods: int = sl_at(a, c, {{O:ClassDef.methods}})
     for mi in range(sl_len(methods)):
         m: int = sl_get(a, methods, mi)
@@ -556,14 +555,8 @@ def print_enum(pr: Pr, c: int, line_no: int, depth: int) -> None:
                 is_variant = True
         if is_variant:
             continue
-        mbody: int = sl_at(a, m, {{O:FuncDef.body}})
-        if first_user and sl_len(mbody) > 0:
-            bl: int = s_line(a, sl_get(a, mbody, 0))
-            while pr.ti < pr.ntr and pr.tr[pr.ti * 5 + 1] < bl:
-                pr.ti = pr.ti + 1
         wb(pr, 10)
         pr.last_blank = True
-        first_user = False
         print_func_def_no_leading(pr, m, depth + 1)
 
 def print_stmt(pr: Pr, st: int, depth: int) -> None:
@@ -999,10 +992,6 @@ def print_class(pr: Pr, c: int, sline: int, depth: int) -> None:
     w(pr, "class ")
     ws(pr, sref_at(a, c, {{O:ClassDef.name}}))
     tps: int = sl_at(a, c, {{O:ClassDef.type_params}})
-    if sl_len(tps) > 0:
-        w(pr, "[")
-        print_name_list(pr, tps)
-        w(pr, "]")
     base: int = opt_at(a, c, {{O:ClassDef.base}})
     if base != -1:
         w(pr, "(")
@@ -1020,6 +1009,11 @@ def print_class(pr: Pr, c: int, sline: int, depth: int) -> None:
             w(pr, ", ")
             ws(pr, pk(a.l[pkx(ebs) + j * 2], a.l[pkx(ebs) + j * 2 + 1]))
         w(pr, ")")
+    # R1-P1.12 (v2.2.50): parser yalnızca `class Ad(Taban)[T]` sırasını kabul eder; tip parametreleri tabandan SONRA yazılır (önceden `class Ad[T](Taban)` → çıktı yeniden ayrışmıyordu).
+    if sl_len(tps) > 0:
+        w(pr, "[")
+        print_name_list(pr, tps)
+        w(pr, "]")
     w(pr, ":")
     line(pr, sline)
     doc: int = opt_at(a, c, {{O:ClassDef.doc}})
@@ -1051,12 +1045,6 @@ def print_class(pr: Pr, c: int, sline: int, depth: int) -> None:
         line(pr, a.n[fd + {{O:FieldDecl.line}}])
     methods: int = sl_at(a, c, {{O:ClassDef.methods}})
     nfc: int = sl_len(fields) + sl_len(consts)
-    if nfc > 0 and sl_len(methods) > 0:
-        m0b: int = sl_at(a, sl_get(a, methods, 0), {{O:FuncDef.body}})
-        if sl_len(m0b) > 0:
-            next_line: int = s_line(a, sl_get(a, m0b, 0))
-            while pr.ti < pr.ntr and pr.tr[pr.ti * 5 + 1] < next_line:
-                pr.ti = pr.ti + 1
     for mi in range(sl_len(methods)):
         if mi > 0 or nfc > 0:
             wb(pr, 10)
@@ -1095,8 +1083,23 @@ def print_func_def(pr: Pr, fd: int, depth: int, source_line: int) -> None:
     print_decl_list(pr, "global ", sl_at(a, fd, {{O:FuncDef.globals}}), depth + 1)
     print_stmts(pr, sl_at(a, fd, {{O:FuncDef.body}}), depth + 1)
 
+# R1-P1.12 (v2.2.50): metodun (varsa ilk dekoratörün) ÖNÜNDEKİ yorum/boş satır trivia'sı metodun önüne basılır (Zig `emitMethodLeadingTrivia` ile aynı).
+def emit_method_leading_trivia(pr: Pr, fd: int, depth: int) -> None:
+    a: Ast = pr.a
+    start: int = a.n[fd + {{O:FuncDef.line}}]
+    decos: int = sl_at(a, fd, {{O:FuncDef.decorators}})
+    if sl_len(decos) > 0:
+        dl: int = a.n[sl_get(a, decos, 0) + {{O:Decorator.line}}]
+        if dl != 0 and (start == 0 or dl < start):
+            start = dl
+    if start == 0:
+        return
+    pr.last_blank = True
+    emit_leading_trivia(pr, depth, start)
+
 def print_func_def_no_leading(pr: Pr, fd: int, depth: int) -> None:
     a: Ast = pr.a
+    emit_method_leading_trivia(pr, fd, depth)
     print_decorators(pr, sl_at(a, fd, {{O:FuncDef.decorators}}), depth)
     indent_to(pr, depth)
     print_func_header(pr, fd)
@@ -1419,6 +1422,8 @@ def print_expr_at(pr: Pr, e: int, ctx_prec: int, side: int) -> None:
         if op == {{E:BinaryOp.pow}}:
             left_side = 1
             right_side = 0
+        elif my_prec == bin_prec({{E:BinaryOp.lt}}):
+            left_side = 1
         print_expr_at(pr, left, my_prec, left_side)
         if is_form and a.n[right] == {{T:Expr.none_lit}} and (op == {{E:BinaryOp.eq}} or op == {{E:BinaryOp.ne}}):
             if op == {{E:BinaryOp.eq}}:
@@ -1476,6 +1481,23 @@ def print_expr_at(pr: Pr, e: int, ctx_prec: int, side: int) -> None:
         if need_u:
             w(pr, ")")
         return
+    # R1-P1.12 (v2.2.50): son-ek bağlamında (ctx_prec >= 13) `(await t).x` / `(spawn f()).x`; lambda herhangi bir operatör bağlamında parantezlenir (Zig `printExprAt` ile aynı).
+    if t == {{T:Expr.await_expr}} or t == {{T:Expr.spawn_expr}}:
+        need_a: bool = ctx_prec >= 13
+        if need_a:
+            w(pr, "(")
+        print_primary(pr, e)
+        if need_a:
+            w(pr, ")")
+        return
+    if t == {{T:Expr.lambda}}:
+        need_l: bool = ctx_prec > 0
+        if need_l:
+            w(pr, "(")
+        print_primary(pr, e)
+        if need_l:
+            w(pr, ")")
+        return
     print_primary(pr, e)
 
 def print_primary(pr: Pr, e: int) -> None:
@@ -1507,7 +1529,7 @@ def print_primary(pr: Pr, e: int) -> None:
         return
     if t == {{T:Expr.attribute}}:
         ap: int = a.n[e + 1]
-        print_expr_at(pr, a.n[ap + {{O:Attribute.obj}}], 0, 0)
+        print_expr_at(pr, a.n[ap + {{O:Attribute.obj}}], 13, 0)
         w(pr, ".")
         ws(pr, sref_at(a, ap, {{O:Attribute.attr}}))
         return
@@ -1542,7 +1564,7 @@ def print_primary(pr: Pr, e: int) -> None:
         return
     if t == {{T:Expr.slice}}:
         sp: int = a.n[e + 1]
-        print_expr_at(pr, a.n[sp + {{O:Slice.obj}}], 0, 0)
+        print_expr_at(pr, a.n[sp + {{O:Slice.obj}}], 13, 0)
         w(pr, "[")
         lo: int = a.n[sp + {{O:Slice.lo}}]
         hi: int = a.n[sp + {{O:Slice.hi}}]
@@ -1559,7 +1581,7 @@ def print_primary(pr: Pr, e: int) -> None:
         return
     if t == {{T:Expr.index}}:
         ip: int = a.n[e + 1]
-        print_expr_at(pr, a.n[ip + {{O:Index.obj}}], 0, 0)
+        print_expr_at(pr, a.n[ip + {{O:Index.obj}}], 13, 0)
         w(pr, "[")
         print_expr(pr, a.n[ip + {{O:Index.index}}])
         w(pr, "]")
@@ -1652,7 +1674,7 @@ def print_call_expr(pr: Pr, e: int) -> None:
             print_comp_clauses(pr, sl_at(a, lc, {{O:ListComp.clauses}}))
         w(pr, "}")
         return
-    print_expr_at(pr, callee, 0, 0)
+    print_expr_at(pr, callee, 13, 0)
     w(pr, "(")
     if nargs == 1:
         a1: int = sl_get(a, args, 0)

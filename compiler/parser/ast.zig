@@ -328,6 +328,9 @@ pub const FuncDef = struct {
     globals: []const []const u8 = &.{},
     /// `generator_desugar.zig`nin `async def` jeneratörü için ürettiği ADIM fonksiyonunda `await`e izin verir (adım, tüketicinin fiber'ında çalışır).
     allow_await: bool = false,
+    /// R1-P1.12 (v2.2.50): `def`/`async def` belirtecinin kaynak satırı (sınıf/protokol metotlarının `Stmt` sarmalayıcısı yoktur; biçimlendirici metot ÖNÜNDEKİ
+    /// yorum/boş satır trivia'sını bu satırla ayırır). Davranışı etkilemez; dökümlere/denetleyiciye girmez.
+    line: u32 = 0,
 };
 
 /// Faz FF.5 (bkz. nox-teknik-spesifikasyon.md §3.64): bir sınıf gövdesinde
