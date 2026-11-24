@@ -69,7 +69,7 @@ Kaynak: `~/Desktop/nox-1.md` (Aşama 1/2: sağlamlaştırma, ref. v2.2.44) ve `~
 - [x] **R2-B.3** (v2.2.59: rapor — YAPILMAYACAK (kazanç düşük); karar kayıtları project/asama3-tasarim-kararlari-2026-11-24.md) Nesne grafiği escape analizi / region inference / arena kümeleri.
 - [x] **R2-B.4** (v2.2.59: rapor — düz dizi korunur, yapma) AST için arena/ARC/ASAP/düz dizi karşılaştırması (düz dizi korunur).
 - [x] **R2-B.6** (v2.2.59: KULLANICI KARARI — yapılmayacak; atomik ARC kalır) Atomik olmayan RC hızlı yolları (varsa mevcut thread-local/publish mekanizmasını önce incele).
-- [~] **R2-C.1/C.2** (v2.2.59: KULLANICI KARARI — tahsissiz skaler etiket (düz enumlar); tasarım+aşamalar asama3-tasarim-kararlari; UYGULAMA ayrı özellik fazı, başlatmadan önce son onay) Enum: immortal nesne, tahsissiz skaler tag, escape ile eliminasyon, statik varyant (D1.3'te yalnızca paylaşılan singleton reddedildi; diğerleri açık); küçük değer tipleri tahsissiz (yeni keyword YOK).
+- [x] **R2-C.1/C.2** (v2.2.61: UYGULANDI — düz enumlar tahsissiz skaler etiket; `enum_flat_bench`: list[Kind] 6,2×, kaçmayan döngü 3,8×; spec §3.496; yük taşıyan enumlar nesne olarak kaldı; kullanıcı kararı tasarım: asama3-tasarim-kararlari) Enum: immortal nesne, tahsissiz skaler tag, escape ile eliminasyon, statik varyant (D1.3'te yalnızca paylaşılan singleton reddedildi; diğerleri açık); küçük değer tipleri tahsissiz (yeni keyword YOK).
 - [~] **R2-G.1/G.2** (v2.2.59: KULLANICI KARARI — `SymbolId` + derleme-ömürlü havuz; Aşama 3 typechecker yazımıyla uygulanır) Sembol tablosu 2,87× kök neden; string interning/SymbolId (sınırsız büyüyen global havuz yok; LSP yaşam süresi).
 
 ### N.5 Typechecker hazırlığı (Aşama 3 öncesi)

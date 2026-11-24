@@ -1,0 +1,102 @@
+# Düz enum (payload'sız) = tahsissiz skaler etiket: metod, match, ==, alan, parametre, liste/dict elemanı, Optional, closure, global.
+enum Color:
+    Red
+    Green
+    Blue
+
+    def name(self) -> str:
+        match self:
+            case Color.Red:
+                return "red"
+            case Color.Green:
+                return "green"
+            case Color.Blue:
+                return "blue"
+
+    def next(self) -> Color:
+        match self:
+            case Color.Red:
+                return Color.Green
+            case Color.Green:
+                return Color.Blue
+            case Color.Blue:
+                return Color.Red
+
+    def is_warm(self) -> bool:
+        return self == Color.Red
+
+class Pixel:
+    def __init__(self, c: Color, x: int) -> None:
+        self.c = c
+        self.x = x
+
+    def label(self) -> str:
+        return self.c.name() + "@" + str(self.x)
+
+def pick(i: int) -> Color:
+    if i == 0:
+        return Color.Red
+    if i == 1:
+        return Color.Green
+    return Color.Blue
+
+def describe(c: Color, other: Color) -> str:
+    if c == other:
+        return "same " + c.name()
+    return c.name() + " != " + other.name()
+
+def maybe(flag: bool) -> Color | None:
+    if flag:
+        return Color.Green
+    return None
+
+g: Color = Color.Red
+
+c: Color = Color.Green
+print(c.name(), c.next().name(), c.next().next().name())
+print(c == Color.Green, c != Color.Green, c == Color.Red)
+print(Color.Red.is_warm(), Color.Blue.is_warm())
+print(describe(Color.Red, Color.Blue), describe(Color.Blue, Color.Blue), describe(Color.Green, Color.Green))
+
+p: Pixel = Pixel(Color.Blue, 7)
+print(p.label())
+p.c = p.c.next()
+print(p.label())
+
+xs: list[Color] = [Color.Red, Color.Green, Color.Blue]
+xs.append(pick(1))
+total: int = 0
+for x in xs:
+    print(x.name())
+    if x == Color.Green:
+        total = total + 1
+print(total, len(xs), xs[2].name())
+
+d: dict[str, Color] = {"a": Color.Red, "b": Color.Blue}
+d["c"] = Color.Green
+print(d["b"].name(), d["c"].next().name())
+
+m: Color | None = maybe(True)
+if m is not None:
+    print(m.name())
+n: Color | None = maybe(False)
+print(n is None)
+
+g = g.next()
+print(g.name())
+
+def apply(f: (Color) -> Color, v: Color) -> Color:
+    return f(v)
+
+def make_adder() -> (Color) -> str:
+    base: Color = Color.Blue
+    def inner(v: Color) -> str:
+        return v.name() + "/" + base.name()
+    return inner
+
+def step(q: Color) -> Color:
+    return q.next()
+
+print(apply(step, Color.Blue).name())
+f: (Color) -> str = make_adder()
+print(f(Color.Red))

@@ -502,6 +502,8 @@ pub fn genBoundMethodTrampoline(self: *Codegen, spec: BoundMethodSpec) CodegenEr
     try self.qbeRet(ret_temp);
     try self.qbeFuncEnd();
 
-    const caps = [_]ClosureCaptureField{.{ .name = "self", .info = .{ .qtype = .l, .heap = .class, .class_name = spec.class_name } }};
+    // R2-C.1/C.2: düz enum alıcısı skalerdir — yakalanan `self` ARC nesnesi DEĞİL (release edilmez).
+    const self_info: types.TypeInfo = if (self.flat_enums.contains(spec.class_name)) .{ .qtype = .l } else .{ .qtype = .l, .heap = .class, .class_name = spec.class_name };
+    const caps = [_]ClosureCaptureField{.{ .name = "self", .info = self_info }};
     try self.genClosureRelease(base, &caps);
 }

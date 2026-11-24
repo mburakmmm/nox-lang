@@ -207,6 +207,15 @@ pub fn computeCyclicClasses(self: *Codegen) CodegenError!void {
     }
 }
 
+/// R2-C.1/C.2: düz enum (skaler etiket) için YALNIZCA kullanıcı metodlarını/varyant kurucularını üretir. Nesne makinesi (`__init__`,
+/// `_release`/`_eq`/`_trace`/`_gc_free`/vtable, `class_id` dağıtımı) YOKTUR: örnek tahsis edilmez, ARC'ye girmez.
+pub fn genFlatEnumMethods(self: *Codegen, cd: ast.ClassDef) CodegenError!void {
+    for (cd.methods) |m| {
+        if (std.mem.eql(u8, m.name, "__init__")) continue;
+        try self.genMethod(cd.name, m);
+    }
+}
+
 /// Her sınıf için `$ClassName_release(rt, p)` üretir: refcount'u azaltır
 /// (`nox_rc_predecrement`); sıfıra düştüyse, ÖNCE heap-yönetimli her alanı
 /// (sınıf TİPLİ ya da — bkz. görev "Sınıf alanı list[T] tipinde olabilsin"

@@ -420,6 +420,15 @@ pub const ClassDef = struct {
     /// Boş değilse bu sınıf bir `enum`dan indirgenmiştir (etiketli birleşim): alanlar `_tag` + `_<Varyant>_<alan>`, kurucular `@staticmethod`lardır.
     /// Kullanılmayan varyantların payload alanları sıfırlı bellekte kalır (checker bu sınıflarda `__init__`te atanmamış alan denetimini atlar).
     enum_variants: []const EnumVariant = &.{},
+
+    /// R2-C.1/C.2 (v2.2.61): HİÇBİR varyantı alan taşımayan ("düz") enum. Bu enumların değerleri ARC nesnesi değil, tahsissiz `int`
+    /// etiketidir (tip sistemi nominal kalır; yalnızca ÇALIŞMA ZAMANI temsili skalerdir). Hem checker (`_tag`/metod çağrısı yeniden
+    /// yazımı) hem codegen (`resolveType`, kurucu, `self`) AYNI yüklemi kullanır — tek doğruluk kaynağı.
+    pub fn isFlatEnum(self: ClassDef) bool {
+        if (self.enum_variants.len == 0) return false;
+        for (self.enum_variants) |v| if (v.fields.len != 0) return false;
+        return true;
+    }
 };
 
 /// Yapısal (structural) bir protokol — Python'ın `typing.Protocol`'üne

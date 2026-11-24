@@ -11,6 +11,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.61]
+
+Düz enum = tahsissiz skaler etiket (R2-C.1/C.2; kullanıcı kararı, `project/asama3-tasarim-kararlari-2026-11-24.md`). Hiçbir varyantı alan taşımayan enumlar ARC nesnesi yerine `int` etiketine derlenir; yük taşıyan enumlar ve tip sistemi (nominal) DEĞİŞMEDİ.
+
+- **Checker**: `ast.ClassDef.isFlatEnum()` tek yüklem; düz enum alıcılarında `x._tag` ve örnek metod çağrıları `__nox_flat("Sınıf", x)` ile sarılır (skaler değer sınıf adı taşımaz). `call_expand_apply` sarılan alıcının iç yeniden yazımlarını uygular (iç içe `a.next().name()` zinciri, `@property`).
+- **Bağlı metod değeri** (`f: () -> Kind = c.turn`): düz enum alıcısı skaler olarak yakalanır (retain/release yok); `genBindMethod`/`checkBindMethod` `__nox_flat` işaretçisini taşır.
+- **Codegen (LLVM + QBE)**: `classTypeInfo` (`heap = .none`, retain/release yok), `Ad(tag)` tahsissiz, `genFlatEnumMethods` (nesne makinesi — `__init__`/release/eq/trace/vtable — üretilmez); konteyner elemanı, alan, global, closure yakalaması, `Optional`, `Task`/`Channel`, `extern def` sınırı skaler `int`.
+- **Performans** (`enum_flat_bench`, ReleaseFast LLVM): `list[Kind]` (AST düğüm etiketi biçimi, 10 M) 161 → 26 ms (6,2×); kaçmayan inşa+`match` döngüsü 3,8× (eski temsil zaten satır içi/havuzlu ≈ 3 ns; skaler ≈ 0,8 ns); tahsis `Node`de kalan alanlı yük 2,2×.
+- **Davranış farkı**: düz enumun `print`/`str`/f-string/`repr` çıktısı artık etiket (`1`); eskiden uygulama sızıntısı `Kind(_tag=1)` idi.
+- **Test**: `enum_flat_scalar`, `enum_flat_edge`, `enum_flat_bench` golden fixture'ları (iki backend, eski nesne temsiliyle bayt-özdeş); mevcut payload'lı enum fixture'ları ve 658 IR anlık görüntüsü değişmedi. Spesifikasyon §3.496.
+
 ## [2.2.60]
 
 Kalıcı kapılar ve ölçüm düzeltmeleri (kod değişikliği yok).

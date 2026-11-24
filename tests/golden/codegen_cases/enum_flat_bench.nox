@@ -1,0 +1,53 @@
+# Düz enum (hiçbir varyant alan taşımaz) kıyası: inşa + eşleme. Skaler etiket temsilinde tahsis YOK. (Ölçüm: nox-teknik-spesifikasyon.md §3.496.)
+enum Kind:
+    Num
+    Str
+    Name
+    Call
+
+def weight(k: Kind) -> int:
+    match k:
+        case Kind.Num:
+            return 1
+        case Kind.Str:
+            return 2
+        case Kind.Name:
+            return 3
+        case Kind.Call:
+            return 4
+
+def make(i: int) -> Kind:
+    r: int = i % 4
+    if r == 0:
+        return Kind.Num
+    if r == 1:
+        return Kind.Str
+    if r == 2:
+        return Kind.Name
+    return Kind.Call
+
+# Kaçmayan biçim: LLVM eski nesne temsilini zaten satır içine alıp havuzdan tahsis eder (~3 ns/işlem); skaler ~0,8 ns (≈ 3,8×).
+def run_inline(n: int) -> int:
+    total: int = 0
+    i: int = 0
+    while i < n:
+        total = total + weight(make(i))
+        i = i + 1
+    return total
+
+# Kaçan biçim (AST düğüm etiketleri gibi listede saklanan değerler): nesne temsilinde her eleman bir ARC tahsisi (≈ 6× yavaş).
+def run_list(n: int) -> int:
+    xs: list[Kind] = []
+    i: int = 0
+    while i < n:
+        xs.append(make(i))
+        i = i + 1
+    total: int = 0
+    j: int = 0
+    while j < len(xs):
+        total = total + weight(xs[j])
+        j = j + 1
+    return total
+
+print(run_inline(3000000))
+print(run_list(3000000))

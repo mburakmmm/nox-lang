@@ -383,6 +383,7 @@ pub const Codegen = struct {
 
     pub const genClassVtable = layout.genClassVtable;
     pub const genClassRelease = layout.genClassRelease;
+    pub const genFlatEnumMethods = layout.genFlatEnumMethods;
     pub const computeCyclicClasses = layout.computeCyclicClasses;
     pub const genClassTrace = layout.genClassTrace;
     pub const emitTraceCopyLoop = layout.emitTraceCopyLoop;
@@ -1492,6 +1493,8 @@ pub const Codegen = struct {
     /// tarafından, HERHANGİ bir sınıf kaydedilmeden ÖNCE BİR KEZ doldurulur
     /// — bkz. onun belge notu ("ileri bilgi problemi"nin çözümü).
     inheriting_classes: std.StringHashMapUnmanaged(void) = .empty,
+    /// R2-C.1/C.2: düz enum (payload'sız varyantlar) sınıf adları — değerleri tahsissiz `int` etiketidir (bkz. `registration.classTypeInfo`).
+    flat_enums: std.StringHashMapUnmanaged(void) = .empty,
     /// Çoklu kalıtım bileşenlerinin alan/vtable renklendirmesi (bkz. `mi_layout.zig`); mixin yoksa boş.
     mi: mi_layout.MiInfo = .{},
     /// v1.142.0 (bkz. nox-teknik-spesifikasyon.md §3.240): referans
@@ -2026,6 +2029,12 @@ pub fn generateModuleWithMetaSinkSplit(allocator: std.mem.Allocator, module: ast
         }
     }
     for (extra_classes) |cd| try gen.classes.put(gen.allocator, cd.name, .{});
+    for (module.body) |stmt| {
+        if (stmt.kind == .class_def and stmt.kind.class_def.type_params.len == 0 and !containsName(generic_class_template_names, stmt.kind.class_def.name) and stmt.kind.class_def.isFlatEnum()) {
+            try gen.flat_enums.put(gen.allocator, stmt.kind.class_def.name, {});
+        }
+    }
+    for (extra_classes) |cd| if (cd.isFlatEnum()) try gen.flat_enums.put(gen.allocator, cd.name, {});
 
     // Faz 7 (tekli kalıtım): TÜM (generic olmayan) sınıf tanımlarını TEK
     // bir listede topla — `inheriting_classes`in SAF/sıraya BAĞIMSIZ
@@ -2202,6 +2211,10 @@ pub fn generateModuleWithMetaSinkSplit(allocator: std.mem.Allocator, module: ast
     for (module.body) |stmt| {
         if (stmt.kind == .class_def and stmt.kind.class_def.type_params.len == 0 and !containsName(generic_class_template_names, stmt.kind.class_def.name)) {
             const cd = stmt.kind.class_def;
+            if (gen.flat_enums.contains(cd.name)) {
+                try gen.genFlatEnumMethods(cd);
+                continue;
+            }
             for (cd.methods) |m| try gen.genMethod(cd.name, m);
             const cinfo = gen.classes.get(cd.name).?;
             try gen.genClassRelease(cd.name, cinfo);
@@ -2213,6 +2226,10 @@ pub fn generateModuleWithMetaSinkSplit(allocator: std.mem.Allocator, module: ast
         }
     }
     for (extra_classes) |cd| {
+        if (gen.flat_enums.contains(cd.name)) {
+            try gen.genFlatEnumMethods(cd);
+            continue;
+        }
         for (cd.methods) |m| try gen.genMethod(cd.name, m);
         const cinfo = gen.classes.get(cd.name).?;
         try gen.genClassRelease(cd.name, cinfo);

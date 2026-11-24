@@ -173,6 +173,13 @@ fn appendMangledTypeExprName(self: *Codegen, buf: *std.ArrayListUnmanaged(u8), t
     }
 }
 
+/// R2-C.1/C.2 (v2.2.61): sınıf adından değer `TypeInfo`su. Düz enumlar (bkz. `ast.ClassDef.isFlatEnum`) ARC nesnesi değil tahsissiz `int`
+/// etiketidir: `heap = .none`, sınıf adı taşımaz (metod çağrısı sınıfı checker'ın `__nox_flat` işaretçisinden alır).
+pub fn classTypeInfo(self: *Codegen, name: []const u8) TypeInfo {
+    if (self.flat_enums.contains(name)) return .{ .qtype = .l };
+    return .{ .qtype = .l, .heap = .class, .class_name = name };
+}
+
 pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
     switch (te) {
         .simple => |name| {
@@ -194,19 +201,19 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             if (std.meta.stringToEnum(types.FixedIntKind, name)) |kind| {
                 return .{ .qtype = abi.fixedIntComputeClass(kind), .fixed_int = kind };
             }
-            if (self.classes.contains(name)) return .{ .qtype = .l, .heap = .class, .class_name = name };
+            if (self.classes.contains(name)) return classTypeInfo(self, name);
             // Bulundu (bkz. proje belleği "from-import class type
             // annotations" görevi, `Codegen.from_imports`in belge notu İLE
             // AYNI gerekçe): `checker.zig`nin `typeExprToType`iyle AYNI
             // geri düşüş — `from X import Y` İLE bağlanan ÇIPLAK bir sınıf
             // adı.
             if (self.from_imports.get(name)) |mangled| {
-                if (self.classes.contains(mangled)) return .{ .qtype = .l, .heap = .class, .class_name = mangled };
+                if (self.classes.contains(mangled)) return classTypeInfo(self, mangled);
             }
             // Değer tipi konumundaki bir protokol adı (`list[Shape]`, `x: Shape`): checker onu sentezlenen soyut taban sınıfa
             // (`Shape__Base`, bkz. `checker.ensureProtocolBase`) çözmüştür; sınıf kaydı ek sınıf olarak buradadır.
             const base_name = try std.fmt.allocPrint(self.allocator, "{s}__Base", .{name});
-            if (self.classes.contains(base_name)) return .{ .qtype = .l, .heap = .class, .class_name = base_name };
+            if (self.classes.contains(base_name)) return classTypeInfo(self, base_name);
             return error.Unsupported;
         },
         .generic => |g| {
@@ -268,7 +275,7 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
                 // olmalıydı, bu SAVUNMACI bir GÜVENLİK AĞIdır.
                 const mangled = try mangleGenericClassName(self, g.name, g.args);
                 if (self.classes.contains(mangled)) {
-                    return .{ .qtype = .l, .heap = .class, .class_name = mangled };
+                    return classTypeInfo(self, mangled);
                 }
                 // Bulundu (bkz. proje belleği "4 yeni stdlib modülü" planı,
                 // nox.collections): `.simple` dalı (satır ~109) `from_imports`
@@ -284,14 +291,14 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
                 if (self.from_imports.get(g.name)) |mangled_base| {
                     const mangled2 = try mangleGenericClassName(self, mangled_base, g.args);
                     if (self.classes.contains(mangled2)) {
-                        return .{ .qtype = .l, .heap = .class, .class_name = mangled2 };
+                        return classTypeInfo(self, mangled2);
                     }
                 }
                 // C15d: `m.Box[int]` — noktalı jenerik ad alias ikamesi + `_` mangling ile çözülür.
                 if (std.mem.indexOfScalar(u8, g.name, '.') != null) {
                     const mangled3 = try mangleGenericClassName(self, try qualifiedGenericBase(self, g.name), g.args);
                     if (self.classes.contains(mangled3)) {
-                        return .{ .qtype = .l, .heap = .class, .class_name = mangled3 };
+                        return classTypeInfo(self, mangled3);
                     }
                 }
                 return error.Unsupported;
@@ -423,7 +430,7 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
         .qualified => |raw_segments| {
             const mangled_name = try mangledQualifiedClassName(self, raw_segments);
             if (self.classes.contains(mangled_name)) {
-                return .{ .qtype = .l, .heap = .class, .class_name = mangled_name };
+                return classTypeInfo(self, mangled_name);
             }
             return error.Unsupported;
         },
@@ -1861,7 +1868,7 @@ pub fn inferFieldType(self: *Codegen, class_name: []const u8, init_params: []con
             // bir A↔B döngüsüne dönüştürülebilir — `None`/opsiyonel tipler
             // OLMADAN kullanılabilecek EN BASİT bootstrap deseni.
             if (std.mem.eql(u8, name, "self")) {
-                return .{ .qtype = .l, .heap = .class, .class_name = class_name };
+                return classTypeInfo(self, class_name);
             }
             for (init_params) |p| {
                 if (std.mem.eql(u8, p.name, name)) {
@@ -2394,7 +2401,7 @@ pub fn genMethod(self: *Codegen, class_name: []const u8, m: ast.FuncDef) Codegen
     defer locals.deinit(self.allocator);
     try locals.append(self.allocator, .{
         .name = "self",
-        .info = .{ .qtype = .l, .heap = .class, .class_name = class_name },
+        .info = classTypeInfo(self, class_name),
         .is_param = true,
     });
     for (m.params[1..]) |p| {

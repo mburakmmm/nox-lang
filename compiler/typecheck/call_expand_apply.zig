@@ -162,6 +162,15 @@ pub fn stmts(body: []ast.Stmt, map: *const Ctx) void {
     }
 }
 
+/// `r` ifadesi, anahtar kutusu `key`i (özgün öznitelik alıcısı) doğrudan içeriyor mu? (bkz. `expr`in `.attribute` dalı.)
+fn refsKey(r: ast.Expr, key: *ast.Expr) bool {
+    return switch (r) {
+        .attribute => |a| a.obj == key,
+        .call => |c| c.callee.* == .attribute and c.callee.attribute.obj == key,
+        else => false,
+    };
+}
+
 pub fn expr(e: *ast.Expr, map: *const Ctx) void {
     // Yuva-anahtarlı protokol sarmalama: özgün ifade kurucunun argümanına taşınır; çocukları bu çağrıda yeniden işlenir (arama tekrarlanmaz).
     if (map.coerce.count() > 0) {
@@ -208,7 +217,12 @@ pub fn expr(e: *ast.Expr, map: *const Ctx) void {
         .attribute => |*a| {
             // Sınıf sabiti okuması (`Sınıf.SABİT`, `self.SABİT`): anahtar `obj` kutusunun adresi; özgün ifade literal değerle değişir.
             if (map.exprs.get(@intFromPtr(a.obj))) |r| {
+                const key = a.obj;
                 e.* = r;
+                // R2-C.1/C.2: yerine geçen ifade çocuk yeniden yazımları taşıyabilir (düz enum `__nox_flat` sarmalı alıcı, `@property` → metod
+                // çağrısı, iç içe zincir). Yerine geçen ifade ÖZGÜN anahtar kutusunu hâlâ içeriyorsa (`Enum.Varyant` → `Enum.Varyant()`) yeniden
+                // gezinmek aynı anahtarla sonsuz döngüye girerdi: o durumda gezinme yapılmaz.
+                if (!refsKey(e.*, key)) expr(e, map);
                 return;
             }
             expr(a.obj, map);

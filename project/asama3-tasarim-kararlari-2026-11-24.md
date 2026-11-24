@@ -22,3 +22,7 @@ Aşamalar (her biri kendi golden testi, iki backend, ayrı sürüm):
 3. **Runtime/FFI**: `nox.reflect`, JSON/`str` kabukları ve `extern def` sınırı (enum → `int` olarak geçer).
 4. **Selfhost + stdlib kayıt**: Nox parser/formatter enum yüzeyi (`printEnum`) aynı kalır (kaynak biçimi değişmez).
 Doğrulama kapısı: `enum_bench` ≥ 5× hızlanma, tüm golden/IR anlık görüntüleri, Zig↔Nox farksal parite, bellek sızıntı testleri. Başlatmadan önce son onay: **kullanıcı** (dil anlambilimi + ABI etkisi).
+
+## Enum: uygulama sonucu (v2.2.61)
+**Uygulandı.** Plandan sapma (gerekçeli): aşama 1 (checker) "`flat_enum` bilgisi" yerine tek yüklem `ast.ClassDef.isFlatEnum()`; tip sistemi nominal kaldı, kapsam dışı kullanım hatası GEREKMEDİ — skaler `int` temsili konteyner/alan/closure/Optional/Task/Channel/FFI'ın tümünde doğrudan çalışır. Sınıf adı gereken yerler (örnek metod çağrısı, `_tag` okuması) için checker alıcıyı `__nox_flat("Sınıf", x)` ile sarar. Ayrıntı: spec §3.496. Gözlenebilir fark: `print/str/f-string/repr` etiketi (`1`) yazar (eskiden `Kind(_tag=1)`).
+Ölçüm (ReleaseFast LLVM): `list[Kind]` 6,2×, kaçmayan inşa+match döngüsü 3,8× (eski temsil LLVM'de zaten ≈ 3 ns/işlem; skaler ≈ 0,8 ns ≈ düz tamsayı tabanı) — '≥5×' hedefi yalnızca kaçan (listede/alanda saklanan) biçimde sağlandı. Bağlı metod değeri (`f = c.name`) destekli; sözlük/küme anahtarı olarak enum zaten reddediliyordu (değişmedi).

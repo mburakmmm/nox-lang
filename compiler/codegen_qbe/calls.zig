@@ -936,6 +936,8 @@ pub fn genCall(self: *Codegen, c: ast.Call) CodegenError!Value {
             // Faz C.1b: `bound_method_fixup.zig`nin ürettiği `obj.ad` bağlama
             // çağrısı — alan İSE düz okuma, metod İSE bağlı closure.
             if (std.mem.eql(u8, name, "__nox_bind_method")) return genBindMethod(self, c);
+            // R2-C.1/C.2: `__nox_flat("Sınıf", x)` — düz enum değeri skalerdir; ifade AYNEN döner (yalnızca sınıf adını metod çağrısına taşır).
+            if (std.mem.eql(u8, name, "__nox_flat") and c.args.len == 2) return self.genExpr(c.args[1]);
             if (std.mem.eql(u8, name, "__nox_hash")) return genNoxHash(self, c);
             if (std.mem.eql(u8, name, "__nox_str_chars")) return genStrChars(self, c);
             if (reflectMetaResult(name)) |ret_is_str| {
@@ -1690,6 +1692,12 @@ pub fn currentArena(self: *Codegen) ?[]const u8 {
 }
 
 pub fn genConstruct(self: *Codegen, class_name: []const u8, cinfo: ClassInfo, args: []const ast.Expr) CodegenError!Value {
+    // R2-C.1/C.2: düz enum `Ad(tag)` tahsissizdir — değer etiketin kendisidir (`int`).
+    if (self.flat_enums.contains(class_name)) {
+        if (args.len != 1) return error.Unsupported;
+        const tag = try self.convert(try self.genExpr(args[0]), .l);
+        return .{ .text = tag.text, .qtype = .l };
+    }
     if (cinfo.init_params.len != args.len) return error.Unsupported;
     const arg_values = try self.allocator.alloc(Value, args.len);
     const eval_order = try self.takeEvalOrder(args.len);
@@ -2097,9 +2105,16 @@ fn genNoxHash(self: *Codegen, c: ast.Call) CodegenError!Value {
 fn genBindMethod(self: *Codegen, c: ast.Call) CodegenError!Value {
     if (c.args.len != 2 or c.args[1] != .string_lit) return error.Unsupported;
     const attr = c.args[1].string_lit;
-    const obj = try self.genExpr(c.args[0]);
-    if (obj.heap != .class or obj.class_name == null) return error.Unsupported;
-    const class_name = obj.class_name.?;
+    // R2-C.1/C.2: düz enum alıcısı `__nox_flat("Sınıf", x)` ile sarılıdır (bkz. checker `checkBindMethod`); alıcı skalerdir (retain edilmez).
+    var flat_class: ?[]const u8 = null;
+    var recv_expr: ast.Expr = c.args[0];
+    if (c.args[0] == .call and c.args[0].call.callee.* == .identifier and std.mem.eql(u8, c.args[0].call.callee.identifier, "__nox_flat") and c.args[0].call.args.len == 2 and c.args[0].call.args[0] == .string_lit) {
+        flat_class = c.args[0].call.args[0].string_lit;
+        recv_expr = c.args[0].call.args[1];
+    }
+    const obj = try self.genExpr(recv_expr);
+    if (flat_class == null and (obj.heap != .class or obj.class_name == null)) return error.Unsupported;
+    const class_name = flat_class orelse obj.class_name.?;
     const cinfo = self.classes.get(class_name) orelse return error.Unsupported;
     for (cinfo.fields.items) |f| {
         if (std.mem.eql(u8, f.name, attr)) {
@@ -2133,7 +2148,7 @@ fn genBindMethod(self: *Codegen, c: ast.Call) CodegenError!Value {
     try self.qbeStoreL(try std.fmt.allocPrint(self.allocator, "${s}_release", .{base}), rel_addr);
     const self_slot = try self.newTemp();
     try self.qbeOp2Imm(self_slot, .l, "add", block, @intCast(types.CLOSURE_HEADER_SIZE));
-    try self.emitInlineRetain(obj.text, .class);
+    if (flat_class == null) try self.emitInlineRetain(obj.text, .class);
     try self.qbeStoreL(obj.text, self_slot);
 
     const fsig = try self.allocator.create(FuncSigInfo);
@@ -2149,7 +2164,14 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
     if (a.obj.* == .identifier and self.routed_lists.contains(a.obj.identifier) and !self.vars.contains(a.obj.identifier)) {
         return shared_globals.genListMethod(self, self.module_globals.get(a.obj.identifier).?, a, args);
     }
-    const obj = try self.genExpr(a.obj.*);
+    // R2-C.1/C.2: düz enum alıcısı `__nox_flat("Sınıf", x)` ile sarılıdır (bkz. checker `flatReceiver`); alıcı skalerdir, sınıf adı işaretçiden gelir.
+    var flat_class: ?[]const u8 = null;
+    var recv_expr: ast.Expr = a.obj.*;
+    if (a.obj.* == .call and a.obj.call.callee.* == .identifier and std.mem.eql(u8, a.obj.call.callee.identifier, "__nox_flat") and a.obj.call.args.len == 2 and a.obj.call.args[0] == .string_lit) {
+        flat_class = a.obj.call.args[0].string_lit;
+        recv_expr = a.obj.call.args[1];
+    }
+    const obj = try self.genExpr(recv_expr);
     if (obj.heap == .str) return genStrMethod(self, obj, a, args);
     if (obj.heap == .dict) return self.genDictMethod(obj, a, args);
     if (obj.heap == .list) {
@@ -2217,9 +2239,9 @@ pub fn genMethodCall(self: *Codegen, a: ast.Attribute, args: []const ast.Expr) C
         try self.qbeOp1(widened, .l, "extsw", r);
         return .{ .text = widened, .qtype = .l };
     }
-    if (obj.heap != .class) return error.Unsupported;
+    if (obj.heap != .class and flat_class == null) return error.Unsupported;
     try self.checkNoLowlevelEscape(obj);
-    const cinfo = self.classes.get(obj.class_name.?).?;
+    const cinfo = self.classes.get(flat_class orelse obj.class_name.?).?;
     const msig = cinfo.methods.get(a.attr) orelse {
         // Faz U.4.5: `a.attr` bir METOD DEĞİLSE, func-tipli bir ALAN
         // OLABİLİR (checker BUNU ZATEN doğruladı, bkz. `checkCall`nin

@@ -1,0 +1,64 @@
+# Düz enum kenar durumları: @property, @staticmethod, jenerik düz enum, liste araması, derin eşitlik, spawn/await, ARC (sızıntı yok).
+enum Dir:
+    N
+    E
+    S
+    W
+
+    @property
+    def idx(self) -> int:
+        return self._tag
+
+    @staticmethod
+    def from_int(i: int) -> Dir:
+        if i == 0:
+            return Dir.N
+        if i == 1:
+            return Dir.E
+        if i == 2:
+            return Dir.S
+        return Dir.W
+
+    def turn(self) -> Dir:
+        return Dir.from_int((self.idx + 1) % 4)
+
+enum Flag[T]:
+    On
+    Off
+
+class Box:
+    def __init__(self, d: Dir, n: int) -> None:
+        self.d = d
+        self.n = n
+
+async def double_turn(d: Dir) -> Dir:
+    return d.turn().turn()
+
+d: Dir = Dir.W
+print(d.idx, d.turn().idx, Dir.from_int(2).idx, d.turn().turn().turn().idx)
+
+xs: list[Dir] = [Dir.N, Dir.E, Dir.S]
+print(Dir.S in xs, Dir.W in xs, xs.index(Dir.E), xs.count(Dir.N))
+
+a: Box = Box(Dir.S, 1)
+b: Box = Box(Dir.S, 1)
+c: Box = Box(Dir.E, 1)
+print(a == b, a == c)
+
+f1: Flag[int] = Flag.On
+f2: Flag[int] = Flag.Off
+f3: Flag[int] = Flag.On
+print(f1 == f3, f1 == f2, f1 != f2)
+
+t: Task[Dir] = spawn double_turn(Dir.N)
+print(await t == Dir.S)
+
+total: int = 0
+i: int = 0
+while i < 1000:
+    total = total + Dir.from_int(i % 4).idx
+    i = i + 1
+print(total)
+
+turn_fn: () -> Dir = d.turn
+print(turn_fn() == Dir.N, turn_fn().idx)

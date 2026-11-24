@@ -30236,3 +30236,21 @@ Runtime iç ilkeli: `nox_list_append5(list, v0..v4)` beş `i64` değeri tek kapa
 ### 3.495 `list[u8]` çıktı tamponu; AST invariant denetimi (v2.2.59, R2-E.1/E.5)
 
 Biçimlendirici çıktı tamponu `list[u8]` (1 B/bayt). Stdlib/selfhost çalışma zamanı kabukları (`extern def ... with_rt`) sabit genişlikli tamsayı listelerini (`list[u8]` ...) ÖDÜNÇ liste işaretçisi olarak alabilir; kullanıcı kodu için C ABI sınırı kuralı değişmedi. `nox_u8list_extend_from_bytes/_from_str` bayt dizisini toplu kopyalar. Selfhost parser `nox_parse_validate()`: span tablosu kimlik/değer sınırları, modül gövde dilimi ve deyim kimlikleri `n`/`l` sınırları içinde olmalı (0 = tamam).
+
+### 3.496 Düz enum = tahsissiz skaler etiket (v2.2.61, R2-C.1/C.2)
+
+**Karar (kullanıcı, 2026-11-24; `project/asama3-tasarim-kararlari-2026-11-24.md`)**: HİÇBİR varyantı alan (`field`) taşımayan ("düz") bir `enum` (`enum Kind: Num; Str; Call`) ARC nesnesi DEĞİL, tahsissiz `int` etiketi olarak derlenir. Yük taşıyan enumlar (en az bir varyantı alan taşıyan) ve onların davranışı DEĞİŞMEZ (nesne + ARC).
+
+**Tip sistemi nominal kalır.** `Kind` hâlâ bir sınıf adıdır (`x: Kind`, `Kind | None`, `list[Kind]`, `==`/`!=`, `match` ve alan/parametre kullanımı aynen denetlenir; `Kind` ile `int` karıştırılamaz). Yalnızca ÇALIŞMA ZAMANI temsili değişir: değer = `tag` (bildirim sırası, 0'dan), `qtype .l`, `heap = .none` (retain/release/ARC YOK, tahsis YOK).
+
+**Tek doğruluk kaynağı**: `ast.ClassDef.isFlatEnum()` (`enum_variants.len > 0` ve her varyantın `fields.len == 0`). Checker (`isFlatEnumClass`) ve codegen (`Codegen.flat_enums`, `registration.classTypeInfo`) AYNI yüklemi kullanır.
+
+**Yeniden yazımlar (checker)** — skaler değer sınıf adı taşımadığından:
+- `x._tag` okuması → `__nox_flat("Sınıf", x)` (codegen kimlik üretir; `match` lowering'i `x._tag == Enum.__tag_V` kalır).
+- `x.metod(...)` (örnek metodu, `@property` dahil) → alıcı `__nox_flat("Sınıf", x)` ile sarılır; `genMethodCall` sınıfı bu işaretçiden alır ve doğrudan (`has_vtable == false`) çağırır. `call_expand_apply.expr` sarılan alıcının kendi yeniden yazımlarını (iç içe zincir, `Enum.Varyant`) uygular.
+
+**Codegen**: `resolveType`/`self` → `classTypeInfo` (düz enum için `.{ .qtype = .l }`); `genConstruct` düz enum için `Ad(tag)` → etiket değeri (kurucu `__init__` ÇAĞRILMAZ); `layout.genFlatEnumMethods` yalnızca kullanıcı metodlarını ve varyant kurucularını üretir (`__init__`, `_release/_eq/_trace/_gc_free`, vtable ve `class_id` dağıtımı YOK). Konteynerler (`list[Kind]`, `dict[str, Kind]`, `Kind | None` → `boxed_scalar`, `Task[Kind]`, `Channel[Kind]`, `ptr[Kind]`), alanlar, globaller, closure yakalamaları ve `extern def` sınırı skaler `int` olarak davranır (FFI'da etiket `int` geçer — ham nesne işaretçisi değil).
+
+**Gözlenebilir davranış farkı**: `print(x)` / `str(x)` / f-string / liste ya da sınıf `repr`'i artık etiketi (`1`) yazar; eskiden uygulama sızıntısı olan `Kind(_tag=1)` yazılıyordu (hiçbir test/belge buna dayanmıyordu).
+
+**Performans** (`enum_flat_bench`, aarch64-macos, ReleaseFast, LLVM; eski nesne temsili ↔ skaler, süreç başlangıcı dahil medyan): kaçmayan döngü (inşa+`match`, 100 M) 305 → 80 ms (3,8×; eski temsil LLVM'de satır içine alınıp havuzdan tahsis edildiği için zaten ≈ 3 ns/işlem, skaler ≈ 0,8 ns — düz tamsayı tabanına yakın); listede saklanan `list[Kind]` (AST düğüm etiketi biçimi, 10 M) 161 → 26 ms (6,2×); `Node(kind, v)` alanlı karışık yük (tahsis `Node` için kalır) 2,2×. Golden: `enum_flat_scalar` (metod/alan/liste/dict/Optional/closure/global), `enum_flat_edge` (`@property`/`@staticmethod`/jenerik düz enum/liste arama/derin eşitlik/`spawn`/bağlı metod değeri), `enum_flat_bench`; ikisi de backend'de (LLVM + QBE) eski nesne temsiliyle bayt-özdeş çıktı.

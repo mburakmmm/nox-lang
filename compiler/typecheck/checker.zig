@@ -8477,6 +8477,15 @@ pub const Checker = struct {
             // Bağlama anında da capability kapısı (çağrı kapısını ATLAMAMALI).
             const owner = info.method_owners.get(attr) orelse class_name;
             try self.checkMethodCapabilityCall(owner, attr);
+            // R2-C.1/C.2: düz enum alıcısı skalerdir — bağlı metod değeri alıcıyı `__nox_flat` ile sınıf adıyla taşır.
+            if (self.isFlatEnumClass(class_name)) {
+                const new_callee = try self.allocator.create(ast.Expr);
+                new_callee.* = .{ .identifier = "__nox_bind_method" };
+                const new_args = try self.allocator.alloc(ast.Expr, 2);
+                new_args[0] = try self.flatReceiver(c.args[0], class_name);
+                new_args[1] = c.args[1];
+                try self.expr_rewrites.put(self.allocator, @intFromPtr(c.callee), .{ .call = .{ .callee = new_callee, .args = new_args } });
+            }
             const ret = try self.allocator.create(Type);
             ret.* = msig.return_type;
             return .{ .func = .{ .params = msig.params, .return_type = ret } };
@@ -8534,6 +8543,11 @@ pub const Checker = struct {
         const info = self.classes.get(class_name) orelse
             return self.fail(error.UndefinedClass, "unknown class: {s}", .{class_name});
         if (info.fields.get(a.attr)) |ft| {
+            // R2-C.1/C.2: düz enumun `_tag` okuması değerin kendisidir (skaler etiket); codegen `__nox_flat`ı kimlik olarak üretir.
+            if (std.mem.eql(u8, a.attr, "_tag") and self.isFlatEnumClass(class_name)) {
+                try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), try self.flatReceiver(a.obj.*, class_name));
+                return ft;
+            }
             // D1.6: daraltılmış özellik yolu (`if n.l != None:` gövdesinde `n.l`).
             if (ctx.narrowed.count() > 0) {
                 if (self.pathKey(.{ .attribute = a }, 0)) |key| {
@@ -9148,6 +9162,22 @@ pub const Checker = struct {
         wild.* = .{ .wild = true };
         for (cols) |*col| col.* = wild;
         return cols;
+    }
+
+    /// R2-C.1/C.2: `name` düz (payload'sız) bir enum sınıfı mı? Değerleri çalışma zamanında tahsissiz `int` etiketidir (bkz. `ast.ClassDef.isFlatEnum`).
+    fn isFlatEnumClass(self: *Checker, name: []const u8) bool {
+        const cd = self.class_defs_by_name.get(name) orelse return false;
+        return cd.isFlatEnum();
+    }
+
+    /// Düz enum alıcısını `__nox_flat("Sınıf", alıcı)` ile sarar: codegen alıcının sınıfını (skaler değer sınıf adı taşımaz) bu işaretçiden alır.
+    fn flatReceiver(self: *Checker, obj: ast.Expr, class_name: []const u8) TypeError!ast.Expr {
+        const callee = try self.allocator.create(ast.Expr);
+        callee.* = .{ .identifier = "__nox_flat" };
+        const args = try self.allocator.alloc(ast.Expr, 2);
+        args[0] = .{ .string_lit = class_name };
+        args[1] = obj;
+        return .{ .call = .{ .callee = callee, .args = args } };
     }
 
     /// `class_name` örneklenmiş enum sınıfının varyantları (jenerik için kaynak tanımdan), enum değilse `null`.
@@ -10751,6 +10781,12 @@ pub const Checker = struct {
                     try self.checkArgsDecl(ctx, sig, c.args, a.attr, @intFromPtr(c.callee));
                     const owner = info.method_owners.get(a.attr) orelse class_name;
                     try self.checkMethodCapabilityCall(owner, a.attr);
+                    // R2-C.1/C.2: düz enum örneği skalerdir — metod çağrısı alıcısı `__nox_flat` ile sınıf adını taşır.
+                    if (self.isFlatEnumClass(class_name)) {
+                        const wrapped = try self.allocator.create(ast.Expr);
+                        wrapped.* = try self.flatReceiver(a.obj.*, class_name);
+                        try self.expr_rewrites.put(self.allocator, @intFromPtr(a.obj), .{ .attribute = .{ .obj = wrapped, .attr = a.attr } });
+                    }
                     return sig.return_type;
                 }
                 // Faz U.4.5: `a.attr` bir METOD DEĞİLSE (method İSİM
