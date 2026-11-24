@@ -713,6 +713,12 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
                         // `extern def`: Nox'un istisna mekanizmasına HİÇ
                         // katılmaz (bkz. `genCall`in extern dalı) — güvenli.
                         info.direct_mutates = true; // ama yerel kod HER ŞEYİ yapabilir
+                    } else if (isRawMemoryBuiltin(name)) {
+                        // native-runtime readiness R1 (kullanıcı onayı 2026-11-24): ham-bellek yerleşikleri (`lowlevel`) ASLA istisna
+                        // fırlatmaz (çıplak yük/depo/adres aritmetiği/ofset sabiti/çit); bunları çağıran küçük sarmalayıcılar artık
+                        // "belki fırlatır" sayılmaz → çağrı sonrası `nox_exception_pending` + `%rt` okuması üretilmez. Bellek
+                        // etkisi var (yazma/okuma sırası) → mutasyon sayılır (davranış korunur; yalnız gereksiz denetim kalkar).
+                        info.direct_mutates = true;
                     } else if (std.mem.eql(u8, name, "print") or std.mem.eql(u8, name, "len") or
                         std.mem.eql(u8, name, "str") or std.mem.eql(u8, name, "wasm_call"))
                     {
@@ -899,6 +905,18 @@ pub fn buildParamListElemTypes(self: *Codegen, params: []const ast.Param) Codege
 
 /// Yığın nesnelerini DEĞİŞTİRMEYEN ve fiber'ı başka işe geçirmeyen yerleşik serbest
 /// fonksiyonlar (dönüşümler/aritmetik) — `heap_readonly` analizi için.
+/// Ham-bellek (`lowlevel`) yerleşikleri: istisna YOK (bkz. `collectRaiseInfoExpr`). Yerel ad gölgelemesi
+/// `self.functions`/`self.classes` dallarında zaten önce ele alınır; buraya yalnız çözülmemiş yerleşik adlar düşer.
+fn isRawMemoryBuiltin(name: []const u8) bool {
+    const raw = [_][]const u8{
+        "ptr_read",         "ptr_write",         "ptr_offset", "ptr_to_int", "ptr_from_int",
+        "ptr_read_volatile", "ptr_write_volatile", "ptr_of",     "sizeof",     "alignof",
+        "offsetof",         "memory_fence",      "compiler_fence",
+    };
+    for (raw) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
+}
+
 fn isPureBuiltinFunc(name: []const u8) bool {
     const pure = [_][]const u8{ "int", "float", "bool", "abs", "min", "max", "round", "sum" };
     for (pure) |n| if (std.mem.eql(u8, n, name)) return true;

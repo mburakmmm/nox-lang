@@ -1,0 +1,53 @@
+# Olumsuz fixture: leaf'e gizlice yönetilen çalışma zamanı bağımlılığı sokan kalıplar kapı tarafından REDDEDİLMELİ.
+# (Ölçülen sınıflar; bkz. project/native-runtime-capability-audit.md R0.1/B.2.)
+# forbid: neg_str=managed-str
+# forbid: neg_list=arena
+# forbid: neg_cls=arc
+# forbid: neg_raise=exception
+# forbid: neg_div=exception
+# forbid: neg_indirect=indirect
+# forbid: neg_helper=exception
+# forbid: neg_print=io
+# forbid: neg_dict=collection
+class NegBox:
+    v: int
+
+    def __init__(self) -> None:
+        self.v = 1
+
+def neg_str(a: int) -> int:
+    s: str = "x" + str(a)
+    return len(s)
+
+def neg_list(a: int) -> int:
+    xs: list[int] = [a, a]
+    return len(xs)
+
+# Kaçan (escape eden) nesne -> gerçek ARC tahsisi. (Kaçmayan örnek ASAP ile yığına inebilir ve runtime'sız derlenir: bu bir
+# SÖZLEŞME değil optimizasyon tesadüfüdür — bkz. neg_cls_stack ve capability audit R0.1.)
+def neg_cls() -> NegBox:
+    return NegBox()
+
+def neg_raise(a: int) -> int:
+    if a < 0:
+        raise ValueError("neg")
+    return a
+
+def neg_div(a: int, b: int) -> int:
+    return a // b
+
+def neg_indirect(f: (int) -> int, a: int) -> int:
+    return f(a)
+
+# Gizli yardımcı: başka bir fonksiyon üzerinden TRANSİTİF fırlatma (yardımcı çağrı sonrası `nox_exception_pending` + istisna zinciri).
+def neg_helper(a: int) -> int:
+    return neg_raise(a) + 1
+
+def neg_print(a: int) -> int:
+    print(a)
+    return a
+
+def neg_dict(a: int) -> int:
+    m: dict[int, int] = {}
+    m[a] = a
+    return len(m)

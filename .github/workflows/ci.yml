@@ -133,6 +133,11 @@ jobs:
       # AGENTS §2.6: runtime/ altına onaysız yeni global/threadlocal durum eklenemez (bkz. project/global-state-allowlist.tsv).
       - name: Global durum denetimi
         run: python3 scripts/check_global_state.py
+      # native-runtime readiness (project/native-runtime-*.md): runtime ABI manifesti kaynakla senkron + runtime'sız leaf kapısı (P01-P06).
+      - name: Native runtime ABI manifesti
+        run: python3 scripts/gen_runtime_abi_manifest.py --check
+      - name: Native runtime leaf kapısı (noxrt.o'suz link/çalıştır + olumsuz fixture'lar)
+        run: python3 scripts/runtime_leaf_audit.py suite
       # TODO 9.5: koddan türetilebilen olgular (hedefler, backend varsayılanı, sürüm) belgelerle çapraz doğrulanır.
       - name: Belge sözleşmesi
         run: python3 scripts/check_doc_contracts.py

@@ -4271,83 +4271,65 @@ export function w $main(w %argc, l %argv) {
     %t19 =l loadl %t1
     %t20 =l loadl %t0
     %t21 =l call $plain_read(l %rt, l %t20)
-    %t22 =l sub %rt, 48
-    %t23 =w loadub %t22
-    %t24 =l sub %rt, 64
-    %t25 =l loadl %t24
-    jnz %t23, @exc_slow10, @exc_fast11
+    %t22 =l add %t19, %t21
+    storel %t22, %t1
+    jmp @for_step9
+@for_step9
+    %t23 =l loadl %t2
+    %t24 =l add %t23, 1
+    storel %t24, %t2
+    jmp @for_cond6
+@for_end8
+    %t25 =l loadl %t1
+    call $printf(l $fmt_int, ..., l %t25)
+    %t26 =l call $keeps_arena_list(l %rt)
+    %t27 =l sub %rt, 48
+    %t28 =w loadub %t27
+    %t29 =l sub %rt, 64
+    %t30 =l loadl %t29
+    jnz %t28, @exc_slow10, @exc_fast11
 @exc_fast11
-    %t26 =w cnel %t25, 0
+    %t31 =w cnel %t30, 0
     jmp @exc_done12
 @exc_slow10
-    %t27 =w call $nox_exception_pending(l %rt)
+    %t32 =w call $nox_exception_pending(l %rt)
     jmp @exc_done12
 @exc_done12
-    %t28 =w phi @exc_fast11 %t26, @exc_slow10 %t27
-    jnz %t28, @exc_propagate13, @exc_continue14
+    %t33 =w phi @exc_fast11 %t31, @exc_slow10 %t32
+    jnz %t33, @exc_propagate13, @exc_continue14
 @exc_propagate13
     call $nox_unhandled_exception(l %rt)
     ret 0
 @exc_continue14
-    %t29 =l add %t19, %t21
-    storel %t29, %t1
-    jmp @for_step9
-@for_step9
-    %t30 =l loadl %t2
-    %t31 =l add %t30, 1
-    storel %t31, %t2
-    jmp @for_cond6
-@for_end8
-    %t32 =l loadl %t1
-    call $printf(l $fmt_int, ..., l %t32)
-    %t33 =l call $keeps_arena_list(l %rt)
-    %t34 =l sub %rt, 48
-    %t35 =w loadub %t34
-    %t36 =l sub %rt, 64
-    %t37 =l loadl %t36
-    jnz %t35, @exc_slow15, @exc_fast16
-@exc_fast16
-    %t38 =w cnel %t37, 0
-    jmp @exc_done17
-@exc_slow15
-    %t39 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done17
-@exc_done17
-    %t40 =w phi @exc_fast16 %t38, @exc_slow15 %t39
-    jnz %t40, @exc_propagate18, @exc_continue19
-@exc_propagate18
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue19
-    call $printf(l $fmt_int, ..., l %t33)
-    %t41 =l call $keeps_arena_class(l %rt)
-    call $printf(l $fmt_int, ..., l %t41)
-    %t42 =l call $keeps_arena_call(l %rt)
-    call $printf(l $fmt_int, ..., l %t42)
-    %t43 =l loadl %t0
-    %t44 =w ceql %t43, 0
-    jnz %t44, @release_skip21, @release20
-@release20
-    %t45 =l sub %t43, 8
-    %t46 =l loadl %t45
-    %t47 =l sub %t46, 1
-    storel %t47, %t45
-    %t49 =l and %t47, 4294967295
-    %t48 =w ceql %t49, 0
-    jnz %t48, @list_free23, @list_free_skip24
-@list_free23
-    call $nox_list_free_payload(l %rt, l %t43, l 8)
-    jmp @list_free_done25
-@list_free_skip24
-    jmp @list_free_done25
-@list_free_done25
-    jmp @release_done22
-@release_skip21
-    jmp @release_done22
-@release_done22
+    call $printf(l $fmt_int, ..., l %t26)
+    %t34 =l call $keeps_arena_class(l %rt)
+    call $printf(l $fmt_int, ..., l %t34)
+    %t35 =l call $keeps_arena_call(l %rt)
+    call $printf(l $fmt_int, ..., l %t35)
+    %t36 =l loadl %t0
+    %t37 =w ceql %t36, 0
+    jnz %t37, @release_skip16, @release15
+@release15
+    %t38 =l sub %t36, 8
+    %t39 =l loadl %t38
+    %t40 =l sub %t39, 1
+    storel %t40, %t38
+    %t42 =l and %t40, 4294967295
+    %t41 =w ceql %t42, 0
+    jnz %t41, @list_free18, @list_free_skip19
+@list_free18
+    call $nox_list_free_payload(l %rt, l %t36, l 8)
+    jmp @list_free_done20
+@list_free_skip19
+    jmp @list_free_done20
+@list_free_done20
+    jmp @release_done17
+@release_skip16
+    jmp @release_done17
+@release_done17
     storel 0, %t0
     call $nox_runtime_deinit(l %rt)
-@fn_end26
+@fn_end21
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {

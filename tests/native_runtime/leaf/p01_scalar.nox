@@ -1,0 +1,42 @@
+# P01 — saf skaler leaf (readiness R1): noxrt.o OLMADAN link/calisir; hicbir runtime bagimliligi yok.
+# leaf: leaf_add, leaf_sum, leaf_fnv, leaf_gcd, leaf_clamp
+# harness: p01_scalar.c
+# expect-out: 42 45 6676401841899300199 21 7
+
+def leaf_add(a: int, b: int) -> int:
+    return a + b
+
+def leaf_sum(n: int) -> int:
+    s: int = 0
+    i: int = 0
+    while i < n:
+        s = s + i
+        i = i + 1
+    return s
+
+# `int` carpma/toplama iki-tamamlayici SARAR (denetimsiz) — FNV-benzeri karma.
+def leaf_fnv(n: int) -> int:
+    h: int = 1469598103934665603
+    i: int = 0
+    while i < n:
+        h = (h ^ i) * 1099511628211
+        i = i + 1
+    return h
+
+# Bolme/mod YOK (`//`/`%` ZeroDivisionError yolunu tasir -> leaf'te yasak); cikarmali gcd.
+def leaf_gcd(a: int, b: int) -> int:
+    x: int = a
+    y: int = b
+    while x != y:
+        if x > y:
+            x = x - y
+        else:
+            y = y - x
+    return x
+
+def leaf_clamp(v: int, lo: int, hi: int) -> int:
+    if v < lo:
+        return lo
+    if v > hi:
+        return hi
+    return v

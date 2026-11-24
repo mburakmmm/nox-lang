@@ -1,0 +1,53 @@
+# P05 — ham-adres atomikleri (load/store/CAS/fetch_add/fence + TLS) GEÇİCİ C sağlayıcı shim'i üzerinden `extern def` ile.
+# Dil/ABI değişikliği YOK. Onaylı platform sembolleri `rtcore_*` (allow); gizli rt parametresi sağlayıcıya `with_rt` OLMADAN
+# da ilk argüman olarak iletilir (Nox def/extern kuralı: hidden rt = ilk argüman).
+# leaf: at_inc, at_cas_inc, at_publish, at_consume, at_tls_roundtrip, at_fence_pair
+# allow: rtcore_*
+# harness: p05_atomics.c
+# link: shim/rtcore_atomic_shim.c
+# expect-out: ok
+
+extern def rtcore_atomic_load_u64(p: ptr, order: int) -> int from "rtcore_atomic_shim.o"
+extern def rtcore_atomic_store_u64(p: ptr, v: int, order: int) -> None from "rtcore_atomic_shim.o"
+extern def rtcore_atomic_cas_u64(p: ptr, expected: int, desired: int, so: int, fo: int) -> int from "rtcore_atomic_shim.o"
+extern def rtcore_atomic_fetch_add_u64(p: ptr, v: int, order: int) -> int from "rtcore_atomic_shim.o"
+extern def rtcore_atomic_fence(order: int) -> None from "rtcore_atomic_shim.o"
+extern def rtcore_tls_get() -> int from "rtcore_atomic_shim.o"
+extern def rtcore_tls_set(v: int) -> None from "rtcore_atomic_shim.o"
+
+# sayac: n kez relaxed fetch_add (RC sayaci kalibi).
+def at_inc(p: ptr, n: int) -> None:
+    i: int = 0
+    while i < n:
+        rtcore_atomic_fetch_add_u64(p, 1, 0)
+        i = i + 1
+
+# CAS dongusu: kilitsiz durum gecisi (n basarili artis).
+def at_cas_inc(p: ptr, n: int) -> None:
+    done: int = 0
+    while done < n:
+        cur: int = rtcore_atomic_load_u64(p, 0)
+        if rtcore_atomic_cas_u64(p, cur, cur + 1, 3, 0) == cur:
+            done = done + 1
+
+# yayim/tuketim (mesaj gecirme): veri yazilir, sonra release-store bayrak; tuketici acquire-load bayrak, sonra veriyi okur.
+def at_publish(data: ptr[int], flag: ptr, v: int) -> None:
+    lowlevel:
+        ptr_write(data, v)
+    rtcore_atomic_store_u64(flag, 1, 2)
+
+def at_consume(data: ptr[int], flag: ptr) -> int:
+    while rtcore_atomic_load_u64(flag, 1) == 0:
+        pass
+    lowlevel:
+        return ptr_read(data)
+
+def at_tls_roundtrip(v: int) -> int:
+    rtcore_tls_set(v)
+    return rtcore_tls_get()
+
+# store-buffering litmus yarisi icin: yaz, seq_cst fence, oku.
+def at_fence_pair(mine: ptr, other: ptr) -> int:
+    rtcore_atomic_store_u64(mine, 1, 0)
+    rtcore_atomic_fence(4)
+    return rtcore_atomic_load_u64(other, 0)

@@ -1,0 +1,48 @@
+# P03 — ham kayıt/layout: sizeof/alignof/offsetof (tek doğruluk kaynağı: @repr("C") bildirimi; HİÇ örneklenmez) + ham ptr erişimcileri.
+# BULGU: @repr("C") sınıf nesnesi = [8 B ARC başlığı | alanlar]; offsetof/sizeof başlığı DAHİL eder (rc@8, flags@12, len@16, data@24, size 32).
+# Başlıksız (header-less) bir kayıt tanımlayıcısı YOK (RuntimeState öneki/ARC başlığı kendisi bu yolla ifade edilemez) -> capability audit G-RAW-2.
+# leaf: rec_size, rec_align, rec_off_len, rec_off_data, rec_get_len, rec_set_len, rec_get_data, rec_set_data
+# harness: p03_record.c
+# expect-out: ok
+
+@repr("C")
+class RawHdr:
+    rc: u32
+    flags: u32
+    len: int
+    data: usize   # `ptr`/`ptr[T]` sinif alani DESTEKLENMIYOR (codegen) -> adres usize olarak (64-bit: ayni layout)
+
+    def __init__(self) -> None:
+        self.rc = u32(0)
+        self.flags = u32(0)
+        self.len = 0
+        self.data = usize(0)
+
+def rec_size() -> usize:
+    return sizeof(RawHdr)
+
+def rec_align() -> usize:
+    return alignof(RawHdr)
+
+def rec_off_len() -> usize:
+    return offsetof(RawHdr, "len")
+
+def rec_off_data() -> usize:
+    return offsetof(RawHdr, "data")
+
+# Ham erişimciler: kayıt `p` adresinde (ARC nesnesi DEĞİL); alan = ptr[int] indeksi (8 B kelime; indeks 0 = ARC başlığı yuvası).
+def rec_get_len(p: ptr[int]) -> int:
+    lowlevel:
+        return ptr_read(ptr_offset(p, 2))
+
+def rec_set_len(p: ptr[int], v: int) -> None:
+    lowlevel:
+        ptr_write(ptr_offset(p, 2), v)
+
+def rec_get_data(p: ptr[int]) -> int:
+    lowlevel:
+        return ptr_read(ptr_offset(p, 3))
+
+def rec_set_data(p: ptr[int], v: int) -> None:
+    lowlevel:
+        ptr_write(ptr_offset(p, 3), v)

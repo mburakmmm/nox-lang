@@ -11,6 +11,18 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.64]
+
+Native runtime readiness (R0–R3): Nox'un runtime'ını Nox ile yazmaya **hazır** olduğunun kanıt programı (runtime portu DEĞİL). Görev: `project/native-runtime-readiness-gorev-belgesi-2026-11.md`; çıktılar `project/native-runtime-{capability-audit,architecture,abi,migration-plan,performance,dependencies}.md` + makine-okunur `native-runtime-{symbols,layout}.tsv`.
+
+- **Derleyici (tek değişiklik, kullanıcı onaylı; dil/ABI değişmez):** ham-bellek yerleşikleri (`ptr_read/ptr_write/ptr_offset/ptr_to_int/ptr_from_int/*_volatile/ptr_of/sizeof/alignof/offsetof/memory_fence/compiler_fence`) istisna analizinde "belki fırlatır" sayılmaz (`exceptions.zig` `isRawMemoryBuiltin`); bunları saran küçük `def`'leri çağıranlarda çağrı-sonrası `nox_exception_pending` + `%rt` okuması kalkar (15 IR anlık görüntüsünde 1719 → 1682 denetim). Bu olmadan `nox.mem`/allocator yardımcıları runtime'sız yazılamıyordu.
+- **Kanıt araçları:** `scripts/runtime_leaf_audit.py` (LLVM IR'da transitif yasak-bağımlılık kapısı + `noxrt.o`'suz link/çalıştırma + son ikili sızıntı taraması), `scripts/native_runtime_inventory.py` (`--dag`: `@import` DAG/SCC), `scripts/gen_runtime_abi_manifest.py` (1014 export, 39 layout sabiti, `--check` drift), `scripts/native_runtime_bench.py`; `precheck.sh` ve CI "Dokümanlar" işine bağlandı.
+- **Fixture/PoC (`tests/native_runtime/`):** P01 skaler leaf, P02/P02b ham tampon + `nox.mem`, P03 ham kayıt/layout (== C struct), P04 tahsissiz fatal sink, P05 ham atomik + TLS (geçici C shim; 4 iş parçacığı sayaç/CAS/release-acquire/store-buffering litmus), P06/P08 Nox'ta bootstrap allocator (durum makinesi, OOM/fault injection, canary/double-free, çift init/fini, yeniden yarat/yık), `neg_forbidden` (managed str/list/dict/escape sınıf/raise/bölme/indirect/yardımcı/print kapıdan REDDEDİLİR).
+- **Bulgular (boşluk kaydı capability-audit §4):** `--selfhost-obj` prelude'un tamamını nesneye alır; her sabit-genişlik dönüşümü `nox_int_overflow_trap` taşır; değişken kaydırma/`//`/`%` istisna yolu; `@repr("C")` nesne [8 B ARC başlığı | alanlar] ve `ptr` sınıf alanı yok; `rt`'siz export yok (1014'ün 574'ü rt'siz); ham atomik/TLS/noreturn/hedef sabitleri yok.
+- **Kararlar (Bölüm M, hepsi yanıtlandı):** derleyici düzeltmesi + dış kapı; başlıksız `@raw` yalnız öneri; atomikler public API yönünde (tasarım önerisi, uygulama ayrı iş); libc/OS+C/asm kalıcı sağlayıcı; hedef sırası macOS arm64 → Linux x86-64 → QEMU → Windows/WASM; ±%5 + 1 minor fallback; ABI parmak izi tasarımı onaylı; önce eşdeğer port; **`zig cc` bağımsızlığı bu projenin kapsamında (R9)**.
+- **Açık/KANITLANMADI (başarı sayılmadı):** QBE leaf ve hosted QBE nesne; P09 mini ARC, P10, P11 fiber bağlamı, P12 QEMU, P13 hedef matrisi; Linux/Windows/WASM yerel kanıtı yok. Bölüm N 13 kutunun tek tek durumu: migration-plan §2.
+- **Test:** `NOX_TEST_FAST=1 zig build test -Dtrace-frames=0 --summary all` → 875/875 adım, 2351/2367 test (16 skip); 15 IR anlık görüntüsü kasıtlı yeniden üretildi; leaf kapısı `VERDICT: GREEN (8 fixture, 0 sapma)`. Spesifikasyon §3.499.
+
 ## [2.2.63]
 
 Çerçeve limitasyon turu: Prism/Ember/Pulse/Chronos'un bildirdiği ~40 madde güncel derleyicide (LLVM+QBE) yeniden üretildi; sonuç tablosu `project/framework-limitasyon-dogrulama-2026-11-24.md` (çoğu BAYAT/TASARIM GEREĞİ; gerçek olanlar aşağıda).

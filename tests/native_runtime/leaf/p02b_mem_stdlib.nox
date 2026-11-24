@@ -1,0 +1,15 @@
+# P02b — stdlib `nox.mem` (jenerik copy/move/set) runtime'sız leaf olarak kullanılabilir (R1 derleyici düzeltmesi sonrası regresyon):
+# ham-bellek yerleşikleri artık "belki fırlatır" sayılmadığından `nox_exception_pending` / `%rt` okuması üretilmez.
+# leaf: m_copy, m_move, m_set
+# harness: p02b_mem_stdlib.c
+# expect-out: ok
+import nox.mem
+
+def m_copy(d: ptr[int], s: ptr[int], n: int) -> None:
+    nox.mem.copy(d, s, n)
+
+def m_move(d: ptr[int], s: ptr[int], n: int) -> None:
+    nox.mem.move(d, s, n)
+
+def m_set(d: ptr[int], v: int, n: int) -> None:
+    nox.mem.set(d, v, n)

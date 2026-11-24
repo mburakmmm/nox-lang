@@ -3932,71 +3932,62 @@ export function l $size_and_align__bool(l %rt, w %p_x) {
 }
 export function w $main(w %argc, l %argv) {
 @start
+    %t0 =l alloc8 8
+    %t1 =l alloc8 8
+    %t2 =l alloc8 8
+    %t3 =l alloc8 8
+    %t4 =l alloc4 4
+    %t5 =l alloc8 8
     %rt =l call $nox_runtime_init()
     call $nox_os_init(w %argc, l %argv)
     call $nox_register_dispatch_table(l $nox_trace_dispatch, l $nox_gc_free_dispatch, l $nox_class_release_dispatch, l $nox_class_name_dispatch, l $nox_json_make_json_value)
-    %t0 =l call $size_and_align__int(l %rt, l 42)
-    %t1 =l sub %rt, 48
-    %t2 =w loadub %t1
-    %t3 =l sub %rt, 64
-    %t4 =l loadl %t3
-    jnz %t2, @exc_slow0, @exc_fast1
-@exc_fast1
-    %t5 =w cnel %t4, 0
-    jmp @exc_done2
-@exc_slow0
-    %t6 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done2
-@exc_done2
-    %t7 =w phi @exc_fast1 %t5, @exc_slow0 %t6
-    jnz %t7, @exc_propagate3, @exc_continue4
-@exc_propagate3
-    call $nox_unhandled_exception(l %rt)
+    storel 42, %t0
+    %t6 =l add 8, 8
+    %t7 =w cultl %t6, 8
+    jnz %t7, @ovf_trap1, @ovf_ok2
+@ovf_trap1
+    call $nox_int_overflow_trap(l %rt, l $fmt_lit3)
     ret 0
-@exc_continue4
-    call $printf(l $fmt_uint, ..., l %t0)
-    %t8 =l call $size_and_align__float(l %rt, d d_3.14)
-    %t9 =l sub %rt, 48
-    %t10 =w loadub %t9
-    %t11 =l sub %rt, 64
-    %t12 =l loadl %t11
-    jnz %t10, @exc_slow5, @exc_fast6
-@exc_fast6
-    %t13 =w cnel %t12, 0
-    jmp @exc_done7
-@exc_slow5
-    %t14 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done7
-@exc_done7
-    %t15 =w phi @exc_fast6 %t13, @exc_slow5 %t14
-    jnz %t15, @exc_propagate8, @exc_continue9
-@exc_propagate8
-    call $nox_unhandled_exception(l %rt)
-    ret 0
-@exc_continue9
+@ovf_ok2
+    storel %t6, %t1
+    jmp @inline_done0
+@after_inline_return3
+    jmp @inline_done0
+@inline_done0
+    %t8 =l loadl %t1
     call $printf(l $fmt_uint, ..., l %t8)
-    %t16 =l call $size_and_align__bool(l %rt, w 1)
-    %t17 =l sub %rt, 48
-    %t18 =w loadub %t17
-    %t19 =l sub %rt, 64
-    %t20 =l loadl %t19
-    jnz %t18, @exc_slow10, @exc_fast11
-@exc_fast11
-    %t21 =w cnel %t20, 0
-    jmp @exc_done12
-@exc_slow10
-    %t22 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done12
-@exc_done12
-    %t23 =w phi @exc_fast11 %t21, @exc_slow10 %t22
-    jnz %t23, @exc_propagate13, @exc_continue14
-@exc_propagate13
-    call $nox_unhandled_exception(l %rt)
+    stored d_3.14, %t2
+    %t9 =l add 8, 8
+    %t10 =w cultl %t9, 8
+    jnz %t10, @ovf_trap5, @ovf_ok6
+@ovf_trap5
+    call $nox_int_overflow_trap(l %rt, l $fmt_lit4)
     ret 0
-@exc_continue14
-    call $printf(l $fmt_uint, ..., l %t16)
+@ovf_ok6
+    storel %t9, %t3
+    jmp @inline_done4
+@after_inline_return7
+    jmp @inline_done4
+@inline_done4
+    %t11 =l loadl %t3
+    call $printf(l $fmt_uint, ..., l %t11)
+    storew 1, %t4
+    %t12 =l add 4, 4
+    %t13 =w cultl %t12, 4
+    jnz %t13, @ovf_trap9, @ovf_ok10
+@ovf_trap9
+    call $nox_int_overflow_trap(l %rt, l $fmt_lit5)
+    ret 0
+@ovf_ok10
+    storel %t12, %t5
+    jmp @inline_done8
+@after_inline_return11
+    jmp @inline_done8
+@inline_done8
+    %t14 =l loadl %t5
+    call $printf(l $fmt_uint, ..., l %t14)
     call $nox_runtime_deinit(l %rt)
-@fn_end15
+@fn_end12
     ret 0
 }
 export function $List_str_release(l %rt, l %p) {
@@ -4443,3 +4434,6 @@ data $str8 = { l 1073741824, l 2305843009213693952, b "", b 0 }
 data $fmt_lit0 = { b "usize", b 0 }
 data $fmt_lit1 = { b "usize", b 0 }
 data $fmt_lit2 = { b "usize", b 0 }
+data $fmt_lit3 = { b "usize", b 0 }
+data $fmt_lit4 = { b "usize", b 0 }
+data $fmt_lit5 = { b "usize", b 0 }

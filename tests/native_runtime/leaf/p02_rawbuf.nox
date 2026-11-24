@@ -1,0 +1,58 @@
+# P02 — ham tampon: doldur/kopyala/ÇAKIŞAN taşı/karşılaştır/topla/sıfırla (kelime=int tabanlı, runtime'sız).
+# leaf: buf_fill, buf_copy, buf_move, buf_sum, buf_eq, buf_zero
+# harness: p02_rawbuf.c
+# expect-out: ok
+
+def buf_fill(p: ptr[int], n: int, seed: int) -> None:
+    lowlevel:
+        i: int = 0
+        while i < n:
+            ptr_write(ptr_offset(p, i), seed + i * 7)
+            i = i + 1
+
+def buf_copy(dst: ptr[int], src: ptr[int], n: int) -> None:
+    lowlevel:
+        i: int = 0
+        while i < n:
+            ptr_write(ptr_offset(dst, i), ptr_read(ptr_offset(src, i)))
+            i = i + 1
+
+# memmove anlamı: dst > src ise sondan başa, değilse baştan sona (örtüşmede okunmamış kaynağın üstüne yazılmaz).
+def buf_move(dst: ptr[int], src: ptr[int], n: int) -> None:
+    lowlevel:
+        if ptr_to_int(dst) > ptr_to_int(src):
+            i: int = n - 1
+            while i >= 0:
+                ptr_write(ptr_offset(dst, i), ptr_read(ptr_offset(src, i)))
+                i = i - 1
+        else:
+            j: int = 0
+            while j < n:
+                ptr_write(ptr_offset(dst, j), ptr_read(ptr_offset(src, j)))
+                j = j + 1
+
+def buf_sum(p: ptr[int], n: int) -> int:
+    s: int = 0
+    lowlevel:
+        i: int = 0
+        while i < n:
+            s = s + ptr_read(ptr_offset(p, i)) * (i + 1)
+            i = i + 1
+    return s
+
+def buf_eq(a: ptr[int], b: ptr[int], n: int) -> int:
+    lowlevel:
+        i: int = 0
+        while i < n:
+            if ptr_read(ptr_offset(a, i)) != ptr_read(ptr_offset(b, i)):
+                return 0
+            i = i + 1
+    return 1
+
+# Sıfırlama (zeroization): derleyici tarafından elenmemesi için volatile yazma.
+def buf_zero(p: ptr[int], n: int) -> None:
+    lowlevel:
+        i: int = 0
+        while i < n:
+            ptr_write_volatile(ptr_offset(p, i), 0)
+            i = i + 1

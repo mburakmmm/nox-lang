@@ -21,6 +21,8 @@ step "WASM http stub uyumu";                            "$PY" scripts/check_wasm
 step "WASM ABI tablosu eksiksizliği";                    "$PY" scripts/check_wasm_abi_table.py
 step "fixture oracle (R1-P1.10)";                         "$PY" scripts/fixture_oracle.py
 step "Zig sonuç-konumu örtüşmesi (R1-P1.7d)";            "$PY" scripts/check_zig_result_alias.py
+step "native-runtime ABI manifesti güncel mi (symbols/layout.tsv)"; "$PY" scripts/gen_runtime_abi_manifest.py --check
+step "native-runtime leaf kapısı (P01-P06, olumsuz fixture'lar)"; "$PY" scripts/runtime_leaf_audit.py suite
 step "SBOM üreteci";                                    "$PY" scripts/gen_sbom.py --check v0.0.0-ci
 step "hizmetler tip denetimi";                          zig-out/bin/noxc check services/noxpkg/main.nox
 (cd services/noxlang-site && ../../zig-out/bin/noxc fetch >/dev/null && ../../zig-out/bin/noxc check main.nox)
