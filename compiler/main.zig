@@ -4181,10 +4181,12 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{base});
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
         const obj_path = try std.fmt.allocPrint(a, "{s}.o", .{base});
+        // R2-A.1 (v2.2.54): `NOX_FRAME_POINTERS=1` ile çerçeve işaretçileri korunur (profilleyici çağıran zincirleri için; yalnızca ölçüm — varsayılan kod üretimi DEĞİŞMEZ).
+        const fp_flag: []const u8 = if (std.c.getenv("NOX_FRAME_POINTERS") != null) "-fno-omit-frame-pointer" else "-O2";
         const argv: []const []const u8 = if (ccDriver(gpa, io) == .zig_cc)
-            &.{ "zig", "cc", "-c", "-O2", "-Wno-override-module", "-fPIC", "-o", obj_path, ll_path }
+            &.{ "zig", "cc", "-c", "-O2", fp_flag, "-Wno-override-module", "-fPIC", "-o", obj_path, ll_path }
         else
-            &.{ "clang", "-c", "-O2", "-Wno-override-module", "-fPIC", "-o", obj_path, ll_path };
+            &.{ "clang", "-c", "-O2", fp_flag, "-Wno-override-module", "-fPIC", "-o", obj_path, ll_path };
         try runTool(gpa, io, argv);
         return obj_path;
     }

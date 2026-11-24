@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.54]
+
+Rapor 1 kapanışı (J, L) ve Rapor 2 lexer ölçüm bulguları.
+
+- **R1-J/L**: v2.2.52 CI'ı Linux/Windows/riscv64/çapraz derlemelerde yeşil; macOS yalnız kararsız `serve_multicore` testinde kırmızı (R1-P3.1 olarak izleniyor).
+- **R2-A.1**: `NOX_FRAME_POINTERS=1` ortam değişkeni `--selfhost-obj` derlemesinde çerçeve işaretçilerini korur (yalnızca profil için; varsayılan kod üretimi değişmez). Bulgu: `sample` Nox runtime yardımcılarını yanlış atfeder.
+- **R2-D.1/D.2**: lexer ≈ 10 ns/bayt saf tarama; `append` büyütme maliyeti ≈%12 (uygulanmadı); istisna kontrolleri hızlı/yavaş yol, `emit/peek/at` sonrası kontrol yok.
+
 ## [2.2.53]
 
 Rapor 1 kapanışı (H, P1.7d) ve Rapor 2 ilk ölçüm/iyileştirme turu.
