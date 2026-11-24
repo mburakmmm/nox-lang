@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.51]
+
+GPT-6 sağlamlaştırma listesi — `[~]` maddelerinin kapatılması: Optional daraltma varyantları, liste başlığı denetimi, ölçüm kapıları, biçimlendirici CRLF.
+
+- **R1-P0.5**: `@property` okuması (`__nox_bind_method(x, "ad")`) artık alan yazan kullanıcı kodu sayılır; koşul içindeki `n.left != None and n.prop > 0` daraltmayı korumaz. `__len__`, vtable, protocol, `spawn`/`await`, `extern def`, `while`/üçlü varyantları yoklandı ve testlerle kilitlendi.
+- **R1-P1.1/P1.2/P1.3**: ayrı tampon (stash) büyümesi + blok boyutu serbest bırakma birim testi; FFI liste sözleşmesi (`docs/language/ffi.md`: kararlı yüzey `ptr_of`/`nox.ffi`, detach/adopt yok, `data-16` geçersiz); mutasyonlu `spawn` liste argümanı kapsamı mevcut kanıtla belgelendi.
+- **R1-P1.13/P1.14**: `parse-bench`/`fmt-bench` Nox ARC tahsis sayaçlarını (blok/bayt/serbest/canlı) yazar; `scripts/selfhost_bench.sh` soğuk başlangıç (tekrar=1) ve RSS-büyüme kapısı (`NOX_BENCH_RSS_GROWTH`, varsayılan 2.0x) ekler.
+- **R1-P1.12 (kullanıcı kararı)**: CRLF kaynakta string değerleri (üç tırnaklı, ham, f-string literal parçaları) `\r\n` yerine `\n` olur (Python evrensel satır sonu); Zig ve Nox çözücüleri birlikte. `fmt_properties` bilinen ihlal 4 → 0.
+- Açık: R1-P1.7c (ReleaseFast nightly `parse-nox` hata iletisi çöp bayt).
+
 ## [2.2.50]
 
 GPT-6 sağlamlaştırma listesi — toplu tur 3: macOS bellek tutulması kök nedeni (R1-P1.7b) ve biçimlendirici düzeltmeleri (R1-P1.12).

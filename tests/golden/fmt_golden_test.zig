@@ -694,3 +694,15 @@ test "fmt: R1-P1.12 (v2.2.50) — metot önü trivia, gerekli parantezler ve `cl
         try std.testing.expectEqualStrings(once, twice);
     }
 }
+
+test "fmt: R1-P1.12 (v2.2.51) — CRLF kaynak, string değerlerinde (üç tırnaklı, ham, f-string) LF ile aynı biçimlenir ve değer `\\n` olur" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const lf = "a: str = \"\"\"x\ny\"\"\"\nb: str = r\"\"\"p\nq\"\"\"\nc: str = f\"\"\"m\n{a}\nn\"\"\"\n";
+    const crlf = "a: str = \"\"\"x\r\ny\"\"\"\r\nb: str = r\"\"\"p\r\nq\"\"\"\r\nc: str = f\"\"\"m\r\n{a}\r\nn\"\"\"\r\n";
+    const from_lf = try formatSource(allocator, lf);
+    const from_crlf = try formatSource(allocator, crlf);
+    try std.testing.expectEqualStrings(from_lf, from_crlf);
+    try std.testing.expect(std.mem.indexOfScalar(u8, from_crlf, '\r') == null);
+}

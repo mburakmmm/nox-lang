@@ -2927,8 +2927,8 @@ pub const Parser = struct {
         // Dil yüzeyi 1 (v2.2.21): ham dize `r"…"`/`R'…'` (üç tırnaklı dahil) — kaçışlar çözülmez.
         if (lexeme.len >= 3 and (lexeme[0] == 'r' or lexeme[0] == 'R')) {
             const q = lexeme[1..];
-            if (q.len >= 6 and q[0] == q[1] and q[1] == q[2]) return q[3 .. q.len - 3];
-            return q[1 .. q.len - 1];
+            if (q.len >= 6 and q[0] == q[1] and q[1] == q[2]) return self.normalizeCrlf(q[3 .. q.len - 3]);
+            return self.normalizeCrlf(q[1 .. q.len - 1]);
         }
         // v1.164.1: üç tırnaklı (`"""…"""`) dizeler.
         if (lexeme.len >= 6 and lexeme[0] == lexeme[1] and lexeme[1] == lexeme[2]) return self.decodeEscapes(lexeme[3 .. lexeme.len - 3]);
@@ -2992,6 +2992,18 @@ pub const Parser = struct {
         return 2;
     }
 
+    /// R1-P1.12 (v2.2.51): ham dizelerde de CRLF → LF (kaçış çözülmez; yalnızca `\r\n` çiftlerinin `\r`i atılır). CRLF yoksa girdi diliminin kendisi döner.
+    fn normalizeCrlf(self: *Parser, inner: []const u8) ParseError![]const u8 {
+        if (std.mem.indexOf(u8, inner, "\r\n") == null) return inner;
+        var out = std.ArrayList(u8).empty;
+        var i: usize = 0;
+        while (i < inner.len) : (i += 1) {
+            if (inner[i] == '\r' and i + 1 < inner.len and inner[i + 1] == '\n') continue;
+            try out.append(self.allocator, inner[i]);
+        }
+        return out.toOwnedSlice(self.allocator);
+    }
+
     /// `decodeString`in ÇEKİRDEK döngüsü — ZATEN tırnaksız (`inner`) bir
     /// dilim üzerinde çalışır. `decodeString` (düz string literalleri) VE
     /// `parseFStringLit` (f-string literal segment'leri, bkz. onun belge
@@ -3002,6 +3014,8 @@ pub const Parser = struct {
         while (i < inner.len) {
             if (inner[i] == '\\' and i + 1 < inner.len) {
                 i += try self.decodeEscapeAt(inner, i, &out);
+            } else if (inner[i] == '\r' and i + 1 < inner.len and inner[i + 1] == '\n') {
+                i += 1; // R1-P1.12 (v2.2.51): CRLF kaynak satır sonu → `\n` (Python evrensel satır sonu)
             } else {
                 try out.append(self.allocator, inner[i]);
                 i += 1;
@@ -3285,6 +3299,10 @@ pub const Parser = struct {
                 // yalnızca KAÇAN `}}` düşer.
                 try literal_buf.append(self.allocator, '}');
                 i += 2;
+                continue;
+            }
+            if (ch == '\r' and i + 1 < inner.len and inner[i + 1] == '\n') {
+                i += 1; // CRLF → `\n` (bkz. `decodeEscapes`)
                 continue;
             }
             try literal_buf.append(self.allocator, ch);

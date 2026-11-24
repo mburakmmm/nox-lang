@@ -61,6 +61,7 @@ pub const Summary = struct {
     pub fn callMayWriteFields(self: *const Summary, c: ast.Call) bool {
         switch (c.callee.*) {
             .identifier => |n| {
+                if (propNameOfBind(c)) |pn| return self.attrMayWriteFields(pn);
                 if (self.defined.contains(n)) return self.isBad("f", n);
                 if (self.classes.contains(n)) return self.isBad("m", "__init__");
                 return !isPureBuiltinWith(n, &self.unsafe_dunders);
@@ -71,6 +72,18 @@ pub const Summary = struct {
             },
             else => return true, // değer olarak çağrılan hedef (closure/işlev değeri/çağrı sonucu)
         }
+    }
+
+    /// `x.ad` okuması denetimde `__nox_bind_method(x, "ad")` çağrısına indirgenir; ad literalini döndürür.
+    pub fn propNameOfBind(c: ast.Call) ?[]const u8 {
+        if (c.callee.* != .identifier or !std.mem.eql(u8, c.callee.identifier, "__nox_bind_method")) return null;
+        if (c.args.len != 2 or c.args[1] != .string_lit) return null;
+        return c.args[1].string_lit;
+    }
+
+    /// `x.name` OKUMASI (`@property` getter'ı ya da bağlı-metot değeri; dekoratör bu aşamada görünmez, muhafazakâr) alan yazan bir kullanıcı metodunu çalıştırabilir mi?
+    pub fn attrMayWriteFields(self: *const Summary, name: []const u8) bool {
+        return self.defined.contains(name) and self.isBad("m", name);
     }
 
     pub fn constructorMayWrite(self: *const Summary) bool {
@@ -228,7 +241,9 @@ const Builder = struct {
         for (c.args) |arg| try self.scanExpr(arg);
         switch (c.callee.*) {
             .identifier => |n| {
-                if (self.defined.contains(n)) {
+                if (Summary.propNameOfBind(c)) |pn| {
+                    if (self.defined.contains(pn)) try self.edge(try self.key("m", pn));
+                } else if (self.defined.contains(n)) {
                     try self.edge(try self.key("f", n));
                 } else if (self.classes.contains(n)) {
                     try self.edge(try self.key("m", "__init__"));

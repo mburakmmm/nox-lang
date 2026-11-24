@@ -8261,7 +8261,7 @@ pub const Checker = struct {
                 for (c.args) |arg| if (self.mayRunUserCode(arg)) break :blk true;
                 break :blk false;
             },
-            .attribute => |a| self.mayRunUserCode(a.obj.*),
+            .attribute => |a| eff.attrMayWriteFields(a.attr) or self.mayRunUserCode(a.obj.*),
             .index => |ix| self.mayRunUserCode(ix.obj.*) or self.mayRunUserCode(ix.index.*),
             .slice => |sl| self.mayRunUserCode(sl.obj.*) or (if (sl.lo) |x| self.mayRunUserCode(x.*) else false) or (if (sl.hi) |x| self.mayRunUserCode(x.*) else false) or (if (sl.step) |x| self.mayRunUserCode(x.*) else false),
             .list_lit, .tuple_lit => |items| blk: {

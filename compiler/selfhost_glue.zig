@@ -10,6 +10,7 @@ extern fn nox_runtime_init() ?*anyopaque;
 extern fn nox_runtime_deinit(rt: ?*anyopaque) void;
 extern fn nox_lib_init(rt: ?*anyopaque) void;
 extern fn nox_lib_fini(rt: ?*anyopaque) void;
+extern fn nox_mem_stat(rt: ?*anyopaque, which: i64) i64;
 extern fn lexer_nox_lex_run(rt: ?*anyopaque, base: i64, n: i64, want_trivia: i64) i64;
 extern fn lexer_nox_lex_trivia_count(rt: ?*anyopaque) i64;
 extern fn lexer_nox_lex_trivia_buffer(rt: ?*anyopaque) i64;
@@ -94,6 +95,11 @@ pub const Runtime = struct {
     }
 
     /// Son `formatSource`ın canlı Nox verisi (bayt).
+    /// R1-P1.13 (v2.2.51): Nox çalışma zamanı ARC tahsis sayaçları (ilk çağrı sayımı BAŞLATIR): 0 = tahsis sayısı, 1 = serbest bırakma sayısı, 2 = toplam tahsis edilen bayt.
+    pub fn memStat(self: Runtime, which: i64) i64 {
+        return nox_mem_stat(self.rt, which);
+    }
+
     pub fn fmtMem(self: Runtime) i64 {
         return formatter_nox_fmt_mem(self.rt);
     }

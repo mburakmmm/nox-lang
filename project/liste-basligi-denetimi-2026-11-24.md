@@ -34,3 +34,8 @@ Kapsam: v2.2.43 liste başlığı (`[len][cap][data][satır içi elemanlar]`, ba
 ## Sonuç
 P1.1: denetim tablosu çıkarıldı, **eksik testler adlandırıldı** (ayrı tampon serbest bırakma boyutu, stdlib listeleri). P1.2: ham ad bulunamadı + belgelenecek sözleşme.
 P1.3: kilitsiz büyümenin tasarım sınırı doğrulandı; kapsam dışı taşınma için M:N yarış testi açık. Üçü de listede `[~]` kalır.
+
+## v2.2.51 kapanışı
+- P1.1: ayrı tampon/stash büyümesi ve blok boyutu serbest bırakma denetimi `runtime/alloc/arc.zig` testi "R1-P1.1" ile eklendi (satır içi → ayrı tampon → havuz sınıfları → büyük blok; DebugAllocator boyut uyuşmazlığı/sızıntı denetimi). Stdlib listeleri aynı codegen yolundan geçer; stdlib golden testleri DebugAllocator sızıntı denetimiyle koşar.
+- P1.2: sözleşme `docs/language/ffi.md` içinde yazıldı.
+- P1.3: kapsam dışı taşınma: mutasyonlu `spawn` liste argümanı derleme hatasıdır (`SpawnSharedMutation`); paylaşılan modül listeleri yalnızca kilitli yoldan erişilir. Mevcut kanıt: `typecheck_cases/err_spawn_shared_list_*`, `codegen_cases/mn_shared_list*`, `mn_dyn_spawn_shared_mutation`, `tests/stress/mn_shared_churn.nox.in`. Kilitsiz büyüme tasarım sınırı olarak kalır (genel kilit eklenmez).

@@ -868,3 +868,27 @@ test "nox_atomic_rc_add/sub işlem-sonrası değeri döner" {
     try std.testing.expectEqual(@as(i64, 4), nox_atomic_rc_sub(&v, 2));
     try std.testing.expectEqual(@as(i64, 4), v);
 }
+
+test "R1-P1.1 (v2.2.51): satır içi → ayrı tampon (stash) büyümesi içeriği korur ve blok boyutları DebugAllocator denetimiyle serbest bırakılır" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt); // sızıntı/boyut uyuşmazlığı burada yakalanır
+    const esz: usize = 8;
+    const b: [*]u8 = @ptrCast(nox_list_new(rt, 2, esz) orelse return error.AllocFailed);
+    var d = abi_layout.listData(b);
+    @as(*align(1) i64, @ptrCast(d)).* = 11;
+    @as(*align(1) i64, @ptrCast(d + 8)).* = 22;
+    var len: usize = 2;
+    // satır içi (cap 2) → ayrı tampon → havuz sınıfları → büyük (> 256 KiB) bloklar
+    while (abi_layout.listCap(b) < 70_000) {
+        const nd = nox_list_reserve_cap(rt, b, listNextCap(abi_layout.listCap(b)), esz) orelse return error.AllocFailed;
+        d = @ptrCast(nd);
+        try std.testing.expectEqual(@as(usize, 2), listInlineCap(b)); // stash: satır içi kapasite sabit kalır (serbest bırakma boyutu)
+        try std.testing.expectEqual(@as(i64, 11), @as(*align(1) i64, @ptrCast(d)).*);
+        try std.testing.expectEqual(@as(i64, 22), @as(*align(1) i64, @ptrCast(d + 8)).*);
+        while (len < abi_layout.listCap(b)) : (len += 1) @as(*align(1) i64, @ptrCast(d + len * 8)).* = @intCast(len * 3);
+        abi_layout.listSetLen(b, len);
+    }
+    var k: usize = 2;
+    while (k < len) : (k += 1) try std.testing.expectEqual(@as(i64, @intCast(k * 3)), @as(*align(1) i64, @ptrCast(d + k * 8)).*);
+    nox_list_free_payload(rt, b, esz);
+}

@@ -204,6 +204,13 @@ print(buf[0])      # 255
 
 Rules: the argument must be a variable or a field (not a call result, whose list would be freed with the temporary); only `list[int]`, `list[float]` and lists of fixed-width integers are accepted. The pointer is valid until the list is released **or grows** (`append` moves the elements to a bigger buffer; the list itself stays put, so call `ptr_of` again after growing), exactly like any other `lowlevel` pointer, and lies inside the [trust boundary](#the-trust-boundary). Compared with copying the elements into a native buffer, this costs nothing per element (0.08 ns/element against 0.36 ns in the FFI benchmark).
 
+**What is stable and what is not.** The only supported ways to hand a list's elements to native code are `ptr_of(xs)` (above) and the `nox.ffi` wrappers. Everything else about the in-memory representation is an implementation detail and may change between releases:
+
+- A list is a reference-counted block whose header holds `len`, `cap` and a `data` pointer; the elements may live inline or in a separate buffer, and growing replaces the buffer while the header stays put. Native code must never walk backwards from `data` to find a reference-counting header (an assumption such as "`data - 16` is the reference count" is wrong for lists), never free or `realloc` a list's buffer, and never keep a pointer across an `append`, `insert`, `extend` or any call that may grow the list.
+- There is no "detach" or "adopt" operation that transfers ownership of a list buffer to or from native code. To keep a list alive on the native side use `retains(xs)` on the `extern def` ([Ownership across the call](#ownership-across-the-call-retains-and-ffiescape)); to receive native memory, copy it into a Nox list.
+- A list that several workers use at the same time must not be handed out as a raw pointer: growth is not synchronised against native readers. Lists that the compiler treats as shared (module-level lists used by `spawn`ed work) are accessed through locked operations only, and `spawn` arguments that are mutated are rejected at compile time (`SpawnSharedMutation`).
+- The HPy/CPython compatibility layer never receives a raw list pointer; C extensions only ever see opaque handles.
+
 ## Sizes and layouts
 
 `sizeof(T)`, `alignof(T)` and `offsetof(T, "field")` work for every type; `@repr("C")` and `@packed` give classes a defined layout to share

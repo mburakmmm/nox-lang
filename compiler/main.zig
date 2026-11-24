@@ -912,6 +912,7 @@ fn cmdParseBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !vo
     var best_nox: u64 = std.math.maxInt(u64);
     var zig_mem: usize = 0;
     var nox_mem: i64 = 0;
+    _ = nrt.memStat(0); // sayımı başlat (R1-P1.13)
     for (0..reps) |_| {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
@@ -948,6 +949,7 @@ fn cmdParseBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !vo
     const ratio = @as(f64, @floatFromInt(best_nox)) / @as(f64, @floatFromInt(@max(best_zig, 1)));
     const mratio = @as(f64, @floatFromInt(nox_mem)) / @as(f64, @floatFromInt(@max(zig_mem, 1)));
     w.interface.print("{d:.2} MiB kaynak\nzig sözcük+ayrıştırma {d:>8} us, {d} B arena-ayrilmis\nnox ayrıştırma        {d:>8} us ({d:.2}x), {d} B mantiksal-canli (mantiksal/ayrilmis {d:.2}x: ESDEGER DEGIL, esdeger metrik: scripts/selfhost_bench.sh tepe-RSS)\n", .{ @as(f64, @floatFromInt(src.len)) / (1024.0 * 1024.0), best_zig / 1000, zig_mem, best_nox / 1000, ratio, nox_mem, mratio }) catch return;
+    if (side != 1) w.interface.print("nox ARC tahsis (tekrar toplamı): {d} blok, {d} B toplam, {d} blok serbest, {d} blok canlı (tepe-canlı-heap sayacı YOK: tepe RSS için scripts/selfhost_bench.sh)\n", .{ nrt.memStat(0), nrt.memStat(2), nrt.memStat(1), nrt.memStat(0) - nrt.memStat(1) }) catch return;
     w.interface.flush() catch return;
     if ((max_ratio > 0 and ratio > max_ratio) or (max_mem > 0 and mratio > max_mem)) {
         printErr("parse-bench: Nox parser over budget (time {d:.2}x / mem {d:.2}x)\n", .{ ratio, mratio });
@@ -996,6 +998,7 @@ fn cmdFmtBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void
     var best_nox: u64 = std.math.maxInt(u64);
     var zig_mem: usize = 0;
     var nox_mem: i64 = 0;
+    _ = nrt.memStat(0); // sayımı başlat (R1-P1.13)
     for (0..reps) |_| {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
@@ -1035,6 +1038,7 @@ fn cmdFmtBench(io: std.Io, a: std.mem.Allocator, rest: []const []const u8) !void
     const ratio = @as(f64, @floatFromInt(best_nox)) / @as(f64, @floatFromInt(@max(best_zig, 1)));
     const mratio = @as(f64, @floatFromInt(nox_mem)) / @as(f64, @floatFromInt(@max(zig_mem, 1)));
     w.interface.print("{d:.2} MiB kaynak\nzig fmt hattı {d:>8} us, {d} B arena-ayrilmis\nnox fmt hattı {d:>8} us ({d:.2}x), {d} B mantiksal-canli (mantiksal/ayrilmis {d:.2}x: ESDEGER DEGIL, esdeger metrik: scripts/selfhost_bench.sh tepe-RSS)\n", .{ @as(f64, @floatFromInt(src.len)) / (1024.0 * 1024.0), best_zig / 1000, zig_mem, best_nox / 1000, ratio, nox_mem, mratio }) catch return;
+    if (side != 1) w.interface.print("nox ARC tahsis (tekrar toplamı): {d} blok, {d} B toplam, {d} blok serbest, {d} blok canlı (tepe-canlı-heap sayacı YOK: tepe RSS için scripts/selfhost_bench.sh)\n", .{ nrt.memStat(0), nrt.memStat(2), nrt.memStat(1), nrt.memStat(0) - nrt.memStat(1) }) catch return;
     w.interface.flush() catch return;
     if ((max_ratio > 0 and ratio > max_ratio) or (max_mem > 0 and mratio > max_mem)) {
         printErr("fmt-bench: Nox formatter over budget (time {d:.2}x / mem {d:.2}x)\n", .{ ratio, mratio });

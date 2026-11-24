@@ -275,3 +275,96 @@ test "P0.5: aynı koşul içindeki str(n) ve dolaylı print(n) yapan işlev ça�
         \\
     );
 }
+
+const gadget =
+    \\class Gadget:
+    \\    left: Gadget | None
+    \\    value: int
+    \\
+    \\    def __init__(self, v: int) -> None:
+    \\        self.left = None
+    \\        self.value = v
+    \\
+    \\    def __len__(self) -> int:
+    \\        self.left = None
+    \\        return 1
+    \\
+    \\    @property
+    \\    def prop(self) -> int:
+    \\        self.left = None
+    \\        return 1
+    \\
+    \\    def hit(self) -> int:
+    \\        self.left = None
+    \\        return 2
+    \\
+    \\class Quiet:
+    \\    left: Quiet | None
+    \\    value: int
+    \\
+    \\    def __init__(self, v: int) -> None:
+    \\        self.left = None
+    \\        self.value = v
+    \\
+    \\    @property
+    \\    def qprop(self) -> int:
+    \\        return self.value
+    \\
+    \\
+;
+
+test "P0.5 (v2.2.51): @property, __len__, sanal metot ve while/üçlü koşulları daraltmayı düşürür" {
+    // `@property` okuması alan yazıyorsa aynı koşul içinde de daraltma korunmaz
+    try expectRejected(gadget ++
+        \\def f(g: Gadget) -> int:
+        \\    if g.left != None and g.prop > 0:
+        \\        return g.left.value
+        \\    return 0
+        \\
+    );
+    try expectRejected(gadget ++
+        \\def f(g: Gadget) -> int:
+        \\    if g.left != None:
+        \\        k: int = g.prop
+        \\        return g.left.value
+        \\    return 0
+        \\
+    );
+    try expectRejected(gadget ++
+        \\def f(g: Gadget) -> int:
+        \\    if g.left != None and len(g) > 0:
+        \\        return g.left.value
+        \\    return 0
+        \\
+    );
+    try expectRejected(gadget ++
+        \\def f(g: Gadget) -> int:
+        \\    while g.left != None and len(g) > 0:
+        \\        return g.left.value
+        \\    return 0
+        \\
+    );
+    try expectRejected(gadget ++
+        \\def f(g: Gadget) -> int:
+        \\    return g.left.value if g.left != None and len(g) > 0 else 0
+        \\
+    );
+    try expectRejected(gadget ++
+        \\def f(g: Gadget) -> int:
+        \\    if g.left != None:
+        \\        k: int = g.hit()
+        \\        return g.left.value
+        \\    return 0
+        \\
+    );
+}
+
+test "P0.5 (v2.2.51): alan yazmayan @property daraltmayı korur (aşırı reddetme yok)" {
+    try expectAccepted(gadget ++
+        \\def f(q: Quiet) -> int:
+        \\    if q.left != None and q.qprop > 0:
+        \\        return q.left.value
+        \\    return 0
+        \\
+    );
+}

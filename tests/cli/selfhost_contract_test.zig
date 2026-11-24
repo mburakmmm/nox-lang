@@ -110,8 +110,8 @@ test "selfhost.o sembol sozlesmesi: glue extern'leri tanimli, init/fini tekil, c
         const rest = line[pre.len..];
         const end = std.mem.indexOfScalar(u8, rest, '(') orelse continue;
         const sym = rest[0..end];
-        // çalışma zamanı simgeleri (`nox_runtime_*`) noxrt.o'dan gelir; geri kalanı selfhost.o tanımlamalıdır
-        if (std.mem.startsWith(u8, sym, "nox_runtime_")) continue;
+        // çalışma zamanı simgeleri (`nox_runtime_*`, `nox_mem_stat`) noxrt.o'dan gelir; geri kalanı selfhost.o tanımlamalıdır
+        if (std.mem.startsWith(u8, sym, "nox_runtime_") or std.mem.eql(u8, sym, "nox_mem_stat")) continue;
         if (!defined.contains(sym)) std.debug.print("glue extern tanimsiz: {s}\n", .{sym});
         try std.testing.expect(defined.contains(sym));
         checked += 1;

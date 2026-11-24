@@ -1136,7 +1136,7 @@ def decode_escapes(p: P, s: int, e: int) -> int:
     a: Ast = p.a
     has_bs: bool = False
     for k in range(s, e - 1):
-        if at(a.src, k) == 92:
+        if at(a.src, k) == 92 or (at(a.src, k) == 13 and at(a.src, k + 1) == 10):
             has_bs = True
             break
     if not has_bs:
@@ -1146,6 +1146,28 @@ def decode_escapes(p: P, s: int, e: int) -> int:
     while i < e:
         if at(a.src, i) == 92 and i + 1 < e:
             i = i + decode_escape_at(p, e, i)
+        elif at(a.src, i) == 13 and i + 1 < e and at(a.src, i + 1) == 10:
+            i = i + 1
+        else:
+            a.sb.append(at(a.src, i))
+            i = i + 1
+    return pk(0 - off - 1, len(a.sb) - off)
+
+# R1-P1.12 (v2.2.51): ham dizelerde CRLF -> LF (Zig `normalizeCrlf`); CRLF yoksa kaynak dilimi aynen döner.
+def norm_crlf(p: P, s: int, e: int) -> int:
+    a: Ast = p.a
+    found: bool = False
+    for k in range(s, e - 1):
+        if at(a.src, k) == 13 and at(a.src, k + 1) == 10:
+            found = True
+            break
+    if not found:
+        return pk(s, e)
+    off: int = len(a.sb)
+    i: int = s
+    while i < e:
+        if at(a.src, i) == 13 and i + 1 < e and at(a.src, i + 1) == 10:
+            i = i + 1
         else:
             a.sb.append(at(a.src, i))
             i = i + 1
@@ -1161,8 +1183,8 @@ def decode_string(p: P, ti: int) -> int:
         qs: int = s + 1
         qn: int = e - qs
         if qn >= 6 and at(a.src, qs) == at(a.src, qs + 1) and at(a.src, qs + 1) == at(a.src, qs + 2):
-            return pk(qs + 3, e - 3)
-        return pk(qs + 1, e - 1)
+            return norm_crlf(p, qs + 3, e - 3)
+        return norm_crlf(p, qs + 1, e - 1)
     if n >= 6 and c0 == at(a.src, s + 1) and at(a.src, s + 1) == at(a.src, s + 2):
         return decode_escapes(p, s + 3, e - 3)
     return decode_escapes(p, s + 1, e - 1)
@@ -1481,6 +1503,9 @@ def parse_fstring_lit(p: P, s: int, e: int) -> int:
         if ch == 125:
             a.sb.append(125)
             i = i + 2
+            continue
+        if ch == 13 and i + 1 < inner_e and at(a.src, i + 1) == 10:
+            i = i + 1
             continue
         a.sb.append(ch)
         i = i + 1
