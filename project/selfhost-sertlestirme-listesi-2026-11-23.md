@@ -130,6 +130,10 @@ Düzeltme (`compiler/codegen_qbe/inlining.zig` `scanStackConstructSites` + `Code
 | fmt tepe RSS (ayrı süreç) | 60,8 MiB | — | 44,4 MiB | 0,73× |
 Doğrulama: tam test-fast 875/875, Zig↔Nox lexer/parser/astdump/fmt farksal paritesi farksız, 16 IR anlık görüntüsü yalnızca arena çifti kalkması + geçici numaralandırma farkı, yeni golden `lowlevel_plain_arena_elided`. R2-A.1/D.1–D.3/F.1/H.1/B.2 bu bulguyla ilerledi (aşağıda).
 
+### v2.2.56 — biçimlendirici toplu yazım (R2-F.1/F.2)
+Profil düzleştikten sonra kalan en büyük payı bayt başına `append(ord(s[i]))`/`append(at(src,k))` döngüleri aldı. Eklenen çalışma zamanı ilkelleri: `nox_list_extend_from_bytes(list, base, n)` (kaynak aralığı → `list[int]`, ≈ `ws`/yorum kopyası) ve `nox_list_extend_from_str(list, s)` (`w(pr, "...")`); `nox_ord_raw`a ASCII hızlı yolu (ilk bayt 1..0x7F → doğrudan döner; `ord` mikro-ölçümü −%14…−%30). Etki (992 KB, ReleaseFast, 30 tekrar): fmt hattı 15,4 → **12,8 ms** (−%17; Zig 16,2 ms ⇒ **0,79×**), lexer 3,28 ms (0,63×), parse 9,84 ms (0,80×). Doğrulama: test-fast 875/875 (2336 test), Zig↔Nox lexer/parser/astdump/fmt paritesi farksız, `fmt_properties` 0 ihlal. Birim testi: `nox_list_extend_from_bytes` (büyüme + n=0).
+Kalan düz profil (en büyük paylar): `lexer_lex` tarama mantığı (~%25), `Ast_release` (~%7, büyük liste serbest bırakma), `parser_mtc` (~%7), `emit_leading_trivia` (artık yorum kopyası toplu).
+
 ### v2.2.54 ek bulgular (lexer) — YUKARIDAKİ v2.2.55 ile DÜZELTİLDİ
 - Profil atıf hatası: `sample` çıktısında `nox_arena_create/destroy` ve `nox_list_free_payload` (~%35) lexer'da gerçek maliyet DEĞİL; `cmdLexBench → nox_arena_create` gibi imkânsız çağrılar sembolsüz kodun yanlış atfını gösterir. Deney: `indent_stack` yerel listesini (arena) `Lx` alanına taşımak lexer süresini değiştirmedi (10,05 ms) → geri alındı.
 - Liste büyütme maliyeti ≈%12 (mikro-ölçüm); lexer ≈ 10 ns/bayt = saf tarama mantığı. Sonraki ölçüm adayı: `at(base, i)` (her baytta `lowlevel` ptr_read çağrısı) ve `emit` satır içi olup olmadığı (bağlı ikilide `otool -rv`/LLVM IR ile).

@@ -23,17 +23,27 @@ class Pr:
         self.in_fstring = 0
 
 # --- yazma yardımcıları ---
+# R2-F (v2.2.55): dize tek toplu kopya (önceden karakter başına `append(ord(s[i]))`). Tüm `w(pr, ...)` argümanları ASCII'dir (literaller ve `str(float)`), bu yüzden bayt dizisi birebir aynıdır;
+# ASCII dışı bir argüman artık kod noktası değil UTF-8 baytları yazar (doğru olan budur).
+extern def nox_list_extend_from_str(out: list[int], s: str) -> None from "zig-out/lib/noxrt.o" with_rt
+
 def w(pr: Pr, s: str) -> None:
-    for i in range(len(s)):
-        pr.out.append(ord(s[i]))
+    nox_list_extend_from_str(pr.out, s)
 
 def wb(pr: Pr, c: int) -> None:
     pr.out.append(c)
 
 # Paketli dize başvurusunu yazar.
+# R2-F (v2.2.55): kaynak metin aralığı (yorumlar, tanımlayıcılar, sayılar) bayt başına `append` yerine tek toplu kopya (`nox_list_extend_from_bytes`; çalışma zamanı ilkeli).
+extern def nox_list_extend_from_bytes(out: list[int], base: int, n: int) -> None from "zig-out/lib/noxrt.o" with_rt
+
 def ws(pr: Pr, v: int) -> None:
     a: Ast = pr.a
     n: int = sref_len(v)
+    x: int = pkx(v)
+    if x >= 0:
+        nox_list_extend_from_bytes(pr.out, a.src + x, n)
+        return
     for i in range(n):
         pr.out.append(sref_byte(a, v, i))
 
@@ -166,8 +176,7 @@ def emit_leading_trivia(pr: Pr, depth: int, upto_line: int) -> None:
                 pr.last_blank = True
         else:
             indent_to(pr, depth)
-            for k in range(pr.tr[b + 3], pr.tr[b + 4]):
-                wb(pr, at(a.src, k))
+            nox_list_extend_from_bytes(pr.out, a.src + pr.tr[b + 3], pr.tr[b + 4] - pr.tr[b + 3])
             wb(pr, 10)
             pr.last_blank = False
         pr.ti = pr.ti + 1
@@ -181,8 +190,7 @@ def line(pr: Pr, source_line: int) -> None:
         b: int = pr.ti * 5
         if pr.tr[b] == 0 and pr.tr[b + 2] != 0 and pr.tr[b + 1] == source_line:
             w(pr, "  ")
-            for k in range(pr.tr[b + 3], pr.tr[b + 4]):
-                wb(pr, at(a.src, k))
+            nox_list_extend_from_bytes(pr.out, a.src + pr.tr[b + 3], pr.tr[b + 4] - pr.tr[b + 3])
             pr.ti = pr.ti + 1
     wb(pr, 10)
     pr.last_blank = False

@@ -468,6 +468,26 @@ pub export fn nox_list_grow(rt: ?*anyopaque, list: ?*anyopaque, esz_i: usize) ?*
     return nox_list_reserve_cap(rt, b, listNextCap(abi_layout.listCap(b)), esz_i);
 }
 
+/// R2-F (v2.2.55): `list[int]`e, `base` adresindeki `n` baytı (her biri işaretsiz, 8 baytlık eleman olarak genişletilerek) TEK çağrıda ekler. Biçimlendirici/AST yazıcısının kaynak metin
+/// aralığını (`out.append(at(src, k))` bayt başına döngüsü yerine) toplu kopyalaması içindir; büyüme politikası `append` ile aynıdır (`listNextCap`), bellek yetersizliğinde durur.
+pub export fn nox_list_extend_from_bytes(rt: ?*anyopaque, list: ?*anyopaque, base: i64, n: i64) void {
+    if (n <= 0) return;
+    const b: [*]u8 = @ptrCast(list orelse return);
+    const len = abi_layout.listLen(b);
+    const need = len + @as(usize, @intCast(n));
+    var data = abi_layout.listData(b);
+    if (need > abi_layout.listCap(b)) {
+        var cap = abi_layout.listCap(b);
+        while (cap < need) cap = listNextCap(cap);
+        data = @ptrCast(nox_list_reserve_cap(rt, b, cap, 8) orelse @panic("OOM: list extend"));
+    }
+    const src: [*]const u8 = @ptrFromInt(@as(usize, @intCast(base)));
+    const dst: [*]align(1) i64 = @ptrCast(data + len * 8);
+    var i: usize = 0;
+    while (i < @as(usize, @intCast(n))) : (i += 1) dst[i] = src[i];
+    abi_layout.listSetLen(b, need);
+}
+
 /// Kapasiteyi (en az) `new_cap` elemana çıkarır (küçültmez); YENİ `data` göstericisini döner, bellek yoksa null (başlığa dokunulmaz).
 pub fn nox_list_reserve_cap(rt: ?*anyopaque, b: [*]u8, new_cap: usize, esz: usize) ?*anyopaque {
     const cap = abi_layout.listCap(b);
@@ -891,4 +911,19 @@ test "R1-P1.1 (v2.2.51): satır içi → ayrı tampon (stash) büyümesi içeri�
     var k: usize = 2;
     while (k < len) : (k += 1) try std.testing.expectEqual(@as(i64, @intCast(k * 3)), @as(*align(1) i64, @ptrCast(d + k * 8)).*);
     nox_list_free_payload(rt, b, esz);
+}
+
+test "R2-F (v2.2.55): nox_list_extend_from_bytes baytları genişleterek ekler, büyür ve mevcut elemanları korur" {
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const b: [*]u8 = @ptrCast(nox_list_new(rt, 0, 8) orelse return error.AllocFailed);
+    var big: [5000]u8 = undefined;
+    for (&big, 0..) |*c, i| c.* = @intCast(i % 251);
+    nox_list_extend_from_bytes(rt, b, @intCast(@intFromPtr(&big)), 3);
+    nox_list_extend_from_bytes(rt, b, @intCast(@intFromPtr(&big) + 3), 0); // n = 0: değişmez
+    nox_list_extend_from_bytes(rt, b, @intCast(@intFromPtr(&big) + 3), 4997); // büyütme (4 → 8 → … )
+    try std.testing.expectEqual(@as(usize, 5000), abi_layout.listLen(b));
+    const d: [*]align(1) const i64 = @ptrCast(abi_layout.listData(b));
+    for (big, 0..) |c, i| try std.testing.expectEqual(@as(i64, c), d[i]);
+    nox_list_free_payload(rt, b, 8);
 }

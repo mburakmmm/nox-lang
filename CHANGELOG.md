@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.56]
+
+Biçimlendirici toplu yazım: fmt hattı 15,4 → 12,8 ms (992 KB, ReleaseFast); Nox/Zig oranı lexer 0,63×, parse 0,80×, fmt 0,79×.
+
+- **Runtime**: `nox_list_extend_from_bytes` (bellek adresinden `list[int]`e toplu bayt ekleme) ve `nox_list_extend_from_str` (dizeden); `nox_ord_raw` ASCII hızlı yolu.
+- **Biçimlendirici (selfhost)**: `w()`, `ws()` (kaynak aralığı) ve yorum kopyası bayt başına `append` yerine tek toplu çağrı; çıktı bayt-eşdeğer.
+
 ## [2.2.55]
 
 Nox selfhost bileşenleri için kanıtlı hızlanma: lexer 10,1 → 3,3 ms, parse 18,9 → 9,9 ms, fmt hattı 27,0 → 15,5 ms (992 KB, ReleaseFast); Nox artık Zig'e oranla lexer 0,62×, parse 0,81×, fmt 0,97×.
