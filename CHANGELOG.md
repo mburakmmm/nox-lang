@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.53]
+
+Rapor 1 kapanışı (H, P1.7d) ve Rapor 2 ilk ölçüm/iyileştirme turu.
+
+- **R1-P1.7d**: `x = .{ ... x ... }` (hedefi kendi başlatmasında okuyan Zig struct ataması) taraması 0 bulgu; `scripts/check_zig_result_alias.py` precheck'e eklendi (tek satırlık + çok satırlı başlatıcılar).
+- **R1-H**: konu → adlandırılmış test eşlemesi (`project/rapor1-asama1-sonuc-2026-11-24.md`), testler mevcut ve tam koşuda yeşil. **R1-I**: 7 ekosistem projesi derlenir, Aether çalışır; Nyx örneği `use_listen_fd` Nyx tarafında eksik.
+- **R2-F (kısmi)**: biçimlendirici `print_stmts` her `def` için tüm önceki deyimleri tarıyordu (`is_generic_enum_ctor`, O(n²)); `__` içermeyen adlar için ön süzgeç → fmt hattı 31,3 → 27,3 ms (−%13), çıktı bayt-eşdeğer.
+- **R2-A/D**: `sample` profili ve aşama süreleri listede (lexer ≈ Nox hattının yarısı); D.2 satır içi analizi sonuçsuz.
+
 ## [2.2.52]
 
 Rapor 1 (selfhost sağlamlaştırma) kalan maddeleri: P1.7c, P1.5, P2.1, P2.2 kapandı; H/I/J/L için sonuç raporu.

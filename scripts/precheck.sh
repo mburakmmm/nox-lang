@@ -20,6 +20,7 @@ step "selfhost/parser.nox güncel mi (parser.nox.in + token/AST şeması)"; "$PY
 step "WASM http stub uyumu";                            "$PY" scripts/check_wasm_http_stubs.py
 step "WASM ABI tablosu eksiksizliği";                    "$PY" scripts/check_wasm_abi_table.py
 step "fixture oracle (R1-P1.10)";                         "$PY" scripts/fixture_oracle.py
+step "Zig sonuç-konumu örtüşmesi (R1-P1.7d)";            "$PY" scripts/check_zig_result_alias.py
 step "SBOM üreteci";                                    "$PY" scripts/gen_sbom.py --check v0.0.0-ci
 step "hizmetler tip denetimi";                          zig-out/bin/noxc check services/noxpkg/main.nox
 (cd services/noxlang-site && ../../zig-out/bin/noxc fetch >/dev/null && ../../zig-out/bin/noxc check main.nox)

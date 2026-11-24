@@ -36,8 +36,8 @@ Kaynak: `~/Desktop/nox-1.md` (Aşama 1/2: sağlamlaştırma, ref. v2.2.44) ve `~
 - [x] **R1-P2.2** (v2.2.52: project/nightly-dagitim-sozlesmesi-2026-11-24.md; Windows açık hata; selfhost-info platform durumu)  Nightly platform/dağıtım: Windows kapsamı, runtime/stdlib/backend dağıtım sözleşmesi belgesi, desteklenmeyeni "doğrulandı" raporlama.
 
 ### Regresyon denetimi (H) ve ekosistem (I) ve matris (J)
-- [~] **R1-H** (v2.2.52 KISMİ: tam test-fast yeşil + bazı alt başlık kanıtları; alt başlık başına adlandırılmış test eşlemesi AÇIK — bkz. rapor1-asama1-sonuc)  Önceden düzeltilmiş konuların yeni liste mimarisi + selfhost sonrası gerilemediğini kontrol et (Aether worker istisnası v2.2.25, SafeHTTP, GC mark/scan OOM, GC seri/paralel eşdeğerlik, yıldızlı unpack uzunluk kontrolü, type alias izolasyonu, lexer span/CRLF, sızıntı testleri, liste alias semantiği, QBE=LLVM).
-- [~] **R1-I** (v2.2.52 KISMİ: 7 proje `noxc check` temiz; Nyx örneği `use_listen_fd` Nyx kaynağında yok (proje tarafı); Vault/Quartz yerelde yok; çalışma-zamanı/perf koşuları YOK)  Gerçek ekosistem uyumluluğu: Nyx, Aether, Aura, Nova, Noxen, Rune, Feather, Atlas, Quartz, Vault (+ Nox 1.2 dönemi Nyx web uygulaması: değişiklik gerektirmeden derleme, HTTP davranışı, çok worker, sızıntı, perf). Erişilemeyeni açıkça raporla. (CI'da Aether+Nyx fixture'ları zaten var.)
+- [x] **R1-H** (v2.2.53: konu→test eşlemesi project/rapor1-asama1-sonuc-2026-11-24.md; testler mevcut ve v2.2.52 tam koşuda yeşil)  Önceden düzeltilmiş konuların yeni liste mimarisi + selfhost sonrası gerilemediğini kontrol et (Aether worker istisnası v2.2.25, SafeHTTP, GC mark/scan OOM, GC seri/paralel eşdeğerlik, yıldızlı unpack uzunluk kontrolü, type alias izolasyonu, lexer span/CRLF, sızıntı testleri, liste alias semantiği, QBE=LLVM).
+- [~] **R1-I** (v2.2.53 KISMİ: 7 proje derlenir, Aether çalışır (200/JSON); Nyx örneği `use_listen_fd` Nyx kaynağında yok (proje tarafı); Vault/Quartz yerelde yok; çok-worker/sızıntı/perf koşuları YOK)  Gerçek ekosistem uyumluluğu: Nyx, Aether, Aura, Nova, Noxen, Rune, Feather, Atlas, Quartz, Vault (+ Nox 1.2 dönemi Nyx web uygulaması: değişiklik gerektirmeden derleme, HTTP davranışı, çok worker, sızıntı, perf). Erişilemeyeni açıkça raporla. (CI'da Aether+Nyx fixture'ları zaten var.)
 - [~] **R1-J** (v2.2.52 KISMİ: macOS aarch64 LLVM+QBE, Debug+ReleaseFast; Linux/Windows/WASM/mobil CI'ya bırakıldı)  Her düzeltme için test matrisi: LLVM+QBE, Debug (bellek) + ReleaseFast (davranış), Linux/macOS/Windows, WASM/freestanding/mobil (etkileniyorsa), NNI/HPy, M:N. Perf: güncel baseline (benchmark seti+sürüm kesinleştir), düzeltme sonrası aynı set; güvenlik kontrolleri perf için kaldırılmaz.
 - [~] **R1-L** (v2.2.52 KISMİ: sonuç raporu project/rapor1-asama1-sonuc-2026-11-24.md)  Aşama 1 tamamlanma ölçütleri (rapor Bölüm L) karşılandı, açık P1/P2 maddeleri gerekçeli kayıtlı. Sonuç raporu: bulgu başına Bölüm K formatı.
 
@@ -45,19 +45,19 @@ Kaynak: `~/Desktop/nox-1.md` (Aşama 1/2: sağlamlaştırma, ref. v2.2.44) ve `~
 
 ### N.1 Ölçüm altyapısı (önce)
 - [x] **R2-N1.a** (v2.2.49: ReleaseFast taban ölçümü aşağıda; BULGU: art arda çağrılarda Nox belleği geri vermiyor → R1-P1.7b) R1-P1.13/P1.14 ölçüm düzeltmeleri doğrulanır; güncel Nox/C baseline (hangi set+sürüm+koşul).
-- [ ] **R2-A.1** Lexer/parser/formatter uçtan uca CPU+ARC profili (kategori tablosu: ARC, allocation, list, string, algoritma, ABI; inclusive/exclusive ayrı; instrumentation'lı ölçüm normalden ayrı).
+- [~] **R2-A.1** (v2.2.53 KISMİ: macOS `sample` profili alındı; Nox çerçeve işaretçisi olmadığı için çağıran zincirleri güvenilmez — bkz. "R2 profil bulguları"; ARC/allocation kategori tablosu ve inclusive/exclusive ayrımı YOK) Lexer/parser/formatter uçtan uca CPU+ARC profili (kategori tablosu: ARC, allocation, list, string, algoritma, ABI; inclusive/exclusive ayrı; instrumentation'lı ölçüm normalden ayrı).
 - [ ] **R2-A.2** Saf Nox vs hibrit (Zig'e statik bağlı) 10 senaryo; fark açıklanır (ABI köprüsü, codegen, link, kopyalama).
-- [ ] **R2-A.3** Adil benchmark protokolü (ReleaseFast, warm-up, medyan/min/dağılım, RSS, tahsis sayısı/baytı, sürüm kaydı; sabit katlama engeli).
+- [~] **R2-A.3** (v2.2.53 KISMİ: `selfhost_bench.sh` ReleaseFast, ayrı süreç RSS, soğuk başlangıç, RSS-büyüme kapısı, ARC tahsis sayısı/baytı mevcut; medyan/dağılım ve sabit-katlama koruması YOK) Adil benchmark protokolü (ReleaseFast, warm-up, medyan/min/dağılım, RSS, tahsis sayısı/baytı, sürüm kaydı; sabit katlama engeli).
 
 ### N.2 Düşük riskli iyileştirmeler
 - [ ] **R2-D.1** Lexer token başına 5 `append` → toplu yazım (9 alternatif ölç; yeni public API ekleme; genel optimizasyon, selfhost'a özgü kural yok).
-- [ ] **R2-D.2** `at()/peek()/emit()` inlining analizi (LLVM IR + asm; bayt başına çağrı kalıyor mu; zorla inline yok).
+- [~] **R2-D.2** (v2.2.53 İNCELENDİ, SONUÇSUZ: `lexer_at/peek/emit` nesnede global `T` simge olarak da var; `lexer_lex` içinde 260 `bl` var ama hedefler nesne dosyasında çözümsüz yeniden konumlandırma → satır içi mi değil mi belirlenemedi; LLVM IR/asm bağlanmış ikiliden incelenmeli) `at()/peek()/emit()` inlining analizi (LLVM IR + asm; bayt başına çağrı kalıyor mu; zorla inline yok).
 - [ ] **R2-D.3** Lexer veri yerleşimi: gerçek uygulama vs eşdeğer (aynı düz tampon) karşılaştırması.
 - [ ] **R2-D.4** Lexer köprüsü maliyetini doğrudan ölç (kopya, Token dönüşümü allocation).
 - [ ] **R2-E.2** `mk_*` oluşturucularında toplu yazım (üretici `gen_selfhost_ast.py`).
 - [ ] **R2-E.3** Span araması (R1-P2.1 ile aynı iş; performans+bellek etkisi ölç).
 - [ ] **R2-E.5** AST sentezlenmiş bayt/çıktı tamponu `list[int]` (8 B/bayt) → `list[u8]`/Buffer.
-- [ ] **R2-F.1/F.2/F.3** Formatter `w()` bayt başına `append`+`ord(s[i])`; küçük geçici tahsisler (`wint` digit listesi, `float_from_bits` tek elemanlı liste); aşama aşama süre (lex/parse/traversal/format/çıktı/aktarım/cleanup).
+- [~] **R2-F.1/F.2/F.3** (v2.2.53 KISMİ: `print_stmts` içindeki `is_generic_enum_ctor` her `def` için tüm önceki deyimleri tarıyordu (O(n²)); `name_has_dunder` ön süzgeci → fmt-bench 31,3→27,3 ms (−%13), çıktı bayt-eşdeğer; `w()`/`wint`/`float_from_bits` ve aşama-aşama süre AÇIK) Formatter `w()` bayt başına `append`+`ord(s[i])`; küçük geçici tahsisler (`wint` digit listesi, `float_from_bits` tek elemanlı liste); aşama aşama süre (lex/parse/traversal/format/çıktı/aktarım/cleanup).
 - [ ] **R2-E.4** (yalnızca köprü yeniden kullanılacaksa) eleman başına ABI çağrısı yerine toplu aktarım; tiplenmiş AST köprüsü eleman başına ABI ile KURULMAZ.
 
 ### N.3 Derleyici optimizasyonları
@@ -91,7 +91,7 @@ Kaynak: `~/Desktop/nox-1.md` (Aşama 1/2: sağlamlaştırma, ref. v2.2.44) ve `~
 - 2026-11-24: v2.2.51: P0.5, P1.1, P1.2, P1.3, P1.13, P1.14 kapandı ([x]); P1.12 yalnız CRLF kararı kaldı; P1.7c listeye eklendi.
 
 - 2026-11-24: v2.2.52: R1-P1.7c/P1.5/P2.1/P2.2 kapandı; H/I/J/L kısmi (rapor1-asama1-sonuc). YENİ açık: **R1-P1.7d** `x = .{ ..., x ... }` sonuç-konumu örtüşmesi kalıbı için depo taraması.
-- [ ] **R1-P1.7d** `x = .{ ... x ... }` (hedefi kendi başlatmasında okuyan Zig struct ataması) kalıbı için depo taraması + düzeltme.
+- [x] **R1-P1.7d** (v2.2.53: depo taraması 0 bulgu; `scripts/check_zig_result_alias.py` precheck'e eklendi) `x = .{ ... x ... }` (hedefi kendi başlatmasında okuyan Zig struct ataması) kalıbı için depo taraması + düzeltme.
 
 ## R2-N1.a taban ölçümü (2026-11-24, v2.2.48 kaynak, aarch64-macos, ReleaseFast derleyici + çalışma zamanı, `zig build nightly -Doptimize=ReleaseFast --prefix`)
 Korpus: `stdlib/nox/*.nox + selfhost/{lexer,parser,formatter}.nox` birleşimi, 990 487 B; 20 tekrar, en iyi süre. Komut: `noxc-nightly parse-bench|fmt-bench` ve `scripts/selfhost_bench.sh` (ayrı süreç tepe RSS).
@@ -110,3 +110,8 @@ Küçük girdide (0,32 MiB tek dosya) süre oranı 5,5–5,9× (sabit maliyet ba
 - [x] **R1-P1.7b** (v2.2.50: kök neden macOS libmalloc realloc tutulması; `nox_list_realloc` macOS düzeltmesi; RSS-büyüme kapısı henüz YOK) Art arda selfhost çağrılarında bellek tutulması (yukarıdaki sayılar): kök neden, düzeltme, `selfhost-contract` + bench'te RSS-büyüme kapısı.
 - [x] **R1-P0.5/P0.3 kalan:** v2.2.49: closure, çıplak `print(n)`, f-string, birleştirme, aynı koşuldaki `str(n)`, dolaylı `print(n)` yapan işlev kapandı; v2.2.51: `@property` (gerçek açıktı, düzeltildi), `__len__`, vtable, protocol, await/spawn, `extern def`, while/üçlü varyantları yoklandı ve testle kilitlendi — hepsi kapandı.
 - [x] **R1-P0.1 kalan** (v2.2.49: tür takma adı + closure izolasyon testi; `G_FOUT/G_FMEM` kozmetik geri alma YAPILMADI; worker-local/paylaşılan global testi yok).
+
+## R2 profil bulguları (v2.2.53, aarch64-macos, ReleaseFast, 992 KB korpus: stdlib + selfhost/{lexer,parser,formatter}.nox, 20 tekrar)
+Aşama süreleri (Nox / Zig): lexer 9,96 ms (2,01×); parse (lex+parse) 18,8 ms vs 11,6 ms (1,62×); fmt hattı 27,4 ms vs 15,5 ms (1,77×; v2.2.48'de 2,07×). Nox hattının ≈ yarısı lexer.
+`sample` (üst-yığın, tek iş parçacığı ~3100 örnek): `nox_list_free_payload` %23, `nox_arena_create` %9, `nox_arena_destroy` %6, `lexer_lex` %7, `formatter_is_generic_enum_ctor` (düzeltildi). ARC: 20 tekrarda ≈ 2,5 M blok (≈126 bin blok/tekrar), 786–1133 MB toplam tahsis. ÇAĞIRAN zincirleri güvenilmez (çerçeve işaretçisi yok); `list_free_payload`/`arena_*` yükünü doğru bir kaynağa bağlamak için derleyici tarafı çerçeve işaretçisi ya da sayaç bazlı ölçüm gerekir (R2-A.1 devamı).
+Sıradaki aday: lexer (10 ms) ve liste/arena yaşam döngüsü (blok sayısı).

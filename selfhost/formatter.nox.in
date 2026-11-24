@@ -319,6 +319,15 @@ def for_unpack_count(a: Ast, var_name: int, body: int) -> int:
             return -1
     return k
 
+# R2-F (v2.2.53): üretilmiş enum kurucusu adı `Sınıf__Varyant` biçimindedir; `__` içermeyen ad eşleşemez. Önceki deyimlerin tamamını tarayan `is_generic_enum_ctor`
+# (her `def` için O(önceki deyim sayısı)) yalnızca bu ucuz ön denetimi geçen adlarda çağrılır — çıktı bayt-eşdeğer.
+def name_has_dunder(a: Ast, name: int) -> bool:
+    n: int = sref_len(name)
+    for j in range(n - 1):
+        if sref_byte(a, name, j) == 95 and sref_byte(a, name, j + 1) == 95:
+            return True
+    return False
+
 def is_generic_enum_ctor(a: Ast, prev: int, name: int) -> bool:
     for i in range(sl_len(prev)):
         st: int = sl_get(a, prev, i)
@@ -374,7 +383,7 @@ def print_stmts(pr: Pr, stmts: int, depth: int) -> None:
         if tag == {{T:StmtKind.if_stmt}} and a.n[s_pay(a, st) + {{O:IfStmt.is_else_tail}}] != 0:
             i = i + 1
             continue
-        if tag == {{T:StmtKind.func_def}} and is_generic_enum_ctor(a, sl_head(stmts, i), sref_at(a, s_pay(a, st), {{O:FuncDef.name}})):
+        if tag == {{T:StmtKind.func_def}} and name_has_dunder(a, sref_at(a, s_pay(a, st), {{O:FuncDef.name}})) and is_generic_enum_ctor(a, sl_head(stmts, i), sref_at(a, s_pay(a, st), {{O:FuncDef.name}})):
             i = i + 1
             continue
         emit_leading_trivia(pr, depth, s_line(a, st))
