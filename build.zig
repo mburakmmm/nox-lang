@@ -853,6 +853,11 @@ pub fn build(b: *std.Build) void {
     ck_diff_scope_cmd.step.dependOn(&install_nightly.step);
     const ck_diff_assign_cmd = b.addSystemCommand(&.{ "sh", "-c", "zig-out/bin/noxc-nightly ck-diff assign $(git ls-files 'stdlib/*.nox' 'tests/*.nox' 'selfhost/*.nox' | head -600)" });
     ck_diff_assign_cmd.step.dependOn(&install_nightly.step);
+    // Aşama 3.3: Nox denetleyicisi (kapsam-içi altküme) ↔ Zig `check()`: tanı kodu/ileti/satır/span eşitliği. Gerçek korpus + tohumlu program üreteci (kasıtlı hatalı programlar dahil).
+    const ck_diff_check_cmd = b.addSystemCommand(&.{ "sh", "-c", "zig-out/bin/noxc-nightly ck-diff check $(git ls-files 'tests/golden/typecheck_cases/*.nox')" });
+    ck_diff_check_cmd.step.dependOn(&install_nightly.step);
+    const ck_diff_gen_cmd = b.addSystemCommand(&.{ "sh", "-c", "d=$(mktemp -d) && python3 scripts/ck_gen.py --out $d --count 1500 --seed 11 && zig-out/bin/noxc-nightly ck-diff check $d/*.nox; rc=$?; rm -rf $d; exit $rc" });
+    ck_diff_gen_cmd.step.dependOn(&install_nightly.step);
     // R1-P1.10/P1.12: fixture oracle (pozitif gerçekten ayrışır, negatif hata türü+konum sabit) ve biçimlendirici özellik denetimi (idempotence + semantik koruma + CRLF; bilinen ihlaller tabanda).
     const fixture_oracle_cmd = b.addSystemCommand(&.{ "python3", "scripts/fixture_oracle.py" });
     const fmt_properties_cmd = b.addSystemCommand(&.{ "python3", "scripts/fmt_properties.py", "--baseline", "scripts/fmt_properties_baseline.txt" });
@@ -863,6 +868,8 @@ pub fn build(b: *std.Build) void {
     frontend_diff_check.step.dependOn(&types_diff_cmd.step);
     frontend_diff_check.step.dependOn(&ck_diff_scope_cmd.step);
     frontend_diff_check.step.dependOn(&ck_diff_assign_cmd.step);
+    frontend_diff_check.step.dependOn(&ck_diff_check_cmd.step);
+    frontend_diff_check.step.dependOn(&ck_diff_gen_cmd.step);
     frontend_diff_check.step.dependOn(&frontend_diff_fmt.step);
     frontend_diff_check.step.dependOn(&frontend_diff_parser.step);
     frontend_diff_check.step.dependOn(&frontend_diff_astdump.step);

@@ -87,10 +87,22 @@ def generate(template):
     return HEADER + out
 
 
+def check_error_codes(text):
+    """`mk_fail(ck, "Ad")` hata kodu adları Zig `TypeError` kümesinde olmalı (yazım hatası farksal testte yalnız çalışan yolda yakalanırdı)."""
+    src = open(os.path.join(ROOT, "compiler/typecheck/checker.zig"), encoding="utf-8").read()
+    m = re.search(r"pub const TypeError = error\{(.*?)\};", src, re.S)
+    known = set(re.findall(r"\b([A-Z][A-Za-z0-9]+)\b", re.sub(r"//[^\n]*", "", m.group(1)))) if m else set()
+    bad = sorted(set(re.findall(r'mk_fail\(ck, "([A-Za-z0-9]+)"\)', text)) - known)
+    if bad:
+        raise SystemExit("gen_selfhost_parser: bilinmeyen TypeError adları: " + ", ".join(bad))
+
+
 def main():
     rc = 0
     for template, output in TEMPLATES:
         text = generate(template)
+        if template.endswith("typecheck.nox.in"):
+            check_error_codes(text)
         rel = os.path.relpath(output, ROOT)
         if "--check" in sys.argv:
             cur = open(output, encoding="utf-8").read() if os.path.exists(output) else ""

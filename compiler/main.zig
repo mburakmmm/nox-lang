@@ -886,6 +886,9 @@ fn cmdCkDiff(io: std.Io, gpa: std.mem.Allocator, rest: []const []const u8) !void
             std.process.exit(1);
         }
         return;
+    } else if (std.mem.eql(u8, rest[0], "check")) {
+        const res = cd.runCheck(gpa, io, nrt.*, rest[1..], false) catch std.process.exit(1);
+        try sw.interface.print("ck-diff: OK check files={d} unsupported={d} accepted={d} rejected={d} diagnostics={d} skipped_parse={d}\n", .{ res.files, res.unsupported, res.accepted, res.rejected, res.diags, res.skipped_parse });
     } else if (std.mem.eql(u8, rest[0], "assign")) {
         const res = cd.runAssign(gpa, io, nrt.*, rest[1..]) catch std.process.exit(1);
         try sw.interface.print("ck-diff: OK assign files={d} skipped={d} names={d} assigned={d}\n", .{ res.files, res.skipped, res.names, res.assigned });

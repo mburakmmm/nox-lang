@@ -39,3 +39,5 @@ Plan ve takip listesi: `project/noxc-nightly-selfhost-plani-2026-11.md`. Bu dizi
 
 `typecheck.nox` ÜRETİLMİŞTİR (3.2+; kaynak `typecheck.nox.in`, üretici `scripts/gen_selfhost_parser.py`, `--check` güncelliği doğrular): kapsam/sembol tabloları (`Scope`, `declare_var`, modül global tabloları), `stmts_assign_name`. Doğrulama: `noxc-nightly ck-diff scope [ops] [tohum]`, `ck-diff assign <dosya...>`, bütçe `ck-diff bench [kapsam] [ad] [işlem] [tekrar] --max-ratio=1.3` (ReleaseFast).
 
+3.3 (kapsam-kapılı): `typecheck.nox` kapsam dışı yapıda `CkUnsupported` fırlatır (durum 2); kapsam-içi programlarda `noxc-nightly ck-diff check <dosya...>` GERÇEK `checker.check` ile sonuç/kod/ileti/satır/span/tüm tanılamaları karşılaştırır. Tohumlu program üreteci: `scripts/ck_gen.py --out DIR --count N --seed S` (kasıtlı hatalı programlar dahil).
+

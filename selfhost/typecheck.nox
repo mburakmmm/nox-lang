@@ -5,9 +5,10 @@
 #
 # Durum: 3.2 (kapsam/sembol tabloları). Tip temsili `types.nox` (TypeId/SymbolId, hash-consing). Ad = SymbolId, tip = TypeId; `dict[str, T]` yerine tamsayı anahtarlı düz tablolar
 # (R2-G.1/G.2: dize anahtarlı sözlük ≈6× pahalı). Tablolar tek `Ck` nesnesindedir; kapsamlar derleme boyunca yaşar (Zig'in arena'sı gibi; tek tek serbest bırakılmaz).
-from ast_schema import Ast, at, dump_module, put
-from parser import pk, pkx, pky, parse_ast, parse_body
-from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, lcg
+from ast_schema import Ast, at, dump_module, mk_fail, put
+from ast_schema import build_sp_idx
+from parser import pk, pkx, pky, parse_ast, parse_body, sref_eq, sref_len, sref_byte, utf8_bytes
+from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, lcg, sym_intern, sym_intern_list, ty_format, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed
 
 # ---- (k1, k2) -> değer tablosu: açık adresleme, ekleme sırası korunur, silme = ölü işareti (yeniden `put` canlandırır) ----
 class Map2:
@@ -109,6 +110,28 @@ class Ck:
     top_scope: int
     # `declare_var` uyuşmazlığında önceki tip (hata iletisi için)
     e_prev: int
+    # 3.3: işlev tablosu (ad -> indeks), parametre tipi havuzu, dönüş tipi
+    fmap: Map2
+    fpar: list[int]
+    fps: list[int]
+    fpn: list[int]
+    fret: list[int]
+    # 3.3: tanılama durumu (`Checker.current_line/current_span/diagnostic/diagnostics`)
+    cur_line: int
+    cur_span: int
+    mb: list[int]
+    diag_msg: list[int]
+    err_code: str
+    dcode: list[str]
+    dline: list[int]
+    dspan: list[int]
+    doff: list[int]
+    dlen: list[int]
+    dbytes: list[int]
+    depth: int
+    out: list[int]
+    o_code: str
+    o_msg: list[int]
 
     def __init__(self, tt: TT) -> None:
         self.tt = tt
@@ -121,6 +144,26 @@ class Ck:
         self.iconsts = Map2()
         self.top_scope = -1
         self.e_prev = -1
+        self.fmap = Map2()
+        self.fpar = []
+        self.fps = []
+        self.fpn = []
+        self.fret = []
+        self.cur_line = 0
+        self.cur_span = -1
+        self.mb = []
+        self.diag_msg = []
+        self.err_code = ""
+        self.dcode = []
+        self.dline = []
+        self.dspan = []
+        self.doff = []
+        self.dlen = []
+        self.dbytes = []
+        self.depth = 0
+        self.out = []
+        self.o_code = ""
+        self.o_msg = []
 
 # ---- Scope (Zig `Scope`) ----
 def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
@@ -265,6 +308,831 @@ def stmts_assign_name(a: Ast, s: int, base: int, off: int, n: int) -> bool:
                     return True
     return False
 
+# =====================================================================================================================
+# 3.3 dilim A: skaler tipli ifade/deyimler + kullanıcı işlevleri (Zig `checkStmt/checkExprInner/checkBinary/checkExprExpected/checkFunctionBody/registerFunc`)
+# Kapsam dışı HER yapı `CkUnsupported` fırlatır (durum 2): sonuç Zig ile karşılaştırılmaz, farksal test yalnızca desteklenen programlarda tam eşitlik ister. Kapsam büyüdükçe atlanan sayısı 0'a iner.
+# =====================================================================================================================
+class CkErr(Exception):
+    pass
+
+class CkUnsupported(Exception):
+    pass
+
+# İşlev gövdesi bağlamı (Zig `FnCtx`in bu dilimde kullanılan alanları). `ret` = -1: modül düzeyi (`expected_return == null`).
+class Fx:
+    scope: int
+    ret: int
+    loop: int
+    in_async: bool
+
+    def __init__(self, scope: int, ret: int, in_async: bool) -> None:
+        self.scope = scope
+        self.ret = ret
+        self.loop = 0
+        self.in_async = in_async
+
+def unsup() -> CkUnsupported:
+    return CkUnsupported("")
+
+# ---- ileti oluşturma (`Checker.fail`) ----
+def mp(ck: Ck, s: str) -> None:
+    bs: list[int] = utf8_bytes(s)
+    for i in range(len(bs)):
+        ck.mb.append(bs[i])
+
+def mp_int(ck: Ck, v: int) -> None:
+    mp(ck, str(v))
+
+def mp_sym(ck: Ck, sym: int) -> None:
+    tt: TT = ck.tt
+    o: int = tt.so[sym]
+    for i in range(tt.sl[sym]):
+        ck.mb.append(tt.sb[o + i])
+
+def mp_sref(ck: Ck, a: Ast, v: int) -> None:
+    n: int = sref_len(v)
+    for i in range(n):
+        ck.mb.append(sref_byte(a, v, i))
+
+def mp_type(ck: Ck, ty: int) -> None:
+    tt: TT = ck.tt
+    tt.out = []
+    ty_format(tt, ty)
+    for i in range(len(tt.out)):
+        ck.mb.append(tt.out[i])
+
+# `Checker.fail`: ileti "line N: ..." öneki (current_line > 0) ile saklanır; hata kodu adı (Zig `TypeError`) dize olarak taşınır.
+def mk_fail(ck: Ck, code: str) -> CkErr:
+    ck.err_code = code
+    out: list[int] = []
+    if ck.cur_line > 0:
+        pre: str = "line " + str(ck.cur_line) + ": "
+        for i in range(len(pre)):
+            out.append(ord(pre[i]))
+    for j in range(len(ck.mb)):
+        out.append(ck.mb[j])
+    ck.diag_msg = out
+    ck.mb = []
+    return CkErr("")
+
+# `Checker.recordDiagnostic`: son `fail` iletisini + konumu tanılama listesine ekler.
+def record_diag(ck: Ck, a: Ast) -> None:
+    ck.dcode.append(ck.err_code)
+    ck.dline.append(ck.cur_line)
+    ck.doff.append(len(ck.dbytes))
+    ck.dlen.append(len(ck.diag_msg))
+    for i in range(len(ck.diag_msg)):
+        ck.dbytes.append(ck.diag_msg[i])
+    sp: int = ck.cur_span
+    for k in range(6):
+        if sp >= 0:
+            ck.dspan.append(a.n[sp + k])
+        else:
+            ck.dspan.append(0)
+
+# ---- AST yardımcıları ----
+def sym_of(ck: Ck, a: Ast, v: int) -> int:
+    x: int = pkx(v)
+    if x >= 0:
+        return sym_intern(ck.tt, a.src, x, pky(v) - x)
+    return sym_intern_list(ck.tt, a.sb, 0 - x - 1, pky(v))
+
+def stmt_at(a: Ast, s: int, i: int) -> int:
+    return a.l[pkx(s) + i]
+
+def span_of(a: Ast, node: int) -> int:
+    if a.sp_idx_n != len(a.sp_ids) or len(a.sp_idx) != len(a.n) + 1:
+        build_sp_idx(a)
+    if node >= 0 and node < len(a.sp_idx):
+        i: int = a.sp_idx[node]
+        if i >= 0:
+            return a.sp_vals[i]
+    return -1
+
+# ---- tip ifadesi -> TypeId (Zig `typeExprToType`in skaler çekirdeği; kalan dallar 3.4/3.6/3.12'de) ----
+def type_expr_to_type(ck: Ck, a: Ast, te: int) -> int:
+    tag: int = a.n[te]
+    if tag != 0:
+        raise unsup()
+    v: int = pk(a.n[te + 1], a.n[te + 2])
+    if sref_eq(a, v, "int"):
+        return 0
+    if sref_eq(a, v, "float"):
+        return 1
+    if sref_eq(a, v, "bool"):
+        return 2
+    if sref_eq(a, v, "str"):
+        return 3
+    if sref_eq(a, v, "None"):
+        return 4
+    if sref_eq(a, v, "ptr"):
+        return 5
+    if sref_eq(a, v, "u8"):
+        return 6
+    if sref_eq(a, v, "u16"):
+        return 7
+    if sref_eq(a, v, "u32"):
+        return 8
+    if sref_eq(a, v, "u64"):
+        return 9
+    if sref_eq(a, v, "usize"):
+        return 10
+    if sref_eq(a, v, "i8"):
+        return 11
+    if sref_eq(a, v, "i16"):
+        return 12
+    if sref_eq(a, v, "i32"):
+        return 13
+    if sref_eq(a, v, "i64"):
+        return 14
+    if sref_eq(a, v, "isize"):
+        return 15
+    # sınıf/from-import/protokol tabloları bu dilimde boştur (bu yapılar kapsam dışı): bilinmeyen ad
+    if sref_eq(a, v, "__infer"):
+        raise unsup()
+    mp(ck, "unknown type: ")
+    mp_sref(ck, a, v)
+    raise mk_fail(ck, "UnknownType")
+
+# ---- sayısal yardımcılar ----
+# `requireSameFixedIntOrNone`: -1 = ikisi de fixed_int değil; aksi halde ortak tür; karışımda hata.
+def require_same_fixed(ck: Ck, l: int, r: int) -> int:
+    tt: TT = ck.tt
+    lk: int = -1
+    rk: int = -1
+    if tt.tag[l] == 16:
+        lk = tt.xa[l]
+    if tt.tag[r] == 16:
+        rk = tt.xa[r]
+    if lk < 0 and rk < 0:
+        return -1
+    if lk >= 0 and rk >= 0 and lk == rk:
+        return lk
+    mp(ck, "fixed-width integers do not implicitly mix with other kinds or with int/float — use an explicit conversion")
+    raise mk_fail(ck, "TypeMismatch")
+
+def is_numeric_t(ck: Ck, t: int) -> bool:
+    g: int = ck.tt.tag[t]
+    return g == 0 or g == 1 or g == 16
+
+def is_bitwise_t(ck: Ck, t: int) -> bool:
+    g: int = ck.tt.tag[t]
+    return g == 0 or g == 16
+
+def numeric_promote(ck: Ck, l: int, r: int) -> int:
+    if not is_numeric_t(ck, l) or not is_numeric_t(ck, r):
+        mp(ck, "arithmetic only works on numeric types")
+        raise mk_fail(ck, "TypeMismatch")
+    k: int = require_same_fixed(ck, l, r)
+    if k >= 0:
+        return 6 + k
+    if l == 1 or r == 1:
+        return 1
+    return 0
+
+# ---- ifadeler ----
+def check_expr(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
+    ck.depth = ck.depth + 1
+    if ck.depth > 500:
+        mp(ck, "expression nested too deeply (maximum allowed depth: 500)")
+        raise mk_fail(ck, "TooDeeplyNested")
+    t: int = check_expr_inner(ck, a, fx, e)
+    ck.depth = ck.depth - 1
+    return t
+
+def check_expr_inner(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
+    tag: int = a.n[e]
+    if tag == 0:
+        return 0
+    if tag == 1:
+        return 1
+    if tag == 2:
+        return 2
+    if tag == 3:
+        return 3
+    if tag == 4:
+        return 4
+    if tag == 5:
+        return check_identifier(ck, a, fx, e)
+    if tag == 6:
+        return check_unary(ck, a, fx, a.n[e + 1])
+    if tag == 7:
+        return check_binary(ck, a, fx, a.n[e + 1])
+    if tag == 8:
+        return check_call(ck, a, fx, a.n[e + 1])
+    raise unsup()
+
+def check_identifier(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
+    v: int = pk(a.n[e + 1], a.n[e + 2])
+    sym: int = sym_of(ck, a, v)
+    t: int = sc_lookup(ck, fx.scope, sym)
+    if t >= 0:
+        return t
+    gi: int = m2_get(ck.globs, 0, sym)
+    if gi >= 0:
+        return ck.globs.vv[gi]
+    # resolveIdentifierAsFunctionValue: üst-düzey (generic/async olmayan) işlev adı bir değer olarak
+    fi: int = m2_get(ck.fmap, 0, sym)
+    if fi >= 0:
+        ty_func_begin(ck.tt)
+        st: int = ck.fps[fi]
+        for i in range(ck.fpn[fi]):
+            ty_func_param(ck.tt, ck.fpar[st + i])
+        return ty_func_end(ck.tt, ck.fret[fi])
+    mp(ck, "undefined variable: ")
+    mp_sym(ck, sym)
+    raise mk_fail(ck, "UndefinedVariable")
+
+def check_unary(ck: Ck, a: Ast, fx: Fx, u: int) -> int:
+    op: int = a.n[u + 0]
+    t: int = check_expr(ck, a, fx, a.n[u + 1])
+    tt: TT = ck.tt
+    if tt.tag[t] == 6:
+        raise unsup()
+    if op == 0:
+        if not is_numeric_t(ck, t):
+            mp(ck, "unary '-' can only be applied to numeric types")
+            raise mk_fail(ck, "TypeMismatch")
+        if tt.tag[t] == 16 and not fx_signed(tt.xa[t]):
+            mp(ck, "unary '-' cannot be applied to an unsigned type ('")
+            mp_type(ck, t)
+            mp(ck, "')")
+            raise mk_fail(ck, "TypeMismatch")
+        return t
+    if op == 1:
+        if t != 2:
+            mp(ck, "'not' can only be used with bool")
+            raise mk_fail(ck, "TypeMismatch")
+        return 2
+    if not is_bitwise_t(ck, t):
+        mp(ck, "unary '~' can only be applied to int/fixed-width integer types (float/bool are not supported — for bool, convert with 'int(...)' first)")
+        raise mk_fail(ck, "TypeMismatch")
+    if tt.tag[t] == 16:
+        return t
+    return 0
+
+def check_binary(ck: Ck, a: Ast, fx: Fx, b: int) -> int:
+    left: int = a.n[b + 1]
+    right: int = a.n[b + 2]
+    op: int = a.n[b + 0]
+    l: int = check_expr(ck, a, fx, left)
+    r: int = check_expr(ck, a, fx, right)
+    tt: TT = ck.tt
+    # tryOperatorOverload / Optional / liste-sözlük işlemleri bu dilimde kapsam dışı
+    if a.n[left] == 4 or a.n[right] == 4:
+        raise unsup()
+    if tt.tag[l] == 6 or tt.tag[r] == 6 or tt.tag[l] == 15 or tt.tag[r] == 15 or tt.tag[l] == 5 or tt.tag[r] == 5 or tt.tag[l] == 13 or tt.tag[r] == 13:
+        raise unsup()
+    if op == 0:
+        if l == 3 and r == 3:
+            return 3
+        return numeric_promote(ck, l, r)
+    if op == 1:
+        return numeric_promote(ck, l, r)
+    if op == 2:
+        if (l == 3 and r == 0) or (l == 0 and r == 3):
+            return 3
+        return numeric_promote(ck, l, r)
+    if op == 5 or op == 4 or op == 6:
+        res: int = numeric_promote(ck, l, r)
+        if tt.tag[res] == 16:
+            mp(ck, "'%'/'//'/'**' are not supported with fixed-width integer types yet — convert to 'int' first")
+            raise mk_fail(ck, "TypeMismatch")
+        return res
+    if op == 3:
+        if not is_numeric_t(ck, l) or not is_numeric_t(ck, r):
+            mp(ck, "'/' can only be used with numeric types")
+            raise mk_fail(ck, "TypeMismatch")
+        require_same_fixed(ck, l, r)
+        return 1
+    if op == 7 or op == 8:
+        require_same_fixed(ck, l, r)
+        if is_numeric_t(ck, l) and is_numeric_t(ck, r):
+            return 2
+        if a.n[b + 5] != 0:
+            return 2
+        if l == r:
+            return 2
+        mp(ck, "the compared types do not match")
+        raise mk_fail(ck, "TypeMismatch")
+    if op == 9 or op == 10 or op == 11 or op == 12:
+        if l == 3 and r == 3:
+            return 2
+        if not is_numeric_t(ck, l) or not is_numeric_t(ck, r):
+            mp(ck, "ordering comparisons only work on numeric types or between two strs")
+            raise mk_fail(ck, "TypeMismatch")
+        require_same_fixed(ck, l, r)
+        return 2
+    if op == 13 or op == 14:
+        if l != 2 or r != 2:
+            mp(ck, "'and'/'or' can only be used with bool")
+            raise mk_fail(ck, "TypeMismatch")
+        return 2
+    if op == 20 or op == 21:
+        if tt.tag[r] == 3:
+            if l != 3:
+                mp(ck, "only a str can be searched for inside a str with 'in'")
+                raise mk_fail(ck, "TypeMismatch")
+            return 2
+        mp(ck, "'in'/'not in' can only be used on list, dict and str")
+        raise mk_fail(ck, "TypeMismatch")
+    if op == 15 or op == 16 or op == 17:
+        if l == 2 and r == 2:
+            return 2
+        if l == 2 or r == 2:
+            mp(ck, "'&'/'|'/'^' do not implicitly mix bool with int/fixed-width integers — use an explicit conversion")
+            raise mk_fail(ck, "TypeMismatch")
+        if not is_bitwise_t(ck, l) or not is_bitwise_t(ck, r):
+            mp(ck, "'&'/'|'/'^' can only be used on int/fixed-width integer types (float is not supported)")
+            raise mk_fail(ck, "TypeMismatch")
+        fk: int = require_same_fixed(ck, l, r)
+        if fk >= 0:
+            return 6 + fk
+        return 0
+    # shl / shr
+    if not is_bitwise_t(ck, l):
+        mp(ck, "the left operand of '<<'/'>>' can only be an int/fixed-width integer (float/bool are not supported — for bool, convert with 'int(...)' first)")
+        raise mk_fail(ck, "TypeMismatch")
+    if r != 0:
+        mp(ck, "the shift amount of '<<'/'>>' must be an 'int'")
+        raise mk_fail(ck, "TypeMismatch")
+    if tt.tag[l] == 16:
+        return l
+    return 0
+
+# `checkExprExpected`in skaler dilimi: sabit-genişlikli beklenen tipte tamsayı literali aralık denetimi.
+def check_expr_expected(ck: Ck, a: Ast, fx: Fx, e: int, expected: int) -> int:
+    tag: int = a.n[e]
+    tt: TT = ck.tt
+    if tag == 21 or tag == 22 or tag == 19 or tag == 20 or tag == 16 or tag == 11 or tag == 12:
+        raise unsup()
+    if expected >= 0 and tt.tag[expected] == 16:
+        kind: int = tt.xa[expected]
+        if tag == 0:
+            v: int = a.n[e + 1]
+            if not fx_fits(kind, v):
+                mp(ck, "the value ")
+                mp_int(ck, v)
+                mp(ck, " does not fit in the range of '")
+                mp_type(ck, expected)
+                mp(ck, "'")
+                raise mk_fail(ck, "TypeMismatch")
+            return expected
+        # sabit tamsayı ifadeleri (constIntValue) ve negatif literal kapsam dışı
+        if tag == 5 or tag == 7 or tag == 6:
+            raise unsup()
+    return check_expr(ck, a, fx, e)
+
+# ---- çağrılar: yerleşikler (print/len) + kullanıcı işlevi (identifier callee) ----
+# `print(a, b, ...)` / `sep=`/`end=` anahtarlı argümanlar (Zig `checkCallInner` print dalı); sınıf (`__str__`) kapsam dışı.
+def check_print(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
+    args: int = sl_at(a, c, 1)
+    saw_kw: bool = False
+    for i in range(pky(args)):
+        arg: int = stmt_at(a, args, i)
+        if a.n[arg] == 17:
+            saw_kw = True
+            k: int = a.n[arg + 1]
+            kn: int = pk(a.n[k + 0], a.n[k + 0 + 1])
+            if not sref_eq(a, kn, "sep") and not sref_eq(a, kn, "end"):
+                mp(ck, "'print' only accepts the 'sep=' and 'end=' keyword arguments")
+                raise mk_fail(ck, "TypeMismatch")
+            kt: int = check_expr(ck, a, fx, a.n[k + 2])
+            if kt != 3:
+                mp(ck, "the '")
+                mp_sref(ck, a, kn)
+                mp(ck, "=' argument of 'print' must be a str")
+                raise mk_fail(ck, "TypeMismatch")
+        else:
+            if saw_kw:
+                mp(ck, "positional arguments of 'print' must come before keyword arguments")
+                raise mk_fail(ck, "TypeMismatch")
+            pt: int = check_expr(ck, a, fx, arg)
+            if ck.tt.tag[pt] == 6:
+                raise unsup()
+    return 4
+
+# `len(s)`: yalnız str (list/dict/sınıf/tuple kapsam dışı).
+def check_len(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
+    args: int = sl_at(a, c, 1)
+    if pky(args) != 1:
+        mp(ck, "'len' takes exactly 1 argument")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    t: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+    g: int = ck.tt.tag[t]
+    if g == 6 or g == 5 or g == 13:
+        raise unsup()
+    if t != 3:
+        mp(ck, "'len' only works on str/list/dict/tuple (define `__len__` for classes)")
+        raise mk_fail(ck, "TypeMismatch")
+    return 0
+
+def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
+    callee: int = a.n[c + 0]
+    if a.n[callee] != 5:
+        raise unsup()
+    cv: int = pk(a.n[callee + 1], a.n[callee + 2])
+    if sref_eq(a, cv, "print"):
+        return check_print(ck, a, fx, c)
+    if sref_eq(a, cv, "len"):
+        return check_len(ck, a, fx, c)
+    sym: int = sym_of(ck, a, cv)
+    fi: int = m2_get(ck.fmap, 0, sym)
+    if fi < 0:
+        raise unsup()
+    # yerel bir ad işlevi gölgeliyorsa (iç içe/closure değeri) kapsam dışı
+    if sc_lookup(ck, fx.scope, sym) >= 0:
+        raise unsup()
+    args: int = sl_at(a, c, 1)
+    n: int = pky(args)
+    for i in range(n):
+        if a.n[stmt_at(a, args, i)] == 17:
+            raise unsup()
+    np: int = ck.fpn[fi]
+    if n < np:
+        # varsayılan/değişken genişletme yolu (expandCallArgs): kapsam dışı
+        raise unsup()
+    if np != n:
+        mp(ck, "'")
+        mp_sym(ck, sym)
+        mp(ck, "' expects ")
+        mp_int(ck, np)
+        mp(ck, " arguments, ")
+        mp_int(ck, n)
+        mp(ck, " were given")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    st: int = ck.fps[fi]
+    for i in range(np):
+        ae: int = stmt_at(a, args, i)
+        pt: int = ck.fpar[st + i]
+        at_: int = check_expr_expected(ck, a, fx, ae, pt)
+        if not ty_assignable(ck.tt, pt, at_):
+            sp: int = span_of(a, ae)
+            if sp >= 0:
+                ck.cur_span = sp
+            mp(ck, "type mismatch for argument '")
+            mp_sym(ck, sym)
+            mp(ck, "'")
+            raise mk_fail(ck, "TypeMismatch")
+    return ck.fret[fi]
+
+# ---- deyimler ----
+def declare_var_checked(ck: Ck, fx: Fx, sym: int, ty: int) -> None:
+    if declare_var(ck, fx.scope, sym, ty) != 0:
+        mp(ck, "'")
+        mp_sym(ck, sym)
+        mp(ck, "' is already defined in this scope with type '")
+        mp_type(ck, ck.e_prev)
+        mp(ck, "'; it cannot be redefined with type '")
+        mp_type(ck, ty)
+        mp(ck, "' (use a different name)")
+        raise mk_fail(ck, "TypeMismatch")
+
+def check_block(ck: Ck, a: Ast, fx: Fx, s: int) -> None:
+    for i in range(pky(s)):
+        check_stmt(ck, a, fx, stmt_at(a, s, i))
+
+def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
+    ck.cur_line = a.n[st + 1]
+    ck.cur_span = a.n[st + 2]
+    kn: int = a.n[st + 0]
+    tag: int = a.n[kn]
+    pay: int = a.n[kn + 1]
+    if tag == 0:
+        # attribute çağrıları (grow/extend kancaları) kapsam dışı: check_call yalnız identifier callee kabul eder
+        check_expr(ck, a, fx, pay)
+        return
+    if tag == 1:
+        nm: int = pk(a.n[pay + 0], a.n[pay + 0 + 1])
+        if sref_len(nm) >= 10 and sref_byte(a, nm, 0) == 95 and sref_byte(a, nm, 1) == 95 and sref_byte(a, nm, 2) == 110:
+            raise unsup()
+        if a.n[pay + 7] != 0:
+            raise unsup()
+        declared: int = type_expr_to_type(ck, a, a.n[pay + 2])
+        value_t: int = check_expr_expected(ck, a, fx, a.n[pay + 3], declared)
+        if not ty_assignable(ck.tt, declared, value_t):
+            mp(ck, "type mismatch for '")
+            mp_sref(ck, a, nm)
+            mp(ck, "'")
+            raise mk_fail(ck, "TypeMismatch")
+        declare_var_checked(ck, fx, sym_of(ck, a, nm), declared)
+        return
+    if tag == 3:
+        check_assign(ck, a, fx, pay)
+        return
+    if tag == 4:
+        if a.n[pay + 8] >= 0:
+            raise unsup()
+        ct: int = check_expr(ck, a, fx, a.n[pay + 0])
+        if ct != 2:
+            mp(ck, "the 'if' condition must be a bool")
+            raise mk_fail(ck, "TypeMismatch")
+        check_block(ck, a, fx, sl_at(a, pay, 1))
+        ecs: int = sl_at(a, pay, 3)
+        for j in range(pky(ecs)):
+            ec: int = stmt_at(a, ecs, j)
+            ect: int = check_expr(ck, a, fx, a.n[ec + 0])
+            if ect != 2:
+                mp(ck, "the 'elif' condition must be a bool")
+                raise mk_fail(ck, "TypeMismatch")
+            check_block(ck, a, fx, sl_at(a, ec, 1))
+        if a.n[pay + 5] != -4611686018427387904:
+            check_block(ck, a, fx, sl_at(a, pay, 5))
+        return
+    if tag == 5:
+        wt: int = check_expr(ck, a, fx, a.n[pay + 0])
+        if wt != 2:
+            mp(ck, "the 'while' condition must be a bool")
+            raise mk_fail(ck, "TypeMismatch")
+        fx.loop = fx.loop + 1
+        try:
+            check_block(ck, a, fx, sl_at(a, pay, 1))
+        finally:
+            fx.loop = fx.loop - 1
+        return
+    if tag == 11:
+        if fx.ret < 0:
+            mp(ck, "'return' can only be used inside a function/method")
+            raise mk_fail(ck, "TypeMismatch")
+        if pay >= 0:
+            rt: int = check_expr_expected(ck, a, fx, pay, fx.ret)
+            if not ty_assignable(ck.tt, fx.ret, rt):
+                mp(ck, "return type mismatch")
+                raise mk_fail(ck, "TypeMismatch")
+        elif fx.ret != 4:
+            mp(ck, "the function must return a value")
+            raise mk_fail(ck, "TypeMismatch")
+        return
+    if tag == 17:
+        return
+    if tag == 18:
+        if fx.loop == 0:
+            mp(ck, "'break' can only be used inside a 'while'/'for' loop")
+            raise mk_fail(ck, "TypeMismatch")
+        return
+    if tag == 19:
+        if fx.loop == 0:
+            mp(ck, "'continue' can only be used inside a 'while'/'for' loop")
+            raise mk_fail(ck, "TypeMismatch")
+        return
+    raise unsup()
+
+# `checkAssign`in identifier hedefi; `_ = ifade` at-gitsin atamasını da içerir.
+def check_assign(ck: Ck, a: Ast, fx: Fx, asg: int) -> None:
+    tg: int = a.n[asg + 0]
+    if a.n[tg] != 5:
+        raise unsup()
+    nv: int = pk(a.n[tg + 1], a.n[tg + 2])
+    sym: int = sym_of(ck, a, nv)
+    if sref_eq(a, nv, "_") and a.n[asg + 2] < 0 and sc_lookup(ck, fx.scope, sym) < 0 and m2_get(ck.globs, 0, sym) < 0:
+        check_expr(ck, a, fx, a.n[asg + 1])
+        return
+    existing: int = sc_lookup_local(ck, fx.scope, sym)
+    if existing < 0:
+        # kapsam üst zinciri yok (iç içe def kapsam dışı); modül global'i denenir
+        gi: int = m2_get(ck.globs, 0, sym)
+        if gi < 0:
+            mp(ck, "undefined variable: ")
+            mp_sym(ck, sym)
+            mp(ck, " (give the type on first assignment: `")
+            mp_sym(ck, sym)
+            mp(ck, ": <type> = ...`)")
+            raise mk_fail(ck, "UndefinedVariable")
+        existing = ck.globs.vv[gi]
+    value_t: int = check_expr_expected(ck, a, fx, a.n[asg + 1], existing)
+    if not ty_assignable(ck.tt, existing, value_t):
+        mp(ck, "type mismatch for '")
+        mp_sym(ck, sym)
+        mp(ck, "'")
+        raise mk_fail(ck, "TypeMismatch")
+
+# `alwaysReturns`
+def always_returns(a: Ast, s: int) -> bool:
+    n: int = pky(s)
+    if n == 0:
+        return False
+    st: int = stmt_at(a, s, n - 1)
+    kn: int = a.n[a.n[st + 0]]
+    pay: int = a.n[a.n[st + 0] + 1]
+    if kn == 11 or kn == 12:
+        return True
+    if kn == 4:
+        if a.n[pay + 5] == -4611686018427387904:
+            return False
+        if not always_returns(a, sl_at(a, pay, 1)):
+            return False
+        ecs: int = sl_at(a, pay, 3)
+        for j in range(pky(ecs)):
+            if not always_returns(a, sl_at(a, stmt_at(a, ecs, j), 1)):
+                return False
+        return always_returns(a, sl_at(a, pay, 5))
+    return False
+
+# `registerFunc` (skaler dilim): varsayılan/variadik/dekoratörlü/jenerik/async işlevler kapsam dışı.
+def register_func(ck: Ck, a: Ast, fd: int) -> None:
+    nm: int = pk(a.n[fd + 0], a.n[fd + 0 + 1])
+    ps: int = sl_at(a, fd, 4)
+    for i in range(pky(ps)):
+        p: int = stmt_at(a, ps, i)
+        if a.n[p + 8] >= 0 or a.n[p + 2] != 0 or a.n[p + 3] != 0 or a.n[p + 4] != 0 or a.n[p + 5] != 0:
+            raise unsup()
+    if pky(sl_at(a, fd, 2)) > 0 or pky(sl_at(a, fd, 11)) > 0 or pky(sl_at(a, fd, 15)) > 0:
+        raise unsup()
+    if a.n[fd + 10] != 0:
+        raise unsup()
+    if sref_eq(a, nm, "main"):
+        mp(ck, "'main' is a reserved name: Nox has no 'def main()' convention, top-level statements are already the program's entry point — define this function under another name")
+        raise mk_fail(ck, "DuplicateDefinition")
+    sym: int = sym_of(ck, a, nm)
+    if m2_get(ck.fmap, 0, sym) >= 0:
+        mp(ck, "function already defined: ")
+        mp_sym(ck, sym)
+        raise mk_fail(ck, "DuplicateDefinition")
+    tys: list[int] = []
+    for k in range(pky(ps)):
+        tys.append(type_expr_to_type(ck, a, a.n[stmt_at(a, ps, k) + 6]))
+    ret: int = type_expr_to_type(ck, a, a.n[fd + 6])
+    idx: int = len(ck.fps)
+    ck.fps.append(len(ck.fpar))
+    ck.fpn.append(len(tys))
+    ck.fret.append(ret)
+    for q in range(len(tys)):
+        ck.fpar.append(tys[q])
+    m2_put(ck.fmap, 0, sym, idx)
+
+# `checkFunctionBody`
+def check_function_body(ck: Ck, a: Ast, fd: int) -> None:
+    gl: int = sl_at(a, fd, 17)
+    for gi in range(pky(gl)):
+        gv: int = pk(a.l[pkx(gl) + gi * 2], a.l[pkx(gl) + gi * 2 + 1])
+        gs: int = sym_of(ck, a, gv)
+        if m2_get(ck.globs, 0, gs) < 0:
+            mp(ck, "'global ")
+            mp_sym(ck, gs)
+            mp(ck, "': there is no module-level variable named '")
+            mp_sym(ck, gs)
+            mp(ck, "' (declare it at module level with a type: '")
+            mp_sym(ck, gs)
+            mp(ck, ": <type> = ...')")
+            raise mk_fail(ck, "UndefinedVariable")
+    scope: int = sc_new(ck, -1, False)
+    ps: int = sl_at(a, fd, 4)
+    for i in range(pky(ps)):
+        p: int = stmt_at(a, ps, i)
+        pt: int = type_expr_to_type(ck, a, a.n[p + 6])
+        sc_declare(ck, scope, sym_of(ck, a, pk(a.n[p + 0], a.n[p + 0 + 1])), pt)
+    ret: int = type_expr_to_type(ck, a, a.n[fd + 6])
+    fx: Fx = Fx(scope, ret, False)
+    body: int = sl_at(a, fd, 8)
+    check_block(ck, a, fx, body)
+    if ret != 4 and not always_returns(a, body):
+        mp(ck, "function '")
+        mp_sref(ck, a, pk(a.n[fd + 0], a.n[fd + 0 + 1]))
+        mp(ck, "' does not return a value on all paths")
+        raise mk_fail(ck, "MissingReturn")
+
+# `collectModuleGlobals`: üst-düzey `var_decl`ların bildirilen tipleri (+ değişmez tamsayı sabitleri). `__infer` bildirimleri terfi etmez.
+def collect_module_globals(ck: Ck, a: Ast, body: int) -> None:
+    for i in range(pky(body)):
+        st: int = stmt_at(a, body, i)
+        ck.cur_line = a.n[st + 1]
+        ck.cur_span = a.n[st + 2]
+        kn: int = a.n[st + 0]
+        if a.n[kn] != 1:
+            continue
+        v: int = a.n[kn + 1]
+        te: int = a.n[v + 2]
+        if a.n[te] == 0 and sref_eq(a, pk(a.n[te + 1], a.n[te + 2]), "__infer"):
+            continue
+        declared: int = type_expr_to_type(ck, a, te)
+        nm: int = pk(a.n[v + 0], a.n[v + 0 + 1])
+        sym: int = sym_of(ck, a, nm)
+        m2_put(ck.globs, 0, sym, declared)
+        if declared == 0:
+            val: int = a.n[v + 3]
+            if a.n[val] == 0:
+                m2_put(ck.iconsts, 0, sym, a.n[val + 1])
+            elif a.n[val] == 6:
+                up: int = a.n[val + 1]
+                if a.n[up + 0] == 0 and a.n[a.n[up + 1]] == 0:
+                    m2_put(ck.iconsts, 0, sym, 0 - a.n[a.n[up + 1] + 1])
+    # yeniden atanan (modülün herhangi bir yerinde, muhafazakâr) adlar sabit değildir
+    for e in range(len(ck.iconsts.k1)):
+        if ck.iconsts.dead[e] == 0:
+            nsym: int = ck.iconsts.k2[e]
+            tt: TT = ck.tt
+            if stmts_assign_name_sym(a, body, tt, nsym):
+                ck.iconsts.dead[e] = 1
+                ck.iconsts.live = ck.iconsts.live - 1
+
+# `stmts_assign_name`in SymbolId ile çağrılan biçimi (bayt aralığına çevirir).
+def stmts_assign_name_sym(a: Ast, body: int, tt: TT, sym: int) -> bool:
+    xs: list[int] = []
+    o: int = tt.so[sym]
+    for i in range(tt.sl[sym]):
+        xs.append(tt.sb[o + i])
+    return stmts_assign_name_ints(a, body, xs)
+
+def sref_is_ints(a: Ast, v: int, xs: list[int]) -> bool:
+    x: int = pkx(v)
+    ln: int = pky(v)
+    if x >= 0:
+        ln = ln - x
+    if ln != len(xs):
+        return False
+    for i in range(ln):
+        if sref_byte(a, v, i) != xs[i]:
+            return False
+    return True
+
+def stmts_assign_name_ints(a: Ast, s: int, xs: list[int]) -> bool:
+    cnt: int = pky(s)
+    for i in range(cnt):
+        st: int = a.l[pkx(s) + i]
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 3:
+            tg: int = a.n[pay + 0]
+            if a.n[tg] == 5 and sref_is_ints(a, pk(a.n[tg + 1], a.n[tg + 2]), xs):
+                return True
+        elif tag == 4:
+            if stmts_assign_name_ints(a, sl_at(a, pay, 1), xs):
+                return True
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                if stmts_assign_name_ints(a, sl_at(a, a.l[pkx(ecs) + j], 1), xs):
+                    return True
+            if a.n[pay + 5] != -4611686018427387904:
+                if stmts_assign_name_ints(a, sl_at(a, pay, 5), xs):
+                    return True
+        elif tag == 5:
+            if stmts_assign_name_ints(a, sl_at(a, pay, 1), xs):
+                return True
+        elif tag == 6:
+            if sref_is_ints(a, pk(a.n[pay + 0], a.n[pay + 0 + 1]), xs):
+                return True
+            if stmts_assign_name_ints(a, sl_at(a, pay, 3), xs):
+                return True
+        elif tag == 7:
+            if stmts_assign_name_ints(a, sl_at(a, pay, 8), xs):
+                return True
+        else:
+            if tag == 13 or tag == 21 or tag == 14 or tag == 8:
+                raise unsup()
+    return False
+
+# `Checker.checkModule` (skaler dilim). Dönüş: 0 = kabul, 1 = tanılama/hata (ayrıntı `nox_ck_diag_*`/`o_*`), 2 = kapsam dışı.
+def check_module(ck: Ck, a: Ast, body: int) -> int:
+    ck.cur_line = 0
+    ck.cur_span = -1
+    ck.o_code = ""
+    ck.o_msg = []
+    # kapsam dışı üst-düzey deyim türleri (import/sınıf/protokol/extern/takma ad ...): bu geçişler henüz taşınmadı
+    for i in range(pky(body)):
+        kn: int = a.n[a.n[stmt_at(a, body, i) + 0]]
+        if kn == 8 or kn == 9 or kn == 10 or kn == 15 or kn == 16 or kn == 2:
+            return 2
+    try:
+        # registerSignatures
+        for j in range(pky(body)):
+            st: int = stmt_at(a, body, j)
+            ck.cur_line = a.n[st + 1]
+            ck.cur_span = a.n[st + 2]
+            kn2: int = a.n[st + 0]
+            if a.n[kn2] == 7:
+                register_func(ck, a, a.n[kn2 + 1])
+        collect_module_globals(ck, a, body)
+    except CkUnsupported:
+        return 2
+    except CkErr:
+        ck.o_code = ck.err_code
+        ck.o_msg = ck.diag_msg
+        return 1
+    ck.top_scope = sc_new(ck, -1, False)
+    top: Fx = Fx(ck.top_scope, -1, True)
+    for k in range(pky(body)):
+        st3: int = stmt_at(a, body, k)
+        ck.cur_line = a.n[st3 + 1]
+        ck.cur_span = a.n[st3 + 2]
+        kn3: int = a.n[st3 + 0]
+        try:
+            if a.n[kn3] == 7:
+                check_function_body(ck, a, a.n[kn3 + 1])
+            else:
+                check_stmt(ck, a, top, st3)
+        except CkUnsupported:
+            return 2
+        except CkErr:
+            ck.depth = 0
+            record_diag(ck, a)
+    if len(ck.dcode) > 0:
+        ck.o_code = ck.dcode[0]
+        for m in range(ck.dlen[0]):
+            ck.o_msg.append(ck.dbytes[ck.doff[0] + m])
+        return 1
+    return 0
+
 # ---- Zig <-> Nox test köprüsü (noxc-nightly `ck-diff`) ----
 CG: Ck = Ck(ty_global())
 
@@ -385,3 +1253,46 @@ def nox_ck_bench(seed: int, ns: int, nn: int, m: int) -> int:
             sc_declare(ck, s, sym, (x >> 4) % 5)
     return acc + len(ck.caps.k1)
 
+# ---- 3.3: `check` farksal köprüsü ----
+def nox_ck_check() -> int:
+    global CG
+    CG = Ck(ty_global())
+    # beklenmeyen (CkErr/CkUnsupported dışı) çalışma hatası sessizce 0 dönmesin: -1 = iç hata
+    try:
+        return check_module(CG, parse_ast(), parse_body())
+    except Exception:
+        return -1
+
+# Metin alma: which 0 = sonuç kodu adı, 1 = sonuç iletisi, 2 = i. tanılamanın kodu, 3 = i. tanılamanın iletisi. Dönüş: bayt sayısı (veri `nox_ck_out_buffer`).
+def nox_ck_text(which: int, i: int) -> int:
+    ck: Ck = CG
+    ck.out = []
+    if which == 0:
+        for k in range(len(ck.o_code)):
+            ck.out.append(ord(ck.o_code[k]))
+    elif which == 1:
+        for k2 in range(len(ck.o_msg)):
+            ck.out.append(ck.o_msg[k2])
+    elif which == 2:
+        for k3 in range(len(ck.dcode[i])):
+            ck.out.append(ord(ck.dcode[i][k3]))
+    else:
+        for k4 in range(ck.dlen[i]):
+            ck.out.append(ck.dbytes[ck.doff[i] + k4])
+    return len(ck.out)
+
+def nox_ck_out_buffer() -> int:
+    xs: list[int] = CG.out
+    p: int = 0
+    lowlevel:
+        p = ptr_to_int(ptr_of(xs))
+    return p
+
+def nox_ck_diag_n() -> int:
+    return len(CG.dcode)
+
+# field 0 = satır, 1..6 = span (start_byte, end_byte, start_line, start_col, end_line, end_col)
+def nox_ck_diag_int(i: int, field: int) -> int:
+    if field == 0:
+        return CG.dline[i]
+    return CG.dspan[i * 6 + field - 1]

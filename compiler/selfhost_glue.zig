@@ -84,6 +84,11 @@ extern fn typecheck_nox_ck_tab_remove(rt: ?*anyopaque, which: i64, sym: i64) i64
 extern fn typecheck_nox_ck_tab_live(rt: ?*anyopaque, which: i64) i64;
 extern fn typecheck_nox_ck_assigns_name(rt: ?*anyopaque, base: i64, off: i64, n: i64) i64;
 extern fn typecheck_nox_ck_mem(rt: ?*anyopaque) i64;
+extern fn typecheck_nox_ck_check(rt: ?*anyopaque) i64;
+extern fn typecheck_nox_ck_text(rt: ?*anyopaque, which: i64, i: i64) i64;
+extern fn typecheck_nox_ck_out_buffer(rt: ?*anyopaque) i64;
+extern fn typecheck_nox_ck_diag_n(rt: ?*anyopaque) i64;
+extern fn typecheck_nox_ck_diag_int(rt: ?*anyopaque, i: i64, field: i64) i64;
 extern fn typecheck_nox_ck_bench(rt: ?*anyopaque, seed: i64, ns: i64, nn: i64, m: i64) i64;
 
 /// Aşama 3.2+: Nox tip denetleyicisinin (`selfhost/typecheck.nox`) Zig tarafı sarmalayıcısı. Ad = SymbolId (`TypeApi.sym`), tip = TypeId; yokluk = -1.
@@ -144,6 +149,25 @@ pub const CheckApi = struct {
     }
     pub fn mem(self: CheckApi) i64 {
         return typecheck_nox_ck_mem(self.rt);
+    }
+    /// 3.3: son Nox ayrıştırmasının modülünü denetler. 0 = kabul, 1 = tanılama/hata, 2 = kapsam dışı (henüz taşınmamış yapı).
+    pub fn checkRun(self: CheckApi) i64 {
+        return typecheck_nox_ck_check(self.rt);
+    }
+    /// which: 0 sonuç hata kodu adı, 1 sonuç iletisi, 2 i. tanılamanın kodu, 3 i. tanılamanın iletisi.
+    pub fn text(self: CheckApi, a: std.mem.Allocator, which: i64, i: i64) ![]u8 {
+        const n: usize = @intCast(typecheck_nox_ck_text(self.rt, which, i));
+        const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(typecheck_nox_ck_out_buffer(self.rt))));
+        const out = try a.alloc(u8, n);
+        for (out, 0..) |*b, k| b.* = @intCast(buf[k]);
+        return out;
+    }
+    pub fn diagN(self: CheckApi) i64 {
+        return typecheck_nox_ck_diag_n(self.rt);
+    }
+    /// field 0 satır, 1..6 span (start_byte, end_byte, start_line, start_col, end_line, end_col).
+    pub fn diagInt(self: CheckApi, i: i64, field: i64) i64 {
+        return typecheck_nox_ck_diag_int(self.rt, i, field);
     }
     /// `ck-bench` Nox tarafı iş yükü (sağlama toplamı Zig `benchZig` ile aynı olmalı).
     pub fn bench(self: CheckApi, seed: i64, ns: i64, nn: i64, m: i64) i64 {

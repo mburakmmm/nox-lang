@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.68]
+
+Aşama 3.2 kapandı, 3.3 dilim A (kapsam-kapılı): skaler tipli ifade/deyim + kullanıcı işlevleri. Ayrıntı: plan §6 3.2/3.3, spec §3.502.
+
+- `selfhost/typecheck.nox.in`: `collect_module_globals`, `type_expr_to_type` (skaler çekirdek), `check_expr/unary/binary/call/print/len`, `check_stmt`/`check_assign`/`check_function_body`/`register_func`/`always_returns`, tanılama toplama (`fail`/`recordDiagnostic` eşdeğeri), `check_module` (0 kabul / 1 tanılama / 2 kapsam dışı); `types.nox`a `sym_intern_list`; `parser.nox.in`e `parse_ast/parse_body`.
+- Nightly (gizli): `ck-diff check` (Zig `check()` ile tam tanı eşitliği) ve `scripts/ck_gen.py` tohumlu program üreteci (`frontend-diff-test` + `tests/cli/selfhost_contract_test.zig`).
+
 ## [2.2.67]
 
 Aşama 3.2 (kapsam/sembol tabloları) — kısmen (`[~]`): `collectModuleGlobals` `typeExprToType`i bekliyor. Ayrıntı: plan §6 3.2, spec §3.501.

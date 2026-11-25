@@ -152,3 +152,20 @@ test "ck-diff: kapsam tabloları ve stmtsAssignName Zig ile farksiz" {
     try std.testing.expect(std.mem.indexOf(u8, r.stdout, "ck-diff: OK assign") != null);
 }
 
+// Aşama 3.3: Nox denetleyicisi (kapsam-içi altküme) ↔ Zig `check()`: ret/kabul, hata kodu, ileti, satır ve span eşit. Nightly yoksa atlanır.
+test "ck-diff check: Nox denetleyicisi kapsam-ici vakalarda Zig ile ayni tanilari uretir" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    if (!have(io, "zig-out/bin/noxc-nightly")) return error.SkipZigTest;
+    const r = try run(&.{
+        "zig-out/bin/noxc-nightly",                                   "ck-diff", "check",
+        "tests/golden/typecheck_cases/err_break_outside_loop.nox",    "tests/golden/typecheck_cases/err_undefined_variable.nox",
+        "tests/golden/typecheck_cases/err_arg_count_mismatch.nox",
+    });
+    defer std.testing.allocator.free(r.stdout);
+    defer std.testing.allocator.free(r.stderr);
+    try std.testing.expect(r.term == .exited and r.term.exited == 0);
+    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "ck-diff: OK check") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "unsupported=0") != null);
+}
+

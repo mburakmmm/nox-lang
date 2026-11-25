@@ -104,6 +104,42 @@ def sym_intern(tt: TT, base: int, off: int, n: int) -> int:
         sym_grow(tt)
     return nid
 
+# `xs[off:off+n]` (ör. AST'nin sentezlenmiş dize baytları `sb`) baytlarını internler (`sym_intern`in liste karşılığı).
+def sym_intern_list(tt: TT, xs: list[int], off: int, n: int) -> int:
+    h: int = 14695981039
+    for i in range(n):
+        h = sym_hash_step(h, xs[off + i])
+    h = sym_hash_step(h, n)
+    i0: int = h & tt.smask
+    while True:
+        s: int = tt.ssl[i0]
+        if s == 0:
+            break
+        id: int = s - 1
+        if tt.sl[id] == n:
+            same: bool = True
+            o: int = tt.so[id]
+            for k in range(n):
+                if tt.sb[o + k] != xs[off + k]:
+                    same = False
+                    break
+            if same:
+                return id
+        i0 = (i0 + 1) & tt.smask
+    nid: int = len(tt.so)
+    tt.so.append(len(tt.sb))
+    tt.sl.append(n)
+    for k2 in range(n):
+        tt.sb.append(xs[off + k2])
+    tt.creg.append(0)
+    tt.cbase.append(-1)
+    tt.cmix.append(-1)
+    tt.cnonarc.append(0)
+    tt.ssl[i0] = nid + 1
+    if len(tt.so) * 2 > tt.smask + 1:
+        sym_grow(tt)
+    return nid
+
 def sym_hash_of(tt: TT, id: int) -> int:
     h: int = 14695981039
     o: int = tt.so[id]
