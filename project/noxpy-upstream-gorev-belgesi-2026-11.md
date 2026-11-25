@@ -7,7 +7,7 @@ Doğrulama döngüsü: her UR bitince `noxPY/tests/reproducers/<ur>.sh` güncel 
 ## Sıra ve durum
 
 - [x] **UR-001 (v2.2.75)** — kodlandı + test (`tests/cli/desktop_lib_emit_test.zig`); macOS-arm64 ana makine + linux-x64/arm64/windows-x64/macos-x64 çapraz `.so/.dll/.dylib` bağlandı. Açık: Linux x86-64'te PIC runtime hız ölçümü (yerelde ölçülemedi)
-- [ ] **UR-007** `noxc expand --json` (şema v1, `ir.py` uyumlu): tipli dışa aktarım metadata'sı
+- [x] **UR-007 (v2.2.76)** — `noxc expand --json [--module <ad>]` (şema v1; `@export` üst-düzey işlevler; tip metni checker'dan; docstring = gövdenin ilk dize deyimi; `@export("<thread_policy>")`); `tests/cli/expand_json_test.zig`; NoxPy `parse_upstream_metadata_json` ile doğrulandı. Not: `c_symbol` UR-002'nin üreteceği ad (`nox_host_export_<modül>_<ad>`). Açık: sınıf/istisna dışa aktarımı (Phase 3), `bytes` tip adı
 - [ ] **UR-002** `include/nox_host.h` + açık dışa aktarım (`@export` thunk'ları, `NoxHostContext*`, init/fini)
 - [ ] **UR-005** Abort etmeyen hata (OOM/taşma → durum kodu) + public istisna inceleme (class_name/message/line)
 - [ ] **UR-003** Gizli sembol görünürlüğü + `dispatch_registry`/`halt_provider`/tl-errno durumunu RuntimeState'e taşıma (`native-runtime-*` planıyla örtüşür)

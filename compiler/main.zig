@@ -34,6 +34,7 @@ const ast_dump = @import("parser/ast_dump.zig");
 const ast_dump_full = @import("parser/ast_dump_full.zig");
 const ast_schema = @import("parser/ast_schema.zig");
 const checker = @import("typecheck/checker.zig");
+const tc_types = @import("typecheck/types.zig");
 const ownership = @import("ownership/analysis.zig");
 const codegen = @import("codegen_qbe/codegen.zig");
 const local_escape = @import("codegen_qbe/local_escape.zig");
@@ -3770,9 +3771,106 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 /// ının topladığı `decorated_functions` listesi (`cmdCheck` İLE AYNI
 /// derleme adımlarından SONRA) DÖKÜLÜR. Kullanıcının decorator'larının
 /// DOĞRU ayrıştırıldığını/geçerli argümanlar TAŞIDIĞINI DOĞRULAMASI İçİndir.
+/// UR-007 (NoxPy): `noxc expand --json` modül adı varsayılanı: dosya adı, `.nox`suz; geçersiz karakterler `_`.
+fn moduleNameFromPath(path: []const u8) []const u8 {
+    const base = std.fs.path.basename(path);
+    return if (std.mem.endsWith(u8, base, ".nox")) base[0 .. base.len - 4] else base;
+}
+
+fn writeJsonString(w: *std.Io.Writer, s: []const u8) !void {
+    try w.writeByte('"');
+    for (s) |c| switch (c) {
+        '"' => try w.writeAll("\\\""),
+        '\\' => try w.writeAll("\\\\"),
+        '\n' => try w.writeAll("\\n"),
+        '\r' => try w.writeAll("\\r"),
+        '\t' => try w.writeAll("\\t"),
+        0...8, 11, 12, 14...31 => try w.print("\\u{x:0>4}", .{c}),
+        else => try w.writeByte(c),
+    };
+    try w.writeByte('"');
+}
+
+/// UR-007 (NoxPy): `@export` taşıyan ÜST-DÜZEY kullanıcı işlevlerinin tipli metadata'sı (şema v1, bkz. NoxPy `python/noxpy/ir.py`). Tipler/imzalar checker'ın çözümlediği
+/// `functions` tablosundan (`types.format`) gelir; docstring gövdenin ilk dize deyimidir; ilk konumsal dize argümanı `thread_policy`dir (`@export("instance_locked")`).
+/// `c_symbol` UR-002'nin üreteceği host sarmalayıcı adıdır (`nox_host_export_<modül>_<ad>`). Yalnızca `user_module` (birleştirilmemiş) taranır: stdlib dışa aktarılmaz.
+fn writeExportMetadataJson(a: std.mem.Allocator, w: *std.Io.Writer, user_module: ast.Module, checker_state: *checker.Checker, path_arg: []const u8, module_name: []const u8) !void {
+    try w.writeAll("{\n  \"schema_version\": 1,\n  \"compiler\": {\"name\": \"noxc\", \"version\": ");
+    try writeJsonString(w, build_options.version);
+    try w.writeAll(", \"commit\": ");
+    try writeJsonString(w, build_options.commit);
+    try w.writeAll("},\n  \"module\": {\"name\": ");
+    try writeJsonString(w, module_name);
+    try w.writeAll(", \"source\": ");
+    try writeJsonString(w, path_arg);
+    try w.writeAll("},\n  \"exports\": [");
+    var first = true;
+    for (user_module.body) |st| {
+        if (st.kind != .func_def) continue;
+        const fd = st.kind.func_def;
+        var export_dec: ?ast.Decorator = null;
+        for (fd.decorators) |d| {
+            if (std.mem.eql(u8, d.name, "export")) export_dec = d;
+        }
+        const dec = export_dec orelse continue;
+        const sig = checker_state.functions.get(fd.name) orelse continue;
+        var policy: []const u8 = "parallel";
+        if (dec.args.len > 0 and dec.args[0] == .string_lit) policy = dec.args[0].string_lit;
+        if (!first) try w.writeAll(",");
+        first = false;
+        try w.writeAll("\n    {\"kind\": \"function\", \"id\": ");
+        const id = try std.fmt.allocPrint(a, "{s}::{s}", .{ module_name, fd.name });
+        try writeJsonString(w, id);
+        try w.writeAll(", \"name\": ");
+        try writeJsonString(w, fd.name);
+        try w.writeAll(", \"c_symbol\": ");
+        const sym = try std.fmt.allocPrint(a, "nox_host_export_{s}_{s}", .{ module_name, fd.name });
+        try writeJsonString(w, sym);
+        try w.writeAll(", \"doc\": ");
+        if (fd.body.len > 0 and fd.body[0].kind == .expr_stmt and fd.body[0].kind.expr_stmt == .string_lit) {
+            try writeJsonString(w, fd.body[0].kind.expr_stmt.string_lit);
+        } else try w.writeAll("null");
+        try w.writeAll(", \"thread_policy\": ");
+        try writeJsonString(w, policy);
+        const line: u32 = if (fd.line != 0) fd.line else st.line;
+        try w.print(", \"span\": {{\"file\": ", .{});
+        try writeJsonString(w, path_arg);
+        try w.print(", \"line\": {d}, \"column\": 1}}, \"params\": [", .{line});
+        for (fd.params, 0..) |p, i| {
+            if (i > 0) try w.writeAll(", ");
+            try w.writeAll("{\"name\": ");
+            try writeJsonString(w, p.name);
+            try w.writeAll(", \"type\": ");
+            var tbuf: std.Io.Writer.Allocating = .init(a);
+            if (i < sig.params.len) try tc_types.format(sig.params[i], &tbuf.writer);
+            try writeJsonString(w, tbuf.written());
+            const kind: []const u8 = if (p.variadic) "var_positional" else if (p.var_kw) "var_keyword" else if (p.kw_only) "keyword_only" else if (p.pos_only) "positional_only" else "positional_or_keyword";
+            try w.print(", \"kind\": \"{s}\", \"has_default\": {s}}}", .{ kind, if (p.default != null) "true" else "false" });
+        }
+        try w.writeAll("], \"return_type\": ");
+        var rbuf: std.Io.Writer.Allocating = .init(a);
+        try tc_types.format(sig.return_type, &rbuf.writer);
+        try writeJsonString(w, rbuf.written());
+        try w.writeAll("}");
+    }
+    try w.writeAll(if (first) "]\n}\n" else "\n  ]\n}\n");
+}
+
 fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
-    const path_arg = if (args.len > 0) args[0] else {
-        std.debug.print("usage: noxc expand <file.nox>\n", .{});
+    var json = false;
+    var module_name_opt: ?[]const u8 = null;
+    var path_opt: ?[]const u8 = null;
+    var ai: usize = 0;
+    while (ai < args.len) : (ai += 1) {
+        if (std.mem.eql(u8, args[ai], "--json")) {
+            json = true;
+        } else if (std.mem.eql(u8, args[ai], "--module") and ai + 1 < args.len) {
+            ai += 1;
+            module_name_opt = args[ai];
+        } else if (path_opt == null) path_opt = args[ai];
+    }
+    const path_arg = path_opt orelse {
+        std.debug.print("usage: noxc expand [--json [--module <name>]] <file.nox>\n", .{});
         std.process.exit(1);
     };
 
@@ -3798,6 +3896,12 @@ fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []c
     var stdout_buf: [4096]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buf);
     const w = &stdout_writer.interface;
+    if (json) {
+        const mod_name = module_name_opt orelse moduleNameFromPath(path_arg);
+        try writeExportMetadataJson(a, w, user_module, &checker_state, path_arg, mod_name);
+        try w.flush();
+        return;
+    }
     const decorated = checker_state.decorated_functions.items;
     if (decorated.len == 0) {
         try w.print("decorator not found: {s}\n", .{path_arg});

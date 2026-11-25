@@ -11,6 +11,12 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.76]
+
+NoxPy UR-007: `noxc expand --json [--module <ad>]` — `@export` işlevlerinin tipli, şema-sürümlü (v1) metadata'sı. Ayrıntı: spec §3.510.
+
+- `compiler/main.zig`: `cmdExpand --json`, `writeExportMetadataJson` (imza/tipler checker'dan; docstring; `thread_policy`; `c_symbol` = UR-002'nin üreteceği `nox_host_export_<modül>_<ad>`). Test: `tests/cli/expand_json_test.zig`.
+
 ## [2.2.75]
 
 NoxPy UR-001: masaüstü `--emit-obj` / `--emit-static-lib` / `--emit-shared-lib` (LLVM, PIC). Ayrıntı: `project/noxpy-upstream-gorev-belgesi-2026-11.md`, spec §3.509.

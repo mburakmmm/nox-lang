@@ -28,7 +28,7 @@ normally).
 | `noxc run [options] <file.nox> [args…]` | compile into `$NOX_HOME/cache/run/` (keyed by path, source contents, the `noxc` binary, `noxrt.o`, and the installed stdlib) and run; a matching cache entry is not rebuilt. Everything after `--` goes to the program (`nox.os.arg(1)`, …) |
 | `noxc check [options] <file.nox>` | parse and type-check only — fast, no code generation. Exit status 0 means "no type errors" |
 | `noxc test [name\|path …]` | run every `*_test.nox` under the current directory, or only those whose file name contains `name`, or the given directory. A compile error is a failed file; the rest still run ([Testing](testing.md)) |
-| `noxc expand <file.nox>` | print the decorator metadata the compiler extracted from the file |
+| `noxc expand [--json [--module <name>]] <file.nox>` | print the decorator metadata the compiler extracted from the file. `--json` emits versioned (`schema_version: 1`) typed metadata for top-level functions marked `@export` (name, parameter names/types/kinds/defaults, return type, docstring, thread policy, source location, host symbol name) for binding generators; the text form is not a stable interface |
 | `noxc bindgen <header.h> --lib <lib>` | generate Nox `extern def` bindings (and a C shim where needed) from a C header ([bindgen](bindgen.md)) |
 | `noxc explain [--release] <file.nox>` | print each local variable's allocation decision (stack, arena or reference-counted) and why ([Memory](../language/memory.md#seeing-the-compilers-decisions-noxc-explain)) |
 | `noxc fmt <file.nox>` | rewrite the file in the standard style, in place ([Formatter](formatter.md)) |
