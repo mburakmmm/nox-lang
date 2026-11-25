@@ -673,9 +673,37 @@ def check_expr_inner(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
         return check_attribute(ck, a, fx, a.n[e + 1])
     if tag == {{T:Expr.await_expr}}:
         return check_await(ck, a, fx, e)
+    if tag == {{T:Expr.spawn_expr}}:
+        return check_spawn(ck, a, fx, a.n[e + 1])
     if tag == {{T:Expr.generic_construct}}:
         return check_generic_construct(ck, a, fx, a.n[e + 1])
     raise unsup(ck, "check_expr_inner#" + str(tag))
+
+# `spawn f(...)`: yalnızca üst-düzey `async def` çağrısı (iç içe async/`obj.metod` sarmalayıcısı kapsam dışı) -> `Task[T]`.
+def check_spawn(ck: Ck, a: Ast, fx: Fx, opd: int) -> int:
+    if a.n[opd] != {{T:Expr.call}}:
+        fail2(ck, "NotCallable", "'spawn' can only wrap a call expression")
+    c: int = a.n[opd + 1]
+    callee: int = a.n[c + {{O:Call.callee}}]
+    if a.n[callee] == {{T:Expr.attribute}}:
+        raise unsup(ck, "spawn#attribute")
+    if a.n[callee] != {{T:Expr.identifier}}:
+        fail2(ck, "NotCallable", "'spawn' can only wrap a direct function call")
+    nm: int = pk(a.n[callee + 1], a.n[callee + 2])
+    sym: int = sym_of(ck, a, nm)
+    if m2_get(ck.afn, 0, sym) < 0:
+        mp(ck, "'spawn' can only start 'async def' functions: '")
+        mp_sym(ck, sym)
+        mp(ck, "' is not async")
+        raise mk_fail(ck, "TypeMismatch")
+    sid: int = ck.fmap.vv[m2_get(ck.fmap, 0, sym)]
+    check_args_sig(ck, a, fx, c, sid, sym)
+    # list/dict/class argümanları paylaşılır: Zig'in spawn-paylaşım/mutasyon analizleri (SpawnSharedMutation ...) henüz taşınmadı
+    for pi in range(ck.fpn[sid]):
+        pg: int = ck.tt.tag[ck.fpar[ck.fps[sid] + pi]]
+        if pg == 5 or pg == 6 or pg == 13:
+            raise unsup(ck, "spawn#shared_arg")
+    return ty_mk(ck.tt, 7, ck.fret[sid], 0)
 
 # `checkGenericConstruct`: `Channel[T](kapasite)`, `ThreadChannel[T](kapasite)`, `TaskLocal[T]()`; `ptr[T](adres)` (lowlevel) ve kullanıcı jenerikleri/nitelikli adlar kapsam dışı.
 def check_generic_construct(ck: Ck, a: Ast, fx: Fx, g: int) -> int:
@@ -861,6 +889,11 @@ def check_identifier(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
     # resolveIdentifierAsFunctionValue: üst-düzey (generic/async olmayan) işlev adı bir değer olarak
     fe: int = m2_get(ck.fmap, 0, sym)
     if fe >= 0:
+        if m2_get(ck.afn, 0, sym) >= 0:
+            mp(ck, "'")
+            mp_sym(ck, sym)
+            mp(ck, "' is an 'async def' function and cannot be used as a value")
+            raise mk_fail(ck, "TypeMismatch")
         fi: int = ck.fmap.vv[fe]
         ty_func_begin(ck.tt)
         st: int = ck.fps[fi]

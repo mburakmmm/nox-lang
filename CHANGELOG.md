@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.84]
+
+Selfhost Aşama 3.13-A: `spawn f(...)` ifadesi Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.518, `project/noxc-nightly-selfhost-plani-2026-11.md`.
+
+- `selfhost/typecheck.nox.in`: `check_spawn` (yalnızca doğrudan üst-düzey `async def` çağrısı → `Task[T]`; async olmayan hedef/çağrı olmayan işlenen hataları; argüman denetimi), `async def` adı değer olarak kullanılamaz. Kapsam dışı: `spawn obj.metod(...)` (`spawn#attribute`), `list/dict/class` parametreli hedefler (`spawn#shared_arg`: Zig'in SpawnSharedMutation analizleri taşınana dek), anahtar sözcüklü argümanlar.
+- `scripts/ck_gen.py --spawn` üreteci; `scripts/ck_regress.sh`: tüm üreteç kipleri + depo dosyaları için kalıcı farksal regresyon betiği (macOS yeniden başlatması scratchpad'i siler). Kanıt: 11 kip + 1300 depo dosyası Zig ile eşit.
+
 ## [2.2.83]
 
 Selfhost Aşama 3.12-A: `extern def` kaydı ve çağrı denetimi Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.517, `project/noxc-nightly-selfhost-plani-2026-11.md`.

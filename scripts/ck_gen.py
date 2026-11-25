@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False):
         self.rnd = rnd
+        self.use_spawn = use_spawn
         self.use_extern = use_extern
         self.use_ptr = use_ptr
         self.use_construct = use_construct
@@ -532,8 +533,43 @@ class Gen:
         if r.random() < 0.2:
             self.lines += ["def g() -> None:", "    extern def h() -> int from \"lib\"", "    pass"]
 
+    def gen_spawn(self):
+        """`spawn`: async/senkron/tanımsız hedefler, argüman sayısı/tipi, parametre taşıma güvenliği, sonuç Task[T] kullanımı, await ile birleşim."""
+        r = self.rnd
+        self.lines += ["class P:", "    a: int", "    def __init__(self, a: int) -> None:", "        self.a = a", "", "n: int = 3", 's: str = "a"', "xs: list[int] = [1]", "ch: Channel[int] = Channel[int](1)", "tc: ThreadChannel[int] = ThreadChannel[int](1)",
+                       "class K:", "    def m(self) -> int:", "        return 1", "k: K = K()", "fs: list[(int) -> int] = []", ""]
+        pty = lambda: r.choice(["int", "float", "bool", "str", "None", "P", "list[int]", "dict[str, int]", "int | None", "Task[int]", "Channel[int]", "ThreadChannel[int]", "ThreadHandle[int]", "(int) -> int", "u8"])
+        rty = lambda: r.choice(["int", "str", "None", "bool", "float", "P", "list[int]"])
+        for k in range(r.randint(1, 3)):
+            ps = ", ".join(f"p{i}: {pty()}" for i in range(r.randint(0, 2)))
+            kind = r.choice(["async", "async", "async", "sync"])
+            rt = rty()
+            body = {"int": "return 1", "str": 'return "a"', "None": "pass", "bool": "return True", "float": "return 1.5", "P": "return P(1)", "list[int]": "return [1]"}[rt]
+            self.lines += [f"{'async ' if kind == 'async' else ''}def w{k}({ps}) -> {rt}:", f"    {body}", ""]
+        arg = lambda: r.choice(["1", "n", "s", "1.5", "True", "P(1)", "xs", "None", "w0", "ch", "tc", "ch", "tc", ""])
+        callee = lambda: r.choice(["w0", "w1", "w2", "nope", "P", "len", "n"])
+        ann = lambda: r.choice(["Task[int]", "Task[int]", "Task[str]", "Task[None]", "Task[bool]", "int", "Task[P]"])
+        exprs = [
+            lambda: f"t: {ann()} = spawn {callee()}({arg()}, {arg()})", lambda: f"t: {ann()} = spawn {callee()}({arg()})", lambda: f"t: {ann()} = spawn {callee()}()",
+            lambda: f"t: Task[int] = spawn {callee()}({arg()})", lambda: f"t: Task[str] = spawn {callee()}({arg()})", lambda: f"t: {ann()} = spawn {r.choice(['n', '1', 'xs[0]', 'P(1).a', 'w0', 'fs[0](1)'])}",
+            lambda: f"t: {ann()} = spawn {callee()}(p0={arg()})", lambda: f"x: {ann()} = spawn {r.choice(['n.foo()', 's.upper()', 'P(1).a()', 'k.m()', 'k.am()', 'k.zz()', 'k.m(1)', 'nope.m()', 'k.am(1)'])}", lambda: f"spawn {callee()}({arg()})",
+            lambda: f"t: {ann()} = spawn {callee()}({arg()})\nx: int = await t",lambda: f"x: int = await spawn {callee()}({arg()})", lambda: f"x: str = await spawn {callee()}({arg()})",
+            lambda: f"x: int = await spawn {r.choice(['k.m()', 'k.am()'])}", lambda: f"t: {ann()} = spawn {callee()}({arg()})\nt = spawn {callee()}({arg()})",
+        ]
+        in_async = r.random() < 0.5
+        body = []
+        for _ in range(r.randint(1, 3)):
+            body += r.choice(exprs)().split("\n")
+        if in_async:
+            self.lines += ["async def main_a() -> None:"] + ["    " + l for l in body]
+        else:
+            self.lines += ["def main_s() -> None:"] + ["    " + l for l in body]
+
     def program(self):
         r = self.rnd
+        if self.use_spawn:
+            self.gen_spawn()
+            return "\n".join(self.lines) + "\n"
         if self.use_extern:
             self.gen_extern()
             return "\n".join(self.lines) + "\n"
@@ -593,11 +629,12 @@ def main():
     ap.add_argument("--construct", dest="use_construct", action="store_true")
     ap.add_argument("--ptr", dest="use_ptr", action="store_true")
     ap.add_argument("--extern", dest="use_extern", action="store_true")
+    ap.add_argument("--spawn", dest="use_spawn", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 
