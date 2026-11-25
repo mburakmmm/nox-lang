@@ -1855,198 +1855,6 @@ export function $GeneratorExit_gc_free(l %rt, l %p) {
     ret
 }
 data $GeneratorExit_vtable = { l $Exception___str__ }
-export function $HPyError_release(l %rt, l %p) {
-@start
-    %t0 =l sub %p, 8
-    %t1 =l loadl %t0
-    %t2 =l sub %t1, 1
-    storel %t2, %t0
-    %t4 =l and %t2, 4294967295
-    %t3 =w ceql %t4, 0
-    jnz %t3, @release_free0, @release_done1
-@release_free0
-    %t5 =l add %p, 16
-    %t6 =l loadl %t5
-    %t7 =w ceql %t6, 0
-    jnz %t7, @release_skip3, @release2
-@release2
-    %t8 =l sub %t6, 16
-    %t9 =l loadl %t8
-    %t10 =w csgel %t9, 536870912
-    jnz %t10, @str_free_done7, @str_rel_atomic8
-@str_rel_atomic8
-    %t11 =l sub %t6, 16
-    %t12 =l loadl %t11
-    %t13 =l sub %t12, 1
-    storel %t13, %t11
-    %t14 =w cslel %t13, 0
-    jnz %t14, @str_free5, @str_free_skip6
-@str_free5
-    call $nox_str_free_now(l %rt, l %t6)
-    jmp @str_free_done7
-@str_free_skip6
-    jmp @str_free_done7
-@str_free_done7
-    jmp @release_done4
-@release_skip3
-    jmp @release_done4
-@release_done4
-    %t15 =l add %p, 32
-    %t16 =l loadl %t15
-    %t17 =w ceql %t16, 0
-    jnz %t17, @release_skip10, @release9
-@release9
-    %t18 =l sub %t16, 16
-    %t19 =l loadl %t18
-    %t20 =w csgel %t19, 536870912
-    jnz %t20, @str_free_done14, @str_rel_atomic15
-@str_rel_atomic15
-    %t21 =l sub %t16, 16
-    %t22 =l loadl %t21
-    %t23 =l sub %t22, 1
-    storel %t23, %t21
-    %t24 =w cslel %t23, 0
-    jnz %t24, @str_free12, @str_free_skip13
-@str_free12
-    call $nox_str_free_now(l %rt, l %t16)
-    jmp @str_free_done14
-@str_free_skip13
-    jmp @str_free_done14
-@str_free_done14
-    jmp @release_done11
-@release_skip10
-    jmp @release_done11
-@release_done11
-    %t25 =l sub %rt, 24
-    %t26 =l loadl %t25
-    %t27 =w ceql %t26, 0
-    jnz %t27, @cfree_slow16, @cfree_fast17
-@cfree_fast17
-    %t28 =l sub %rt, 32
-    %t29 =l loadl %t28
-    %t30 =l add %t29, 16
-    %t31 =l loadl %t30
-    %t32 =l sub %p, 8
-    storel %t31, %t32
-    storel %t32, %t30
-    jmp @cfree_done18
-@cfree_slow16
-    call $nox_rc_free_payload(l %rt, l %p, l 40)
-    jmp @cfree_done18
-@cfree_done18
-    jmp @release_done1
-@release_done1
-    ret
-}
-export function w $HPyError_eq(l %rt, l %a, l %b) {
-@start
-    %t0 =l add %a, 16
-    %t1 =l add %b, 16
-    %t2 =l loadl %t0
-    %t3 =l loadl %t1
-    %t4 =w ceql %t2, 0
-    %t5 =w ceql %t3, 0
-    %t6 =w or %t4, %t5
-    jnz %t6, @eqcmp_nullcase1, @eqcmp_rec2
-@eqcmp_nullcase1
-    %t7 =w and %t4, %t5
-    jnz %t7, @eqcmp_cont3, @classeq_mismatch0
-@eqcmp_rec2
-    %t8 =w call $strcmp(l %t2, l %t3)
-    %t9 =w ceqw %t8, 0
-    jnz %t9, @eqcmp_cont3, @classeq_mismatch0
-@eqcmp_cont3
-    %t10 =l add %a, 24
-    %t11 =l add %b, 24
-    %t12 =l loadl %t10
-    %t13 =l loadl %t11
-    %t14 =w ceql %t12, %t13
-    jnz %t14, @eqcmp_cont4, @classeq_mismatch0
-@eqcmp_cont4
-    %t15 =l add %a, 32
-    %t16 =l add %b, 32
-    %t17 =l loadl %t15
-    %t18 =l loadl %t16
-    %t19 =w ceql %t17, 0
-    %t20 =w ceql %t18, 0
-    %t21 =w or %t19, %t20
-    jnz %t21, @eqcmp_nullcase5, @eqcmp_rec6
-@eqcmp_nullcase5
-    %t22 =w and %t19, %t20
-    jnz %t22, @eqcmp_cont7, @classeq_mismatch0
-@eqcmp_rec6
-    %t23 =w call $strcmp(l %t17, l %t18)
-    %t24 =w ceqw %t23, 0
-    jnz %t24, @eqcmp_cont7, @classeq_mismatch0
-@eqcmp_cont7
-    ret 1
-@classeq_mismatch0
-    ret 0
-}
-export function l $HPyError_trace(l %rt, l %p) {
-@start
-    %t0 =l call $nox_trace_buf_alloc(l %rt, l 8)
-    storel 0, %t0
-    ret %t0
-}
-export function $HPyError_gc_free(l %rt, l %p) {
-@start
-    %t0 =l add %p, 16
-    %t1 =l loadl %t0
-    %t2 =w ceql %t1, 0
-    jnz %t2, @release_skip1, @release0
-@release0
-    %t3 =l sub %t1, 16
-    %t4 =l loadl %t3
-    %t5 =w csgel %t4, 536870912
-    jnz %t5, @str_free_done5, @str_rel_atomic6
-@str_rel_atomic6
-    %t6 =l sub %t1, 16
-    %t7 =l loadl %t6
-    %t8 =l sub %t7, 1
-    storel %t8, %t6
-    %t9 =w cslel %t8, 0
-    jnz %t9, @str_free3, @str_free_skip4
-@str_free3
-    call $nox_str_free_now(l %rt, l %t1)
-    jmp @str_free_done5
-@str_free_skip4
-    jmp @str_free_done5
-@str_free_done5
-    jmp @release_done2
-@release_skip1
-    jmp @release_done2
-@release_done2
-    %t10 =l add %p, 32
-    %t11 =l loadl %t10
-    %t12 =w ceql %t11, 0
-    jnz %t12, @release_skip8, @release7
-@release7
-    %t13 =l sub %t11, 16
-    %t14 =l loadl %t13
-    %t15 =w csgel %t14, 536870912
-    jnz %t15, @str_free_done12, @str_rel_atomic13
-@str_rel_atomic13
-    %t16 =l sub %t11, 16
-    %t17 =l loadl %t16
-    %t18 =l sub %t17, 1
-    storel %t18, %t16
-    %t19 =w cslel %t18, 0
-    jnz %t19, @str_free10, @str_free_skip11
-@str_free10
-    call $nox_str_free_now(l %rt, l %t11)
-    jmp @str_free_done12
-@str_free_skip11
-    jmp @str_free_done12
-@str_free_done12
-    jmp @release_done9
-@release_skip8
-    jmp @release_done9
-@release_done9
-    call $nox_rc_free_payload(l %rt, l %p, l 40)
-    ret
-}
-data $HPyError_vtable = { l $Exception___str__ }
 export function $CancelledError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -3219,7 +3027,7 @@ export function $nox_pcre2_Match___init__(l %rt, l %p_self, l %p_text, l %p_span
     jmp @calloc_done31
 @calloc_done31
     %t63 =l loadl %t51
-    storel 16, %t63
+    storel 15, %t63
     %t64 =l add %t63, 8
     storel $IndexError_vtable, %t64
     %t65 =l add %t63, 16
@@ -3289,7 +3097,7 @@ export function $nox_pcre2_Match___init__(l %rt, l %p_self, l %p_text, l %p_span
     jmp @calloc_done47
 @calloc_done47
     %t102 =l loadl %t90
-    storel 16, %t102
+    storel 15, %t102
     %t103 =l add %t102, 8
     storel $IndexError_vtable, %t103
     %t104 =l add %t102, 16
@@ -3427,7 +3235,7 @@ export function w $nox_pcre2_Match_matched(l %rt, l %p_self, l %p_i) {
     jmp @calloc_done11
 @calloc_done11
     %t37 =l loadl %t25
-    storel 16, %t37
+    storel 15, %t37
     %t38 =l add %t37, 8
     storel $IndexError_vtable, %t38
     %t39 =l add %t37, 16
@@ -3526,7 +3334,7 @@ export function l $nox_pcre2_Match_group(l %rt, l %p_self, l %p_i) {
     jmp @calloc_done8
 @calloc_done8
     %t27 =l loadl %t15
-    storel 16, %t27
+    storel 15, %t27
     %t28 =l add %t27, 8
     storel $IndexError_vtable, %t28
     %t29 =l add %t27, 16
@@ -3682,7 +3490,7 @@ export function l $nox_pcre2_Match_group(l %rt, l %p_self, l %p_i) {
     jmp @calloc_done30
 @calloc_done30
     %t73 =l loadl %t61
-    storel 16, %t73
+    storel 15, %t73
     %t74 =l add %t73, 8
     storel $IndexError_vtable, %t74
     %t75 =l add %t73, 16
@@ -3752,7 +3560,7 @@ export function l $nox_pcre2_Match_group(l %rt, l %p_self, l %p_i) {
     jmp @calloc_done48
 @calloc_done48
     %t122 =l loadl %t110
-    storel 16, %t122
+    storel 15, %t122
     %t123 =l add %t122, 8
     storel $IndexError_vtable, %t123
     %t124 =l add %t122, 16
@@ -3822,7 +3630,7 @@ export function l $nox_pcre2_Match_group(l %rt, l %p_self, l %p_i) {
     jmp @calloc_done64
 @calloc_done64
     %t167 =l loadl %t155
-    storel 16, %t167
+    storel 15, %t167
     %t168 =l add %t167, 8
     storel $IndexError_vtable, %t168
     %t169 =l add %t167, 16
@@ -3946,7 +3754,7 @@ export function l $nox_pcre2_Match_index_of(l %rt, l %p_self, l %p_name) {
     jmp @calloc_done9
 @calloc_done9
     %t29 =l loadl %t17
-    storel 16, %t29
+    storel 15, %t29
     %t30 =l add %t29, 8
     storel $IndexError_vtable, %t30
     %t31 =l add %t29, 16
@@ -4049,7 +3857,7 @@ export function l $nox_pcre2_Match_named(l %rt, l %p_self, l %p_name) {
     jmp @calloc_done10
 @calloc_done10
     %t29 =l loadl %t17
-    storel 16, %t29
+    storel 15, %t29
     %t30 =l add %t29, 8
     storel $IndexError_vtable, %t30
     %t31 =l add %t29, 16
@@ -5118,7 +4926,7 @@ export function l $nox_pcre2_Pcre2_search(l %rt, l %p_self, l %p_text, l %p_star
     jmp @calloc_done22
 @calloc_done22
     %t41 =l loadl %t29
-    storel 16, %t41
+    storel 15, %t41
     %t42 =l add %t41, 8
     storel $IndexError_vtable, %t42
     %t43 =l add %t41, 16
@@ -5326,7 +5134,7 @@ export function l $nox_pcre2_Pcre2_match(l %rt, l %p_self, l %p_text, l %p_start
     jmp @calloc_done22
 @calloc_done22
     %t41 =l loadl %t29
-    storel 16, %t41
+    storel 15, %t41
     %t42 =l add %t41, 8
     storel $IndexError_vtable, %t42
     %t43 =l add %t41, 16
@@ -5532,7 +5340,7 @@ export function l $nox_pcre2_Pcre2_full_match(l %rt, l %p_self, l %p_text) {
     jmp @calloc_done22
 @calloc_done22
     %t40 =l loadl %t28
-    storel 16, %t40
+    storel 15, %t40
     %t41 =l add %t40, 8
     storel $IndexError_vtable, %t41
     %t42 =l add %t40, 16
@@ -5990,7 +5798,7 @@ export function l $nox_pcre2_Pcre2_find_all(l %rt, l %p_self, l %p_text) {
     jmp @calloc_done33
 @calloc_done33
     %t78 =l loadl %t66
-    storel 16, %t78
+    storel 15, %t78
     %t79 =l add %t78, 8
     storel $IndexError_vtable, %t79
     %t80 =l add %t78, 16
@@ -6124,7 +5932,7 @@ export function l $nox_pcre2_Pcre2_find_all(l %rt, l %p_self, l %p_text) {
     jmp @calloc_done67
 @calloc_done67
     %t138 =l loadl %t126
-    storel 16, %t138
+    storel 15, %t138
     %t139 =l add %t138, 8
     storel $IndexError_vtable, %t139
     %t140 =l add %t138, 16
@@ -6419,7 +6227,7 @@ export function l $nox_pcre2_Pcre2_count_matches(l %rt, l %p_self, l %p_text) {
     jmp @calloc_done24
 @calloc_done24
     %t55 =l loadl %t43
-    storel 13, %t55
+    storel 12, %t55
     %t56 =l add %t55, 8
     storel $ZeroDivisionError_vtable, %t56
     %t57 =l add %t55, 16
@@ -7648,7 +7456,7 @@ export function $nox_regex_Match___init__(l %rt, l %p_self, l %p_text, l %p_span
     jmp @calloc_done31
 @calloc_done31
     %t63 =l loadl %t51
-    storel 16, %t63
+    storel 15, %t63
     %t64 =l add %t63, 8
     storel $IndexError_vtable, %t64
     %t65 =l add %t63, 16
@@ -7718,7 +7526,7 @@ export function $nox_regex_Match___init__(l %rt, l %p_self, l %p_text, l %p_span
     jmp @calloc_done47
 @calloc_done47
     %t102 =l loadl %t90
-    storel 16, %t102
+    storel 15, %t102
     %t103 =l add %t102, 8
     storel $IndexError_vtable, %t103
     %t104 =l add %t102, 16
@@ -7856,7 +7664,7 @@ export function w $nox_regex_Match_matched(l %rt, l %p_self, l %p_i) {
     jmp @calloc_done11
 @calloc_done11
     %t37 =l loadl %t25
-    storel 16, %t37
+    storel 15, %t37
     %t38 =l add %t37, 8
     storel $IndexError_vtable, %t38
     %t39 =l add %t37, 16
@@ -7955,7 +7763,7 @@ export function l $nox_regex_Match_group(l %rt, l %p_self, l %p_i) {
     jmp @calloc_done8
 @calloc_done8
     %t27 =l loadl %t15
-    storel 16, %t27
+    storel 15, %t27
     %t28 =l add %t27, 8
     storel $IndexError_vtable, %t28
     %t29 =l add %t27, 16
@@ -8111,7 +7919,7 @@ export function l $nox_regex_Match_group(l %rt, l %p_self, l %p_i) {
     jmp @calloc_done30
 @calloc_done30
     %t73 =l loadl %t61
-    storel 16, %t73
+    storel 15, %t73
     %t74 =l add %t73, 8
     storel $IndexError_vtable, %t74
     %t75 =l add %t73, 16
@@ -8181,7 +7989,7 @@ export function l $nox_regex_Match_group(l %rt, l %p_self, l %p_i) {
     jmp @calloc_done48
 @calloc_done48
     %t122 =l loadl %t110
-    storel 16, %t122
+    storel 15, %t122
     %t123 =l add %t122, 8
     storel $IndexError_vtable, %t123
     %t124 =l add %t122, 16
@@ -8251,7 +8059,7 @@ export function l $nox_regex_Match_group(l %rt, l %p_self, l %p_i) {
     jmp @calloc_done64
 @calloc_done64
     %t167 =l loadl %t155
-    storel 16, %t167
+    storel 15, %t167
     %t168 =l add %t167, 8
     storel $IndexError_vtable, %t168
     %t169 =l add %t167, 16
@@ -8375,7 +8183,7 @@ export function l $nox_regex_Match_index_of(l %rt, l %p_self, l %p_name) {
     jmp @calloc_done9
 @calloc_done9
     %t29 =l loadl %t17
-    storel 16, %t29
+    storel 15, %t29
     %t30 =l add %t29, 8
     storel $IndexError_vtable, %t30
     %t31 =l add %t29, 16
@@ -8478,7 +8286,7 @@ export function l $nox_regex_Match_named(l %rt, l %p_self, l %p_name) {
     jmp @calloc_done10
 @calloc_done10
     %t29 =l loadl %t17
-    storel 16, %t29
+    storel 15, %t29
     %t30 =l add %t29, 8
     storel $IndexError_vtable, %t30
     %t31 =l add %t29, 16
@@ -8931,105 +8739,99 @@ export function l $nox_trace_dispatch(l %rt, l %tag, l %p) {
     %t1 =l call $Exception_trace(l %rt, l %p)
     ret %t1
 @trace_next1
-    %t2 =w ceql %tag, 17
+    %t2 =w ceql %tag, 16
     jnz %t2, @trace_case2, @trace_next3
 @trace_case2
     %t3 =l call $ValueError_trace(l %rt, l %p)
     ret %t3
 @trace_next3
-    %t4 =w ceql %tag, 16
+    %t4 =w ceql %tag, 15
     jnz %t4, @trace_case4, @trace_next5
 @trace_case4
     %t5 =l call $IndexError_trace(l %rt, l %p)
     ret %t5
 @trace_next5
-    %t6 =w ceql %tag, 15
+    %t6 =w ceql %tag, 14
     jnz %t6, @trace_case6, @trace_next7
 @trace_case6
     %t7 =l call $RuntimeError_trace(l %rt, l %p)
     ret %t7
 @trace_next7
-    %t8 =w ceql %tag, 14
+    %t8 =w ceql %tag, 13
     jnz %t8, @trace_case8, @trace_next9
 @trace_case8
     %t9 =l call $AssertionError_trace(l %rt, l %p)
     ret %t9
 @trace_next9
-    %t10 =w ceql %tag, 13
+    %t10 =w ceql %tag, 12
     jnz %t10, @trace_case10, @trace_next11
 @trace_case10
     %t11 =l call $ZeroDivisionError_trace(l %rt, l %p)
     ret %t11
 @trace_next11
-    %t12 =w ceql %tag, 12
+    %t12 =w ceql %tag, 11
     jnz %t12, @trace_case12, @trace_next13
 @trace_case12
     %t13 =l call $KeyError_trace(l %rt, l %p)
     ret %t13
 @trace_next13
-    %t14 =w ceql %tag, 11
+    %t14 =w ceql %tag, 10
     jnz %t14, @trace_case14, @trace_next15
 @trace_case14
     %t15 =l call $StopIteration_trace(l %rt, l %p)
     ret %t15
 @trace_next15
-    %t16 =w ceql %tag, 10
+    %t16 =w ceql %tag, 9
     jnz %t16, @trace_case16, @trace_next17
 @trace_case16
     %t17 =l call $GeneratorExit_trace(l %rt, l %p)
     ret %t17
 @trace_next17
-    %t18 =w ceql %tag, 9
+    %t18 =w ceql %tag, 8
     jnz %t18, @trace_case18, @trace_next19
 @trace_case18
-    %t19 =l call $HPyError_trace(l %rt, l %p)
+    %t19 =l call $CancelledError_trace(l %rt, l %p)
     ret %t19
 @trace_next19
-    %t20 =w ceql %tag, 8
+    %t20 =w ceql %tag, 7
     jnz %t20, @trace_case20, @trace_next21
 @trace_case20
-    %t21 =l call $CancelledError_trace(l %rt, l %p)
+    %t21 =l call $JsonValue_trace(l %rt, l %p)
     ret %t21
 @trace_next21
-    %t22 =w ceql %tag, 7
+    %t22 =w ceql %tag, 6
     jnz %t22, @trace_case22, @trace_next23
 @trace_case22
-    %t23 =l call $JsonValue_trace(l %rt, l %p)
+    %t23 =l call $nox_pcre2_Pcre2Error_trace(l %rt, l %p)
     ret %t23
 @trace_next23
-    %t24 =w ceql %tag, 6
+    %t24 =w ceql %tag, 5
     jnz %t24, @trace_case24, @trace_next25
 @trace_case24
-    %t25 =l call $nox_pcre2_Pcre2Error_trace(l %rt, l %p)
+    %t25 =l call $nox_pcre2_Match_trace(l %rt, l %p)
     ret %t25
 @trace_next25
-    %t26 =w ceql %tag, 5
+    %t26 =w ceql %tag, 4
     jnz %t26, @trace_case26, @trace_next27
 @trace_case26
-    %t27 =l call $nox_pcre2_Match_trace(l %rt, l %p)
+    %t27 =l call $nox_pcre2_Pcre2_trace(l %rt, l %p)
     ret %t27
 @trace_next27
-    %t28 =w ceql %tag, 4
+    %t28 =w ceql %tag, 3
     jnz %t28, @trace_case28, @trace_next29
 @trace_case28
-    %t29 =l call $nox_pcre2_Pcre2_trace(l %rt, l %p)
+    %t29 =l call $nox_regex_RegexError_trace(l %rt, l %p)
     ret %t29
 @trace_next29
-    %t30 =w ceql %tag, 3
+    %t30 =w ceql %tag, 2
     jnz %t30, @trace_case30, @trace_next31
 @trace_case30
-    %t31 =l call $nox_regex_RegexError_trace(l %rt, l %p)
+    %t31 =l call $nox_regex_Match_trace(l %rt, l %p)
     ret %t31
 @trace_next31
-    %t32 =w ceql %tag, 2
-    jnz %t32, @trace_case32, @trace_next33
-@trace_case32
-    %t33 =l call $nox_regex_Match_trace(l %rt, l %p)
-    ret %t33
-@trace_next33
-    %t34 =l call $nox_trace_buf_alloc(l %rt, l 8)
-    storel 0, %t34
-    ret %t34
+    %t32 =l call $nox_trace_buf_alloc(l %rt, l 8)
+    storel 0, %t32
+    ret %t32
 }
 export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
 @start
@@ -9039,102 +8841,96 @@ export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
     call $Exception_gc_free(l %rt, l %p)
     ret
 @gc_free_next1
-    %t1 =w ceql %tag, 17
+    %t1 =w ceql %tag, 16
     jnz %t1, @gc_free_case2, @gc_free_next3
 @gc_free_case2
     call $ValueError_gc_free(l %rt, l %p)
     ret
 @gc_free_next3
-    %t2 =w ceql %tag, 16
+    %t2 =w ceql %tag, 15
     jnz %t2, @gc_free_case4, @gc_free_next5
 @gc_free_case4
     call $IndexError_gc_free(l %rt, l %p)
     ret
 @gc_free_next5
-    %t3 =w ceql %tag, 15
+    %t3 =w ceql %tag, 14
     jnz %t3, @gc_free_case6, @gc_free_next7
 @gc_free_case6
     call $RuntimeError_gc_free(l %rt, l %p)
     ret
 @gc_free_next7
-    %t4 =w ceql %tag, 14
+    %t4 =w ceql %tag, 13
     jnz %t4, @gc_free_case8, @gc_free_next9
 @gc_free_case8
     call $AssertionError_gc_free(l %rt, l %p)
     ret
 @gc_free_next9
-    %t5 =w ceql %tag, 13
+    %t5 =w ceql %tag, 12
     jnz %t5, @gc_free_case10, @gc_free_next11
 @gc_free_case10
     call $ZeroDivisionError_gc_free(l %rt, l %p)
     ret
 @gc_free_next11
-    %t6 =w ceql %tag, 12
+    %t6 =w ceql %tag, 11
     jnz %t6, @gc_free_case12, @gc_free_next13
 @gc_free_case12
     call $KeyError_gc_free(l %rt, l %p)
     ret
 @gc_free_next13
-    %t7 =w ceql %tag, 11
+    %t7 =w ceql %tag, 10
     jnz %t7, @gc_free_case14, @gc_free_next15
 @gc_free_case14
     call $StopIteration_gc_free(l %rt, l %p)
     ret
 @gc_free_next15
-    %t8 =w ceql %tag, 10
+    %t8 =w ceql %tag, 9
     jnz %t8, @gc_free_case16, @gc_free_next17
 @gc_free_case16
     call $GeneratorExit_gc_free(l %rt, l %p)
     ret
 @gc_free_next17
-    %t9 =w ceql %tag, 9
+    %t9 =w ceql %tag, 8
     jnz %t9, @gc_free_case18, @gc_free_next19
 @gc_free_case18
-    call $HPyError_gc_free(l %rt, l %p)
-    ret
-@gc_free_next19
-    %t10 =w ceql %tag, 8
-    jnz %t10, @gc_free_case20, @gc_free_next21
-@gc_free_case20
     call $CancelledError_gc_free(l %rt, l %p)
     ret
-@gc_free_next21
-    %t11 =w ceql %tag, 7
-    jnz %t11, @gc_free_case22, @gc_free_next23
-@gc_free_case22
+@gc_free_next19
+    %t10 =w ceql %tag, 7
+    jnz %t10, @gc_free_case20, @gc_free_next21
+@gc_free_case20
     call $JsonValue_gc_free(l %rt, l %p)
     ret
-@gc_free_next23
-    %t12 =w ceql %tag, 6
-    jnz %t12, @gc_free_case24, @gc_free_next25
-@gc_free_case24
+@gc_free_next21
+    %t11 =w ceql %tag, 6
+    jnz %t11, @gc_free_case22, @gc_free_next23
+@gc_free_case22
     call $nox_pcre2_Pcre2Error_gc_free(l %rt, l %p)
     ret
-@gc_free_next25
-    %t13 =w ceql %tag, 5
-    jnz %t13, @gc_free_case26, @gc_free_next27
-@gc_free_case26
+@gc_free_next23
+    %t12 =w ceql %tag, 5
+    jnz %t12, @gc_free_case24, @gc_free_next25
+@gc_free_case24
     call $nox_pcre2_Match_gc_free(l %rt, l %p)
     ret
-@gc_free_next27
-    %t14 =w ceql %tag, 4
-    jnz %t14, @gc_free_case28, @gc_free_next29
-@gc_free_case28
+@gc_free_next25
+    %t13 =w ceql %tag, 4
+    jnz %t13, @gc_free_case26, @gc_free_next27
+@gc_free_case26
     call $nox_pcre2_Pcre2_gc_free(l %rt, l %p)
     ret
-@gc_free_next29
-    %t15 =w ceql %tag, 3
-    jnz %t15, @gc_free_case30, @gc_free_next31
-@gc_free_case30
+@gc_free_next27
+    %t14 =w ceql %tag, 3
+    jnz %t14, @gc_free_case28, @gc_free_next29
+@gc_free_case28
     call $nox_regex_RegexError_gc_free(l %rt, l %p)
     ret
-@gc_free_next31
-    %t16 =w ceql %tag, 2
-    jnz %t16, @gc_free_case32, @gc_free_next33
-@gc_free_case32
+@gc_free_next29
+    %t15 =w ceql %tag, 2
+    jnz %t15, @gc_free_case30, @gc_free_next31
+@gc_free_case30
     call $nox_regex_Match_gc_free(l %rt, l %p)
     ret
-@gc_free_next33
+@gc_free_next31
     ret
 }
 export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
@@ -9145,102 +8941,96 @@ export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
     call $Exception_release(l %rt, l %p)
     ret
 @class_release_next1
-    %t1 =w ceql %tag, 17
+    %t1 =w ceql %tag, 16
     jnz %t1, @class_release_case2, @class_release_next3
 @class_release_case2
     call $ValueError_release(l %rt, l %p)
     ret
 @class_release_next3
-    %t2 =w ceql %tag, 16
+    %t2 =w ceql %tag, 15
     jnz %t2, @class_release_case4, @class_release_next5
 @class_release_case4
     call $IndexError_release(l %rt, l %p)
     ret
 @class_release_next5
-    %t3 =w ceql %tag, 15
+    %t3 =w ceql %tag, 14
     jnz %t3, @class_release_case6, @class_release_next7
 @class_release_case6
     call $RuntimeError_release(l %rt, l %p)
     ret
 @class_release_next7
-    %t4 =w ceql %tag, 14
+    %t4 =w ceql %tag, 13
     jnz %t4, @class_release_case8, @class_release_next9
 @class_release_case8
     call $AssertionError_release(l %rt, l %p)
     ret
 @class_release_next9
-    %t5 =w ceql %tag, 13
+    %t5 =w ceql %tag, 12
     jnz %t5, @class_release_case10, @class_release_next11
 @class_release_case10
     call $ZeroDivisionError_release(l %rt, l %p)
     ret
 @class_release_next11
-    %t6 =w ceql %tag, 12
+    %t6 =w ceql %tag, 11
     jnz %t6, @class_release_case12, @class_release_next13
 @class_release_case12
     call $KeyError_release(l %rt, l %p)
     ret
 @class_release_next13
-    %t7 =w ceql %tag, 11
+    %t7 =w ceql %tag, 10
     jnz %t7, @class_release_case14, @class_release_next15
 @class_release_case14
     call $StopIteration_release(l %rt, l %p)
     ret
 @class_release_next15
-    %t8 =w ceql %tag, 10
+    %t8 =w ceql %tag, 9
     jnz %t8, @class_release_case16, @class_release_next17
 @class_release_case16
     call $GeneratorExit_release(l %rt, l %p)
     ret
 @class_release_next17
-    %t9 =w ceql %tag, 9
+    %t9 =w ceql %tag, 8
     jnz %t9, @class_release_case18, @class_release_next19
 @class_release_case18
-    call $HPyError_release(l %rt, l %p)
-    ret
-@class_release_next19
-    %t10 =w ceql %tag, 8
-    jnz %t10, @class_release_case20, @class_release_next21
-@class_release_case20
     call $CancelledError_release(l %rt, l %p)
     ret
-@class_release_next21
-    %t11 =w ceql %tag, 7
-    jnz %t11, @class_release_case22, @class_release_next23
-@class_release_case22
+@class_release_next19
+    %t10 =w ceql %tag, 7
+    jnz %t10, @class_release_case20, @class_release_next21
+@class_release_case20
     call $JsonValue_release(l %rt, l %p)
     ret
-@class_release_next23
-    %t12 =w ceql %tag, 6
-    jnz %t12, @class_release_case24, @class_release_next25
-@class_release_case24
+@class_release_next21
+    %t11 =w ceql %tag, 6
+    jnz %t11, @class_release_case22, @class_release_next23
+@class_release_case22
     call $nox_pcre2_Pcre2Error_release(l %rt, l %p)
     ret
-@class_release_next25
-    %t13 =w ceql %tag, 5
-    jnz %t13, @class_release_case26, @class_release_next27
-@class_release_case26
+@class_release_next23
+    %t12 =w ceql %tag, 5
+    jnz %t12, @class_release_case24, @class_release_next25
+@class_release_case24
     call $nox_pcre2_Match_release(l %rt, l %p)
     ret
-@class_release_next27
-    %t14 =w ceql %tag, 4
-    jnz %t14, @class_release_case28, @class_release_next29
-@class_release_case28
+@class_release_next25
+    %t13 =w ceql %tag, 4
+    jnz %t13, @class_release_case26, @class_release_next27
+@class_release_case26
     call $nox_pcre2_Pcre2_release(l %rt, l %p)
     ret
-@class_release_next29
-    %t15 =w ceql %tag, 3
-    jnz %t15, @class_release_case30, @class_release_next31
-@class_release_case30
+@class_release_next27
+    %t14 =w ceql %tag, 3
+    jnz %t14, @class_release_case28, @class_release_next29
+@class_release_case28
     call $nox_regex_RegexError_release(l %rt, l %p)
     ret
-@class_release_next31
-    %t16 =w ceql %tag, 2
-    jnz %t16, @class_release_case32, @class_release_next33
-@class_release_case32
+@class_release_next29
+    %t15 =w ceql %tag, 2
+    jnz %t15, @class_release_case30, @class_release_next31
+@class_release_case30
     call $nox_regex_Match_release(l %rt, l %p)
     ret
-@class_release_next33
+@class_release_next31
     ret
 }
 data $__nox_classname_unknown = { b "unknown class", b 0 }
@@ -9253,7 +9043,6 @@ data $__nox_classname_ZeroDivisionError = { b "ZeroDivisionError", b 0 }
 data $__nox_classname_KeyError = { b "KeyError", b 0 }
 data $__nox_classname_StopIteration = { b "StopIteration", b 0 }
 data $__nox_classname_GeneratorExit = { b "GeneratorExit", b 0 }
-data $__nox_classname_HPyError = { b "HPyError", b 0 }
 data $__nox_classname_CancelledError = { b "CancelledError", b 0 }
 data $__nox_classname_JsonValue = { b "JsonValue", b 0 }
 data $__nox_classname_nox_pcre2_Pcre2Error = { b "nox_pcre2_Pcre2Error", b 0 }
@@ -9268,86 +9057,81 @@ export function l $nox_class_name_dispatch(l %rt, l %tag, l %p) {
 @class_name_case0
     ret $__nox_classname_Exception
 @class_name_next1
-    %t1 =w ceql %tag, 17
+    %t1 =w ceql %tag, 16
     jnz %t1, @class_name_case2, @class_name_next3
 @class_name_case2
     ret $__nox_classname_ValueError
 @class_name_next3
-    %t2 =w ceql %tag, 16
+    %t2 =w ceql %tag, 15
     jnz %t2, @class_name_case4, @class_name_next5
 @class_name_case4
     ret $__nox_classname_IndexError
 @class_name_next5
-    %t3 =w ceql %tag, 15
+    %t3 =w ceql %tag, 14
     jnz %t3, @class_name_case6, @class_name_next7
 @class_name_case6
     ret $__nox_classname_RuntimeError
 @class_name_next7
-    %t4 =w ceql %tag, 14
+    %t4 =w ceql %tag, 13
     jnz %t4, @class_name_case8, @class_name_next9
 @class_name_case8
     ret $__nox_classname_AssertionError
 @class_name_next9
-    %t5 =w ceql %tag, 13
+    %t5 =w ceql %tag, 12
     jnz %t5, @class_name_case10, @class_name_next11
 @class_name_case10
     ret $__nox_classname_ZeroDivisionError
 @class_name_next11
-    %t6 =w ceql %tag, 12
+    %t6 =w ceql %tag, 11
     jnz %t6, @class_name_case12, @class_name_next13
 @class_name_case12
     ret $__nox_classname_KeyError
 @class_name_next13
-    %t7 =w ceql %tag, 11
+    %t7 =w ceql %tag, 10
     jnz %t7, @class_name_case14, @class_name_next15
 @class_name_case14
     ret $__nox_classname_StopIteration
 @class_name_next15
-    %t8 =w ceql %tag, 10
+    %t8 =w ceql %tag, 9
     jnz %t8, @class_name_case16, @class_name_next17
 @class_name_case16
     ret $__nox_classname_GeneratorExit
 @class_name_next17
-    %t9 =w ceql %tag, 9
+    %t9 =w ceql %tag, 8
     jnz %t9, @class_name_case18, @class_name_next19
 @class_name_case18
-    ret $__nox_classname_HPyError
+    ret $__nox_classname_CancelledError
 @class_name_next19
-    %t10 =w ceql %tag, 8
+    %t10 =w ceql %tag, 7
     jnz %t10, @class_name_case20, @class_name_next21
 @class_name_case20
-    ret $__nox_classname_CancelledError
+    ret $__nox_classname_JsonValue
 @class_name_next21
-    %t11 =w ceql %tag, 7
+    %t11 =w ceql %tag, 6
     jnz %t11, @class_name_case22, @class_name_next23
 @class_name_case22
-    ret $__nox_classname_JsonValue
+    ret $__nox_classname_nox_pcre2_Pcre2Error
 @class_name_next23
-    %t12 =w ceql %tag, 6
+    %t12 =w ceql %tag, 5
     jnz %t12, @class_name_case24, @class_name_next25
 @class_name_case24
-    ret $__nox_classname_nox_pcre2_Pcre2Error
+    ret $__nox_classname_nox_pcre2_Match
 @class_name_next25
-    %t13 =w ceql %tag, 5
+    %t13 =w ceql %tag, 4
     jnz %t13, @class_name_case26, @class_name_next27
 @class_name_case26
-    ret $__nox_classname_nox_pcre2_Match
+    ret $__nox_classname_nox_pcre2_Pcre2
 @class_name_next27
-    %t14 =w ceql %tag, 4
+    %t14 =w ceql %tag, 3
     jnz %t14, @class_name_case28, @class_name_next29
 @class_name_case28
-    ret $__nox_classname_nox_pcre2_Pcre2
+    ret $__nox_classname_nox_regex_RegexError
 @class_name_next29
-    %t15 =w ceql %tag, 3
+    %t15 =w ceql %tag, 2
     jnz %t15, @class_name_case30, @class_name_next31
 @class_name_case30
-    ret $__nox_classname_nox_regex_RegexError
-@class_name_next31
-    %t16 =w ceql %tag, 2
-    jnz %t16, @class_name_case32, @class_name_next33
-@class_name_case32
     ret $__nox_classname_nox_regex_Match
-@class_name_next33
+@class_name_next31
     ret $__nox_classname_unknown
 }
 export function $nox_init_globals(l %rt) {
@@ -9518,7 +9302,7 @@ export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
     jmp @calloc_done5
 @calloc_done5
     %t21 =l loadl %t9
-    storel 17, %t21
+    storel 16, %t21
     %t22 =l add %t21, 8
     storel $ValueError_vtable, %t22
     %t23 =l add %t21, 16
@@ -9559,8 +9343,8 @@ export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
     ret 0
 @exc_continue15
     %t35 =l add %t21, 24
-    storel 488, %t35
-    call $nox_raise(l %rt, l %t21, l 488)
+    storel 478, %t35
+    call $nox_raise(l %rt, l %t21, l 478)
     %t36 =l sub %rt, 48
     %t37 =w loadub %t36
     %t38 =l sub %rt, 64
@@ -9627,7 +9411,7 @@ export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
     jmp @calloc_done5
 @calloc_done5
     %t21 =l loadl %t9
-    storel 17, %t21
+    storel 16, %t21
     %t22 =l add %t21, 8
     storel $ValueError_vtable, %t22
     %t23 =l add %t21, 16
@@ -9668,8 +9452,8 @@ export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
     ret 0
 @exc_continue15
     %t35 =l add %t21, 24
-    storel 493, %t35
-    call $nox_raise(l %rt, l %t21, l 493)
+    storel 483, %t35
+    call $nox_raise(l %rt, l %t21, l 483)
     %t36 =l sub %rt, 48
     %t37 =w loadub %t36
     %t38 =l sub %rt, 64
@@ -9736,7 +9520,7 @@ export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
     jmp @calloc_done5
 @calloc_done5
     %t21 =l loadl %t9
-    storel 17, %t21
+    storel 16, %t21
     %t22 =l add %t21, 8
     storel $ValueError_vtable, %t22
     %t23 =l add %t21, 16
@@ -9777,8 +9561,8 @@ export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
     ret 0
 @exc_continue15
     %t35 =l add %t21, 24
-    storel 498, %t35
-    call $nox_raise(l %rt, l %t21, l 498)
+    storel 488, %t35
+    call $nox_raise(l %rt, l %t21, l 488)
     %t36 =l sub %rt, 48
     %t37 =w loadub %t36
     %t38 =l sub %rt, 64
@@ -9855,7 +9639,7 @@ export function l $ord(l %rt, l %p_s) {
     jmp @calloc_done5
 @calloc_done5
     %t20 =l loadl %t8
-    storel 17, %t20
+    storel 16, %t20
     %t21 =l add %t20, 8
     storel $ValueError_vtable, %t21
     %t22 =l add %t20, 16
@@ -9896,8 +9680,8 @@ export function l $ord(l %rt, l %p_s) {
     ret 0
 @exc_continue15
     %t34 =l add %t20, 24
-    storel 507, %t34
-    call $nox_raise(l %rt, l %t20, l 507)
+    storel 497, %t34
+    call $nox_raise(l %rt, l %t20, l 497)
     %t35 =l sub %rt, 48
     %t36 =w loadub %t35
     %t37 =l sub %rt, 64
@@ -10649,7 +10433,7 @@ export function l $nox_pcre2_expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done426
 @calloc_done426
     %t660 =l loadl %t648
-    storel 17, %t660
+    storel 16, %t660
     %t661 =l add %t660, 8
     storel $ValueError_vtable, %t661
     %t662 =l add %t660, 16
@@ -11756,7 +11540,7 @@ export function l $nox_pcre2_expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done795
 @calloc_done795
     %t1205 =l loadl %t1193
-    storel 17, %t1205
+    storel 16, %t1205
     %t1206 =l add %t1205, 8
     storel $ValueError_vtable, %t1206
     %t1207 =l add %t1205, 16
@@ -12791,7 +12575,7 @@ export function l $nox_pcre2_expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done19
 @calloc_done19
     %t62 =l loadl %t50
-    storel 16, %t62
+    storel 15, %t62
     %t63 =l add %t62, 8
     storel $IndexError_vtable, %t63
     %t64 =l add %t62, 16
@@ -13121,7 +12905,7 @@ export function l $nox_pcre2_expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done126
 @calloc_done126
     %t225 =l loadl %t213
-    storel 16, %t225
+    storel 15, %t225
     %t226 =l add %t225, 8
     storel $IndexError_vtable, %t226
     %t227 =l add %t225, 16
@@ -13451,7 +13235,7 @@ export function l $nox_pcre2_expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done231
 @calloc_done231
     %t375 =l loadl %t363
-    storel 16, %t375
+    storel 15, %t375
     %t376 =l add %t375, 8
     storel $IndexError_vtable, %t376
     %t377 =l add %t375, 16
@@ -13781,7 +13565,7 @@ export function l $nox_pcre2_expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done330
 @calloc_done330
     %t524 =l loadl %t512
-    storel 16, %t524
+    storel 15, %t524
     %t525 =l add %t524, 8
     storel $IndexError_vtable, %t525
     %t526 =l add %t524, 16
@@ -14111,7 +13895,7 @@ export function l $nox_pcre2_expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done577
 @calloc_done577
     %t881 =l loadl %t869
-    storel 16, %t881
+    storel 15, %t881
     %t882 =l add %t881, 8
     storel $IndexError_vtable, %t882
     %t883 =l add %t881, 16
@@ -14932,7 +14716,7 @@ export function l $nox_pcre2_search(l %rt, l %p_pattern, l %p_text, l %p_flags) 
     jmp @calloc_done33
 @calloc_done33
     %t54 =l loadl %t42
-    storel 16, %t54
+    storel 15, %t54
     %t55 =l add %t54, 8
     storel $IndexError_vtable, %t55
     %t56 =l add %t54, 16
@@ -15176,7 +14960,7 @@ export function l $nox_pcre2_match(l %rt, l %p_pattern, l %p_text, l %p_flags) {
     jmp @calloc_done33
 @calloc_done33
     %t52 =l loadl %t40
-    storel 16, %t52
+    storel 15, %t52
     %t53 =l add %t52, 8
     storel $IndexError_vtable, %t53
     %t54 =l add %t52, 16
@@ -15421,7 +15205,7 @@ export function l $nox_pcre2_full_match(l %rt, l %p_pattern, l %p_text, l %p_fla
     jmp @calloc_done33
 @calloc_done33
     %t53 =l loadl %t41
-    storel 16, %t53
+    storel 15, %t53
     %t54 =l add %t53, 8
     storel $IndexError_vtable, %t54
     %t55 =l add %t53, 16
@@ -16926,7 +16710,7 @@ export function l $nox_regex_search(l %rt, l %p_pattern, l %p_text, l %p_flags) 
     jmp @calloc_done22
 @calloc_done22
     %t41 =l loadl %t29
-    storel 16, %t41
+    storel 15, %t41
     %t42 =l add %t41, 8
     storel $IndexError_vtable, %t42
     %t43 =l add %t41, 16
@@ -17135,7 +16919,7 @@ export function l $nox_regex_match(l %rt, l %p_pattern, l %p_text, l %p_flags) {
     jmp @calloc_done22
 @calloc_done22
     %t42 =l loadl %t30
-    storel 16, %t42
+    storel 15, %t42
     %t43 =l add %t42, 8
     storel $IndexError_vtable, %t43
     %t44 =l add %t42, 16
@@ -17345,7 +17129,7 @@ export function l $nox_regex_full_match(l %rt, l %p_pattern, l %p_text, l %p_fla
     jmp @calloc_done22
 @calloc_done22
     %t43 =l loadl %t31
-    storel 16, %t43
+    storel 15, %t43
     %t44 =l add %t43, 8
     storel $IndexError_vtable, %t44
     %t45 =l add %t43, 16
@@ -18342,7 +18126,7 @@ export function l $nox_regex__expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done426
 @calloc_done426
     %t660 =l loadl %t648
-    storel 17, %t660
+    storel 16, %t660
     %t661 =l add %t660, 8
     storel $ValueError_vtable, %t661
     %t662 =l add %t660, 16
@@ -19449,7 +19233,7 @@ export function l $nox_regex__expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done795
 @calloc_done795
     %t1205 =l loadl %t1193
-    storel 17, %t1205
+    storel 16, %t1205
     %t1206 =l add %t1205, 8
     storel $ValueError_vtable, %t1206
     %t1207 =l add %t1205, 16
@@ -20484,7 +20268,7 @@ export function l $nox_regex__expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done19
 @calloc_done19
     %t62 =l loadl %t50
-    storel 16, %t62
+    storel 15, %t62
     %t63 =l add %t62, 8
     storel $IndexError_vtable, %t63
     %t64 =l add %t62, 16
@@ -20814,7 +20598,7 @@ export function l $nox_regex__expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done126
 @calloc_done126
     %t225 =l loadl %t213
-    storel 16, %t225
+    storel 15, %t225
     %t226 =l add %t225, 8
     storel $IndexError_vtable, %t226
     %t227 =l add %t225, 16
@@ -21144,7 +20928,7 @@ export function l $nox_regex__expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done231
 @calloc_done231
     %t375 =l loadl %t363
-    storel 16, %t375
+    storel 15, %t375
     %t376 =l add %t375, 8
     storel $IndexError_vtable, %t376
     %t377 =l add %t375, 16
@@ -21474,7 +21258,7 @@ export function l $nox_regex__expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done330
 @calloc_done330
     %t524 =l loadl %t512
-    storel 16, %t524
+    storel 15, %t524
     %t525 =l add %t524, 8
     storel $IndexError_vtable, %t525
     %t526 =l add %t524, 16
@@ -21804,7 +21588,7 @@ export function l $nox_regex__expand(l %rt, l %p_repl, l %p_m) {
     jmp @calloc_done577
 @calloc_done577
     %t881 =l loadl %t869
-    storel 16, %t881
+    storel 15, %t881
     %t882 =l add %t881, 8
     storel $IndexError_vtable, %t882
     %t883 =l add %t881, 16

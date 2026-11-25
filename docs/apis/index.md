@@ -28,7 +28,7 @@ are internal.
 - *"I need to call a C library I already have."* — [`extern def`](../language/ffi.md). No plugin needed.
 - *"I am writing a native extension that Nox users should install and call safely, possibly from several Nox versions."* — NNI
   ([guide](nni-guide.md)), packaged with the [Plugin API](plugin-api.md).
-- *"I want to run a Python C extension or a WebAssembly module."* — the HPy/WASM bridges ([Internals](../internals/hpy-wasm.md)).
+- *"I want to run a WebAssembly module."* — the WASM bridge ([Internals](../internals/wasm-bridge.md)).
 
 ## How they compose
 

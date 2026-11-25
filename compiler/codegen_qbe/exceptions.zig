@@ -730,15 +730,7 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
                         // listede DEĞİL (`genParseOrRaise` ile GERÇEKTEN
                         // `ValueError` raise EDEBİLİRLER, bkz. checker.zig'in
                         // eşdeğer notu) — o ikisi AŞAĞIDAKİ `else` dalına
-                        // düşüp MUHAFAZAKAR şekilde güvensiz sayılır. Faz 18
-                        // (bkz. plan dosyası "HPy köprüsünü Nox'un istisna
-                        // mekanizmasına entegre etme"): `hpy_call`/`hpy_call_str`
-                        // AYNI GEREKÇEYLE BU LİSTEDEN ÇIKARILDI — ARTIK
-                        // GERÇEKTEN bir `HPyError` raise EDEBİLİYORLAR
-                        // (`emitHpyErrorCheckOrRaise`, bkz. calls.zig), bu
-                        // YÜZDEN `else` dalına düşüp güvensiz sayılmaları
-                        // GEREKİR (`wasm_call` BU FAZIN kapsamı DIŞINDA,
-                        // DEĞİŞMEDİ).
+                        // düşüp MUHAFAZAKAR şekilde güvensiz sayılır. `wasm_call` bu listenin dışında kalır (muhafazakâr).
                     } else {
                         // Faz M.8 (yeniden ele alındı, bkz. nox-teknik-
                         // spesifikasyon.md §3.59): BURASI ÖNCEDEN (bu

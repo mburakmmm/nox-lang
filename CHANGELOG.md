@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.69]
+
+**HPy/CPython uyumluluk katmanı tamamen kaldırıldı** (kullanıcı kararı; `VERSIONING.md` "HPy istisnası"). Ayrıntı: spec §3.503.
+
+- Silindi: `runtime/hpy_bridge/` (~5 800 satır), `runtime/foreign_bridge.zig` (HPy kısmı), `hpy_*` yerleşikleri (checker + codegen + `hpy_sigs.zig`), `nox.hpy`, `HPyError` (`core.nox`), `nox-hpy-host-v1` paket profili (`compiler/pkg/hpy_host.zig`, `shared/hpy_host_contract.zig`, kilit dosyası `hpy_*` alanları, SBOM özelliği, `<bin>/hpy` hazırlama), `tests/compat/hpy_*`, HPy golden/benchmark testleri, `hpy-host.yml`, `gen_hpy_ctx.py`, `nox-ahpyentegrasyon.md`, ilgili belge sayfaları.
+- Korundu/ayrıldı: `wasm_call` yerleşiği ve `nox.wasm` (WASM köprüsü artık HPy handle sistemine bağlı değil: `runtime/wasm_call.zig`; `wasm_bridge/interp.zig` `callExport` kaldırıldı), `extern def`/`bindgen`/`nox.ffi`/NNI aynen. Eski `nox.lock` dosyaları (fazla `hpy_*` alanı) sorunsuz açılır.
+- **Araç-disiplini zorlaması (rtk/graphify/qrun) kalıcılaştırıldı:** `.claude/settings.json` artık git'te izlenir (önceden `.claude/` tümüyle ignore'du → worktree/yeni klon/ajan worktree'lerinde proje hook'ları HİÇ yüklenmiyordu); `SubagentStart` hook'u eklendi (alt oturumlar kuralları alır); `PostToolUse` denetim hook'u kayda ek olarak hız-sınırlı, engellemeyen `additionalContext` ipuçları verir (ham `sed -n/cat/head/tail`, qrun'sız gürültülü komut, tekrar okuma, büyük aralıksız Read, art arda arama, rtk çıktısını süzme); `session_rules.sh` rtk/graf eksik-bayat uyarısı verir; `scripts/hooks/verify_enforcement.py` (+ precheck adımı) yapılandırmayı doğrular; `scripts/token_audit.py` yinelenen atlamaları raporlar; kullanıcı-düzeyi `rtk hook claude` PreToolUse hook'una dokunulmadı.
+- Etki: tüm IR anlık görüntüleri yeniden üretildi (çekirdekteki `HPyError` sınıfı gitti); `native-runtime-symbols.tsv`/`wasm_abi_table.zig` yeniden üretildi (WASM tablosu önceden eksik 4 sembolü de kazandı).
+
 ## [2.2.68]
 
 Aşama 3.2 kapandı, 3.3 dilim A (kapsam-kapılı): skaler tipli ifade/deyim + kullanıcı işlevleri. Ayrıntı: plan §6 3.2/3.3, spec §3.502.

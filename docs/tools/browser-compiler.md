@@ -36,5 +36,5 @@ When running, the host options on the [WebAssembly page](wasm.md) apply: the in-
 
 - Next to the release archive a `nox-web-compiler-<version>.tar.gz` is published: `noxc-frontend.wasm`, `wasm_compiler.mjs`, `wasm_asyncify.mjs`, `wasm_host.mjs` and `lib/` (the runtime objects). From source: `zig build wasm-compiler wasm-rt`.
 - The first compile loads clang/lld (hundreds of ms); later ones take about 0.3-1 s. Large programs and `nox.sqlite` (an output of about 800 KB) take a little longer.
-- Native `extern def ... from "<library>"` declarations cannot be linked in a browser (there are no native libraries); the `native`, `plugin` and `hpy` modules are unavailable on WebAssembly anyway.
+- Native `extern def ... from "<library>"` declarations cannot be linked in a browser (there are no native libraries); the `native` and `plugin` modules are unavailable on WebAssembly anyway.
 - Verification: `scripts/wasm_frontend_corpus.py` compares the front end's IR with native `noxc` over the whole `codegen_cases` corpus (467 identical, plus 16 rejected for the same reason); `scripts/web_compiler_e2e.mjs` runs the full pipeline (front end, clang, run) over the corpus and compares with `.expected` (`wasm32-freestanding` 453 ok, `wasm32-freestanding-asyncify` 458 ok with binaryen).

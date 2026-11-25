@@ -6,9 +6,6 @@
 //! ve etiket hataları çalışma zamanında denetlenmez; yalnızca belirsiz davranış üretebilecek durumlar denetlenir: bellek/tablo sınırları, sıfıra bölme,
 //! taşma, çağrı yığını/değer yığını derinliği, yakıt (sonsuz döngü), dolaylı çağrı tipi.
 //!
-//! **Handle birleştirmesi (AGENTS.md §11: "iki ayrı FFI mekanizması yoktur, tek bir handle soyutlaması vardır"):** `callExport`, argümanları ve dönüş
-//! değerini `runtime/hpy_bridge/context.zig`nin AYNI `HPy`/`Obj` temsiliyle alıp verir.
-//!
 //! **Güven sınırı (AGENTS §9.5):** `.wasm` modülü GÜVENİLMEYEN koddur; bellek erişimi doğrusal belleğe kapalıdır, host işlevleri yalnızca `Imports`
 //! ile açıkça verilenlerdir (varsayılan: hiç yok), yakıt/yığın/bellek tavanları `Config`dedir.
 
@@ -22,9 +19,6 @@ const shared_mem = @import("shared_mem.zig");
 const Module = module_mod.Module;
 const ValType = module_mod.ValType;
 const FuncCode = compile.FuncCode;
-const hpy_context = @import("hpy_bridge").context;
-const HPy = hpy_context.HPy;
-const HPyContext = hpy_context.HPyContext;
 
 pub const Trap = error{
     Unreachable,
@@ -1245,7 +1239,7 @@ pub fn truncSat(comptime I: type, comptime F: type, x: F) I {
     return @intFromFloat(t);
 }
 
-// ---------------------------------------------------------------- eski (i32) API ve HPy birleştirmesi
+// ---------------------------------------------------------------- eski (i32) API
 
 /// `func_index`i, verilen `args` (i32) ile çalıştırır (eski basit API: içe aktarmasız modüller için). Bir değer döndürüyorsa onu, `void` ise `null` döner.
 pub fn callFunc(allocator: std.mem.Allocator, module: *const Module, func_index: u32, args: []const i32) InterpError!?i32 {
@@ -1265,38 +1259,6 @@ pub fn callFunc(allocator: std.mem.Allocator, module: *const Module, func_index:
     return @bitCast(@as(u32, @truncate(res[0])));
 }
 
-/// `module`nin `name` adında export edilmiş bir işlevini çağırır. Argümanlar ve dönüş değeri, `hpy_bridge/context.zig`nin AYNI `HPy` handle sistemiyle
-/// alınıp verilir (tamsayı ve `f32`/`f64` argümanlar; tek sonuç).
-pub fn callExport(allocator: std.mem.Allocator, ctx: *HPyContext, module: *const Module, name: []const u8, args: []const HPy) InterpError!HPy {
-    const func_index = module.findExportedFunc(name) orelse return error.ExportNotFound;
-    const ft = module.typeOf(func_index);
-    if (args.len != ft.params.len) return error.TypeMismatch;
-    if (args.len > 16) return error.TooManyArgs;
-    var slots: [16]u64 = undefined;
-    for (args, 0..) |a, i| {
-        slots[i] = switch (ft.params[i]) {
-            .i32 => @as(u32, @truncate(@as(u64, @bitCast(ctx.ctx_Long_AsInt64_t.?(ctx, a))))),
-            .i64 => @bitCast(ctx.ctx_Long_AsInt64_t.?(ctx, a)),
-            .f32 => vf32(@floatCast(ctx.ctx_Float_AsDouble.?(ctx, a))),
-            .f64 => vf64(ctx.ctx_Float_AsDouble.?(ctx, a)),
-            else => return error.TypeMismatch,
-        };
-    }
-    if (ft.results.len > 1) return error.TypeMismatch;
-    const inst = try Instance.init(allocator, module, &.{}, .{});
-    defer inst.deinit();
-    var res: [1]u64 = undefined;
-    try inst.invoke(func_index, slots[0..args.len], res[0..ft.results.len]);
-    if (ft.results.len == 0) return hpy_context.HPy_NULL;
-    return switch (ft.results[0]) {
-        .i32 => ctx.ctx_Long_FromInt64_t.?(ctx, @as(i32, @bitCast(@as(u32, @truncate(res[0]))))),
-        .i64 => ctx.ctx_Long_FromInt64_t.?(ctx, @bitCast(res[0])),
-        .f32 => ctx.ctx_Float_FromDouble.?(ctx, f32v(res[0])),
-        .f64 => ctx.ctx_Float_FromDouble.?(ctx, f64v(res[0])),
-        else => error.TypeMismatch,
-    };
-}
-
 // ---------------------------------------------------------------- testler
 
 const add_one_bytes = "\x00asm\x01\x00\x00\x00\x01\x06\x01\x60\x01\x7f\x01\x7f\x03\x02\x01\x00\x04\x05\x01\x70\x01\x01\x01\x05\x03\x01\x00\x10\x06\x09\x01\x7f\x01\x41\x80\x80\xc0\x00\x0b\x07\x14\x02\x06memory\x02\x00\x07add_one\x00\x00\x0a\x09\x01\x07\x00\x20\x00\x41\x01\x6a\x0b";
@@ -1307,22 +1269,6 @@ test "callFunc: gerçek zig-derlenmiş add_one modülünü çalıştırır" {
     const idx = mod.findExportedFunc("add_one").?;
     const result = try callFunc(std.testing.allocator, &mod, idx, &.{41});
     try std.testing.expectEqual(@as(i32, 42), result.?);
-}
-
-test "callExport: HPy handle sistemi üzerinden çağrı" {
-    var mod = try module_mod.parse(std.testing.allocator, add_one_bytes);
-    defer mod.deinit();
-
-    const ctx = try hpy_context.createContext(std.testing.allocator);
-    defer hpy_context.destroyContext(std.testing.allocator, ctx);
-
-    const arg = ctx.ctx_Long_FromInt64_t.?(ctx, 41);
-    defer ctx.ctx_Close.?(ctx, arg);
-
-    const result = try callExport(std.testing.allocator, ctx, &mod, "add_one", &.{arg});
-    defer ctx.ctx_Close.?(ctx, result);
-
-    try std.testing.expectEqual(@as(i64, 42), ctx.ctx_Long_AsInt64_t.?(ctx, result));
 }
 
 test "nearest: eşitlikte çifte yuvarlama, işaretli sıfır" {

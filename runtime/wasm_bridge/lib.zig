@@ -1,6 +1,4 @@
-//! Nox WASM köprüsü — tek import yüzeyi (AGENTS.md §11). `hpy_bridge` gibi,
-//! bu da henüz derlenmiş Nox programlarına DEĞİL, `tests/compat`teki uçtan
-//! uca doğrulamaya hizmet eder.
+//! Nox WASM köprüsü — tek import yüzeyi (AGENTS.md §11): ayrıştırıcı (`module`) + yorumlayıcı (`interp`). `wasm_call` yerleşiği ve `nox.wasm` bunun üzerine kuruludur.
 
 pub const module = @import("module.zig");
 pub const compile = @import("compile.zig");

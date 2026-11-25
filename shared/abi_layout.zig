@@ -40,11 +40,6 @@ pub const ARC_HEADER_SIZE: usize = 8;
 /// değeri — `nox_rc_predecrement` pratikte HİÇBİR gerçekçi programda bu
 /// değere ulaşamaz, bu yüzden statik string literalleri hiçbir zaman
 /// serbest bırakılmaya çalışılmaz.
-///
-/// **Karıştırılmamalı:** `runtime/hpy_bridge/context.zig`nin AYNI sayısal
-/// değere sahip KENDİ `PINNED_REFCOUNT`si TAMAMEN ALAKASIZDIR — HPy'nin
-/// kendi (CPython singleton'larını taklit eden) `Obj` sistemi, Nox'un ARC
-/// düzeniyle HİÇBİR paylaşılan ABI'ye sahip değildir; BİRLEŞTİRİLMEMELİDİR.
 pub const PINNED_REFCOUNT: i64 = 1 << 30; // 1073741824
 
 // ---- `str` başlığı: { refcount: i64 @-8 (ARC_HEADER_SIZE), packed: i64 @0, baytlar @8...NUL } ----
@@ -57,7 +52,7 @@ pub const PINNED_REFCOUNT: i64 = 1 << 30; // 1073741824
 /// alanın KENDİSİNİ DEĞİL, HEMEN ARDINDAKİ baytları gösterir (`str_ptr =
 /// arc_payload_ptr + STR_HEADER_SIZE`) — BU KASITLI: `str_ptr` HÂLÂ
 /// GEÇERLİ, NUL-sonlandırılmış bir C bayt dizisine işaret eder, `extern
-/// def`/HPy geçişinin "zaten sıfır-sonlandırılmış, dönüşüm YOK" varsayımı
+/// def` geçişinin "zaten sıfır-sonlandırılmış, dönüşüm YOK" varsayımı
 /// KORUNUR. Runtime tarafında `runtime/str.zig`nin TÜM str-üreten
 /// fonksiyonları (`nox_str_concat`/`nox_int_to_str`/`nox_str_char_at`/vb.)
 /// VE `nox_str_release`/`free_now` (`arc_ptr = str_ptr - STR_HEADER_SIZE`

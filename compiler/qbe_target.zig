@@ -70,8 +70,7 @@ pub fn nameForArch(arch_name: []const u8) ?[]const u8 {
 /// `--target <isim>` bayrağının HOSTED (varsayılan profil) tarafı —
 /// `.github/workflows/release.yml`nin sevk edilen 4 platform ismi
 /// (`macos-arm64`/`linux-x64`/`linux-arm64`/`windows-x64`) artı hosted
-/// `linux-riscv64` (v2.0.4, musl) ve HPy sözleşmesinin `macos-x86_64`
-/// satırı için `macos-x64` (QBE `amd64_apple`, Rosetta). `qbe_target`,
+/// `linux-riscv64` (v2.0.4, musl) ve `macos-x64` (QBE `amd64_apple`, Rosetta). `qbe_target`,
 /// `runtime_object_name` (`build.zig`nin AYNI isimle kurduğu `noxrt-
 /// <isim>.o`) VE `zig_triple` (`zig cc -target`in beklediği, `swap_asm`
 /// çapraz-derlemesinde de kullanılan üçlü) döner.

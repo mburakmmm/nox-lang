@@ -24,7 +24,7 @@ Bu dosya, Nox derleyicisi ve çalışma zamanı üzerinde çalışan tüm kodlam
 
 ## 1. Proje Özeti
 
-Nox, Python'a sözdizimsel olarak yakın, **zorunlu statik tipli**, QBE ile AOT makine koduna derlenen, Zig ile yazılmış bir çalışma zamanına sahip bir sistem/genel amaçlı programlama dilidir. Bellek yönetimi tamamen otomatik ve kullanıcıya görünmezdir (ASAP destructor + ARC fallback + döngü çözücü). Python C eklentileri (NumPy, Pandas vb.) HPy esinli izole bir handle sistemi üzerinden desteklenir. WASM modülleri gömülü bir runtime üzerinden native kütüphane gibi import edilebilir.
+Nox, Python'a sözdizimsel olarak yakın, **zorunlu statik tipli**, QBE ile AOT makine koduna derlenen, Zig ile yazılmış bir çalışma zamanına sahip bir sistem/genel amaçlı programlama dilidir. Bellek yönetimi tamamen otomatik ve kullanıcıya görünmezdir (ASAP destructor + ARC fallback + döngü çözücü). C kütüphaneleri `extern def`/`noxc bindgen`/NNI ile, WASM modülleri gömülü bir runtime üzerinden native kütüphane gibi import edilebilir.
 
 **Tek cümlelik pusula:** *"Python gibi görünen, hiçbir zaman ownership hissettirmeyen, C kadar hızlı ve deterministik bir dil."*
 
@@ -37,7 +37,7 @@ Bu kurallar hiçbir görev, optimizasyon veya "geçici çözüm" gerekçesiyle i
 1. **Ownership hiçbir zaman kullanıcı sözdiziminde görünmez.** `Annotated[...]`, `mut`/`read`/`owned` benzeri hiçbir açık ownership anahtar kelimesi/sözdizimi eklenmez. Belirsizlik varsa derleyici sessizce ARC'ye (Katman 2) düşer — asla derleme hatası vermez, asla kullanıcıdan ipucu istemez.
 2. **Tip sistemi her yerde zorunlu ve statiktir — `lowlevel` blok dahil.** `lowlevel`, yalnızca bellek tahsis stratejisini (Arena/pool/raw pointer) gevşetir; hiçbir zaman bir dinamik tipleme kaçış kapısı olarak kullanılmaz.
 3. **QBE çıktısında hiçbir zaman unwind tablosu / landing pad üretilmez.** Hata yayılımı yalnızca örtük error-union dönüş zinciriyle yapılır.
-4. **C eklentilerine hiçbir zaman ham `PyObject*` veya Nox nesnesinin bellek adresi verilmez.** Tüm dış erişim opaque handle üzerinden geçer.
+4. **C tarafına hiçbir zaman bir Nox nesnesinin iç bellek düzeni/adresi sızdırılmaz.** `extern def`/NNI sınırında yalnızca C ABI ilkelleri, sıfır-sonlandırılmış `str` baytları ve ARC-izlenmeyen opak `ptr` tutamaçları geçer. (v2.2.69: HPy/CPython uyumluluk katmanı kaldırıldı; bu ilke C FFI için aynen geçerlidir.)
 5. **WASM, LLVM backend'i üzerinden bir DERLEME HEDEFİDİR** (`--target wasm32-wasi`, ardından `wasm32-freestanding`; kullanıcı kararı, 2026-10-29: dil oturduğu için ilk aşama kısıtı kaldırıldı). **QBE'ye WASM backend'i eklenmez** ve bu hedefte de diğer ilkeler (örtük hata zinciri, unwind tablosu yok, opak handle) aynen geçerlidir. Gömülü WASM yorumlayıcısı (WASM modüllerini Nox'a kütüphane gibi içe aktarma) ayrı bir mekanizma olarak kalır.
 6. **Global/gizli mutable state yasak.** Runtime, allocator'ları her zaman açıkça parametre olarak alır (Zig idiomu). **Dar, belgelenmiş istisna:** freestanding runtime'ın kendi tek-seferlik bootstrap durumu (ör. `lib_freestanding.zig`'in `g_kernel_fba_ready`/`g_kernel_alloc_fn`/`g_kernel_free_fn`'i, bkz. §3.197) bu yasağın kapsadığı genel/gizli runtime durumu DEĞİLDİR — `nox_freestanding_early_init`in `main`e atlanmadan ÖNCE, KOŞULSUZ ve tam olarak bir kez çalıştırdığı, dışa açık/belgelenmiş bir kurulum adımıdır. **İkinci dar, belgelenmiş istisna (kullanıcı kararı, 2026-11-04):** WASM hedeflerinin tek örnekli host köprüsü durumu (`runtime/wasm_vfs.zig` sanal dosya sistemi, `http_fetch.zig` istek tablosu/yetenek maskesi, `http_server_wasm.zig` sunucu kuyruğu, `async_rt/asyncify.zig` askıya alma durumu, `sqlite.zig`nin VFS kilidi): bir WASM modülü = bir host = bir zamanlayıcıdır ve host `nox_host_*` dışa aktarımlarıyla bu duruma allocator parametresi olmadan erişir. Bu bildirimler `project/global-state-allowlist.tsv`de `wasm-host` kategorisiyle gerekçelendirilir; yeni bir `wasm-host` bildirimi yine allowlist'e gerekçeyle eklenmeden geçmez.
 7. **Her yeni dil özelliği, en az bir "golden test" (kaynak → beklenen QBE IR/davranış) ile birlikte gelir.**
@@ -58,7 +58,7 @@ QBE IR üretimi (ASAP destructor / ARC retain-release / error-union kontrolleri 
    ▼
 QBE → native assembly (amd64 / arm64 / riscv64 / amd64_win)
    ▼
-Zig runtime'a statik bağlama (allocator, ARC, döngü çözücü, HPy köprüsü, WASM köprüsü)
+Zig runtime'a statik bağlama (allocator, ARC, döngü çözücü, WASM köprüsü)
 ```
 
 **Backend notu (v1.143.0, kullanıcı kararı):** yukarıdaki "QBE IR üretimi" adımı AYNI tiplenmiş
@@ -86,8 +86,6 @@ Detaylı gerekçeler için: `nox-teknik-spesifikasyon.md` (repo kökünde).
   /alloc             # ASAP, ARC, cycle detector (bkz. §8)
   /async_rt          # fiber zamanlayıcı, Task/Channel, nox.thread (M:N)
   /errors            # error-union temsili, exception handle (bkz. §9)
-  /hpy_bridge         # opaque handle sistemi (bkz. §10)
-  /cpython_compat     # CPython C-API emülasyon katmanı (bkz. §10)
   /wasm_bridge        # gömülü WASM runtime entegrasyonu (bkz. §11)
   /stdlib_shims       # nox.* stdlib modüllerinin Zig tarafı
   /freestanding       # bare-metal boot zinciri (Faz F.0-F.5) — /x86_64: linker
@@ -96,7 +94,7 @@ Detaylı gerekçeler için: `nox-teknik-spesifikasyon.md` (repo kökünde).
 /tests
   /unit
   /golden            # .nox → beklenen QBE IR / çalışma zamanı çıktısı
-  /compat            # gerçek C/WASM/HPy eklentileriyle entegrasyon testleri
+  /compat            # gerçek C/WASM/NNI eklentileriyle entegrasyon testleri
   /fuzz
 /benchmarks          # Nox/Python/C karşılaştırmalı performans paketi
 /examples            # örnek Nox projeleri
@@ -173,7 +171,7 @@ Bu sıra atlanamaz; özellikle **golden test olmadan codegen değişikliği merg
 - `except ClassName:` eşleşmesi, `ExceptionHandle` üzerinde runtime'da bir isinstance-zinciri kontrolüne derlenir.
 - `finally` ve `with` (context manager `__exit__`) temizliği, ASAP destructor codegen yoluyla **aynı kapsam-çıkışı mekanizmasını** paylaşır — ayrı bir kod yolu yazılmaz.
 - **C/WASM sınırı trampoline'ları:** Her `extern`/import edilen sembol için derleyici otomatik bir trampoline fonksiyonu üretir. Trampoline sorumlulukları:
-  1. Nox tipli değerleri HPy handle'a veya WASM linear memory temsiline dönüştürmek.
+  1. Nox tipli değerleri C ABI temsiline veya WASM linear memory temsiline dönüştürmek.
   2. Çağrı dönüşünde ilgili sınırın hata konvansiyonunu kontrol etmek (CPython: `PyErr_Occurred()` eşdeğeri `cpython_compat` katmanı üzerinden; WASM: trap/dönüş kodu konvansiyonu) ve sonucu Nox `ExceptionHandle`'ına çevirmek.
   3. Ham C exception/longjmp'in Nox stack çerçevelerine sızmasını **engellemek** — bu, yalnızca trampoline sınırında savunma amaçlı, izole bir `setjmp`/`longjmp` bariyeriyle yapılır. Bu, İlke #3'ü ihlal etmez çünkü Nox'un kendi kontrol akışı hâlâ unwind tablosu kullanmaz; bariyer yalnızca dışarıdan gelen tehlikeyi izole eder.
 - Golden test gereksinimi: her yeni exception sınıfı/hata yolu için hem başarı hem hata senaryosu testi.
@@ -232,26 +230,16 @@ AÇIKÇA UYARMAZ.**
 
 ---
 
-## 10. HPy / CPython Uyumluluk Katmanı Kılavuzu
+## 10. (Kaldırıldı) HPy / CPython Uyumluluk Katmanı
 
-Hedef: **mümkün olan en geniş HPy/CPython API desteği**, önceliklendirilmiş katmanlar halinde uygulanır. Bir ajan bu katmanda çalışırken önce bir alttaki tier tamamlanmadan bir üsttekine geçmemelidir (aksi durumda test coverage'ı tutarsızlaşır).
-
-| Tier | Kapsam | Neden öncelikli |
-|---|---|---|
-| **Tier 0** | Nesne yaşam döngüsü (create/destroy), refcount emülasyonu, temel tip objesi protokolü, modül init (`PyModule_Create` eşdeğeri) | Herhangi bir C eklentisinin yüklenebilmesi için minimum gereksinim |
-| **Tier 1** | Buffer protokolü (PEP 3118), sequence/mapping protokolü, number protokolü (aritmetik dunder emülasyonu), iterator protokolü | NumPy/Pandas sınıfı kütüphanelerin **çekirdek** kullanım alanı — proje hedefinin asıl kaldıracı |
-| **Tier 2** | GC destek kancaları (`tp_traverse`/`tp_clear` emülasyonu), weakref, alt sınıflama (subclassing) sınır ötesi | Karmaşık nesne grafiği kullanan kütüphaneler için gerekli |
-| **Tier 3** | Descriptor protokolü, metaclass, capsule objeleri, gelişmiş buffer stride desteği, async/await protokolü | Uzun kuyruk — talep geldikçe uygulanır |
-
-- Uygulama, gerçek HPy projesinin Universal ABI moduyla mümkün olduğunca hizalanmalı; Nox'a özgü genişletmeler yalnızca HPy'nin karşılamadığı boşluklarda eklenir.
-- Her Tier 0/1 API eklemesi, gerçek bir C eklentisiyle (`tests/compat`) entegrasyon testiyle doğrulanmalıdır — sadece unit test yeterli değildir.
+**v2.2.69'da kullanıcı kararıyla (2026-11-25) tamamen kaldırıldı:** `runtime/hpy_bridge`, `hpy_*` yerleşikleri, `nox.hpy`, `HPyError`, `nox-hpy-host-v1` paket sözleşmesi ve ilgili CI/testler artık yoktur. C kütüphane entegrasyonu `extern def` (+ `noxc bindgen`, `nox.ffi`) ve NNI (`nox.native`/`nox.plugin`) üzerinden yapılır; WASM köprüsü (`wasm_call`, `nox.wasm`) ayrı ve bağımsız kalır. Bu bölümü yeniden eklemeye çalışan hiçbir görev kabul edilmez; CPython C eklentisi desteği gerekiyorsa önce kullanıcıya danışılır.
 
 ---
 
 ## 11. WASM Entegrasyon Kılavuzu
 
 - Gömülü WASM runtime seçimi (wasmtime/wasmer C API veya native Zig yorumlayıcı) `/runtime/wasm_bridge` altında izole edilir; derleyici bu seçimden habersizdir.
-- WASM modül export'ları, §10'daki aynı opaque handle sistemi üzerinden Nox'a sunulur — **iki ayrı FFI mekanizması yoktur, tek bir handle soyutlaması vardır.**
+- WASM modül export'ları `wasm_call`/`nox.wasm` (opak `ptr` tutamacı) üzerinden Nox'a sunulur; C FFI (`extern def`/NNI) ayrı ve bağımsızdır.
 - QBE'ye WASM backend eklemeye çalışan hiçbir görev kabul edilmez (bkz. İlke #5). Nox kodunu WASM'a derleme LLVM backend'iyle yapılır (`project/nox-ana-todo.md` Faz 10).
 
 ---
@@ -276,7 +264,6 @@ Bir görev şu şartları sağlamadan tamamlanmış sayılmaz:
 - [ ] Yeni/değişen dil davranışı için en az bir golden test (`tests/golden`)
 - [ ] Bellek yönetimiyle ilgili değişikliklerde: leak testi + double-free testi + `GeneralPurposeAllocator` safety modu yeşil
 - [ ] Hata yönetimiyle ilgili değişikliklerde: başarı yolu + hata yolu + (varsa) `finally`/`with` etkileşim testi
-- [ ] HPy/CPython katmanı değişikliklerinde: en az bir gerçek eklenti ile `tests/compat` testi
 - [ ] Hiçbir Değişmez İlke (§2) ihlal edilmemiş
 - [ ] Spesifikasyon dosyası, davranış değişmişse güncellenmiş
 
@@ -298,11 +285,9 @@ Bir görev şu şartları sağlamadan tamamlanmış sayılmaz:
 |---|---|
 | **Sahiplik Piramidi** | 4 katmanlı bellek yönetim modeli (ASAP → ARC → Döngü Çözücü → lowlevel) |
 | **ASAP Destructor** | Kapsamdan çıkışta, referans sayacı olmadan eklenen sıfır maliyetli temizlik kodu |
-| **HPy Handle** | C eklentisine verilen, gerçek bellek adresini gizleyen opaque kimlik |
 | **ExceptionHandle** | Nox'un hata yayılım zincirinde taşınan, sınıf hiyerarşi bilgili hata nesnesi referansı |
 | **Trampoline** | C/WASM sınırında otomatik üretilen, marshaling + hata çevirisi yapan köprü fonksiyon |
 | **Monomorphization** | Generic/protokol tabanlı kodun her somut tip için ayrı, dispatch'siz derlenmesi |
-| **Tier 0-3** | HPy/CPython uyumluluk katmanının önceliklendirilmiş uygulama sırası |
 
 ---
 

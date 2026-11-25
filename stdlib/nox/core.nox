@@ -190,20 +190,10 @@ class StopIteration(Exception):
 class GeneratorExit(Exception):
     pass
 
-# Faz 18 (bkz. plan dosyası "HPy köprüsünü Nox'un istisna mekanizmasına
-# entegre etme"): `hpy_call`/`hpy_open`/`hpy_call_on`/vb.nin (bkz.
-# runtime/foreign_bridge.zig'in `setHpyError`/`nox_hpy_take_error`si)
-# TÜM hata durumları (dosya/sembol/metod bulunamadı, çağrılan HPy C
-# fonksiyonunun KENDİSİ bir istisna fırlattı) İçİn — `ValueError`/
-# `IndexError`/`KeyError`YLA AYNI "alt sınıf KENDİ `__init__`ini
-# tanımlamaz" deseni.
-class HPyError(Exception):
-    pass
-
 # Faz SC.2 (bkz. nox-teknik-spesifikasyon.md, "Task[T].cancel()"): `t.
 # cancel()` İLE İSTENEN kooperatif iptalin, cancel edilen task'ın KENDİ
 # kodunun BİR SONRAKİ `await`inde fırlattığı istisna — `ValueError`/
-# `IndexError`/`KeyError`/`HPyError`YLA AYNI "alt sınıf KENDİ `__init__`ini
+# `IndexError`/`KeyError`YLA AYNI "alt sınıf KENDİ `__init__`ini
 # tanımlamaz" deseni.
 class CancelledError(Exception):
     pass

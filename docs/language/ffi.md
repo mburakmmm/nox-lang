@@ -3,7 +3,7 @@
 Nox calls native code through **`extern def`**: a declaration of a function implemented outside Nox — in C, Zig, Rust (with a C ABI), or
 the system libraries — callable from Nox with normal static typing at the boundary. This page covers `extern def`, raw pointers, callbacks
 and the trust boundary. For richer integrations see [the three APIs](../apis/index.md): the **Nox Native Interface** for plugins that keep
-the runtime's data structures private, and the HPy/WASM bridges in [Internals](../internals/hpy-wasm.md).
+the runtime's data structures private, and the WASM bridge in [Internals](../internals/wasm-bridge.md).
 
 For a whole C library, [`noxc bindgen`](../tools/bindgen.md) writes the declarations for you from its header.
 
@@ -209,7 +209,6 @@ Rules: the argument must be a variable or a field (not a call result, whose list
 - A list is a reference-counted block whose header holds `len`, `cap` and a `data` pointer; the elements may live inline or in a separate buffer, and growing replaces the buffer while the header stays put. Native code must never walk backwards from `data` to find a reference-counting header (an assumption such as "`data - 16` is the reference count" is wrong for lists), never free or `realloc` a list's buffer, and never keep a pointer across an `append`, `insert`, `extend` or any call that may grow the list.
 - There is no "detach" or "adopt" operation that transfers ownership of a list buffer to or from native code. To keep a list alive on the native side use `retains(xs)` on the `extern def` ([Ownership across the call](#ownership-across-the-call-retains-and-ffiescape)); to receive native memory, copy it into a Nox list.
 - A list that several workers use at the same time must not be handed out as a raw pointer: growth is not synchronised against native readers. Lists that the compiler treats as shared (module-level lists used by `spawn`ed work) are accessed through locked operations only, and `spawn` arguments that are mutated are rejected at compile time (`SpawnSharedMutation`).
-- The HPy/CPython compatibility layer never receives a raw list pointer; C extensions only ever see opaque handles.
 
 ## Sizes and layouts
 
@@ -234,6 +233,4 @@ Nox deliberately has no "safe mode" for `extern def` in 2.0 — a sandbox needs 
 
 - **Nox Native Interface (NNI)** — a stable C ABI with opaque handles for plugins that must not depend on the runtime's layouts
   ([NNI](../apis/nni.md), [Plugin API](../apis/plugin-api.md)).
-- **HPy / CPython extensions** — Python C extensions load through an opaque-handle compatibility layer; a raw `PyObject*` never crosses
-  ([Internals](../internals/hpy-wasm.md)).
 - **WebAssembly** — a WASM module can be imported like a native library; importing a WASM module is separate from compiling Nox *to* WASM (`--target wasm32-wasi`, [WebAssembly](../tools/wasm.md)).

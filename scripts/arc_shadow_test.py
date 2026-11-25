@@ -14,7 +14,7 @@ ap.add_argument("--only")
 a = ap.parse_args()
 
 SKIP_IMPORTS = ("nox.http", "nox.grpc", "nox.websocket", "nox.tls", "nox.smtp", "nox.redis", "nox.postgres", "nox.mysql", "nox.udp", "nox.thread", "nox.sharedmem",
-                "nox.process", "nox.signal", "nox.terminal", "nox.native", "nox.plugin", "nox.hpy", "nox.sqlite", "nox.time", "nox.random", "nox.uuid", "nox.tempfile", "nox.log")
+                "nox.process", "nox.signal", "nox.terminal", "nox.native", "nox.plugin", "nox.sqlite", "nox.time", "nox.random", "nox.uuid", "nox.tempfile", "nox.log")
 
 def build_run(path, env_arc, workdir):
     exe = os.path.join(workdir, "arc" if env_arc else "norm")

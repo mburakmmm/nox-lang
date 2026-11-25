@@ -26,14 +26,14 @@ Every mode exists for both `wasm32-wasi` and `wasm32-freestanding`. Language and
 ## Limits
 
 - **Concurrency depends on the mode** (see the table). In the default mode there are no threads and `spawn`/`await` use the nested-run simulation: a task runs to completion on the stack of the task awaiting it, and a task waiting for the result of a task below it is reported as a "deadlock". `--asyncify` gives real fibers (one thread, M:1); `--threads` gives real parallelism (M:N).
-- **Modules that are not available.** `sharedmem`, `native`, `plugin`, `hpy` and the `hpy_*` / `wasm_call` built-ins are rejected at compile time with a message such as `module 'nox.sharedmem' cannot be used on the wasm32-wasi target (...)`. `native`, `plugin` and `hpy` can never work in WebAssembly (there is no dynamic loading).
+- **Modules that are not available.** `sharedmem`, `native`, `plugin` and the `wasm_call` built-in are rejected at compile time with a message such as `module 'nox.sharedmem' cannot be used on the wasm32-wasi target (...)`. `native` and `plugin` can never work in WebAssembly (there is no dynamic loading).
 - **The network belongs to the host.** `nox.http` compiles, but a real socket (client `get`/`post`/`request`/streaming, server `serve*`) does not work without a host capability: client calls raise a catchable `HttpCapabilityError` (a subclass of `HttpError`); `serve` prints a diagnostic and returns at once, like a real bind failure.
 - **Node WASI on Windows has no `read_dir`.** Running a `wasm32-wasi` module under Node's `node:wasi` on Windows makes `nox.fs.read_dir` (and `remove_dir_all`, which uses it) raise `FsError`: Node's WASI does not implement `fd_readdir` on Windows (ENOSYS). Linux, macOS, `wasm32-freestanding` (virtual file system) and other WASI engines such as Wasmtime are not affected.
 - **No native libraries.** `extern def ... from "lib"` cannot link a native library into a `.wasm`.
 - **The file system** depends on the runner's WASI pre-opens (`wasm_run.mjs` opens `.` and `/tmp`).
 - **Math** functions (`exp`, `sin`, ...) come from wasi-libc and may differ from the platform libm in the last digit (for example `exp(1.0)`).
 
-Details and rationale: [ADR-012](../internals/adr/012-wasm-target.md). *Importing* a WebAssembly module into Nox ([`nox.wasm`](../stdlib/wasm.md) for a persistent instance handle, or the older single-call `wasm_call` built-in) is a separate mechanism: [HPy and WebAssembly](../internals/hpy-wasm.md).
+Details and rationale: [ADR-012](../internals/adr/012-wasm-target.md). *Importing* a WebAssembly module into Nox ([`nox.wasm`](../stdlib/wasm.md) for a persistent instance handle, or the older single-call `wasm_call` built-in) is a separate mechanism: [WebAssembly bridge](../internals/wasm-bridge.md).
 
 ## Capability model and `--deny-capability`
 

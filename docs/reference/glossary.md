@@ -24,9 +24,7 @@
 
 **Golden test** — a test whose expected output (or generated IR) is stored in a file and compared byte for byte.
 
-**Handle** — an opaque identifier that stands for a resource without exposing its address; NNI, the HPy bridge and the WASM bridge use handles at their boundaries.
-
-**HPy** — a handle-based API for Python C extensions; Nox implements a compatible layer.
+**Handle** — an opaque identifier that stands for a resource without exposing its address; NNI and the WASM bridge use handles at their boundaries.
 
 **LLVM / QBE** — the two compilation back ends. LLVM generates faster code and runs tasks in parallel; QBE is small and supports cross-compilation and debug info.
 

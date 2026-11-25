@@ -215,7 +215,7 @@ pub fn isNumeric(t: Type) bool {
 /// v3 madde 2 (bitwise operatörler): `&`/`|`/`^`/`~`/`<<`/`>>`in TEK
 /// başına (bool KARIŞIMI OLMADAN) kabul ettiği operand tipleri — `int`/
 /// sabit-genişlikli tamsayı, `float` DEĞİL. **`bool` BİLİNÇLİ olarak
-/// BURAYA DAHİL DEĞİL** (nox-lang'in KENDİ HPy köprüsünün "bool int gibi
+/// BURAYA DAHİL DEĞİL** ("bool int gibi
 /// davranır" emsalinden — codegen'in `common` hesaplamasında GERÇEKTEN
 /// bulunan bir bit-genişliği uyuşmazlığı YÜZÜNDEN — BİLİNÇLİ olarak
 /// SAPILDI, bkz. `checker.zig`nin `.bit_and, .bit_or, .bit_xor` dalının

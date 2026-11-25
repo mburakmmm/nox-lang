@@ -190,7 +190,7 @@ test "wasm: web / router / reflect / akışlı yanıt fixture'ları artık wasm'
     try expectGolden("http_request_methods_errors", @embedFile("codegen_cases/http_request_methods_errors.nox"), @embedFile("codegen_cases/http_request_methods_errors.expected"));
 }
 
-test "wasm32-wasi: HPy/WASM köprü yerleşikleri reddedilir" {
+test "wasm32-wasi: wasm_call köprü yerleşiği reddedilir" {
     try expectRejected("print(wasm_call(\"a.wasm\", \"f\", 1))\n", "cannot be used on the wasm32-wasi target");
 }
 

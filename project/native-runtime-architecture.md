@@ -12,7 +12,7 @@
 | `runtime/collections` | 4 | 2 364 | 53 | 3 | 1 | 0 | 10 | 11 | 11 | 0 |
 | `runtime/errors` | 2 | 381 | 8 | 8 | 1 | 0 | 1 | 4 | 8 | 0 |
 | `runtime/freestanding/*` | 7 | 1 133 | 15 | 0 | 1 | 2 | 0 | 0 | 0 | 19 |
-| `runtime/hpy_bridge` | 4 | 5 787 | 0 | 0 | 2 | 4 | 22 | 9 | 3 | 0 |
+| ~~`runtime/hpy_bridge`~~ | — | — | — | — | — | — | — | — | — | — | (v2.2.69'da KALDIRILDI: ~5 800 satır port kapsamı dışı)
 | `runtime/stdlib_shims` | 72 | 41 191 | 692 | 160 | 46 | 110 | 419 | 826 | 267 | 2 |
 | `runtime/wasm_bridge` | 7 | 4 243 | 0 | 45 | 0 | 3 | 25 | 7 | 63 | 0 |
 | `shared/` | 3 | 1 682 | 0 | 0 | 0 | 5 | 15 | 8 | 3 | 0 |
@@ -29,7 +29,7 @@ L2  Ham allocator/state            alloc/asap.zig (RuntimeState, rawAlloc), size
 L3  ARC/ASAP kancaları             alloc/arc.zig, dispatch_registry.zig, defer_stack.zig, shared/abi_layout.zig
 L4  Döngü toplayıcı + dispatch     alloc/cycle_detector.zig, collections/{list_ops,dict,…}.zig, errors/
 L5  Scheduler/fiber/worker/IO      async_rt/{fiber,scheduler,worker_pool,io,io_reactor,channel,…}.zig
-L6  Native stdlib shim + köprüler  stdlib_shims/* (692 export), hpy_bridge, wasm_bridge, foreign_bridge, NNI
+L6  Native stdlib shim + köprüler  stdlib_shims/* (692 export), wasm_bridge, wasm_call, NNI (hpy_bridge v2.2.69'da kaldırıldı)
 L7  Nox programı / derleyici
 ```
 

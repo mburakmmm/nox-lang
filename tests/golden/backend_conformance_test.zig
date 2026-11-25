@@ -14,8 +14,7 @@
 //! büyük özellik AYRI AYRI değerlendirildi — 3'ü (Task istisna yayılımı,
 //! Task iptali, `and`/`or` kısa-devre) TAMAMEN backend-agnostik, TEK bir
 //! codegen yolu paylaştıkları KANITLANDIĞINDAN AŞAĞIYA `expectConformant`
-//! fixture'ı OLARAK EKLENDİ. KALAN 3'ü (HPy çağrı yüzeyi — harici
-//! `.hpy-venv`/`.so` bağımlılığı GEREKTİRİR; extern geçici sahiplik —
+//! fixture'ı OLARAK EKLENDİ. KALAN 2'si (extern geçici sahiplik —
 //! `codegen_ir_diff_test.zig`de ZATEN IR-seviyesinde doğrulanıyor;
 //! ORM/generic çıkarım — SAF derleme-zamanı, generic'ler codegen'e
 //! ULAŞMADAN monomorfize edilir) BİLİNÇLİ olarak KAPSAM DIŞI bırakıldı —

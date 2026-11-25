@@ -225,7 +225,6 @@ const registration = @import("registration.zig");
 const decorators_mod = @import("decorators.zig");
 const qbe_emit = @import("qbe_emit.zig");
 const llvm_emit = @import("llvm_emit.zig");
-const hpy_sigs = @import("hpy_sigs.zig");
 const effect_graph = @import("../effect_graph.zig");
 
 pub const CodegenError = abi.CodegenError;
@@ -462,10 +461,6 @@ pub const Codegen = struct {
     pub const genCall = calls.genCall;
     pub const genStrFromValue = calls.genStrFromValue;
     pub const genParseOrRaise = calls.genParseOrRaise;
-    pub const emitHpyErrorCheckOrRaise = calls.emitHpyErrorCheckOrRaise;
-    pub const genHpyPackageCall = calls.genHpyPackageCall;
-    pub const emitPackageAllow = calls.emitPackageAllow;
-    pub const genHpyMarshalTrailingArgs = calls.genHpyMarshalTrailingArgs;
     pub const releaseTemporaryArgs = calls.releaseTemporaryArgs;
     pub const genExternCallEmit = calls.genExternCallEmit;
     pub const releaseIfTemporary = calls.releaseIfTemporary;
@@ -1009,10 +1004,6 @@ pub const Codegen = struct {
         // `str()`/f-string biriktiricisi açıkken sınıf metni stdout'a değil
         // birikime eklenir (`$printf("%s")`nin sinkPrintf yolu ile aynı).
         if (self.print_acc != null and args.len == 1 and std.mem.eql(u8, func_text, "$nox_print_str")) return self.sinkAppendStr(args[0].text);
-        if (hpy_sigs.declared(func_text)) {
-            const ret: ?QbeType = if (dst) |d| d.ty else null;
-            hpy_sigs.require(func_text, ret) catch return error.HpySignature;
-        }
         return switch (self.backend) {
             .qbe => qbe_emit.qbeCall(self, dst, func_text, args),
             .llvm => llvm_emit.qbeCall(self, dst, func_text, args),
@@ -2492,8 +2483,7 @@ pub fn generateModuleWithMetaSinkSplit(allocator: std.mem.Allocator, module: ast
     if (gen.backend == .qbe) {
         for (gen.string_data.items) |sd| {
             // `PINNED_REFCOUNT` (1<<30, bkz. `abi_layout.PINNED_REFCOUNT`nin
-            // belge notu — HPy'nin KENDİ, TAMAMEN ALAKASIZ `PINNED_REFCOUNT`i
-            // İLE KARIŞTIRILMAMALI) — string literalinin görünmez ARC başlığı,
+            // belge notu) — string literalinin görünmez ARC başlığı,
             // hiçbir gerçekçi retain/release dizisinin sıfıra indiremeyeceği
             // kadar büyük bir değerle başlar, bu yüzden `nox_rc_release` bu
             // statik belleği asla gerçekten serbest bırakmaya çalışmaz (bkz.

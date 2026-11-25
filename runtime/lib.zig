@@ -39,7 +39,7 @@ pub const lowlevel = @import("alloc/lowlevel.zig");
 pub const cycle_detector = @import("alloc/cycle_detector.zig");
 pub const defer_stack = @import("alloc/defer_stack.zig");
 pub const errors = @import("errors/handle.zig");
-pub const foreign_bridge = @import("foreign_bridge.zig");
+pub const wasm_call = @import("wasm_call.zig");
 pub const async_bridge = @import("async_rt/bridge.zig");
 pub const thread_bridge = @import("async_rt/thread_bridge.zig");
 pub const thread_channel = @import("async_rt/thread_channel.zig");
@@ -143,7 +143,7 @@ comptime {
     _ = @import("alloc/ptr_map.zig");
     _ = defer_stack;
     _ = errors;
-    _ = foreign_bridge;
+    _ = wasm_call;
     _ = async_bridge;
     _ = thread_bridge;
     _ = pool_bridge;

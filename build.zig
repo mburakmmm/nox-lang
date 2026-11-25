@@ -243,28 +243,12 @@ fn addHostedRuntimeChain(
         .target = os_target,
         .optimize = optimize,
     });
-    const hpy_contract_mod = b.createModule(.{
-        .root_source_file = b.path("shared/hpy_host_contract.zig"),
-        .target = os_target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    const hpy_bridge_mod = b.createModule(.{
-        .root_source_file = b.path("runtime/hpy_bridge/lib.zig"),
-        .target = os_target,
-        .optimize = optimize,
-        .link_libc = true,
-        .imports = &.{
-            .{ .name = "hpy_contract", .module = hpy_contract_mod },
-        },
-    });
     const wasm_bridge_mod = b.createModule(.{
         .root_source_file = b.path("runtime/wasm_bridge/lib.zig"),
         .target = os_target,
         .optimize = optimize,
         .link_libc = true,
         .imports = &.{
-            .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
         },
     });
     const mod = b.createModule(.{
@@ -274,7 +258,6 @@ fn addHostedRuntimeChain(
         .strip = if (optimize == .Debug or os_tag == .windows) null else true, // 2.2 aşama 9 (bkz. native `noxrt_mod`; Windows'ta strip .pdata'yı da atar ve ölçümde boyutu küçültmedi)
         .link_libc = true,
         .imports = &.{
-            .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
             .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
             .{ .name = "abi_layout", .module = abi_layout_mod },
             .{ .name = "diag_sink", .module = diag_sink_mod },
@@ -449,23 +432,6 @@ fn addMobileRuntimeChain(
         .optimize = optimize,
         .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
     });
-    const hpy_contract_mod = b.createModule(.{
-        .root_source_file = b.path("shared/hpy_host_contract.zig"),
-        .target = os_target,
-        .optimize = optimize,
-        .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
-        .link_libc = true,
-    });
-    const hpy_bridge_mod = b.createModule(.{
-        .root_source_file = b.path("runtime/hpy_bridge/lib.zig"),
-        .target = os_target,
-        .optimize = optimize,
-        .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
-        .link_libc = true,
-        .imports = &.{
-            .{ .name = "hpy_contract", .module = hpy_contract_mod },
-        },
-    });
     const wasm_bridge_mod = b.createModule(.{
         .root_source_file = b.path("runtime/wasm_bridge/lib.zig"),
         .target = os_target,
@@ -473,7 +439,6 @@ fn addMobileRuntimeChain(
         .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
         .link_libc = true,
         .imports = &.{
-            .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
         },
     });
     const mod = b.createModule(.{
@@ -483,7 +448,6 @@ fn addMobileRuntimeChain(
         .pic = true, // v2.1.39: Android API 29'da Zig yerel ELF TLS üretir; -shared bağlamada PIC gerekir (API<29'da emulated TLS buna gerek bırakmıyordu).
         .link_libc = true,
         .imports = &.{
-            .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
             .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
             .{ .name = "abi_layout", .module = abi_layout_mod },
             .{ .name = "diag_sink", .module = diag_sink_mod },
@@ -613,7 +577,7 @@ pub fn build(b: *std.Build) void {
 
     // Faz F.1 (bkz. plan dosyası "Cross-compile İSKELETİ"): Windows'un
     // KENDİ, ZATEN kanıtlanmış `target.result.os.tag == .windows` deseniyle
-    // PARALEL bir kontrol — SADECE İSKELET (link_libc/HPy-WASM hariç tutma),
+    // PARALEL bir kontrol — SADECE İSKELET (link_libc/WASM hariç tutma),
     // `noxrt_mod`nin KÖK dosyası BU turda HÂLÂ `runtime/lib.zig`DİR (`lib_
     // freestanding.zig` HENÜZ YOK — fiber.zig/self_pipe.zig'in OS-fallback
     // kodu comptime-gate'lenmediğinden, freestanding hedefte `noxrt_mod`
@@ -674,7 +638,7 @@ pub fn build(b: *std.Build) void {
     // BAĞIMSIZ Zig modülü olduğundan (aşağıda), ABI/bellek-düzeni
     // sabitlerinin (`LIST_HEADER_SIZE`/`TAG_SIZE`/`ARC_HEADER_SIZE`/vb.)
     // TEK doğruluk kaynağı olması İçin ÜÇÜNCÜ, bağımsız bir yaprak modül —
-    // `hpy_bridge_mod`/`wasm_bridge_mod` İLE AYNI desen (aşağıda), HER İKİ
+    // `wasm_bridge_mod` İLE AYNI desen (aşağıda), HER İKİ
     // tarafa da named import olarak verilir. Hiçbir şey import ETMEZ (saf
     // sabitler) — bu yüzden `nox_mod`/`noxrt_mod`dan ÖNCE tanımlanabilir.
     const abi_layout_mod = b.addModule("abi_layout", .{
@@ -708,22 +672,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const hpy_contract_mod = b.addModule("hpy_contract", .{
-        .root_source_file = b.path("shared/hpy_host_contract.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = !is_freestanding,
-    });
     const nox_mod = b.addModule("nox", .{
         .root_source_file = b.path("compiler/lib.zig"),
         .target = target,
         .optimize = optimize,
-        // `compiler/pkg/hpy_host.zig` paket artefaktını `openat(O_NOFOLLOW)`
-        // ile okur. Derleyici testi bu libc sembollerini bağlar.
+        // Derleyici testi libc sembollerini bağlar.
         .link_libc = true,
         .imports = &.{
             .{ .name = "abi_layout", .module = abi_layout_mod },
-            .{ .name = "hpy_contract", .module = hpy_contract_mod },
         },
     });
 
@@ -747,7 +703,6 @@ pub fn build(b: *std.Build) void {
         // sağlanması gerekir (`nox_mod`a eklemek YETERLİ DEĞİLDİR).
         .imports = &.{
             .{ .name = "abi_layout", .module = abi_layout_mod },
-            .{ .name = "hpy_contract", .module = hpy_contract_mod },
         },
     });
 
@@ -792,7 +747,6 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "abi_layout", .module = abi_layout_mod },
-            .{ .name = "hpy_contract", .module = hpy_contract_mod },
         },
     });
     noxc_nightly_mod.addOptions("build_options", nightly_options);
@@ -888,7 +842,6 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{
             .{ .name = "abi_layout", .module = abi_layout_mod },
-            .{ .name = "hpy_contract", .module = hpy_contract_mod },
         },
     });
     const noxlsp = b.addExecutable(.{
@@ -915,35 +868,24 @@ pub fn build(b: *std.Build) void {
     noxc_only_step.dependOn(&install_noxlsp.step);
 
     // Faz 12/13'ün köprüleri (Faz 14'ten beri `noxrt_mod`ün BİR PARÇASI —
-    // bkz. runtime/foreign_bridge.zig, `nox_hpy_call`/`nox_wasm_call`); bu
+    // bkz. runtime/wasm_call.zig, `nox_wasm_call`); bu
     // yüzden `noxrt_mod`dan ÖNCE tanımlanmalılar ki ona named import olarak
     // verilebilsinler.
-    // NOT: `hpy_bridge_mod`/`wasm_bridge_mod`, `noxrt_mod`a İTHAL EDİLDİĞİNDE
+    // NOT: `wasm_bridge_mod`, `noxrt_mod`a İTHAL EDİLDİĞİNDE
     // ONUN `.link_libc = true`SUNU (aşağıdaki Faz R.1 notu) MİRAS ALIYOR
-    // GİBİ GÖRÜNSE de, KENDİ BAĞIMSIZ test hedefleri (`hpy_bridge_test`/
-    // `wasm_bridge_test`, aşağıda) BU İKİ modülü KENDİ KÖK modülleri olarak
-    // derliyor — bu YÜZDEN `link_libc` HER İKİSİNE de AYRICA (`noxrt_mod`dan
-    // BAĞIMSIZ) tanımlı OLMALI. GERÇEK bir Linux CI çalıştırmasında BULUNDU:
-    // `hpy_bridge/context.zig`nin `std.c.arc4random_buf` ÇAĞRISI (dict.zig'in
-    // AYNI Faz LL.4 deseni) `link_libc` OLMADAN "dependency on libc must be
+    // GİBİ GÖRÜNSE de, KENDİ BAĞIMSIZ test hedefi (`wasm_bridge_test`,
+    // aşağıda) bu modülü KENDİ KÖK modülü olarak derliyor — bu YÜZDEN `link_libc`
+    // AYRICA (`noxrt_mod`dan BAĞIMSIZ) tanımlı OLMALI. GERÇEK bir Linux CI çalıştırmasında BULUNDU:
+    // `std.c.arc4random_buf` ÇAĞRISI (dict.zig'in
+    // Faz LL.4 deseni) `link_libc` OLMADAN "dependency on libc must be
     // explicitly specified"/"type 'void' not a function" hatalarıyla
     // BAŞARISIZ oluyordu.
-    const hpy_bridge_mod = b.addModule("hpy_bridge", .{
-        .root_source_file = b.path("runtime/hpy_bridge/lib.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = !is_freestanding,
-        .imports = &.{
-            .{ .name = "hpy_contract", .module = hpy_contract_mod },
-        },
-    });
     const wasm_bridge_mod = b.addModule("wasm_bridge", .{
         .root_source_file = b.path("runtime/wasm_bridge/lib.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = !is_freestanding,
         .imports = &.{
-            .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
         },
     });
 
@@ -979,7 +921,6 @@ pub fn build(b: *std.Build) void {
             .{ .name = "abi_layout", .module = abi_layout_mod },
             .{ .name = "diag_sink", .module = diag_sink_mod },
         } else &.{
-            .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
             .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
             .{ .name = "abi_layout", .module = abi_layout_mod },
             .{ .name = "diag_sink", .module = diag_sink_mod },
@@ -1249,13 +1190,13 @@ pub fn build(b: *std.Build) void {
 
     // v2.0 madde 8: kamuya açık `--target` bayrağının hosted tarafı.
     // Sürüm varlığı hâlâ `macos-arm64`/`linux-x64`/`linux-arm64`/
-    // `windows-x64`. `macos-x64` bir sürüm varlığı değil; HPy sözleşmesinin
-    // `macos-x86_64` satırını Rosetta altında çalıştırmak için derleyici hedefi.
+    // `windows-x64`. `macos-x64` bir sürüm varlığı değil; Rosetta altında
+    // çalıştırmak için derleyici hedefi.
     // NOT (BU turda GERÇEK bir derlemeyle ÖLÇÜLEREK bulundu): `.gnu` ABI'si
     // (glibc, VERSİYON PİNLENMEDEN) Zig'in VARSAYILAN, GENİŞ-uyumluluk
     // glibc TABANINDA `arc4random_buf`i (glibc 2.36'da EKLENDİ) TAŞIMIYOR —
     // "type 'void' not a function" İLE BAŞARISIZ oluyordu. Düzeltme:
-    // `runtime/collections/dict.zig`/`hpy_bridge/context.zig`/`stdlib_
+    // `runtime/collections/dict.zig`/`stdlib_
     // shims/crypto.zig`, Linux'ta `arc4random_buf` YERİNE `std.c.getrandom`
     // KULLANACAK şekilde güncellendi (`getrandom` glibc'de ≥2.25 [2017]
     // İKEN, musl'da KOŞULSUZ gerçek bir implementasyona sahip — ÇOK DAHA
@@ -1482,27 +1423,6 @@ pub fn build(b: *std.Build) void {
     const bench_http_step = b.step("bench-http", "nox.http.serve verim ölçümünü çalıştır");
     bench_http_step.dependOn(&run_http_bench.step);
 
-    // ---- `hpy_call_on` verim (throughput) ölçümü (bkz. benchmarks/
-    // hpy_call_bench.zig) — Faz FFI.2'nin Obj havuzlama + MarshalCtx/
-    // packed_args tahsis azaltmasının GERÇEK etkisini ölçmek İçİn — `bench_
-    // http_step`in AYNI deseni. `tests/compat/hpy_ext/noxtest.so`ya bağımlı
-    // olduğundan (`.hpy-venv` KURULUYSA `zig build test` SIRASINDA derlenir)
-    // bu adım `b.getInstallStep()`e BAĞLIDIR AMA `noxtest.so`nun KENDİSİNİ
-    // ZORUNLU KILMAZ — program KENDİSİ eksikse AÇIK bir hatayla ÇIKAR ----
-    const hpy_call_bench_mod = b.createModule(.{
-        .root_source_file = b.path("benchmarks/hpy_call_bench.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const hpy_call_bench = b.addExecutable(.{
-        .name = "noxhpycallbench",
-        .root_module = hpy_call_bench_mod,
-    });
-    const run_hpy_call_bench = b.addRunArtifact(hpy_call_bench);
-    run_hpy_call_bench.step.dependOn(b.getInstallStep());
-    const bench_hpy_step = b.step("bench-hpy", "hpy_call_on verim ölçümünü çalıştır (Faz FFI.2)");
-    bench_hpy_step.dependOn(&run_hpy_call_bench.step);
-
     const test_step = b.step("test", "Tüm unit ve golden testleri çalıştır");
     // codegen golden testleri, üretilen binary'leri `zig-out/lib/noxrt.o`'ya
     // karşı linklemek için bu adımın önceden tamamlanmış olmasına ihtiyaç duyar.
@@ -1569,7 +1489,6 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .link_libc = true,
             .imports = &.{
-                .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
                 .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
                 .{ .name = "abi_layout", .module = abi_layout_mod },
                 .{ .name = "diag_sink", .module = diag_sink_mod },
@@ -1745,8 +1664,8 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             // NOT: `tests/cli/shared_mem_test.zig`nin KENDİSİ `std.c.getpid()`
             // ÇAĞIRIYOR (paylaşımlı bellek testinin İKİ ayrı process'i AYNI
-            // PID uzayında OLMADIĞINI doğrulamak İçİn) — `hpy_bridge_mod`/
-            // `wasm_bridge_mod`İLE AYNI, GERÇEK bir Linux CI çalıştırmasında
+            // PID uzayında OLMADIĞINI doğrulamak İçİn) — `wasm_bridge_mod`
+            // İLE AYNI, GERÇEK bir Linux CI çalıştırmasında
             // BULUNAN sınıf hatası: `std.c.*` KULLANIMI Linux'ta `link_libc`
             // OLMADAN "dependency on libc must be explicitly specified"
             // derleme hatası verir. Bu döngüdeki DİĞER dosyaların HİÇBİRİ
@@ -1775,8 +1694,8 @@ pub fn build(b: *std.Build) void {
         }
     }
 
-    // `codegen_golden_test.zig` ayrıca (Faz 14'ten beri) `hpy_call`/
-    // `wasm_call` golden testleri içerir — bunlar aşağıda tanımlanan
+    // `codegen_golden_test.zig` ayrıca (Faz 14'ten beri) `wasm_call`
+    // golden testleri içerir — bunlar aşağıda tanımlanan
     // `compile_ext`/`compile_wasm` adımlarının ÖNCEDEN tamamlanmış olmasını
     // gerektirir (gerçek `.so`/`.wasm` fixture'ları diske yazılmalı). Bu
     // yüzden generic döngünün dışında, çalıştırma adımını daha sonra
@@ -1795,93 +1714,11 @@ pub fn build(b: *std.Build) void {
     const codegen_test_run = addTimedTestRun(b, codegen_test, win_test_timeout_s);
     test_step.dependOn(&codegen_test_run.step);
 
-    // ---- Faz 12: HPy köprüsü (Tier 0) uyumluluk testi ----
-    //
-    // AGENTS.md §10/§13: her Tier 0/1 eklemesi GERÇEK bir C eklentisiyle
-    // doğrulanmalıdır. `tests/compat/hpy_ext/noxtest.c`, gerçek HPy
-    // header'larına karşı derlenmiş, bağımsız bir paylaşımlı kütüphanedir.
-    // Bu, `.hpy-venv` (bkz. nox-teknik-spesifikasyon.md §3.12, kurulum
-    // notu — `python3 -m venv .hpy-venv && .hpy-venv/bin/pip install hpy`)
-    // önceden oluşturulmuş olmasını gerektirir; yoksa bu test adımı
-    // (yalnızca bu adım) sessizce atlanır, ana test takımı etkilenmez.
-    const hpy_bridge_test = b.addTest(.{ .root_module = hpy_bridge_mod });
-    test_step.dependOn(&addTimedTestRun(b, hpy_bridge_test, win_test_timeout_s).step);
-    const hpy_host_test_step = b.step("hpy-host-test", "nox-hpy-host-v1 sözleşme, imza tablosu ve codegen testleri");
-    hpy_host_test_step.dependOn(&addTimedTestRun(b, lib_test, win_test_timeout_s).step);
-    hpy_host_test_step.dependOn(&codegen_test_run.step);
-    hpy_host_test_step.dependOn(&addTimedTestRun(b, hpy_bridge_test, win_test_timeout_s).step);
-
-    const io = b.graph.io;
-    const build_root_handle = if (comptime @hasField(std.Build, "build_root")) b.build_root.handle else b.root.root_dir.handle;
-    if (build_root_handle.access(io, ".hpy-venv/lib", .{})) |_| {
-        var venv_lib_dir = build_root_handle.openDir(io, ".hpy-venv/lib", .{ .iterate = true }) catch unreachable;
-        defer venv_lib_dir.close(io);
-        var it = venv_lib_dir.iterate();
-        const python_dir_name = blk: {
-            while (it.next(io) catch unreachable) |entry| {
-                if (entry.kind == .directory and std.mem.startsWith(u8, entry.name, "python3")) {
-                    break :blk b.dupe(entry.name);
-                }
-            }
-            break :blk null;
-        };
-        if (python_dir_name) |py_dir| {
-            const hpy_include = b.fmt(".hpy-venv/lib/{s}/site-packages/hpy/devel/include", .{py_dir});
-
-            const so_path = "tests/compat/hpy_ext/noxtest.so";
-            const compile_ext = b.addSystemCommand(&.{
-                "cc",                             "-DHPY_ABI_UNIVERSAL",
-                "-I",                             hpy_include,
-                "-shared",                        "-fPIC",
-                "-o",                             so_path,
-                "tests/compat/hpy_ext/noxtest.c",
-            });
-
-            const build_options = b.addOptions();
-            build_options.addOption([]const u8, "noxtest_so_path", pathFromRootCompat(b, so_path));
-
-            const compat_mod = b.createModule(.{
-                .root_source_file = b.path("tests/compat/hpy_tier0_test.zig"),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{
-                    .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
-                    .{ .name = "build_options", .module = build_options.createModule() },
-                },
-            });
-            const compat_test = b.addTest(.{ .root_module = compat_mod });
-            compat_test.step.dependOn(&compile_ext.step);
-            test_step.dependOn(&addTimedTestRun(b, compat_test, win_test_timeout_s).step);
-
-            // Faz 14: `hpy_call` yerleşiğinin gerçek bir .nox programından
-            // GERÇEK bir HPy eklentisini çağırdığını doğrulayan golden test.
-            // `codegen_golden_test.zig`e (her zaman çalışan ana takıma)
-            // KASITLI OLARAK eklenmedi — bu, HPy venv'i kurulu olmayanlarda
-            // ana takımı kırardı (bkz. Faz 12'nin "sessizce atlanır" ilkesi).
-            // Bunun yerine, `noxtest.so` derlendiğinde ayrı ve koşullu
-            // olarak eklenir.
-            const hpy_call_golden_mod = b.createModule(.{
-                .root_source_file = b.path("tests/compat/hpy_call_golden_test.zig"),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{
-                    .{ .name = "nox", .module = nox_mod },
-                    .{ .name = "sys_compat", .module = sys_compat_mod },
-                    .{ .name = "host_link", .module = host_link_mod },
-                },
-            });
-            const hpy_call_golden_test = b.addTest(.{ .root_module = hpy_call_golden_mod });
-            hpy_call_golden_test.step.dependOn(&compile_ext.step);
-            hpy_call_golden_test.step.dependOn(&install_noxrt.step);
-            test_step.dependOn(&addTimedTestRun(b, hpy_call_golden_test, win_test_timeout_s).step);
-        }
-    } else |_| {}
-
     // ---- Faz 13: WASM köprüsü uyumluluk testi ----
     //
     // AGENTS.md §11: gömülü WASM runtime seçimi olarak NATIF bir Zig
     // yorumlayıcısı seçildi (wasmtime/wasmer yerine) — bu, üçüncü bir yeni
-    // sistem bağımlılığı eklemeden (QBE, HPy'den sonra) kendi kendine
+    // sistem bağımlılığı eklemeden (QBE'den sonra) kendi kendine
     // yeten bir çözüm sağlar. Test fixture'ı, `zig`in KENDİSİYLE (zaten
     // zorunlu bir araç) `wasm32-freestanding` hedefine derlenmiş GERÇEK bir
     // `.wasm` ikilisidir — WABT/wasmtime gibi ek bir araç GEREKMEZ.
@@ -1932,7 +1769,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "wasm_bridge", .module = wasm_bridge_mod },
-            .{ .name = "hpy_bridge", .module = hpy_bridge_mod },
             .{ .name = "build_options", .module = wasm_build_options.createModule() },
         },
     });
@@ -2012,7 +1848,7 @@ pub fn build(b: *std.Build) void {
 
     // ---- Planlanan Faz 20: Zig/C ABI FFI (`extern def`) uyumluluk testi ----
     //
-    // nox-teknik-spesifikasyon.md §3.20: HPy/WASM köprülerinden BAĞIMSIZ,
+    // nox-teknik-spesifikasyon.md §3.20: WASM köprüsünden BAĞIMSIZ,
     // derleme/bağlama zamanında çözülen, kutulanmamış bir C ABI FFI'si.
     // Hem GERÇEK bir C dosyası (`cc -c`) HEM GERÇEK bir Zig dosyası (`zig
     // build-obj`, `export fn ... callconv(.c)`) ayrı ayrı nesne dosyalarına

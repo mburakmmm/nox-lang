@@ -52,7 +52,7 @@ Genel kural (Kural 10): **önce eşdeğer port, sonra ayrı optimizasyon**; ayn�
 | R4 | saf math/hash/bayt algoritmaları, str/list/dict yardımcıları; hibrit runtime (Zig+Nox aynı `rt` ABI'si); modül-bazlı build seçimi | mevcut uygulamalar tüm davranışlarını korur; ±%5 mikro; tam fixture korpusu (LLVM+QBE) |
 | R5 | allocator (P06 → üretim), ARC, exception, cycle collector — **mevcut algoritma birebir** | fault injection, leak/double-free, cycle oracle (nesne-kimliği tabanlı), OOM, çok-işçili stres; ARC sıcak yol/GC duraklaması Zig referansına göre ölçülür |
 | R6 | scheduler/fiber/worker/IO/TLS; assembly bağlantısı korunur | STW altında CPU yükü, kanal stresi, derin yield, HTTP gerçek iş yükü; Windows/WASM/freestanding farkları |
-| R7 | native stdlib shim'leri (NNI/NAPI/HPy/FFI/embedding) | aynı public ABI testleri; kalıcı sağlayıcı manifesti |
+| R7 | native stdlib shim'leri (NNI/NAPI/FFI/embedding; HPy v2.2.69'da kaldırıldı) | aynı public ABI testleri; kalıcı sağlayıcı manifesti |
 | R8 | Stage0→Stage3 bootstrap, deterministik çıktı, Zig'siz temiz ortam | Zig runtime kaynakları/nesneleri/executable'ı olmadan temiz build+run |
 | R9 | **Toolchain bağımsızlığı (kullanıcı kararı M.9: bu proje kapsamında)** | masaüstü `--target` çapraz derleme ve `--selfhost-obj` yedek yolunda `zig cc` yok (clang/lld/LLVM veya kendi bağlama stratejisi; Windows PE/COFF dahil); `zig` olmayan temiz ortamda kurulum + build + çapraz-link; ayrıca ayrı plan/ölçüm belgesi gerekir |
 

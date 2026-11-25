@@ -293,7 +293,7 @@ pub const ForStmt = struct {
 /// (isim, literal argümanlar) çiftini KAYDEDER, framework bunu çalışma
 /// zamanında `nox.reflect` üzerinden sorgular. v1: `args` yalnızca
 /// `.string_lit` OLABİLİR (checker zorunlu kılar) — parser HERHANGİ bir
-/// ifadeyi kabul eder, kısıt BİLEREK checker'da (hpy_call'ın AYNI deseni).
+/// ifadeyi kabul eder, kısıt BİLEREK checker'da (`wasm_call`ın AYNI deseni).
 pub const Decorator = struct {
     name: []const u8,
     args: []Expr,
@@ -455,7 +455,7 @@ pub const ExternDef = struct {
     /// `with_rt` işareti — bkz. nox-teknik-spesifikasyon.md, stdlib fazı
     /// §D.1 (Keşif 3). Varsayılan (`false`): bu extern def ÇAĞRILIRKEN
     /// hiçbir gizli argüman GEÇİRİLMEZ (Faz 20'nin ZATEN var olan "ARC-dışı
-    /// opak" tasarımı, DEĞİŞMEDEN — `counter.c`/HPy/WASM köprüleri). `true`
+    /// opak" tasarımı, DEĞİŞMEDEN — `counter.c`/WASM köprüsü). `true`
     /// İSE (`extern def ... from "lib" with_rt`), codegen'in `genCall`i
     /// argüman listesinin BAŞINA GİZLİCE `RT_PARAM`ı ekler (normal
     /// fonksiyon çağrılarıyla AYNI kalıp) — Zig tarafındaki fonksiyonun

@@ -43,7 +43,6 @@ const project = @import("project.zig");
 const qbe_target = @import("qbe_target.zig");
 const test_runner = @import("pkg/test_runner.zig");
 const fetch = @import("pkg/fetch.zig");
-const hpy_host_mod = @import("pkg/hpy_host.zig");
 const pkg_index = @import("pkg/index.zig");
 const upgrade_mod = @import("pkg/upgrade.zig");
 const registry = @import("pkg/registry.zig");
@@ -1612,7 +1611,6 @@ fn cmdDelete(io: std.Io, a: std.mem.Allocator, args: []const []const u8) !void {
     for (lock.packages) |pkg| {
         if (std.mem.eql(u8, pkg.alias, alias)) {
             lock_changed = true;
-            hpy_host_mod.forgetStaged(a, io, root, pkg.hpy_module);
             continue;
         }
         try new_packages.append(a, pkg);
@@ -3342,11 +3340,7 @@ fn resolveImportsForBuild(
                     break;
                 }
             }
-            var new_entry: project.LockedPackage = .{ .alias = req.alias, .repo = req.repo, .ref = req.ref, .resolved = result.resolved_sha };
-            hpy_host_mod.annotateLock(a, io, result.cache_dir, &new_entry) catch |e| {
-                printErr("HPy package rejected before install (alias={s}): {t}\n", .{ req.alias, e });
-                return error.BuildFailed;
-            };
+            const new_entry: project.LockedPackage = .{ .alias = req.alias, .repo = req.repo, .ref = req.ref, .resolved = result.resolved_sha };
             if (found_idx) |i| new_packages.items[i] = new_entry else try new_packages.append(a, new_entry);
             lock_changed = true;
         }
@@ -3456,15 +3450,6 @@ fn resolveDependencies(
             if (locked_opt) |locked| {
                 const cache_dir = try fetch.cachedDirFor(a, nox_home, locked.repo, locked.resolved);
                 if (std.Io.Dir.accessAbsolute(io, cache_dir, .{})) |_| {
-                    var check = locked;
-                    hpy_host_mod.annotateLock(a, io, cache_dir, &check) catch |e| {
-                        printErr("HPy package rejected before use (alias={s}): {t}\n", .{ req.alias, e });
-                        return e;
-                    };
-                    if (check.hpy_module.len != 0 and !hpy_host_mod.requireComplete(locked, true)) {
-                        printErr("HPy package is locked without a digest (alias={s})\n", .{req.alias});
-                        return error.HpyRejected;
-                    }
                     try outcomes.append(a, .{ .alias = req.alias, .repo = req.repo, .action = .cached, .resolved = locked.resolved, .previous_resolved = null });
                     continue;
                 } else |_| {}
@@ -3503,11 +3488,7 @@ fn resolveDependencies(
                 break;
             }
         }
-        var new_entry: project.LockedPackage = .{ .alias = req.alias, .repo = req.repo, .ref = req.ref, .resolved = result.resolved_sha };
-        hpy_host_mod.annotateLock(a, io, result.cache_dir, &new_entry) catch |e| {
-            printErr("HPy package rejected before install (alias={s}): {t}\n", .{ req.alias, e });
-            return e;
-        };
+        const new_entry: project.LockedPackage = .{ .alias = req.alias, .repo = req.repo, .ref = req.ref, .resolved = result.resolved_sha };
         if (found_idx) |i| new_packages.items[i] = new_entry else try new_packages.append(a, new_entry);
 
         const same_as_before = if (previous) |p| std.mem.eql(u8, p, result.resolved_sha) else false;
@@ -3517,10 +3498,6 @@ fn resolveDependencies(
         try outcomes.append(a, .{ .alias = req.alias, .repo = req.repo, .action = action, .resolved = result.resolved_sha, .previous_resolved = previous });
     }
 
-    if (hpy_host_mod.findConflict(new_packages.items)) {
-        printErr("HPy module name is locked to two different artifacts\n", .{});
-        return error.HpyRejected;
-    }
     return .{ .packages = new_packages.items, .outcomes = outcomes.items, .changed = changed };
 }
 
@@ -4476,10 +4453,6 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             printErr("{s} failed:\n{s}\n", .{ if (driver == .zig_cc) "zig cc" else "clang", clang_result.stderr });
             return error.BuildFailed;
         }
-        stageProjectHpy(a, io, path_arg, bin_path, nox_home) catch |e| {
-            printErr("HPy artifacts were not staged: {t}\n", .{e});
-            return error.BuildFailed;
-        };
         return bin_path;
     }
 
@@ -4675,33 +4648,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         return error.BuildFailed;
     }
 
-    stageProjectHpy(a, io, path_arg, bin_path, nox_home) catch |e| {
-        printErr("HPy artifacts were not staged: {t}\n", .{e});
-        return error.BuildFailed;
-    };
     return bin_path;
-}
-
-fn stageProjectHpy(a: std.mem.Allocator, io: std.Io, path_arg: []const u8, bin_path: []const u8, nox_home: []const u8) !void {
-    const start_rel = std.fs.path.dirname(path_arg) orelse ".";
-    const start = if (std.fs.path.isAbsolute(start_rel))
-        start_rel
-    else if (std.mem.eql(u8, start_rel, "."))
-        try std.process.currentPathAlloc(io, a)
-    else
-        try std.fs.path.join(a, &.{ try std.process.currentPathAlloc(io, a), start_rel });
-    const root = try project.findProjectRoot(a, io, start) orelse return;
-    const lock = project.loadLockfile(a, io, root) catch return;
-    if (hpy_host_mod.findConflict(lock.packages)) return error.HpyRejected;
-    const bin_dir = std.fs.path.dirname(bin_path) orelse ".";
-    const staged_root = try std.fmt.allocPrint(a, "{s}/hpy", .{bin_dir});
-    std.Io.Dir.cwd().deleteTree(io, staged_root) catch {};
-    for (lock.packages) |pkg| {
-        if (pkg.hpy_module.len == 0) continue;
-        if (!hpy_host_mod.requireComplete(pkg, true)) return error.HpyRejected;
-        const cache_dir = try fetch.cachedDirFor(a, nox_home, pkg.repo, pkg.resolved);
-        try hpy_host_mod.stageBesideBinary(a, io, cache_dir, bin_path, pkg);
-    }
 }
 
 fn stemOf(path: []const u8) []const u8 {

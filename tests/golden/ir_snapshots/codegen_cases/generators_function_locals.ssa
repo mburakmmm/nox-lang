@@ -1931,198 +1931,6 @@ export function $GeneratorExit_gc_free(l %rt, l %p) {
     ret
 }
 data $GeneratorExit_vtable = { l $Exception___str__ }
-export function $HPyError_release(l %rt, l %p) {
-@start
-    %t0 =l sub %p, 8
-    %t1 =l loadl %t0
-    %t2 =l sub %t1, 1
-    storel %t2, %t0
-    %t4 =l and %t2, 4294967295
-    %t3 =w ceql %t4, 0
-    jnz %t3, @release_free0, @release_done1
-@release_free0
-    %t5 =l add %p, 16
-    %t6 =l loadl %t5
-    %t7 =w ceql %t6, 0
-    jnz %t7, @release_skip3, @release2
-@release2
-    %t8 =l sub %t6, 16
-    %t9 =l loadl %t8
-    %t10 =w csgel %t9, 536870912
-    jnz %t10, @str_free_done7, @str_rel_atomic8
-@str_rel_atomic8
-    %t11 =l sub %t6, 16
-    %t12 =l loadl %t11
-    %t13 =l sub %t12, 1
-    storel %t13, %t11
-    %t14 =w cslel %t13, 0
-    jnz %t14, @str_free5, @str_free_skip6
-@str_free5
-    call $nox_str_free_now(l %rt, l %t6)
-    jmp @str_free_done7
-@str_free_skip6
-    jmp @str_free_done7
-@str_free_done7
-    jmp @release_done4
-@release_skip3
-    jmp @release_done4
-@release_done4
-    %t15 =l add %p, 32
-    %t16 =l loadl %t15
-    %t17 =w ceql %t16, 0
-    jnz %t17, @release_skip10, @release9
-@release9
-    %t18 =l sub %t16, 16
-    %t19 =l loadl %t18
-    %t20 =w csgel %t19, 536870912
-    jnz %t20, @str_free_done14, @str_rel_atomic15
-@str_rel_atomic15
-    %t21 =l sub %t16, 16
-    %t22 =l loadl %t21
-    %t23 =l sub %t22, 1
-    storel %t23, %t21
-    %t24 =w cslel %t23, 0
-    jnz %t24, @str_free12, @str_free_skip13
-@str_free12
-    call $nox_str_free_now(l %rt, l %t16)
-    jmp @str_free_done14
-@str_free_skip13
-    jmp @str_free_done14
-@str_free_done14
-    jmp @release_done11
-@release_skip10
-    jmp @release_done11
-@release_done11
-    %t25 =l sub %rt, 24
-    %t26 =l loadl %t25
-    %t27 =w ceql %t26, 0
-    jnz %t27, @cfree_slow16, @cfree_fast17
-@cfree_fast17
-    %t28 =l sub %rt, 32
-    %t29 =l loadl %t28
-    %t30 =l add %t29, 16
-    %t31 =l loadl %t30
-    %t32 =l sub %p, 8
-    storel %t31, %t32
-    storel %t32, %t30
-    jmp @cfree_done18
-@cfree_slow16
-    call $nox_rc_free_payload(l %rt, l %p, l 40)
-    jmp @cfree_done18
-@cfree_done18
-    jmp @release_done1
-@release_done1
-    ret
-}
-export function w $HPyError_eq(l %rt, l %a, l %b) {
-@start
-    %t0 =l add %a, 16
-    %t1 =l add %b, 16
-    %t2 =l loadl %t0
-    %t3 =l loadl %t1
-    %t4 =w ceql %t2, 0
-    %t5 =w ceql %t3, 0
-    %t6 =w or %t4, %t5
-    jnz %t6, @eqcmp_nullcase1, @eqcmp_rec2
-@eqcmp_nullcase1
-    %t7 =w and %t4, %t5
-    jnz %t7, @eqcmp_cont3, @classeq_mismatch0
-@eqcmp_rec2
-    %t8 =w call $strcmp(l %t2, l %t3)
-    %t9 =w ceqw %t8, 0
-    jnz %t9, @eqcmp_cont3, @classeq_mismatch0
-@eqcmp_cont3
-    %t10 =l add %a, 24
-    %t11 =l add %b, 24
-    %t12 =l loadl %t10
-    %t13 =l loadl %t11
-    %t14 =w ceql %t12, %t13
-    jnz %t14, @eqcmp_cont4, @classeq_mismatch0
-@eqcmp_cont4
-    %t15 =l add %a, 32
-    %t16 =l add %b, 32
-    %t17 =l loadl %t15
-    %t18 =l loadl %t16
-    %t19 =w ceql %t17, 0
-    %t20 =w ceql %t18, 0
-    %t21 =w or %t19, %t20
-    jnz %t21, @eqcmp_nullcase5, @eqcmp_rec6
-@eqcmp_nullcase5
-    %t22 =w and %t19, %t20
-    jnz %t22, @eqcmp_cont7, @classeq_mismatch0
-@eqcmp_rec6
-    %t23 =w call $strcmp(l %t17, l %t18)
-    %t24 =w ceqw %t23, 0
-    jnz %t24, @eqcmp_cont7, @classeq_mismatch0
-@eqcmp_cont7
-    ret 1
-@classeq_mismatch0
-    ret 0
-}
-export function l $HPyError_trace(l %rt, l %p) {
-@start
-    %t0 =l call $nox_trace_buf_alloc(l %rt, l 8)
-    storel 0, %t0
-    ret %t0
-}
-export function $HPyError_gc_free(l %rt, l %p) {
-@start
-    %t0 =l add %p, 16
-    %t1 =l loadl %t0
-    %t2 =w ceql %t1, 0
-    jnz %t2, @release_skip1, @release0
-@release0
-    %t3 =l sub %t1, 16
-    %t4 =l loadl %t3
-    %t5 =w csgel %t4, 536870912
-    jnz %t5, @str_free_done5, @str_rel_atomic6
-@str_rel_atomic6
-    %t6 =l sub %t1, 16
-    %t7 =l loadl %t6
-    %t8 =l sub %t7, 1
-    storel %t8, %t6
-    %t9 =w cslel %t8, 0
-    jnz %t9, @str_free3, @str_free_skip4
-@str_free3
-    call $nox_str_free_now(l %rt, l %t1)
-    jmp @str_free_done5
-@str_free_skip4
-    jmp @str_free_done5
-@str_free_done5
-    jmp @release_done2
-@release_skip1
-    jmp @release_done2
-@release_done2
-    %t10 =l add %p, 32
-    %t11 =l loadl %t10
-    %t12 =w ceql %t11, 0
-    jnz %t12, @release_skip8, @release7
-@release7
-    %t13 =l sub %t11, 16
-    %t14 =l loadl %t13
-    %t15 =w csgel %t14, 536870912
-    jnz %t15, @str_free_done12, @str_rel_atomic13
-@str_rel_atomic13
-    %t16 =l sub %t11, 16
-    %t17 =l loadl %t16
-    %t18 =l sub %t17, 1
-    storel %t18, %t16
-    %t19 =w cslel %t18, 0
-    jnz %t19, @str_free10, @str_free_skip11
-@str_free10
-    call $nox_str_free_now(l %rt, l %t11)
-    jmp @str_free_done12
-@str_free_skip11
-    jmp @str_free_done12
-@str_free_done12
-    jmp @release_done9
-@release_skip8
-    jmp @release_done9
-@release_done9
-    call $nox_rc_free_payload(l %rt, l %p, l 40)
-    ret
-}
-data $HPyError_vtable = { l $Exception___str__ }
 export function $CancelledError_release(l %rt, l %p) {
 @start
     %t0 =l sub %p, 8
@@ -4733,7 +4541,7 @@ export function l $__nox_Gen__int___next__(l %rt, l %p_self) {
     jmp @calloc_done19
 @calloc_done19
     %t43 =l loadl %t31
-    storel 16, %t43
+    storel 15, %t43
     %t44 =l add %t43, 8
     storel $IndexError_vtable, %t44
     %t45 =l add %t43, 16
@@ -4807,8 +4615,8 @@ export function l $__nox_Gen__int___next__(l %rt, l %p_self) {
     ret 0
 @exc_continue29
     %t67 =l add %t43, 24
-    storel 305, %t67
-    call $nox_raise(l %rt, l %t43, l 305)
+    storel 295, %t67
+    call $nox_raise(l %rt, l %t43, l 295)
     %t68 =l loadl %t2
     %t69 =w ceql %t68, 0
     jnz %t69, @release_skip40, @release39
@@ -4869,7 +4677,7 @@ export function l $__nox_Gen__int___next__(l %rt, l %p_self) {
     jmp @calloc_done97
 @calloc_done97
     %t171 =l loadl %t159
-    storel 16, %t171
+    storel 15, %t171
     %t172 =l add %t171, 8
     storel $IndexError_vtable, %t172
     %t173 =l add %t171, 16
@@ -4943,8 +4751,8 @@ export function l $__nox_Gen__int___next__(l %rt, l %p_self) {
     ret 0
 @exc_continue107
     %t195 =l add %t171, 24
-    storel 313, %t195
-    call $nox_raise(l %rt, l %t171, l 313)
+    storel 303, %t195
+    call $nox_raise(l %rt, l %t171, l 303)
     %t196 =l loadl %t2
     %t197 =w ceql %t196, 0
     jnz %t197, @release_skip118, @release117
@@ -5099,7 +4907,7 @@ export function l $__nox_Gen__int___nox_next_raise__(l %rt, l %p_self) {
     jmp @calloc_done23
 @calloc_done23
     %t39 =l loadl %t27
-    storel 11, %t39
+    storel 10, %t39
     %t40 =l add %t39, 8
     storel $StopIteration_vtable, %t40
     %t41 =l add %t39, 16
@@ -5161,8 +4969,8 @@ export function l $__nox_Gen__int___nox_next_raise__(l %rt, l %p_self) {
     ret 0
 @exc_continue33
     %t59 =l add %t39, 24
-    storel 324, %t59
-    call $nox_raise(l %rt, l %t39, l 324)
+    storel 314, %t59
+    call $nox_raise(l %rt, l %t39, l 314)
     %t60 =l sub %rt, 48
     %t61 =w loadub %t60
     %t62 =l sub %rt, 64
@@ -5455,93 +5263,90 @@ export function $__nox_Gen__int___del__(l %rt, l %p_self) {
     %t20 =w ceql %t19, 1
     jnz %t20, @except_body14, @except_hier_check16
 @except_hier_check16
-    %t21 =w ceql %t19, 12
+    %t21 =w ceql %t19, 11
     jnz %t21, @except_body14, @except_hier_check17
 @except_hier_check17
     %t22 =w ceql %t19, 8
     jnz %t22, @except_body14, @except_hier_check18
 @except_hier_check18
-    %t23 =w ceql %t19, 11
+    %t23 =w ceql %t19, 10
     jnz %t23, @except_body14, @except_hier_check19
 @except_hier_check19
-    %t24 =w ceql %t19, 10
+    %t24 =w ceql %t19, 9
     jnz %t24, @except_body14, @except_hier_check20
 @except_hier_check20
-    %t25 =w ceql %t19, 15
+    %t25 =w ceql %t19, 14
     jnz %t25, @except_body14, @except_hier_check21
 @except_hier_check21
-    %t26 =w ceql %t19, 14
+    %t26 =w ceql %t19, 13
     jnz %t26, @except_body14, @except_hier_check22
 @except_hier_check22
-    %t27 =w ceql %t19, 9
+    %t27 =w ceql %t19, 16
     jnz %t27, @except_body14, @except_hier_check23
 @except_hier_check23
-    %t28 =w ceql %t19, 17
+    %t28 =w ceql %t19, 12
     jnz %t28, @except_body14, @except_hier_check24
 @except_hier_check24
-    %t29 =w ceql %t19, 13
-    jnz %t29, @except_body14, @except_hier_check25
-@except_hier_check25
-    %t30 =w ceql %t19, 16
-    jnz %t30, @except_body14, @except_reraise15
+    %t29 =w ceql %t19, 15
+    jnz %t29, @except_body14, @except_reraise15
 @except_body14
-    %t31 =l loadl %t1
-    %t32 =w ceql %t31, 0
-    jnz %t32, @release_skip27, @release26
-@release26
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t31)
-    jmp @release_done28
-@release_skip27
-    jmp @release_done28
-@release_done28
+    %t30 =l loadl %t1
+    %t31 =w ceql %t30, 0
+    jnz %t31, @release_skip26, @release25
+@release25
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t30)
+    jmp @release_done27
+@release_skip26
+    jmp @release_done27
+@release_done27
     storel 0, %t1
     storel %t18, %t1
     jmp @try_after6
 @except_reraise15
-    call $nox_raise(l %rt, l %t18, l 342)
-    %t33 =l sub %rt, 48
-    %t34 =w loadub %t33
-    %t35 =l sub %rt, 64
-    %t36 =l loadl %t35
-    jnz %t34, @exc_slow29, @exc_fast30
-@exc_fast30
-    %t37 =w cnel %t36, 0
-    jmp @exc_done31
-@exc_slow29
-    %t38 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done31
-@exc_done31
-    %t39 =w phi @exc_fast30 %t37, @exc_slow29 %t38
-    jnz %t39, @exc_propagate32, @exc_continue33
-@exc_propagate32
-    %t40 =l loadl %t1
-    %t41 =w ceql %t40, 0
-    jnz %t41, @release_skip35, @release34
-@release34
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t40)
-    jmp @release_done36
-@release_skip35
-    jmp @release_done36
-@release_done36
+    call $nox_raise(l %rt, l %t18, l 332)
+    %t32 =l sub %rt, 48
+    %t33 =w loadub %t32
+    %t34 =l sub %rt, 64
+    %t35 =l loadl %t34
+    jnz %t33, @exc_slow28, @exc_fast29
+@exc_fast29
+    %t36 =w cnel %t35, 0
+    jmp @exc_done30
+@exc_slow28
+    %t37 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done30
+@exc_done30
+    %t38 =w phi @exc_fast29 %t36, @exc_slow28 %t37
+    jnz %t38, @exc_propagate31, @exc_continue32
+@exc_propagate31
+    %t39 =l loadl %t1
+    %t40 =w ceql %t39, 0
+    jnz %t40, @release_skip34, @release33
+@release33
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t39)
+    jmp @release_done35
+@release_skip34
+    jmp @release_done35
+@release_done35
     storel 0, %t1
     ret
-@exc_continue33
+@exc_continue32
     jmp @try_after6
 @try_after6
 @try_end7
     jmp @if_end0
 @if_end0
-    %t42 =l loadl %t1
-    %t43 =w ceql %t42, 0
-    jnz %t43, @release_skip38, @release37
-@release37
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t42)
-    jmp @release_done39
-@release_skip38
-    jmp @release_done39
-@release_done39
+    %t41 =l loadl %t1
+    %t42 =w ceql %t41, 0
+    jnz %t42, @release_skip37, @release36
+@release36
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t41)
+    jmp @release_done38
+@release_skip37
+    jmp @release_done38
+@release_done38
     storel 0, %t1
-@fn_end40
+@fn_end39
     ret
 }
 export function $__nox_Gen__int_close(l %rt, l %p_self) {
@@ -5746,7 +5551,7 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     %t189 =l loadl %t188
     jmp @except_check125
 @except_check125
-    %t190 =w ceql %t189, 10
+    %t190 =w ceql %t189, 9
     jnz %t190, @except_body126, @except_reraise127
 @except_body126
     %t191 =l loadl %t4
@@ -5762,7 +5567,7 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     storel %t188, %t4
     jmp @try_after110
 @except_reraise127
-    call $nox_raise(l %rt, l %t188, l 357)
+    call $nox_raise(l %rt, l %t188, l 347)
     %t193 =l sub %rt, 48
     %t194 =w loadub %t193
     %t195 =l sub %rt, 64
@@ -5854,7 +5659,7 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     jmp @calloc_done153
 @calloc_done153
     %t227 =l loadl %t215
-    storel 15, %t227
+    storel 14, %t227
     %t228 =l add %t227, 8
     storel $RuntimeError_vtable, %t228
     %t229 =l add %t227, 16
@@ -5938,8 +5743,8 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     ret
 @exc_continue163
     %t253 =l add %t227, 24
-    storel 359, %t253
-    call $nox_raise(l %rt, l %t227, l 359)
+    storel 349, %t253
+    call $nox_raise(l %rt, l %t227, l 349)
     %t254 =l sub %rt, 48
     %t255 =w loadub %t254
     %t256 =l sub %rt, 64
@@ -6075,7 +5880,7 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     jmp @calloc_done28
 @calloc_done28
     %t56 =l loadl %t44
-    storel 16, %t56
+    storel 15, %t56
     %t57 =l add %t56, 8
     storel $IndexError_vtable, %t57
     %t58 =l add %t56, 16
@@ -6159,8 +5964,8 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     ret
 @exc_continue38
     %t82 =l add %t56, 24
-    storel 349, %t82
-    call $nox_raise(l %rt, l %t56, l 349)
+    storel 339, %t82
+    call $nox_raise(l %rt, l %t56, l 339)
     %t83 =l loadl %t4
     %t84 =w ceql %t83, 0
     jnz %t84, @release_skip52, @release51
@@ -6231,7 +6036,7 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     jmp @calloc_done68
 @calloc_done68
     %t118 =l loadl %t106
-    storel 16, %t118
+    storel 15, %t118
     %t119 =l add %t118, 8
     storel $IndexError_vtable, %t119
     %t120 =l add %t118, 16
@@ -6315,8 +6120,8 @@ export function $__nox_Gen__int_close(l %rt, l %p_self) {
     ret
 @exc_continue78
     %t144 =l add %t118, 24
-    storel 350, %t144
-    call $nox_raise(l %rt, l %t118, l 350)
+    storel 340, %t144
+    call $nox_raise(l %rt, l %t118, l 340)
     %t145 =l loadl %t4
     %t146 =w ceql %t145, 0
     jnz %t146, @release_skip92, @release91
@@ -6425,8 +6230,8 @@ export function l $__nox_Gen__int_throw(l %rt, l %p_self, l %p_e) {
     jmp @retain_done13
 @retain_done13
     %t29 =l add %t24, 24
-    storel 366, %t29
-    call $nox_raise(l %rt, l %t24, l 366)
+    storel 356, %t29
+    call $nox_raise(l %rt, l %t24, l 356)
     %t30 =l sub %rt, 48
     %t31 =w loadub %t30
     %t32 =l sub %rt, 64
@@ -6528,7 +6333,7 @@ export function l $__nox_Gen__int_throw(l %rt, l %p_self, l %p_e) {
     jmp @calloc_done27
 @calloc_done27
     %t61 =l loadl %t49
-    storel 16, %t61
+    storel 15, %t61
     %t62 =l add %t61, 8
     storel $IndexError_vtable, %t62
     %t63 =l add %t61, 16
@@ -6569,8 +6374,8 @@ export function l $__nox_Gen__int_throw(l %rt, l %p_self, l %p_e) {
     ret 0
 @exc_continue37
     %t75 =l add %t61, 24
-    storel 367, %t75
-    call $nox_raise(l %rt, l %t61, l 367)
+    storel 357, %t75
+    call $nox_raise(l %rt, l %t61, l 357)
     %t76 =w ceql %t40, 0
     jnz %t76, @release_skip39, @release38
 @release38
@@ -7696,7 +7501,7 @@ export function l $__nox_Gen__func_int_int___next__(l %rt, l %p_self) {
     jmp @calloc_done19
 @calloc_done19
     %t45 =l loadl %t33
-    storel 16, %t45
+    storel 15, %t45
     %t46 =l add %t45, 8
     storel $IndexError_vtable, %t46
     %t47 =l add %t45, 16
@@ -7773,8 +7578,8 @@ export function l $__nox_Gen__func_int_int___next__(l %rt, l %p_self) {
     ret 0
 @exc_continue29
     %t71 =l add %t45, 24
-    storel 305, %t71
-    call $nox_raise(l %rt, l %t45, l 305)
+    storel 295, %t71
+    call $nox_raise(l %rt, l %t45, l 295)
     %t72 =l loadl %t2
     %t73 =w ceql %t72, 0
     jnz %t73, @release_skip40, @release39
@@ -7838,7 +7643,7 @@ export function l $__nox_Gen__func_int_int___next__(l %rt, l %p_self) {
     jmp @calloc_done97
 @calloc_done97
     %t183 =l loadl %t171
-    storel 16, %t183
+    storel 15, %t183
     %t184 =l add %t183, 8
     storel $IndexError_vtable, %t184
     %t185 =l add %t183, 16
@@ -7915,8 +7720,8 @@ export function l $__nox_Gen__func_int_int___next__(l %rt, l %p_self) {
     ret 0
 @exc_continue107
     %t209 =l add %t183, 24
-    storel 313, %t209
-    call $nox_raise(l %rt, l %t183, l 313)
+    storel 303, %t209
+    call $nox_raise(l %rt, l %t183, l 303)
     %t210 =l loadl %t2
     %t211 =w ceql %t210, 0
     jnz %t211, @release_skip118, @release117
@@ -8056,7 +7861,7 @@ export function l $__nox_Gen__func_int_int___nox_next_raise__(l %rt, l %p_self) 
     jmp @calloc_done17
 @calloc_done17
     %t35 =l loadl %t23
-    storel 11, %t35
+    storel 10, %t35
     %t36 =l add %t35, 8
     storel $StopIteration_vtable, %t36
     %t37 =l add %t35, 16
@@ -8109,8 +7914,8 @@ export function l $__nox_Gen__func_int_int___nox_next_raise__(l %rt, l %p_self) 
     ret 0
 @exc_continue27
     %t53 =l add %t35, 24
-    storel 324, %t53
-    call $nox_raise(l %rt, l %t35, l 324)
+    storel 314, %t53
+    call $nox_raise(l %rt, l %t35, l 314)
     %t54 =l sub %rt, 48
     %t55 =w loadub %t54
     %t56 =l sub %rt, 64
@@ -8316,93 +8121,90 @@ export function $__nox_Gen__func_int_int___del__(l %rt, l %p_self) {
     %t20 =w ceql %t19, 1
     jnz %t20, @except_body14, @except_hier_check16
 @except_hier_check16
-    %t21 =w ceql %t19, 12
+    %t21 =w ceql %t19, 11
     jnz %t21, @except_body14, @except_hier_check17
 @except_hier_check17
     %t22 =w ceql %t19, 8
     jnz %t22, @except_body14, @except_hier_check18
 @except_hier_check18
-    %t23 =w ceql %t19, 11
+    %t23 =w ceql %t19, 10
     jnz %t23, @except_body14, @except_hier_check19
 @except_hier_check19
-    %t24 =w ceql %t19, 10
+    %t24 =w ceql %t19, 9
     jnz %t24, @except_body14, @except_hier_check20
 @except_hier_check20
-    %t25 =w ceql %t19, 15
+    %t25 =w ceql %t19, 14
     jnz %t25, @except_body14, @except_hier_check21
 @except_hier_check21
-    %t26 =w ceql %t19, 14
+    %t26 =w ceql %t19, 13
     jnz %t26, @except_body14, @except_hier_check22
 @except_hier_check22
-    %t27 =w ceql %t19, 9
+    %t27 =w ceql %t19, 16
     jnz %t27, @except_body14, @except_hier_check23
 @except_hier_check23
-    %t28 =w ceql %t19, 17
+    %t28 =w ceql %t19, 12
     jnz %t28, @except_body14, @except_hier_check24
 @except_hier_check24
-    %t29 =w ceql %t19, 13
-    jnz %t29, @except_body14, @except_hier_check25
-@except_hier_check25
-    %t30 =w ceql %t19, 16
-    jnz %t30, @except_body14, @except_reraise15
+    %t29 =w ceql %t19, 15
+    jnz %t29, @except_body14, @except_reraise15
 @except_body14
-    %t31 =l loadl %t1
-    %t32 =w ceql %t31, 0
-    jnz %t32, @release_skip27, @release26
-@release26
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t31)
-    jmp @release_done28
-@release_skip27
-    jmp @release_done28
-@release_done28
+    %t30 =l loadl %t1
+    %t31 =w ceql %t30, 0
+    jnz %t31, @release_skip26, @release25
+@release25
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t30)
+    jmp @release_done27
+@release_skip26
+    jmp @release_done27
+@release_done27
     storel 0, %t1
     storel %t18, %t1
     jmp @try_after6
 @except_reraise15
-    call $nox_raise(l %rt, l %t18, l 342)
-    %t33 =l sub %rt, 48
-    %t34 =w loadub %t33
-    %t35 =l sub %rt, 64
-    %t36 =l loadl %t35
-    jnz %t34, @exc_slow29, @exc_fast30
-@exc_fast30
-    %t37 =w cnel %t36, 0
-    jmp @exc_done31
-@exc_slow29
-    %t38 =w call $nox_exception_pending(l %rt)
-    jmp @exc_done31
-@exc_done31
-    %t39 =w phi @exc_fast30 %t37, @exc_slow29 %t38
-    jnz %t39, @exc_propagate32, @exc_continue33
-@exc_propagate32
-    %t40 =l loadl %t1
-    %t41 =w ceql %t40, 0
-    jnz %t41, @release_skip35, @release34
-@release34
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t40)
-    jmp @release_done36
-@release_skip35
-    jmp @release_done36
-@release_done36
+    call $nox_raise(l %rt, l %t18, l 332)
+    %t32 =l sub %rt, 48
+    %t33 =w loadub %t32
+    %t34 =l sub %rt, 64
+    %t35 =l loadl %t34
+    jnz %t33, @exc_slow28, @exc_fast29
+@exc_fast29
+    %t36 =w cnel %t35, 0
+    jmp @exc_done30
+@exc_slow28
+    %t37 =w call $nox_exception_pending(l %rt)
+    jmp @exc_done30
+@exc_done30
+    %t38 =w phi @exc_fast29 %t36, @exc_slow28 %t37
+    jnz %t38, @exc_propagate31, @exc_continue32
+@exc_propagate31
+    %t39 =l loadl %t1
+    %t40 =w ceql %t39, 0
+    jnz %t40, @release_skip34, @release33
+@release33
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t39)
+    jmp @release_done35
+@release_skip34
+    jmp @release_done35
+@release_done35
     storel 0, %t1
     ret
-@exc_continue33
+@exc_continue32
     jmp @try_after6
 @try_after6
 @try_end7
     jmp @if_end0
 @if_end0
-    %t42 =l loadl %t1
-    %t43 =w ceql %t42, 0
-    jnz %t43, @release_skip38, @release37
-@release37
-    call $nox_rc_release_enqueue_dynamic(l %rt, l %t42)
-    jmp @release_done39
-@release_skip38
-    jmp @release_done39
-@release_done39
+    %t41 =l loadl %t1
+    %t42 =w ceql %t41, 0
+    jnz %t42, @release_skip37, @release36
+@release36
+    call $nox_rc_release_enqueue_dynamic(l %rt, l %t41)
+    jmp @release_done38
+@release_skip37
+    jmp @release_done38
+@release_done38
     storel 0, %t1
-@fn_end40
+@fn_end39
     ret
 }
 export function $__nox_Gen__func_int_int_close(l %rt, l %p_self) {
@@ -8589,7 +8391,7 @@ export function $__nox_Gen__func_int_int_close(l %rt, l %p_self) {
     %t177 =l loadl %t176
     jmp @except_check107
 @except_check107
-    %t178 =w ceql %t177, 10
+    %t178 =w ceql %t177, 9
     jnz %t178, @except_body108, @except_reraise109
 @except_body108
     %t179 =l loadl %t4
@@ -8605,7 +8407,7 @@ export function $__nox_Gen__func_int_int_close(l %rt, l %p_self) {
     storel %t176, %t4
     jmp @try_after95
 @except_reraise109
-    call $nox_raise(l %rt, l %t176, l 357)
+    call $nox_raise(l %rt, l %t176, l 347)
     %t181 =l sub %rt, 48
     %t182 =w loadub %t181
     %t183 =l sub %rt, 64
@@ -8688,7 +8490,7 @@ export function $__nox_Gen__func_int_int_close(l %rt, l %p_self) {
     jmp @calloc_done132
 @calloc_done132
     %t213 =l loadl %t201
-    storel 15, %t213
+    storel 14, %t213
     %t214 =l add %t213, 8
     storel $RuntimeError_vtable, %t214
     %t215 =l add %t213, 16
@@ -8763,8 +8565,8 @@ export function $__nox_Gen__func_int_int_close(l %rt, l %p_self) {
     ret
 @exc_continue142
     %t237 =l add %t213, 24
-    storel 359, %t237
-    call $nox_raise(l %rt, l %t213, l 359)
+    storel 349, %t237
+    call $nox_raise(l %rt, l %t213, l 349)
     %t238 =l sub %rt, 48
     %t239 =w loadub %t238
     %t240 =l sub %rt, 64
@@ -8882,7 +8684,7 @@ export function $__nox_Gen__func_int_int_close(l %rt, l %p_self) {
     jmp @calloc_done25
 @calloc_done25
     %t54 =l loadl %t42
-    storel 16, %t54
+    storel 15, %t54
     %t55 =l add %t54, 8
     storel $IndexError_vtable, %t55
     %t56 =l add %t54, 16
@@ -8957,8 +8759,8 @@ export function $__nox_Gen__func_int_int_close(l %rt, l %p_self) {
     ret
 @exc_continue35
     %t78 =l add %t54, 24
-    storel 349, %t78
-    call $nox_raise(l %rt, l %t54, l 349)
+    storel 339, %t78
+    call $nox_raise(l %rt, l %t54, l 339)
     %t79 =l loadl %t4
     %t80 =w ceql %t79, 0
     jnz %t80, @release_skip46, @release45
@@ -9020,7 +8822,7 @@ export function $__nox_Gen__func_int_int_close(l %rt, l %p_self) {
     jmp @calloc_done59
 @calloc_done59
     %t112 =l loadl %t100
-    storel 16, %t112
+    storel 15, %t112
     %t113 =l add %t112, 8
     storel $IndexError_vtable, %t113
     %t114 =l add %t112, 16
@@ -9095,8 +8897,8 @@ export function $__nox_Gen__func_int_int_close(l %rt, l %p_self) {
     ret
 @exc_continue69
     %t136 =l add %t112, 24
-    storel 350, %t136
-    call $nox_raise(l %rt, l %t112, l 350)
+    storel 340, %t136
+    call $nox_raise(l %rt, l %t112, l 340)
     %t137 =l loadl %t4
     %t138 =w ceql %t137, 0
     jnz %t138, @release_skip80, @release79
@@ -9196,8 +8998,8 @@ export function l $__nox_Gen__func_int_int_throw(l %rt, l %p_self, l %p_e) {
     jmp @retain_done13
 @retain_done13
     %t29 =l add %t24, 24
-    storel 366, %t29
-    call $nox_raise(l %rt, l %t24, l 366)
+    storel 356, %t29
+    call $nox_raise(l %rt, l %t24, l 356)
     %t30 =l sub %rt, 48
     %t31 =w loadub %t30
     %t32 =l sub %rt, 64
@@ -9299,7 +9101,7 @@ export function l $__nox_Gen__func_int_int_throw(l %rt, l %p_self, l %p_e) {
     jmp @calloc_done27
 @calloc_done27
     %t61 =l loadl %t49
-    storel 16, %t61
+    storel 15, %t61
     %t62 =l add %t61, 8
     storel $IndexError_vtable, %t62
     %t63 =l add %t61, 16
@@ -9340,8 +9142,8 @@ export function l $__nox_Gen__func_int_int_throw(l %rt, l %p_self, l %p_e) {
     ret 0
 @exc_continue37
     %t75 =l add %t61, 24
-    storel 367, %t75
-    call $nox_raise(l %rt, l %t61, l 367)
+    storel 357, %t75
+    call $nox_raise(l %rt, l %t61, l 357)
     %t76 =w ceql %t40, 0
     jnz %t76, @release_skip39, @release38
 @release38
@@ -10085,105 +9887,99 @@ export function l $nox_trace_dispatch(l %rt, l %tag, l %p) {
     %t1 =l call $Exception_trace(l %rt, l %p)
     ret %t1
 @trace_next1
-    %t2 =w ceql %tag, 17
+    %t2 =w ceql %tag, 16
     jnz %t2, @trace_case2, @trace_next3
 @trace_case2
     %t3 =l call $ValueError_trace(l %rt, l %p)
     ret %t3
 @trace_next3
-    %t4 =w ceql %tag, 16
+    %t4 =w ceql %tag, 15
     jnz %t4, @trace_case4, @trace_next5
 @trace_case4
     %t5 =l call $IndexError_trace(l %rt, l %p)
     ret %t5
 @trace_next5
-    %t6 =w ceql %tag, 15
+    %t6 =w ceql %tag, 14
     jnz %t6, @trace_case6, @trace_next7
 @trace_case6
     %t7 =l call $RuntimeError_trace(l %rt, l %p)
     ret %t7
 @trace_next7
-    %t8 =w ceql %tag, 14
+    %t8 =w ceql %tag, 13
     jnz %t8, @trace_case8, @trace_next9
 @trace_case8
     %t9 =l call $AssertionError_trace(l %rt, l %p)
     ret %t9
 @trace_next9
-    %t10 =w ceql %tag, 13
+    %t10 =w ceql %tag, 12
     jnz %t10, @trace_case10, @trace_next11
 @trace_case10
     %t11 =l call $ZeroDivisionError_trace(l %rt, l %p)
     ret %t11
 @trace_next11
-    %t12 =w ceql %tag, 12
+    %t12 =w ceql %tag, 11
     jnz %t12, @trace_case12, @trace_next13
 @trace_case12
     %t13 =l call $KeyError_trace(l %rt, l %p)
     ret %t13
 @trace_next13
-    %t14 =w ceql %tag, 11
+    %t14 =w ceql %tag, 10
     jnz %t14, @trace_case14, @trace_next15
 @trace_case14
     %t15 =l call $StopIteration_trace(l %rt, l %p)
     ret %t15
 @trace_next15
-    %t16 =w ceql %tag, 10
+    %t16 =w ceql %tag, 9
     jnz %t16, @trace_case16, @trace_next17
 @trace_case16
     %t17 =l call $GeneratorExit_trace(l %rt, l %p)
     ret %t17
 @trace_next17
-    %t18 =w ceql %tag, 9
+    %t18 =w ceql %tag, 8
     jnz %t18, @trace_case18, @trace_next19
 @trace_case18
-    %t19 =l call $HPyError_trace(l %rt, l %p)
+    %t19 =l call $CancelledError_trace(l %rt, l %p)
     ret %t19
 @trace_next19
-    %t20 =w ceql %tag, 8
+    %t20 =w ceql %tag, 7
     jnz %t20, @trace_case20, @trace_next21
 @trace_case20
-    %t21 =l call $CancelledError_trace(l %rt, l %p)
+    %t21 =l call $JsonValue_trace(l %rt, l %p)
     ret %t21
 @trace_next21
-    %t22 =w ceql %tag, 7
+    %t22 =w ceql %tag, 6
     jnz %t22, @trace_case22, @trace_next23
 @trace_case22
-    %t23 =l call $JsonValue_trace(l %rt, l %p)
+    %t23 =l call $Gen_trace(l %rt, l %p)
     ret %t23
 @trace_next23
-    %t24 =w ceql %tag, 6
+    %t24 =w ceql %tag, 5
     jnz %t24, @trace_case24, @trace_next25
 @trace_case24
-    %t25 =l call $Gen_trace(l %rt, l %p)
+    %t25 =l call $__nox_Gen__int_trace(l %rt, l %p)
     ret %t25
 @trace_next25
-    %t26 =w ceql %tag, 5
+    %t26 =w ceql %tag, 4
     jnz %t26, @trace_case26, @trace_next27
 @trace_case26
-    %t27 =l call $__nox_Gen__int_trace(l %rt, l %p)
+    %t27 =l call $__nox_Gen__func_int_int_trace(l %rt, l %p)
     ret %t27
 @trace_next27
-    %t28 =w ceql %tag, 4
+    %t28 =w ceql %tag, 3
     jnz %t28, @trace_case28, @trace_next29
 @trace_case28
-    %t29 =l call $__nox_Gen__func_int_int_trace(l %rt, l %p)
+    %t29 =l call $__nox_FnBox__func_int_int_trace(l %rt, l %p)
     ret %t29
 @trace_next29
-    %t30 =w ceql %tag, 3
+    %t30 =w ceql %tag, 2
     jnz %t30, @trace_case30, @trace_next31
 @trace_case30
-    %t31 =l call $__nox_FnBox__func_int_int_trace(l %rt, l %p)
+    %t31 =l call $__nox_FnBox__func_int_trace(l %rt, l %p)
     ret %t31
 @trace_next31
-    %t32 =w ceql %tag, 2
-    jnz %t32, @trace_case32, @trace_next33
-@trace_case32
-    %t33 =l call $__nox_FnBox__func_int_trace(l %rt, l %p)
-    ret %t33
-@trace_next33
-    %t34 =l call $nox_trace_buf_alloc(l %rt, l 8)
-    storel 0, %t34
-    ret %t34
+    %t32 =l call $nox_trace_buf_alloc(l %rt, l 8)
+    storel 0, %t32
+    ret %t32
 }
 export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
 @start
@@ -10193,102 +9989,96 @@ export function $nox_gc_free_dispatch(l %rt, l %tag, l %p) {
     call $Exception_gc_free(l %rt, l %p)
     ret
 @gc_free_next1
-    %t1 =w ceql %tag, 17
+    %t1 =w ceql %tag, 16
     jnz %t1, @gc_free_case2, @gc_free_next3
 @gc_free_case2
     call $ValueError_gc_free(l %rt, l %p)
     ret
 @gc_free_next3
-    %t2 =w ceql %tag, 16
+    %t2 =w ceql %tag, 15
     jnz %t2, @gc_free_case4, @gc_free_next5
 @gc_free_case4
     call $IndexError_gc_free(l %rt, l %p)
     ret
 @gc_free_next5
-    %t3 =w ceql %tag, 15
+    %t3 =w ceql %tag, 14
     jnz %t3, @gc_free_case6, @gc_free_next7
 @gc_free_case6
     call $RuntimeError_gc_free(l %rt, l %p)
     ret
 @gc_free_next7
-    %t4 =w ceql %tag, 14
+    %t4 =w ceql %tag, 13
     jnz %t4, @gc_free_case8, @gc_free_next9
 @gc_free_case8
     call $AssertionError_gc_free(l %rt, l %p)
     ret
 @gc_free_next9
-    %t5 =w ceql %tag, 13
+    %t5 =w ceql %tag, 12
     jnz %t5, @gc_free_case10, @gc_free_next11
 @gc_free_case10
     call $ZeroDivisionError_gc_free(l %rt, l %p)
     ret
 @gc_free_next11
-    %t6 =w ceql %tag, 12
+    %t6 =w ceql %tag, 11
     jnz %t6, @gc_free_case12, @gc_free_next13
 @gc_free_case12
     call $KeyError_gc_free(l %rt, l %p)
     ret
 @gc_free_next13
-    %t7 =w ceql %tag, 11
+    %t7 =w ceql %tag, 10
     jnz %t7, @gc_free_case14, @gc_free_next15
 @gc_free_case14
     call $StopIteration_gc_free(l %rt, l %p)
     ret
 @gc_free_next15
-    %t8 =w ceql %tag, 10
+    %t8 =w ceql %tag, 9
     jnz %t8, @gc_free_case16, @gc_free_next17
 @gc_free_case16
     call $GeneratorExit_gc_free(l %rt, l %p)
     ret
 @gc_free_next17
-    %t9 =w ceql %tag, 9
+    %t9 =w ceql %tag, 8
     jnz %t9, @gc_free_case18, @gc_free_next19
 @gc_free_case18
-    call $HPyError_gc_free(l %rt, l %p)
-    ret
-@gc_free_next19
-    %t10 =w ceql %tag, 8
-    jnz %t10, @gc_free_case20, @gc_free_next21
-@gc_free_case20
     call $CancelledError_gc_free(l %rt, l %p)
     ret
-@gc_free_next21
-    %t11 =w ceql %tag, 7
-    jnz %t11, @gc_free_case22, @gc_free_next23
-@gc_free_case22
+@gc_free_next19
+    %t10 =w ceql %tag, 7
+    jnz %t10, @gc_free_case20, @gc_free_next21
+@gc_free_case20
     call $JsonValue_gc_free(l %rt, l %p)
     ret
-@gc_free_next23
-    %t12 =w ceql %tag, 6
-    jnz %t12, @gc_free_case24, @gc_free_next25
-@gc_free_case24
+@gc_free_next21
+    %t11 =w ceql %tag, 6
+    jnz %t11, @gc_free_case22, @gc_free_next23
+@gc_free_case22
     call $Gen_gc_free(l %rt, l %p)
     ret
-@gc_free_next25
-    %t13 =w ceql %tag, 5
-    jnz %t13, @gc_free_case26, @gc_free_next27
-@gc_free_case26
+@gc_free_next23
+    %t12 =w ceql %tag, 5
+    jnz %t12, @gc_free_case24, @gc_free_next25
+@gc_free_case24
     call $__nox_Gen__int_gc_free(l %rt, l %p)
     ret
-@gc_free_next27
-    %t14 =w ceql %tag, 4
-    jnz %t14, @gc_free_case28, @gc_free_next29
-@gc_free_case28
+@gc_free_next25
+    %t13 =w ceql %tag, 4
+    jnz %t13, @gc_free_case26, @gc_free_next27
+@gc_free_case26
     call $__nox_Gen__func_int_int_gc_free(l %rt, l %p)
     ret
-@gc_free_next29
-    %t15 =w ceql %tag, 3
-    jnz %t15, @gc_free_case30, @gc_free_next31
-@gc_free_case30
+@gc_free_next27
+    %t14 =w ceql %tag, 3
+    jnz %t14, @gc_free_case28, @gc_free_next29
+@gc_free_case28
     call $__nox_FnBox__func_int_int_gc_free(l %rt, l %p)
     ret
-@gc_free_next31
-    %t16 =w ceql %tag, 2
-    jnz %t16, @gc_free_case32, @gc_free_next33
-@gc_free_case32
+@gc_free_next29
+    %t15 =w ceql %tag, 2
+    jnz %t15, @gc_free_case30, @gc_free_next31
+@gc_free_case30
     call $__nox_FnBox__func_int_gc_free(l %rt, l %p)
     ret
-@gc_free_next33
+@gc_free_next31
     ret
 }
 export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
@@ -10299,102 +10089,96 @@ export function $nox_class_release_dispatch(l %rt, l %tag, l %p) {
     call $Exception_release(l %rt, l %p)
     ret
 @class_release_next1
-    %t1 =w ceql %tag, 17
+    %t1 =w ceql %tag, 16
     jnz %t1, @class_release_case2, @class_release_next3
 @class_release_case2
     call $ValueError_release(l %rt, l %p)
     ret
 @class_release_next3
-    %t2 =w ceql %tag, 16
+    %t2 =w ceql %tag, 15
     jnz %t2, @class_release_case4, @class_release_next5
 @class_release_case4
     call $IndexError_release(l %rt, l %p)
     ret
 @class_release_next5
-    %t3 =w ceql %tag, 15
+    %t3 =w ceql %tag, 14
     jnz %t3, @class_release_case6, @class_release_next7
 @class_release_case6
     call $RuntimeError_release(l %rt, l %p)
     ret
 @class_release_next7
-    %t4 =w ceql %tag, 14
+    %t4 =w ceql %tag, 13
     jnz %t4, @class_release_case8, @class_release_next9
 @class_release_case8
     call $AssertionError_release(l %rt, l %p)
     ret
 @class_release_next9
-    %t5 =w ceql %tag, 13
+    %t5 =w ceql %tag, 12
     jnz %t5, @class_release_case10, @class_release_next11
 @class_release_case10
     call $ZeroDivisionError_release(l %rt, l %p)
     ret
 @class_release_next11
-    %t6 =w ceql %tag, 12
+    %t6 =w ceql %tag, 11
     jnz %t6, @class_release_case12, @class_release_next13
 @class_release_case12
     call $KeyError_release(l %rt, l %p)
     ret
 @class_release_next13
-    %t7 =w ceql %tag, 11
+    %t7 =w ceql %tag, 10
     jnz %t7, @class_release_case14, @class_release_next15
 @class_release_case14
     call $StopIteration_release(l %rt, l %p)
     ret
 @class_release_next15
-    %t8 =w ceql %tag, 10
+    %t8 =w ceql %tag, 9
     jnz %t8, @class_release_case16, @class_release_next17
 @class_release_case16
     call $GeneratorExit_release(l %rt, l %p)
     ret
 @class_release_next17
-    %t9 =w ceql %tag, 9
+    %t9 =w ceql %tag, 8
     jnz %t9, @class_release_case18, @class_release_next19
 @class_release_case18
-    call $HPyError_release(l %rt, l %p)
-    ret
-@class_release_next19
-    %t10 =w ceql %tag, 8
-    jnz %t10, @class_release_case20, @class_release_next21
-@class_release_case20
     call $CancelledError_release(l %rt, l %p)
     ret
-@class_release_next21
-    %t11 =w ceql %tag, 7
-    jnz %t11, @class_release_case22, @class_release_next23
-@class_release_case22
+@class_release_next19
+    %t10 =w ceql %tag, 7
+    jnz %t10, @class_release_case20, @class_release_next21
+@class_release_case20
     call $JsonValue_release(l %rt, l %p)
     ret
-@class_release_next23
-    %t12 =w ceql %tag, 6
-    jnz %t12, @class_release_case24, @class_release_next25
-@class_release_case24
+@class_release_next21
+    %t11 =w ceql %tag, 6
+    jnz %t11, @class_release_case22, @class_release_next23
+@class_release_case22
     call $Gen_release(l %rt, l %p)
     ret
-@class_release_next25
-    %t13 =w ceql %tag, 5
-    jnz %t13, @class_release_case26, @class_release_next27
-@class_release_case26
+@class_release_next23
+    %t12 =w ceql %tag, 5
+    jnz %t12, @class_release_case24, @class_release_next25
+@class_release_case24
     call $__nox_Gen__int_release(l %rt, l %p)
     ret
-@class_release_next27
-    %t14 =w ceql %tag, 4
-    jnz %t14, @class_release_case28, @class_release_next29
-@class_release_case28
+@class_release_next25
+    %t13 =w ceql %tag, 4
+    jnz %t13, @class_release_case26, @class_release_next27
+@class_release_case26
     call $__nox_Gen__func_int_int_release(l %rt, l %p)
     ret
-@class_release_next29
-    %t15 =w ceql %tag, 3
-    jnz %t15, @class_release_case30, @class_release_next31
-@class_release_case30
+@class_release_next27
+    %t14 =w ceql %tag, 3
+    jnz %t14, @class_release_case28, @class_release_next29
+@class_release_case28
     call $__nox_FnBox__func_int_int_release(l %rt, l %p)
     ret
-@class_release_next31
-    %t16 =w ceql %tag, 2
-    jnz %t16, @class_release_case32, @class_release_next33
-@class_release_case32
+@class_release_next29
+    %t15 =w ceql %tag, 2
+    jnz %t15, @class_release_case30, @class_release_next31
+@class_release_case30
     call $__nox_FnBox__func_int_release(l %rt, l %p)
     ret
-@class_release_next33
+@class_release_next31
     ret
 }
 data $__nox_classname_unknown = { b "unknown class", b 0 }
@@ -10407,7 +10191,6 @@ data $__nox_classname_ZeroDivisionError = { b "ZeroDivisionError", b 0 }
 data $__nox_classname_KeyError = { b "KeyError", b 0 }
 data $__nox_classname_StopIteration = { b "StopIteration", b 0 }
 data $__nox_classname_GeneratorExit = { b "GeneratorExit", b 0 }
-data $__nox_classname_HPyError = { b "HPyError", b 0 }
 data $__nox_classname_CancelledError = { b "CancelledError", b 0 }
 data $__nox_classname_JsonValue = { b "JsonValue", b 0 }
 data $__nox_classname_Gen = { b "Gen", b 0 }
@@ -10422,86 +10205,81 @@ export function l $nox_class_name_dispatch(l %rt, l %tag, l %p) {
 @class_name_case0
     ret $__nox_classname_Exception
 @class_name_next1
-    %t1 =w ceql %tag, 17
+    %t1 =w ceql %tag, 16
     jnz %t1, @class_name_case2, @class_name_next3
 @class_name_case2
     ret $__nox_classname_ValueError
 @class_name_next3
-    %t2 =w ceql %tag, 16
+    %t2 =w ceql %tag, 15
     jnz %t2, @class_name_case4, @class_name_next5
 @class_name_case4
     ret $__nox_classname_IndexError
 @class_name_next5
-    %t3 =w ceql %tag, 15
+    %t3 =w ceql %tag, 14
     jnz %t3, @class_name_case6, @class_name_next7
 @class_name_case6
     ret $__nox_classname_RuntimeError
 @class_name_next7
-    %t4 =w ceql %tag, 14
+    %t4 =w ceql %tag, 13
     jnz %t4, @class_name_case8, @class_name_next9
 @class_name_case8
     ret $__nox_classname_AssertionError
 @class_name_next9
-    %t5 =w ceql %tag, 13
+    %t5 =w ceql %tag, 12
     jnz %t5, @class_name_case10, @class_name_next11
 @class_name_case10
     ret $__nox_classname_ZeroDivisionError
 @class_name_next11
-    %t6 =w ceql %tag, 12
+    %t6 =w ceql %tag, 11
     jnz %t6, @class_name_case12, @class_name_next13
 @class_name_case12
     ret $__nox_classname_KeyError
 @class_name_next13
-    %t7 =w ceql %tag, 11
+    %t7 =w ceql %tag, 10
     jnz %t7, @class_name_case14, @class_name_next15
 @class_name_case14
     ret $__nox_classname_StopIteration
 @class_name_next15
-    %t8 =w ceql %tag, 10
+    %t8 =w ceql %tag, 9
     jnz %t8, @class_name_case16, @class_name_next17
 @class_name_case16
     ret $__nox_classname_GeneratorExit
 @class_name_next17
-    %t9 =w ceql %tag, 9
+    %t9 =w ceql %tag, 8
     jnz %t9, @class_name_case18, @class_name_next19
 @class_name_case18
-    ret $__nox_classname_HPyError
+    ret $__nox_classname_CancelledError
 @class_name_next19
-    %t10 =w ceql %tag, 8
+    %t10 =w ceql %tag, 7
     jnz %t10, @class_name_case20, @class_name_next21
 @class_name_case20
-    ret $__nox_classname_CancelledError
+    ret $__nox_classname_JsonValue
 @class_name_next21
-    %t11 =w ceql %tag, 7
+    %t11 =w ceql %tag, 6
     jnz %t11, @class_name_case22, @class_name_next23
 @class_name_case22
-    ret $__nox_classname_JsonValue
+    ret $__nox_classname_Gen
 @class_name_next23
-    %t12 =w ceql %tag, 6
+    %t12 =w ceql %tag, 5
     jnz %t12, @class_name_case24, @class_name_next25
 @class_name_case24
-    ret $__nox_classname_Gen
+    ret $__nox_classname___nox_Gen__int
 @class_name_next25
-    %t13 =w ceql %tag, 5
+    %t13 =w ceql %tag, 4
     jnz %t13, @class_name_case26, @class_name_next27
 @class_name_case26
-    ret $__nox_classname___nox_Gen__int
+    ret $__nox_classname___nox_Gen__func_int_int
 @class_name_next27
-    %t14 =w ceql %tag, 4
+    %t14 =w ceql %tag, 3
     jnz %t14, @class_name_case28, @class_name_next29
 @class_name_case28
-    ret $__nox_classname___nox_Gen__func_int_int
+    ret $__nox_classname___nox_FnBox__func_int_int
 @class_name_next29
-    %t15 =w ceql %tag, 3
+    %t15 =w ceql %tag, 2
     jnz %t15, @class_name_case30, @class_name_next31
 @class_name_case30
-    ret $__nox_classname___nox_FnBox__func_int_int
-@class_name_next31
-    %t16 =w ceql %tag, 2
-    jnz %t16, @class_name_case32, @class_name_next33
-@class_name_case32
     ret $__nox_classname___nox_FnBox__func_int
-@class_name_next33
+@class_name_next31
     ret $__nox_classname_unknown
 }
 export function l $nox_json_make_json_value(l %rt, l %p_kind, w %p_b, d %p_n, l %p_s, l %p_arr, l %p_keys, l %p_vals) {
@@ -10650,7 +10428,7 @@ export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
     jmp @calloc_done5
 @calloc_done5
     %t21 =l loadl %t9
-    storel 17, %t21
+    storel 16, %t21
     %t22 =l add %t21, 8
     storel $ValueError_vtable, %t22
     %t23 =l add %t21, 16
@@ -10691,8 +10469,8 @@ export function l $__nox_format_int(l %rt, l %p_v, l %p_spec) {
     ret 0
 @exc_continue15
     %t35 =l add %t21, 24
-    storel 488, %t35
-    call $nox_raise(l %rt, l %t21, l 488)
+    storel 478, %t35
+    call $nox_raise(l %rt, l %t21, l 478)
     %t36 =l sub %rt, 48
     %t37 =w loadub %t36
     %t38 =l sub %rt, 64
@@ -10759,7 +10537,7 @@ export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
     jmp @calloc_done5
 @calloc_done5
     %t21 =l loadl %t9
-    storel 17, %t21
+    storel 16, %t21
     %t22 =l add %t21, 8
     storel $ValueError_vtable, %t22
     %t23 =l add %t21, 16
@@ -10800,8 +10578,8 @@ export function l $__nox_format_float(l %rt, d %p_v, l %p_spec) {
     ret 0
 @exc_continue15
     %t35 =l add %t21, 24
-    storel 493, %t35
-    call $nox_raise(l %rt, l %t21, l 493)
+    storel 483, %t35
+    call $nox_raise(l %rt, l %t21, l 483)
     %t36 =l sub %rt, 48
     %t37 =w loadub %t36
     %t38 =l sub %rt, 64
@@ -10868,7 +10646,7 @@ export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
     jmp @calloc_done5
 @calloc_done5
     %t21 =l loadl %t9
-    storel 17, %t21
+    storel 16, %t21
     %t22 =l add %t21, 8
     storel $ValueError_vtable, %t22
     %t23 =l add %t21, 16
@@ -10909,8 +10687,8 @@ export function l $__nox_format_str(l %rt, l %p_v, l %p_spec) {
     ret 0
 @exc_continue15
     %t35 =l add %t21, 24
-    storel 498, %t35
-    call $nox_raise(l %rt, l %t21, l 498)
+    storel 488, %t35
+    call $nox_raise(l %rt, l %t21, l 488)
     %t36 =l sub %rt, 48
     %t37 =w loadub %t36
     %t38 =l sub %rt, 64
@@ -10987,7 +10765,7 @@ export function l $ord(l %rt, l %p_s) {
     jmp @calloc_done5
 @calloc_done5
     %t20 =l loadl %t8
-    storel 17, %t20
+    storel 16, %t20
     %t21 =l add %t20, 8
     storel $ValueError_vtable, %t21
     %t22 =l add %t20, 16
@@ -11028,8 +10806,8 @@ export function l $ord(l %rt, l %p_s) {
     ret 0
 @exc_continue15
     %t34 =l add %t20, 24
-    storel 507, %t34
-    call $nox_raise(l %rt, l %t20, l 507)
+    storel 497, %t34
+    call $nox_raise(l %rt, l %t20, l 497)
     %t35 =l sub %rt, 48
     %t36 =w loadub %t35
     %t37 =l sub %rt, 64
@@ -15826,7 +15604,7 @@ export function l $__nox_unwrap____nox_Gen__int(l %rt, l %p_o) {
     jmp @calloc_done6
 @calloc_done6
     %t17 =l loadl %t5
-    storel 17, %t17
+    storel 16, %t17
     %t18 =l add %t17, 8
     storel $ValueError_vtable, %t18
     %t19 =l add %t17, 16
@@ -15867,8 +15645,8 @@ export function l $__nox_unwrap____nox_Gen__int(l %rt, l %p_o) {
     ret 0
 @exc_continue16
     %t31 =l add %t17, 24
-    storel 457, %t31
-    call $nox_raise(l %rt, l %t17, l 457)
+    storel 447, %t31
+    call $nox_raise(l %rt, l %t17, l 447)
     %t32 =l sub %rt, 48
     %t33 =w loadub %t32
     %t34 =l sub %rt, 64
@@ -16451,7 +16229,7 @@ export function l $__nox_unwrap____nox_Gen__func_int_int(l %rt, l %p_o) {
     jmp @calloc_done6
 @calloc_done6
     %t17 =l loadl %t5
-    storel 17, %t17
+    storel 16, %t17
     %t18 =l add %t17, 8
     storel $ValueError_vtable, %t18
     %t19 =l add %t17, 16
@@ -16492,8 +16270,8 @@ export function l $__nox_unwrap____nox_Gen__func_int_int(l %rt, l %p_o) {
     ret 0
 @exc_continue16
     %t31 =l add %t17, 24
-    storel 457, %t31
-    call $nox_raise(l %rt, l %t17, l 457)
+    storel 447, %t31
+    call $nox_raise(l %rt, l %t17, l 447)
     %t32 =l sub %rt, 48
     %t33 =w loadub %t32
     %t34 =l sub %rt, 64
@@ -16566,7 +16344,7 @@ export function l $__nox_unwrap____nox_FnBox__func_int_int(l %rt, l %p_o) {
     jmp @calloc_done6
 @calloc_done6
     %t17 =l loadl %t5
-    storel 17, %t17
+    storel 16, %t17
     %t18 =l add %t17, 8
     storel $ValueError_vtable, %t18
     %t19 =l add %t17, 16
@@ -16607,8 +16385,8 @@ export function l $__nox_unwrap____nox_FnBox__func_int_int(l %rt, l %p_o) {
     ret 0
 @exc_continue16
     %t31 =l add %t17, 24
-    storel 457, %t31
-    call $nox_raise(l %rt, l %t17, l 457)
+    storel 447, %t31
+    call $nox_raise(l %rt, l %t17, l 447)
     %t32 =l sub %rt, 48
     %t33 =w loadub %t32
     %t34 =l sub %rt, 64
@@ -16681,7 +16459,7 @@ export function l $__nox_unwrap____nox_FnBox__func_int(l %rt, l %p_o) {
     jmp @calloc_done6
 @calloc_done6
     %t17 =l loadl %t5
-    storel 17, %t17
+    storel 16, %t17
     %t18 =l add %t17, 8
     storel $ValueError_vtable, %t18
     %t19 =l add %t17, 16
@@ -16722,8 +16500,8 @@ export function l $__nox_unwrap____nox_FnBox__func_int(l %rt, l %p_o) {
     ret 0
 @exc_continue16
     %t31 =l add %t17, 24
-    storel 457, %t31
-    call $nox_raise(l %rt, l %t17, l 457)
+    storel 447, %t31
+    call $nox_raise(l %rt, l %t17, l 447)
     %t32 =l sub %rt, 48
     %t33 =w loadub %t32
     %t34 =l sub %rt, 64
@@ -18885,7 +18663,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done6
 @calloc_done6
     %t36 =l loadl %t24
-    storel 16, %t36
+    storel 15, %t36
     %t37 =l add %t36, 8
     storel $IndexError_vtable, %t37
     %t38 =l add %t36, 16
@@ -19027,7 +18805,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done51
 @calloc_done51
     %t109 =l loadl %t97
-    storel 16, %t109
+    storel 15, %t109
     %t110 =l add %t109, 8
     storel $IndexError_vtable, %t110
     %t111 =l add %t109, 16
@@ -19169,7 +18947,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done86
 @calloc_done86
     %t169 =l loadl %t157
-    storel 16, %t169
+    storel 15, %t169
     %t170 =l add %t169, 8
     storel $IndexError_vtable, %t170
     %t171 =l add %t169, 16
@@ -19311,7 +19089,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done121
 @calloc_done121
     %t232 =l loadl %t220
-    storel 16, %t232
+    storel 15, %t232
     %t233 =l add %t232, 8
     storel $IndexError_vtable, %t233
     %t234 =l add %t232, 16
@@ -19453,7 +19231,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done170
 @calloc_done170
     %t323 =l loadl %t311
-    storel 16, %t323
+    storel 15, %t323
     %t324 =l add %t323, 8
     storel $IndexError_vtable, %t324
     %t325 =l add %t323, 16
@@ -19603,7 +19381,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done211
 @calloc_done211
     %t386 =l loadl %t374
-    storel 16, %t386
+    storel 15, %t386
     %t387 =l add %t386, 8
     storel $IndexError_vtable, %t387
     %t388 =l add %t386, 16
@@ -19745,7 +19523,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done249
 @calloc_done249
     %t448 =l loadl %t436
-    storel 16, %t448
+    storel 15, %t448
     %t449 =l add %t448, 8
     storel $IndexError_vtable, %t449
     %t450 =l add %t448, 16
@@ -19887,7 +19665,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done286
 @calloc_done286
     %t510 =l loadl %t498
-    storel 16, %t510
+    storel 15, %t510
     %t511 =l add %t510, 8
     storel $IndexError_vtable, %t511
     %t512 =l add %t510, 16
@@ -20029,7 +19807,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done321
 @calloc_done321
     %t573 =l loadl %t561
-    storel 16, %t573
+    storel 15, %t573
     %t574 =l add %t573, 8
     storel $IndexError_vtable, %t574
     %t575 =l add %t573, 16
@@ -20171,7 +19949,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done356
 @calloc_done356
     %t636 =l loadl %t624
-    storel 16, %t636
+    storel 15, %t636
     %t637 =l add %t636, 8
     storel $IndexError_vtable, %t637
     %t638 =l add %t636, 16
@@ -20313,7 +20091,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done404
 @calloc_done404
     %t720 =l loadl %t708
-    storel 16, %t720
+    storel 15, %t720
     %t721 =l add %t720, 8
     storel $IndexError_vtable, %t721
     %t722 =l add %t720, 16
@@ -20455,7 +20233,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done455
 @calloc_done455
     %t801 =l loadl %t789
-    storel 16, %t801
+    storel 15, %t801
     %t802 =l add %t801, 8
     storel $IndexError_vtable, %t802
     %t803 =l add %t801, 16
@@ -20597,7 +20375,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done490
 @calloc_done490
     %t861 =l loadl %t849
-    storel 16, %t861
+    storel 15, %t861
     %t862 =l add %t861, 8
     storel $IndexError_vtable, %t862
     %t863 =l add %t861, 16
@@ -20739,7 +20517,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done525
 @calloc_done525
     %t923 =l loadl %t911
-    storel 16, %t923
+    storel 15, %t923
     %t924 =l add %t923, 8
     storel $IndexError_vtable, %t924
     %t925 =l add %t923, 16
@@ -20881,7 +20659,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done559
 @calloc_done559
     %t983 =l loadl %t971
-    storel 16, %t983
+    storel 15, %t983
     %t984 =l add %t983, 8
     storel $IndexError_vtable, %t984
     %t985 =l add %t983, 16
@@ -21023,7 +20801,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done593
 @calloc_done593
     %t1043 =l loadl %t1031
-    storel 16, %t1043
+    storel 15, %t1043
     %t1044 =l add %t1043, 8
     storel $IndexError_vtable, %t1044
     %t1045 =l add %t1043, 16
@@ -21165,7 +20943,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done627
 @calloc_done627
     %t1103 =l loadl %t1091
-    storel 16, %t1103
+    storel 15, %t1103
     %t1104 =l add %t1103, 8
     storel $IndexError_vtable, %t1104
     %t1105 =l add %t1103, 16
@@ -21307,7 +21085,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done672
 @calloc_done672
     %t1177 =l loadl %t1165
-    storel 16, %t1177
+    storel 15, %t1177
     %t1178 =l add %t1177, 8
     storel $IndexError_vtable, %t1178
     %t1179 =l add %t1177, 16
@@ -21449,7 +21227,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done708
 @calloc_done708
     %t1239 =l loadl %t1227
-    storel 16, %t1239
+    storel 15, %t1239
     %t1240 =l add %t1239, 8
     storel $IndexError_vtable, %t1240
     %t1241 =l add %t1239, 16
@@ -21591,7 +21369,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done752
 @calloc_done752
     %t1323 =l loadl %t1311
-    storel 16, %t1323
+    storel 15, %t1323
     %t1324 =l add %t1323, 8
     storel $IndexError_vtable, %t1324
     %t1325 =l add %t1323, 16
@@ -21741,7 +21519,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done792
 @calloc_done792
     %t1386 =l loadl %t1374
-    storel 16, %t1386
+    storel 15, %t1386
     %t1387 =l add %t1386, 8
     storel $IndexError_vtable, %t1387
     %t1388 =l add %t1386, 16
@@ -21883,7 +21661,7 @@ export function l $closure_counter_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done826
 @calloc_done826
     %t1446 =l loadl %t1434
-    storel 16, %t1446
+    storel 15, %t1446
     %t1447 =l add %t1446, 8
     storel $IndexError_vtable, %t1447
     %t1448 =l add %t1446, 16
@@ -24155,7 +23933,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done6
 @calloc_done6
     %t52 =l loadl %t40
-    storel 16, %t52
+    storel 15, %t52
     %t53 =l add %t52, 8
     storel $IndexError_vtable, %t53
     %t54 =l add %t52, 16
@@ -24387,7 +24165,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done87
 @calloc_done87
     %t167 =l loadl %t155
-    storel 16, %t167
+    storel 15, %t167
     %t168 =l add %t167, 8
     storel $IndexError_vtable, %t168
     %t169 =l add %t167, 16
@@ -24619,7 +24397,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done146
 @calloc_done146
     %t255 =l loadl %t243
-    storel 16, %t255
+    storel 15, %t255
     %t256 =l add %t255, 8
     storel $IndexError_vtable, %t256
     %t257 =l add %t255, 16
@@ -24851,7 +24629,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done220
 @calloc_done220
     %t376 =l loadl %t364
-    storel 16, %t376
+    storel 15, %t376
     %t377 =l add %t376, 8
     storel $IndexError_vtable, %t377
     %t378 =l add %t376, 16
@@ -25091,7 +24869,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done285
 @calloc_done285
     %t467 =l loadl %t455
-    storel 16, %t467
+    storel 15, %t467
     %t468 =l add %t467, 8
     storel $IndexError_vtable, %t468
     %t469 =l add %t467, 16
@@ -25323,7 +25101,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done345
 @calloc_done345
     %t557 =l loadl %t545
-    storel 16, %t557
+    storel 15, %t557
     %t558 =l add %t557, 8
     storel $IndexError_vtable, %t558
     %t559 =l add %t557, 16
@@ -25555,7 +25333,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done452
 @calloc_done452
     %t726 =l loadl %t714
-    storel 16, %t726
+    storel 15, %t726
     %t727 =l add %t726, 8
     storel $IndexError_vtable, %t727
     %t728 =l add %t726, 16
@@ -25677,8 +25455,8 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     ret 0
 @exc_continue462
     %t766 =l add %t726, 24
-    storel 396, %t766
-    call $nox_raise(l %rt, l %t726, l 396)
+    storel 386, %t766
+    call $nox_raise(l %rt, l %t726, l 386)
     %t767 =w ceql %t709, 0
     jnz %t767, @release_skip485, @release484
 @release484
@@ -25795,7 +25573,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done520
 @calloc_done520
     %t817 =l loadl %t805
-    storel 16, %t817
+    storel 15, %t817
     %t818 =l add %t817, 8
     storel $IndexError_vtable, %t818
     %t819 =l add %t817, 16
@@ -26027,7 +25805,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done579
 @calloc_done579
     %t907 =l loadl %t895
-    storel 16, %t907
+    storel 15, %t907
     %t908 =l add %t907, 8
     storel $IndexError_vtable, %t908
     %t909 =l add %t907, 16
@@ -26259,7 +26037,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done701
 @calloc_done701
     %t1075 =l loadl %t1063
-    storel 16, %t1075
+    storel 15, %t1075
     %t1076 =l add %t1075, 8
     storel $IndexError_vtable, %t1076
     %t1077 =l add %t1075, 16
@@ -26491,7 +26269,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done761
 @calloc_done761
     %t1163 =l loadl %t1151
-    storel 16, %t1163
+    storel 15, %t1163
     %t1164 =l add %t1163, 8
     storel $IndexError_vtable, %t1164
     %t1165 =l add %t1163, 16
@@ -26723,7 +26501,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done820
 @calloc_done820
     %t1253 =l loadl %t1241
-    storel 16, %t1253
+    storel 15, %t1253
     %t1254 =l add %t1253, 8
     storel $IndexError_vtable, %t1254
     %t1255 =l add %t1253, 16
@@ -26955,7 +26733,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done878
 @calloc_done878
     %t1341 =l loadl %t1329
-    storel 16, %t1341
+    storel 15, %t1341
     %t1342 =l add %t1341, 8
     storel $IndexError_vtable, %t1342
     %t1343 =l add %t1341, 16
@@ -27187,7 +26965,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done936
 @calloc_done936
     %t1429 =l loadl %t1417
-    storel 16, %t1429
+    storel 15, %t1429
     %t1430 =l add %t1429, 8
     storel $IndexError_vtable, %t1430
     %t1431 =l add %t1429, 16
@@ -27419,7 +27197,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done994
 @calloc_done994
     %t1517 =l loadl %t1505
-    storel 16, %t1517
+    storel 15, %t1517
     %t1518 =l add %t1517, 8
     storel $IndexError_vtable, %t1518
     %t1519 =l add %t1517, 16
@@ -27651,7 +27429,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1078
 @calloc_done1078
     %t1643 =l loadl %t1631
-    storel 16, %t1643
+    storel 15, %t1643
     %t1644 =l add %t1643, 8
     storel $IndexError_vtable, %t1644
     %t1645 =l add %t1643, 16
@@ -27883,7 +27661,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1188
 @calloc_done1188
     %t1794 =l loadl %t1782
-    storel 16, %t1794
+    storel 15, %t1794
     %t1795 =l add %t1794, 8
     storel $IndexError_vtable, %t1795
     %t1796 =l add %t1794, 16
@@ -28115,7 +27893,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1248
 @calloc_done1248
     %t1884 =l loadl %t1872
-    storel 16, %t1884
+    storel 15, %t1884
     %t1885 =l add %t1884, 8
     storel $IndexError_vtable, %t1885
     %t1886 =l add %t1884, 16
@@ -28347,7 +28125,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1316
 @calloc_done1316
     %t1996 =l loadl %t1984
-    storel 16, %t1996
+    storel 15, %t1996
     %t1997 =l add %t1996, 8
     storel $IndexError_vtable, %t1997
     %t1998 =l add %t1996, 16
@@ -28587,7 +28365,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1380
 @calloc_done1380
     %t2087 =l loadl %t2075
-    storel 16, %t2087
+    storel 15, %t2087
     %t2088 =l add %t2087, 8
     storel $IndexError_vtable, %t2088
     %t2089 =l add %t2087, 16
@@ -28819,7 +28597,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1438
 @calloc_done1438
     %t2175 =l loadl %t2163
-    storel 16, %t2175
+    storel 15, %t2175
     %t2176 =l add %t2175, 8
     storel $IndexError_vtable, %t2176
     %t2177 =l add %t2175, 16
@@ -29059,7 +28837,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1503
 @calloc_done1503
     %t2266 =l loadl %t2254
-    storel 16, %t2266
+    storel 15, %t2266
     %t2267 =l add %t2266, 8
     storel $IndexError_vtable, %t2267
     %t2268 =l add %t2266, 16
@@ -29291,7 +29069,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1577
 @calloc_done1577
     %t2387 =l loadl %t2375
-    storel 16, %t2387
+    storel 15, %t2387
     %t2388 =l add %t2387, 8
     storel $IndexError_vtable, %t2388
     %t2389 =l add %t2387, 16
@@ -29531,7 +29309,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1642
 @calloc_done1642
     %t2478 =l loadl %t2466
-    storel 16, %t2478
+    storel 15, %t2478
     %t2479 =l add %t2478, 8
     storel $IndexError_vtable, %t2479
     %t2480 =l add %t2478, 16
@@ -29763,7 +29541,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1701
 @calloc_done1701
     %t2568 =l loadl %t2556
-    storel 16, %t2568
+    storel 15, %t2568
     %t2569 =l add %t2568, 8
     storel $IndexError_vtable, %t2569
     %t2570 =l add %t2568, 16
@@ -29995,7 +29773,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1759
 @calloc_done1759
     %t2656 =l loadl %t2644
-    storel 16, %t2656
+    storel 15, %t2656
     %t2657 =l add %t2656, 8
     storel $IndexError_vtable, %t2657
     %t2658 =l add %t2656, 16
@@ -30227,7 +30005,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1817
 @calloc_done1817
     %t2744 =l loadl %t2732
-    storel 16, %t2744
+    storel 15, %t2744
     %t2745 =l add %t2744, 8
     storel $IndexError_vtable, %t2745
     %t2746 =l add %t2744, 16
@@ -30459,7 +30237,7 @@ export function l $closure_apply_all_fn___nox_step(l %rt, l %env) {
     jmp @calloc_done1952
 @calloc_done1952
     %t2932 =l loadl %t2920
-    storel 16, %t2932
+    storel 15, %t2932
     %t2933 =l add %t2932, 8
     storel $IndexError_vtable, %t2933
     %t2934 =l add %t2932, 16
@@ -31685,7 +31463,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done6
 @calloc_done6
     %t39 =l loadl %t27
-    storel 16, %t39
+    storel 15, %t39
     %t40 =l add %t39, 8
     storel $IndexError_vtable, %t40
     %t41 =l add %t39, 16
@@ -31827,7 +31605,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done51
 @calloc_done51
     %t112 =l loadl %t100
-    storel 16, %t112
+    storel 15, %t112
     %t113 =l add %t112, 8
     storel $IndexError_vtable, %t113
     %t114 =l add %t112, 16
@@ -31969,7 +31747,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done86
 @calloc_done86
     %t172 =l loadl %t160
-    storel 16, %t172
+    storel 15, %t172
     %t173 =l add %t172, 8
     storel $IndexError_vtable, %t173
     %t174 =l add %t172, 16
@@ -32111,7 +31889,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done139
 @calloc_done139
     %t271 =l loadl %t259
-    storel 16, %t271
+    storel 15, %t271
     %t272 =l add %t271, 8
     storel $IndexError_vtable, %t272
     %t273 =l add %t271, 16
@@ -32261,7 +32039,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done179
 @calloc_done179
     %t335 =l loadl %t323
-    storel 16, %t335
+    storel 15, %t335
     %t336 =l add %t335, 8
     storel $IndexError_vtable, %t336
     %t337 =l add %t335, 16
@@ -32403,7 +32181,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done214
 @calloc_done214
     %t395 =l loadl %t383
-    storel 16, %t395
+    storel 15, %t395
     %t396 =l add %t395, 8
     storel $IndexError_vtable, %t396
     %t397 =l add %t395, 16
@@ -32545,7 +32323,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done252
 @calloc_done252
     %t457 =l loadl %t445
-    storel 16, %t457
+    storel 15, %t457
     %t458 =l add %t457, 8
     storel $IndexError_vtable, %t458
     %t459 =l add %t457, 16
@@ -32687,7 +32465,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done289
 @calloc_done289
     %t519 =l loadl %t507
-    storel 16, %t519
+    storel 15, %t519
     %t520 =l add %t519, 8
     storel $IndexError_vtable, %t520
     %t521 =l add %t519, 16
@@ -32829,7 +32607,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done324
 @calloc_done324
     %t582 =l loadl %t570
-    storel 16, %t582
+    storel 15, %t582
     %t583 =l add %t582, 8
     storel $IndexError_vtable, %t583
     %t584 =l add %t582, 16
@@ -32971,7 +32749,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done359
 @calloc_done359
     %t644 =l loadl %t632
-    storel 16, %t644
+    storel 15, %t644
     %t645 =l add %t644, 8
     storel $IndexError_vtable, %t645
     %t646 =l add %t644, 16
@@ -33113,7 +32891,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done393
 @calloc_done393
     %t704 =l loadl %t692
-    storel 16, %t704
+    storel 15, %t704
     %t705 =l add %t704, 8
     storel $IndexError_vtable, %t705
     %t706 =l add %t704, 16
@@ -33255,7 +33033,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done427
 @calloc_done427
     %t764 =l loadl %t752
-    storel 16, %t764
+    storel 15, %t764
     %t765 =l add %t764, 8
     storel $IndexError_vtable, %t765
     %t766 =l add %t764, 16
@@ -33397,7 +33175,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done461
 @calloc_done461
     %t824 =l loadl %t812
-    storel 16, %t824
+    storel 15, %t824
     %t825 =l add %t824, 8
     storel $IndexError_vtable, %t825
     %t826 =l add %t824, 16
@@ -33539,7 +33317,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done509
 @calloc_done509
     %t908 =l loadl %t896
-    storel 16, %t908
+    storel 15, %t908
     %t909 =l add %t908, 8
     storel $IndexError_vtable, %t909
     %t910 =l add %t908, 16
@@ -33681,7 +33459,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done571
 @calloc_done571
     %t1003 =l loadl %t991
-    storel 16, %t1003
+    storel 15, %t1003
     %t1004 =l add %t1003, 8
     storel $IndexError_vtable, %t1004
     %t1005 =l add %t1003, 16
@@ -33823,7 +33601,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done606
 @calloc_done606
     %t1066 =l loadl %t1054
-    storel 16, %t1066
+    storel 15, %t1066
     %t1067 =l add %t1066, 8
     storel $IndexError_vtable, %t1067
     %t1068 =l add %t1066, 16
@@ -33965,7 +33743,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done640
 @calloc_done640
     %t1127 =l loadl %t1115
-    storel 16, %t1127
+    storel 15, %t1127
     %t1128 =l add %t1127, 8
     storel $IndexError_vtable, %t1128
     %t1129 =l add %t1127, 16
@@ -34107,7 +33885,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done675
 @calloc_done675
     %t1187 =l loadl %t1175
-    storel 16, %t1187
+    storel 15, %t1187
     %t1188 =l add %t1187, 8
     storel $IndexError_vtable, %t1188
     %t1189 =l add %t1187, 16
@@ -34249,7 +34027,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done710
 @calloc_done710
     %t1249 =l loadl %t1237
-    storel 16, %t1249
+    storel 15, %t1249
     %t1250 =l add %t1249, 8
     storel $IndexError_vtable, %t1250
     %t1251 =l add %t1249, 16
@@ -34391,7 +34169,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done756
 @calloc_done756
     %t1337 =l loadl %t1325
-    storel 16, %t1337
+    storel 15, %t1337
     %t1338 =l add %t1337, 8
     storel $IndexError_vtable, %t1338
     %t1339 =l add %t1337, 16
@@ -34541,7 +34319,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done796
 @calloc_done796
     %t1400 =l loadl %t1388
-    storel 16, %t1400
+    storel 15, %t1400
     %t1401 =l add %t1400, 8
     storel $IndexError_vtable, %t1401
     %t1402 =l add %t1400, 16
@@ -34683,7 +34461,7 @@ export function l $closure_with_offset___nox_step(l %rt, l %env) {
     jmp @calloc_done830
 @calloc_done830
     %t1460 =l loadl %t1448
-    storel 16, %t1460
+    storel 15, %t1460
     %t1461 =l add %t1460, 8
     storel $IndexError_vtable, %t1461
     %t1462 =l add %t1460, 16
@@ -34985,7 +34763,7 @@ export function l $closure_with_offset___nox_step___nox_lambda_2(l %rt, l %env, 
     jmp @calloc_done5
 @calloc_done5
     %t22 =l loadl %t10
-    storel 16, %t22
+    storel 15, %t22
     %t23 =l add %t22, 8
     storel $IndexError_vtable, %t23
     %t24 =l add %t22, 16
@@ -35117,7 +34895,7 @@ export function l $closure_with_offset___nox_step___nox_lambda_1(l %rt, l %env, 
     jmp @calloc_done5
 @calloc_done5
     %t22 =l loadl %t10
-    storel 16, %t22
+    storel 15, %t22
     %t23 =l add %t22, 8
     storel $IndexError_vtable, %t23
     %t24 =l add %t22, 16
@@ -36103,7 +35881,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done6
 @calloc_done6
     %t41 =l loadl %t29
-    storel 16, %t41
+    storel 15, %t41
     %t42 =l add %t41, 8
     storel $IndexError_vtable, %t42
     %t43 =l add %t41, 16
@@ -36197,7 +35975,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done33
 @calloc_done33
     %t90 =l loadl %t78
-    storel 16, %t90
+    storel 15, %t90
     %t91 =l add %t90, 8
     storel $IndexError_vtable, %t91
     %t92 =l add %t90, 16
@@ -36291,7 +36069,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done56
 @calloc_done56
     %t134 =l loadl %t122
-    storel 16, %t134
+    storel 15, %t134
     %t135 =l add %t134, 8
     storel $IndexError_vtable, %t135
     %t136 =l add %t134, 16
@@ -36385,7 +36163,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done80
 @calloc_done80
     %t180 =l loadl %t168
-    storel 16, %t180
+    storel 15, %t180
     %t181 =l add %t180, 8
     storel $IndexError_vtable, %t181
     %t182 =l add %t180, 16
@@ -36479,7 +36257,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done148
 @calloc_done148
     %t300 =l loadl %t288
-    storel 16, %t300
+    storel 15, %t300
     %t301 =l add %t300, 8
     storel $IndexError_vtable, %t301
     %t302 =l add %t300, 16
@@ -36532,8 +36310,8 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     ret 0
 @exc_continue158
     %t318 =l add %t300, 24
-    storel 396, %t318
-    call $nox_raise(l %rt, l %t300, l 396)
+    storel 386, %t318
+    call $nox_raise(l %rt, l %t300, l 386)
     %t319 =w ceql %t283, 0
     jnz %t319, @release_skip163, @release162
 @release162
@@ -36581,7 +36359,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done180
 @calloc_done180
     %t347 =l loadl %t335
-    storel 16, %t347
+    storel 15, %t347
     %t348 =l add %t347, 8
     storel $IndexError_vtable, %t348
     %t349 =l add %t347, 16
@@ -36675,7 +36453,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done203
 @calloc_done203
     %t393 =l loadl %t381
-    storel 16, %t393
+    storel 15, %t393
     %t394 =l add %t393, 8
     storel $IndexError_vtable, %t394
     %t395 =l add %t393, 16
@@ -36769,7 +36547,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done254
 @calloc_done254
     %t485 =l loadl %t473
-    storel 16, %t485
+    storel 15, %t485
     %t486 =l add %t485, 8
     storel $IndexError_vtable, %t486
     %t487 =l add %t485, 16
@@ -36871,7 +36649,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done284
 @calloc_done284
     %t532 =l loadl %t520
-    storel 16, %t532
+    storel 15, %t532
     %t533 =l add %t532, 8
     storel $IndexError_vtable, %t533
     %t534 =l add %t532, 16
@@ -36965,7 +36743,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done307
 @calloc_done307
     %t578 =l loadl %t566
-    storel 16, %t578
+    storel 15, %t578
     %t579 =l add %t578, 8
     storel $IndexError_vtable, %t579
     %t580 =l add %t578, 16
@@ -37059,7 +36837,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done329
 @calloc_done329
     %t622 =l loadl %t610
-    storel 16, %t622
+    storel 15, %t622
     %t623 =l add %t622, 8
     storel $IndexError_vtable, %t623
     %t624 =l add %t622, 16
@@ -37153,7 +36931,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done351
 @calloc_done351
     %t666 =l loadl %t654
-    storel 16, %t666
+    storel 15, %t666
     %t667 =l add %t666, 8
     storel $IndexError_vtable, %t667
     %t668 =l add %t666, 16
@@ -37247,7 +37025,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done373
 @calloc_done373
     %t710 =l loadl %t698
-    storel 16, %t710
+    storel 15, %t710
     %t711 =l add %t710, 8
     storel $IndexError_vtable, %t711
     %t712 =l add %t710, 16
@@ -37341,7 +37119,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done419
 @calloc_done419
     %t788 =l loadl %t776
-    storel 16, %t788
+    storel 15, %t788
     %t789 =l add %t788, 8
     storel $IndexError_vtable, %t789
     %t790 =l add %t788, 16
@@ -37435,7 +37213,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done442
 @calloc_done442
     %t834 =l loadl %t822
-    storel 16, %t834
+    storel 15, %t834
     %t835 =l add %t834, 8
     storel $IndexError_vtable, %t835
     %t836 =l add %t834, 16
@@ -37529,7 +37307,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done464
 @calloc_done464
     %t878 =l loadl %t866
-    storel 16, %t878
+    storel 15, %t878
     %t879 =l add %t878, 8
     storel $IndexError_vtable, %t879
     %t880 =l add %t878, 16
@@ -37623,7 +37401,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done486
 @calloc_done486
     %t922 =l loadl %t910
-    storel 16, %t922
+    storel 15, %t922
     %t923 =l add %t922, 8
     storel $IndexError_vtable, %t923
     %t924 =l add %t922, 16
@@ -37717,7 +37495,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done508
 @calloc_done508
     %t966 =l loadl %t954
-    storel 16, %t966
+    storel 15, %t966
     %t967 =l add %t966, 8
     storel $IndexError_vtable, %t967
     %t968 =l add %t966, 16
@@ -37811,7 +37589,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done553
 @calloc_done553
     %t1044 =l loadl %t1032
-    storel 16, %t1044
+    storel 15, %t1044
     %t1045 =l add %t1044, 8
     storel $IndexError_vtable, %t1045
     %t1046 =l add %t1044, 16
@@ -37905,7 +37683,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done575
 @calloc_done575
     %t1088 =l loadl %t1076
-    storel 16, %t1088
+    storel 15, %t1088
     %t1089 =l add %t1088, 8
     storel $IndexError_vtable, %t1089
     %t1090 =l add %t1088, 16
@@ -38007,7 +37785,7 @@ export function l $closure_over_funcs___nox_step(l %rt, l %env) {
     jmp @calloc_done603
 @calloc_done603
     %t1135 =l loadl %t1123
-    storel 16, %t1135
+    storel 15, %t1135
     %t1136 =l add %t1135, 8
     storel $IndexError_vtable, %t1136
     %t1137 =l add %t1135, 16
@@ -39135,7 +38913,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done6
 @calloc_done6
     %t44 =l loadl %t32
-    storel 16, %t44
+    storel 15, %t44
     %t45 =l add %t44, 8
     storel $IndexError_vtable, %t45
     %t46 =l add %t44, 16
@@ -39247,7 +39025,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done42
 @calloc_done42
     %t99 =l loadl %t87
-    storel 16, %t99
+    storel 15, %t99
     %t100 =l add %t99, 8
     storel $IndexError_vtable, %t100
     %t101 =l add %t99, 16
@@ -39359,7 +39137,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done71
 @calloc_done71
     %t147 =l loadl %t135
-    storel 16, %t147
+    storel 15, %t147
     %t148 =l add %t147, 8
     storel $IndexError_vtable, %t148
     %t149 =l add %t147, 16
@@ -39471,7 +39249,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done101
 @calloc_done101
     %t197 =l loadl %t185
-    storel 16, %t197
+    storel 15, %t197
     %t198 =l add %t197, 8
     storel $IndexError_vtable, %t198
     %t199 =l add %t197, 16
@@ -39583,7 +39361,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done178
 @calloc_done178
     %t326 =l loadl %t314
-    storel 16, %t326
+    storel 15, %t326
     %t327 =l add %t326, 8
     storel $IndexError_vtable, %t327
     %t328 =l add %t326, 16
@@ -39645,8 +39423,8 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     ret 0
 @exc_continue188
     %t346 =l add %t326, 24
-    storel 396, %t346
-    call $nox_raise(l %rt, l %t326, l 396)
+    storel 386, %t346
+    call $nox_raise(l %rt, l %t326, l 386)
     %t347 =w ceql %t309, 0
     jnz %t347, @release_skip196, @release195
 @release195
@@ -39703,7 +39481,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done216
 @calloc_done216
     %t377 =l loadl %t365
-    storel 16, %t377
+    storel 15, %t377
     %t378 =l add %t377, 8
     storel $IndexError_vtable, %t378
     %t379 =l add %t377, 16
@@ -39815,7 +39593,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done245
 @calloc_done245
     %t427 =l loadl %t415
-    storel 16, %t427
+    storel 15, %t427
     %t428 =l add %t427, 8
     storel $IndexError_vtable, %t428
     %t429 =l add %t427, 16
@@ -39927,7 +39705,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done307
 @calloc_done307
     %t515 =l loadl %t503
-    storel 16, %t515
+    storel 15, %t515
     %t516 =l add %t515, 8
     storel $IndexError_vtable, %t516
     %t517 =l add %t515, 16
@@ -40039,7 +39817,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done337
 @calloc_done337
     %t563 =l loadl %t551
-    storel 16, %t563
+    storel 15, %t563
     %t564 =l add %t563, 8
     storel $IndexError_vtable, %t564
     %t565 =l add %t563, 16
@@ -40151,7 +39929,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done366
 @calloc_done366
     %t613 =l loadl %t601
-    storel 16, %t613
+    storel 15, %t613
     %t614 =l add %t613, 8
     storel $IndexError_vtable, %t614
     %t615 =l add %t613, 16
@@ -40263,7 +40041,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done394
 @calloc_done394
     %t661 =l loadl %t649
-    storel 16, %t661
+    storel 15, %t661
     %t662 =l add %t661, 8
     storel $IndexError_vtable, %t662
     %t663 =l add %t661, 16
@@ -40375,7 +40153,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done422
 @calloc_done422
     %t709 =l loadl %t697
-    storel 16, %t709
+    storel 15, %t709
     %t710 =l add %t709, 8
     storel $IndexError_vtable, %t710
     %t711 =l add %t709, 16
@@ -40487,7 +40265,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done450
 @calloc_done450
     %t757 =l loadl %t745
-    storel 16, %t757
+    storel 15, %t757
     %t758 =l add %t757, 8
     storel $IndexError_vtable, %t758
     %t759 =l add %t757, 16
@@ -40599,7 +40377,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done478
 @calloc_done478
     %t807 =l loadl %t795
-    storel 16, %t807
+    storel 15, %t807
     %t808 =l add %t807, 8
     storel $IndexError_vtable, %t808
     %t809 =l add %t807, 16
@@ -40711,7 +40489,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done525
 @calloc_done525
     %t877 =l loadl %t865
-    storel 16, %t877
+    storel 15, %t877
     %t878 =l add %t877, 8
     storel $IndexError_vtable, %t878
     %t879 =l add %t877, 16
@@ -40823,7 +40601,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done555
 @calloc_done555
     %t927 =l loadl %t915
-    storel 16, %t927
+    storel 15, %t927
     %t928 =l add %t927, 8
     storel $IndexError_vtable, %t928
     %t929 =l add %t927, 16
@@ -40935,7 +40713,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done584
 @calloc_done584
     %t978 =l loadl %t966
-    storel 16, %t978
+    storel 15, %t978
     %t979 =l add %t978, 8
     storel $IndexError_vtable, %t979
     %t980 =l add %t978, 16
@@ -41047,7 +40825,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done615
 @calloc_done615
     %t1030 =l loadl %t1018
-    storel 16, %t1030
+    storel 15, %t1030
     %t1031 =l add %t1030, 8
     storel $IndexError_vtable, %t1031
     %t1032 =l add %t1030, 16
@@ -41159,7 +40937,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done643
 @calloc_done643
     %t1078 =l loadl %t1066
-    storel 16, %t1078
+    storel 15, %t1078
     %t1079 =l add %t1078, 8
     storel $IndexError_vtable, %t1079
     %t1080 =l add %t1078, 16
@@ -41279,7 +41057,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done678
 @calloc_done678
     %t1129 =l loadl %t1117
-    storel 16, %t1129
+    storel 15, %t1129
     %t1130 =l add %t1129, 8
     storel $IndexError_vtable, %t1130
     %t1131 =l add %t1129, 16
@@ -41391,7 +41169,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done707
 @calloc_done707
     %t1179 =l loadl %t1167
-    storel 16, %t1179
+    storel 15, %t1179
     %t1180 =l add %t1179, 8
     storel $IndexError_vtable, %t1180
     %t1181 =l add %t1179, 16
@@ -41503,7 +41281,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done735
 @calloc_done735
     %t1227 =l loadl %t1215
-    storel 16, %t1227
+    storel 15, %t1227
     %t1228 =l add %t1227, 8
     storel $IndexError_vtable, %t1228
     %t1229 =l add %t1227, 16
@@ -41615,7 +41393,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done763
 @calloc_done763
     %t1275 =l loadl %t1263
-    storel 16, %t1275
+    storel 15, %t1275
     %t1276 =l add %t1275, 8
     storel $IndexError_vtable, %t1276
     %t1277 =l add %t1275, 16
@@ -41727,7 +41505,7 @@ export function l $closure_pipeline___nox_step(l %rt, l %env) {
     jmp @calloc_done809
 @calloc_done809
     %t1346 =l loadl %t1334
-    storel 16, %t1346
+    storel 15, %t1346
     %t1347 =l add %t1346, 8
     storel $IndexError_vtable, %t1347
     %t1348 =l add %t1346, 16
@@ -42893,7 +42671,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done6
 @calloc_done6
     %t53 =l loadl %t41
-    storel 16, %t53
+    storel 15, %t53
     %t54 =l add %t53, 8
     storel $IndexError_vtable, %t54
     %t55 =l add %t53, 16
@@ -43035,7 +42813,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done51
 @calloc_done51
     %t126 =l loadl %t114
-    storel 16, %t126
+    storel 15, %t126
     %t127 =l add %t126, 8
     storel $IndexError_vtable, %t127
     %t128 =l add %t126, 16
@@ -43177,7 +42955,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done86
 @calloc_done86
     %t186 =l loadl %t174
-    storel 16, %t186
+    storel 15, %t186
     %t187 =l add %t186, 8
     storel $IndexError_vtable, %t187
     %t188 =l add %t186, 16
@@ -43319,7 +43097,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done139
 @calloc_done139
     %t285 =l loadl %t273
-    storel 16, %t285
+    storel 15, %t285
     %t286 =l add %t285, 8
     storel $IndexError_vtable, %t286
     %t287 =l add %t285, 16
@@ -43469,7 +43247,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done180
 @calloc_done180
     %t348 =l loadl %t336
-    storel 16, %t348
+    storel 15, %t348
     %t349 =l add %t348, 8
     storel $IndexError_vtable, %t349
     %t350 =l add %t348, 16
@@ -43611,7 +43389,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done216
 @calloc_done216
     %t410 =l loadl %t398
-    storel 16, %t410
+    storel 15, %t410
     %t411 =l add %t410, 8
     storel $IndexError_vtable, %t411
     %t412 =l add %t410, 16
@@ -43753,7 +43531,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done251
 @calloc_done251
     %t472 =l loadl %t460
-    storel 16, %t472
+    storel 15, %t472
     %t473 =l add %t472, 8
     storel $IndexError_vtable, %t473
     %t474 =l add %t472, 16
@@ -43895,7 +43673,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done285
 @calloc_done285
     %t533 =l loadl %t521
-    storel 16, %t533
+    storel 15, %t533
     %t534 =l add %t533, 8
     storel $IndexError_vtable, %t534
     %t535 =l add %t533, 16
@@ -44037,7 +43815,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done319
 @calloc_done319
     %t593 =l loadl %t581
-    storel 16, %t593
+    storel 15, %t593
     %t594 =l add %t593, 8
     storel $IndexError_vtable, %t594
     %t595 =l add %t593, 16
@@ -44179,7 +43957,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done357
 @calloc_done357
     %t653 =l loadl %t641
-    storel 16, %t653
+    storel 15, %t653
     %t654 =l add %t653, 8
     storel $IndexError_vtable, %t654
     %t655 =l add %t653, 16
@@ -44321,7 +44099,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done393
 @calloc_done393
     %t715 =l loadl %t703
-    storel 16, %t715
+    storel 15, %t715
     %t716 =l add %t715, 8
     storel $IndexError_vtable, %t716
     %t717 =l add %t715, 16
@@ -44463,7 +44241,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done430
 @calloc_done430
     %t777 =l loadl %t765
-    storel 16, %t777
+    storel 15, %t777
     %t778 =l add %t777, 8
     storel $IndexError_vtable, %t778
     %t779 =l add %t777, 16
@@ -44605,7 +44383,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done464
 @calloc_done464
     %t838 =l loadl %t826
-    storel 16, %t838
+    storel 15, %t838
     %t839 =l add %t838, 8
     storel $IndexError_vtable, %t839
     %t840 =l add %t838, 16
@@ -44747,7 +44525,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done501
 @calloc_done501
     %t901 =l loadl %t889
-    storel 16, %t901
+    storel 15, %t901
     %t902 =l add %t901, 8
     storel $IndexError_vtable, %t902
     %t903 =l add %t901, 16
@@ -44889,7 +44667,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done538
 @calloc_done538
     %t963 =l loadl %t951
-    storel 16, %t963
+    storel 15, %t963
     %t964 =l add %t963, 8
     storel $IndexError_vtable, %t964
     %t965 =l add %t963, 16
@@ -45031,7 +44809,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done572
 @calloc_done572
     %t1024 =l loadl %t1012
-    storel 16, %t1024
+    storel 15, %t1024
     %t1025 =l add %t1024, 8
     storel $IndexError_vtable, %t1025
     %t1026 =l add %t1024, 16
@@ -45173,7 +44951,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done608
 @calloc_done608
     %t1089 =l loadl %t1077
-    storel 16, %t1089
+    storel 15, %t1089
     %t1090 =l add %t1089, 8
     storel $IndexError_vtable, %t1090
     %t1091 =l add %t1089, 16
@@ -45315,7 +45093,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done642
 @calloc_done642
     %t1149 =l loadl %t1137
-    storel 16, %t1149
+    storel 15, %t1149
     %t1150 =l add %t1149, 8
     storel $IndexError_vtable, %t1150
     %t1151 =l add %t1149, 16
@@ -45457,7 +45235,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done676
 @calloc_done676
     %t1210 =l loadl %t1198
-    storel 16, %t1210
+    storel 15, %t1210
     %t1211 =l add %t1210, 8
     storel $IndexError_vtable, %t1211
     %t1212 =l add %t1210, 16
@@ -45599,7 +45377,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done710
 @calloc_done710
     %t1271 =l loadl %t1259
-    storel 16, %t1271
+    storel 15, %t1271
     %t1272 =l add %t1271, 8
     storel $IndexError_vtable, %t1272
     %t1273 =l add %t1271, 16
@@ -45741,7 +45519,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done744
 @calloc_done744
     %t1332 =l loadl %t1320
-    storel 16, %t1332
+    storel 15, %t1332
     %t1333 =l add %t1332, 8
     storel $IndexError_vtable, %t1333
     %t1334 =l add %t1332, 16
@@ -45883,7 +45661,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done779
 @calloc_done779
     %t1392 =l loadl %t1380
-    storel 16, %t1392
+    storel 15, %t1392
     %t1393 =l add %t1392, 8
     storel $IndexError_vtable, %t1393
     %t1394 =l add %t1392, 16
@@ -46025,7 +45803,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done814
 @calloc_done814
     %t1454 =l loadl %t1442
-    storel 16, %t1454
+    storel 15, %t1454
     %t1455 =l add %t1454, 8
     storel $IndexError_vtable, %t1455
     %t1456 =l add %t1454, 16
@@ -46167,7 +45945,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done848
 @calloc_done848
     %t1514 =l loadl %t1502
-    storel 16, %t1514
+    storel 15, %t1514
     %t1515 =l add %t1514, 8
     storel $IndexError_vtable, %t1515
     %t1516 =l add %t1514, 16
@@ -46309,7 +46087,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done882
 @calloc_done882
     %t1574 =l loadl %t1562
-    storel 16, %t1574
+    storel 15, %t1574
     %t1575 =l add %t1574, 8
     storel $IndexError_vtable, %t1575
     %t1576 =l add %t1574, 16
@@ -46451,7 +46229,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done916
 @calloc_done916
     %t1634 =l loadl %t1622
-    storel 16, %t1634
+    storel 15, %t1634
     %t1635 =l add %t1634, 8
     storel $IndexError_vtable, %t1635
     %t1636 =l add %t1634, 16
@@ -46593,7 +46371,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done964
 @calloc_done964
     %t1718 =l loadl %t1706
-    storel 16, %t1718
+    storel 15, %t1718
     %t1719 =l add %t1718, 8
     storel $IndexError_vtable, %t1719
     %t1720 =l add %t1718, 16
@@ -46735,7 +46513,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done1026
 @calloc_done1026
     %t1813 =l loadl %t1801
-    storel 16, %t1813
+    storel 15, %t1813
     %t1814 =l add %t1813, 8
     storel $IndexError_vtable, %t1814
     %t1815 =l add %t1813, 16
@@ -46877,7 +46655,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done1070
 @calloc_done1070
     %t1897 =l loadl %t1885
-    storel 16, %t1897
+    storel 15, %t1897
     %t1898 =l add %t1897, 8
     storel $IndexError_vtable, %t1898
     %t1899 =l add %t1897, 16
@@ -47027,7 +46805,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done1110
 @calloc_done1110
     %t1960 =l loadl %t1948
-    storel 16, %t1960
+    storel 15, %t1960
     %t1961 =l add %t1960, 8
     storel $IndexError_vtable, %t1961
     %t1962 =l add %t1960, 16
@@ -47169,7 +46947,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done1144
 @calloc_done1144
     %t2020 =l loadl %t2008
-    storel 16, %t2020
+    storel 15, %t2020
     %t2021 =l add %t2020, 8
     storel $IndexError_vtable, %t2021
     %t2022 =l add %t2020, 16
@@ -47311,7 +47089,7 @@ export function l $closure_Gen_run___nox_step(l %rt, l %env) {
     jmp @calloc_done1178
 @calloc_done1178
     %t2080 =l loadl %t2068
-    storel 16, %t2080
+    storel 15, %t2080
     %t2081 =l add %t2080, 8
     storel $IndexError_vtable, %t2081
     %t2082 =l add %t2080, 16

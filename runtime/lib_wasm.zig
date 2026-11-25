@@ -1,5 +1,5 @@
 //! Faz 10 (WASM): `wasm32-wasi` hedefinin çalışma zamanı kökü. `lib.zig`in "her dosyayı yeniden dışa aktar + comptime force-ref" deseni, ama
-//! OS iş parçacığı, soket, `dlopen` (sqlite/postgres/mysql/tls), HPy/WASM köprüsü, fiber yığın değiştirme ve M:N havuz İÇERMEYEN dar bir küme.
+//! OS iş parçacığı, soket, `dlopen` (sqlite/postgres/mysql/tls), WASM köprüsü, fiber yığın değiştirme ve M:N havuz İÇERMEYEN dar bir küme.
 //! Asenkron (`spawn`/`await`/`Channel`) `async_rt/bridge_wasm.zig`deki aynı-yığında yuvalanmış benzetimle çalışır.
 
 const std = @import("std");

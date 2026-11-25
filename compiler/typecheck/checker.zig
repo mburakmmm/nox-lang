@@ -451,7 +451,6 @@ const WASM_UNAVAILABLE_MODULES = [_]struct { name: []const u8, why: []const u8 }
     .{ .name = "sharedmem", .why = "WASI has no shared memory" },
     .{ .name = "native", .why = "WASI has no dynamic loading" },
     .{ .name = "plugin", .why = "WASI has no dynamic loading" },
-    .{ .name = "hpy", .why = "the HPy bridge is not part of the wasm runtime" },
     .{ .name = "wasm", .why = "the embedded WebAssembly engine is not part of the wasm runtime" },
     .{ .name = "ffi", .why = "C callbacks need native code, which a wasm module does not link" },
 };
@@ -1419,7 +1418,7 @@ pub const Checker = struct {
         // GERİ GETİRİLDİ.
         libc_math,
         arch_x86_64,
-        /// `nox.native` / `nox.plugin` / `nox.hpy`: indirilen kod ve `dlopen`.
+        /// `nox.native` / `nox.plugin`: indirilen kod ve `dlopen`.
         dynamic_code,
 
         fn label(self: Capability) []const u8 {
@@ -1550,7 +1549,6 @@ pub const Checker = struct {
         .{ .name = "grpc", .caps = &.{.network} },
         .{ .name = "grpc_server", .caps = &.{.network} },
         .{ .name = "gzip", .caps = &.{} },
-        .{ .name = "hpy", .caps = &.{ .filesystem, .dynamic_code } },
         .{ .name = "http", .caps = &.{.network} },
         .{ .name = "json", .caps = &.{} },
         // Saf Nox (`nox.base64` ve `nox.crypto` üzerine). Mobil hedefte de geçerlidir.
@@ -3083,8 +3081,7 @@ pub const Checker = struct {
     /// Faz 1 decorator (Faz A.6 İLE GENİŞLETİLDİ, bkz. `DecoratorArg`nin
     /// belge notu): `registerFunc`in AYIRDIĞI (sinyal amaçlı) alt adım —
     /// `fd.decorators`nin HER girdisi İçin (a) argümanların string/int/
-    /// bool/string-listesi literallerinden BİRİ olduğunu doğrular (`hpy_
-    /// call`nin AYNI deseni, bkz. onun belge notu — iç içe/karmaşık
+    /// bool/string-listesi literallerinden BİRİ olduğunu doğrular (iç içe/karmaşık
     /// literal HÂLÂ reddedilir), (b) fonksiyonu `functions_used_as_value`e
     /// EKLEYEREK codegen'in bir trampoline ÜRETMESİNİ sağlar
     /// (`resolveIdentifierAsFunctionValue`in AYNI mekanizması), (c) imza
@@ -4822,59 +4819,11 @@ pub const Checker = struct {
     }
 
     fn isKnownSafeBuiltinCallee(name: []const u8) bool {
-        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "hpy_call", "hpy_call_str", "hpy_open", "hpy_call_on", "hpy_call_str_on", "hpy_call_float_on", "hpy_call_bool_on", "hpy_call_obj_on", "hpy_close", "hpy_close_obj", "hpy_new_on", "hpy_getattr_int_on", "hpy_setattr_int_on", "hpy_call_attr_on", "hpy_new_object_on", "hpy_getitem_int_on", "hpy_new_string_writer_on", "hpy_writer_get_str_on", "hpy_new_string_reader_on", "hpy_package_open", "hpy_package_close", "hpy_package_close_obj", "hpy_package_call_int", "hpy_package_call_int_arg", "hpy_package_call_bool", "hpy_package_call_float", "hpy_package_call_str", "hpy_package_call_obj", "hpy_package_call_str_arg", "hpy_package_call_float_arg", "hpy_package_method_int", "hpy_package_call_method", "hpy_package_new", "hpy_package_call_bytes", "hpy_package_call_int_keyword", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_of", "ffi_box", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
+        const safe = [_][]const u8{ "len", "print", "str", "int", "float", "bool", "super", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_of", "ffi_box", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence" };
         for (safe) |s| {
             if (std.mem.eql(u8, name, s)) return true;
         }
         return std.mem.startsWith(u8, name, "__nox_reflect_") or std.mem.eql(u8, name, "__nox_str_chars");
-    }
-
-    /// Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına çoklu-
-    /// argüman + list/dict/class marshalling"): `hpy_call_on`/`hpy_call_
-    /// str_on`/`hpy_call_float_on`/`hpy_call_bool_on`nin TRAILING (2.
-    /// argümandan SONRAKİ) argümanları BU tipteyse marshal EDİLEBİLİR —
-    /// `list[T]`/`dict[K,V]` yalnızca SKALER `T`/`K`/`V` (`dict`in KENDİ
-    /// v1 kısıtı — `K`/`V` yalnızca int/bool/str — BUNU zaten sağlıyor,
-    /// EK bir kontrol GEREKMEZ), `class` yalnızca TÜM alanları skalerse
-    /// (nested list/dict/class/task/vb. alan VARSA reddedilir — HPy'de
-    /// GERÇEK bir özel tip henüz YOK, `HPyType_FromSpec` Faz 19'un işi,
-    /// bu YÜZDEN bir sınıf ancak alan-adı→değer bir HPy `dict`i OLARAK
-    /// "surrogate" temsil edilebilir, bkz. `foreign_bridge.zig`nin `nox_
-    /// hpy_class_arg_*` ailesi).
-    fn isHpyMarshalableArgType(self: *Checker, ty: Type) bool {
-        return switch (ty) {
-            // Faz 19: `ptr` — DAHA ÖNCE `hpy_call_obj_on`dan alınmış OPAK
-            // bir HPy nesne tutamacı (`HPyType_FromSpec` İLE tanımlanmış
-            // bir C eklenti tipinin ÖRNEĞİ) — codegen'in `__nox_hpy_obj_arg`
-            // AST-işaretleyicisi ÜZERİNDEN `nox_hpy_args_add_handle`e
-            // yönlendirilir (bkz. bu checker'ın çağırdığı yer).
-            .int, .float, .boolean, .str, .ptr => true,
-            .list => |elem| switch (elem.*) {
-                .int, .float, .boolean, .str => true,
-                else => false,
-            },
-            // Dict'in KENDİ anahtar kısıtı (int/bool/str) ZATEN yeterli —
-            // AMA değer tipi Faz OO.4'ten BERİ `class`ı da KABUL EDİYOR
-            // (bkz. `typeExprToType`'ın `"dict"` dalı) — BU fazın kapsamı
-            // dict[K, class]'ı KAPSAMAZ (nested class-değer marshalling,
-            // her elemanın KENDİ surrogate dict'ini gerektirirdi).
-            .dict => |d| switch (d.value.*) {
-                .int, .float, .boolean, .str => true,
-                else => false,
-            },
-            .class => |cname| blk: {
-                const info = self.classes.get(cname) orelse break :blk false;
-                var it = info.fields.valueIterator();
-                while (it.next()) |fty| {
-                    switch (fty.*) {
-                        .int, .float, .boolean, .str => {},
-                        else => break :blk false,
-                    }
-                }
-                break :blk true;
-            },
-            else => false,
-        };
     }
 
     fn paramIndexByName(params: []const ast.Param, name: []const u8) ?u32 {
@@ -7590,8 +7539,7 @@ pub const Checker = struct {
                         break :blk .boolean;
                     },
                     // v3 madde 2 (bitwise operatörler): bkz. `types.
-                    // isBitwiseEligible`in belge notu (nox-lang'in KENDİ
-                    // HPy köprüsündeki emsalin genişlemesi).
+                    // isBitwiseEligible`in belge notu (emsalin genişlemesi).
                     .invert => {
                         if (!types.isBitwiseEligible(t)) return self.fail(error.TypeMismatch, "unary '~' can only be applied to int/fixed-width integer types (float/bool are not supported — for bool, convert with 'int(...)' first)", .{});
                         break :blk if (t == .fixed_int) t else .int;
@@ -8187,7 +8135,7 @@ pub const Checker = struct {
             // spesifikasyon.md ilgili bölüm): **DÜZELTME (KODLAMA
             // SIRASINDA GERÇEKTEN bulunan bir codegen tutarsızlığı
             // ÜZERİNE) — `bool`, `int`/sabit-genişlikli tamsayıyla ÖRTÜK
-            // KARIŞMAZ.** İlk tasarım (nox-lang'in KENDİ HPy köprüsündeki
+            // KARIŞMAZ.** İlk tasarım (eski bir
             // "bool int gibi davranır" emsalini AYNEN izleyerek) `bool İLE
             // int`in KARIŞABİLECEĞİNİ VARSAYIYORDU — AMA codegen'in
             // `common` hesaplaması (bkz. `genBinary`nin belge notu:
@@ -9646,398 +9594,8 @@ pub const Checker = struct {
                     }
                     return .{ .fixed_int = .usize };
                 }
-                if (self.wasm_target and (std.mem.startsWith(u8, name, "hpy_") or std.mem.eql(u8, name, "wasm_call"))) {
-                    return self.fail(error.CapabilityNotGranted, "the builtin '{s}' cannot be used on the wasm32-wasi target (the HPy/WASM foreign bridges are not part of the wasm runtime)", .{name});
-                }
-                // Faz 14: `hpy_call`/`wasm_call` — Faz 12/13'ün köprülerini
-                // (bkz. runtime/foreign_bridge.zig) Nox kaynağından
-                // çağırabilmek için `print` gibi özel işlenen, sabit
-                // imzalı iki yerleşik. Bkz. nox-teknik-spesifikasyon.md
-                // §3.14.
-                if (std.mem.eql(u8, name, "hpy_call")) {
-                    if (c.args.len != 4) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_call' takes exactly 4 arguments (path: str, extension_name: str, function_name: str, argument: int)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_call' must be a str", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_call' must be a str", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "argument 3 (function name) of 'hpy_call' must be a str", .{});
-                    if (try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "argument 4 (argument) of 'hpy_call' must be an int", .{});
-                    // Güvenlik bulgusu H-1 (bkz. güvenlik raporu) —
-                    // DÜZELTİLDİ: `yol`/`uzantı_adı`/`fonksiyon_adı` ÖNCEDEN
-                    // yalnızca TİPÇE `str` olmak zorundaydı, DEĞER olarak
-                    // keyfi çalışma-zamanı ifadeleri (bir config dosyasından/
-                    // ortam değişkeninden/ağ yanıtından okunan bir `str`)
-                    // OLABİLİYORDU — `runtime/hpy_bridge/loader.zig`nin
-                    // `std.DynLib.open`ı BU yolu doğrulamasız, sandbox'sız
-                    // AÇIP eşleşen `HPyInit_*` sembolünü fonksiyon işaretçisi
-                    // olarak ÇAĞIRDIĞINDAN, bu SIRADAN Nox kodundan
-                    // ulaşılabilen, doğrulamasız bir "keyfi native kütüphane
-                    // yükle ve çalıştır" ilkeliydi. ÜÇÜ de ARTIK derleme-
-                    // zamanı SABİTİ (`.string_lit`) OLMAK ZORUNDA — bir
-                    // Nox programı hangi native kodu yükleyeceğini KAYNAK
-                    // KODUNDA AÇIKÇA yazmalıdır, ÇALIŞMA ZAMANINDA hesaplayıp
-                    // GİZLEYEMEZ (`extern def ... from "<lib>"`nin ZATEN
-                    // dilbilgisi SEVİYESİNDE yalnızca bir string TOKEN'I
-                    // kabul etmesiyle AYNI ilke).
-                    if (c.args[0] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_call' can only be a string LITERAL (security: loading an arbitrary native library from a path computed at run time is prevented)", .{});
-                    }
-                    if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_call' can only be a string LITERAL", .{});
-                    }
-                    if (c.args[2] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 3 (function name) of 'hpy_call' can only be a string LITERAL", .{});
-                    }
-                    return .int;
-                }
-                // Faz 15 (bkz. nox-teknik-spesifikasyon.md §3.78): `hpy_call`in
-                // AYNI güvenlik kısıtlarına (İLK 3 argüman string LİTERALİ
-                // OLMAK ZORUNDA) sahip, YALNIZCA `str` argüman/dönüşlü kardeşi
-                // — `HPyFunc_KEYWORDS` imzalı metodları (`hpy_call`nin
-                // `HPyFunc_O`sunun AKSİNE, ör. `ujson_hpy.dumps`/`loads`)
-                // POZİSYONEL-TEK-ARGÜMAN (anahtar kelime YOK) olarak çağırır.
-                if (std.mem.eql(u8, name, "hpy_call_str")) {
-                    if (c.args.len != 4) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_str' takes exactly 4 arguments (path: str, extension_name: str, function_name: str, argument: str)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_call_str' must be a str", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_call_str' must be a str", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "argument 3 (function name) of 'hpy_call_str' must be a str", .{});
-                    if (try self.checkExpr(ctx, c.args[3]) != .str) return self.fail(error.TypeMismatch, "argument 4 (argument) of 'hpy_call_str' must be a str", .{});
-                    // Güvenlik bulgusu H-1'in AYNI düzeltmesi — bkz. `hpy_call`nin
-                    // belge notu.
-                    if (c.args[0] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_call_str' can only be a string LITERAL (security: loading an arbitrary native library from a path computed at run time is prevented)", .{});
-                    }
-                    if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_call_str' can only be a string LITERAL", .{});
-                    }
-                    if (c.args[2] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 3 (function name) of 'hpy_call_str' can only be a string LITERAL", .{});
-                    }
-                    return .str;
-                }
-                // Faz 16 (bkz. plan dosyası "hpy_call'e kalıcı modül+context"):
-                // `hpy_call`/`hpy_call_str`nin HER ÇAĞRIDA modülü/context'i
-                // BAŞTAN yaratıp HEMEN yok eden "v0.1, bilinçli dar" modeli
-                // YERİNE — `hpy_open` BİR KEZ açıp opak bir `ptr` tutamacı
-                // (Nox'un `extern def`in ZATEN kullandığı AYNI opak-handle
-                // tipi, bkz. `ok_extern_ptr.nox`) döner, `hpy_call_on`/
-                // `hpy_call_str_on` BU tutamacı YENİDEN KULLANIR (SIFIR
-                // yeniden-yükleme/yeniden-yaratma), `hpy_close` serbest
-                // bırakır. `hpy_call`nin AYNI Güvenlik bulgusu H-1 kısıtı
-                // (yol/uzantı-adı/fonksiyon-adı SADECE string LİTERALİ)
-                // BURADA da GEÇERLİDİR.
-                if (std.mem.eql(u8, name, "hpy_open")) {
-                    if (c.args.len != 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_open' takes exactly 2 arguments (path: str, extension_name: str)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_open' must be a str", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_open' must be a str", .{});
-                    if (c.args[0] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 1 (path) of 'hpy_open' can only be a string LITERAL (security: loading an arbitrary native library from a path computed at run time is prevented)", .{});
-                    }
-                    if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 2 (extension name) of 'hpy_open' can only be a string LITERAL", .{});
-                    }
-                    return .ptr;
-                }
-                // Paket yolu. `hpy_open`in literali burada aranmaz; manifest
-                // doğrulaması runtime'da, `HPyInit_*` çağrısından önce yapılır.
-                if (std.mem.eql(u8, name, "hpy_package_open")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'hpy_package_open' takes exactly 1 argument (package_root: str)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .str) return self.fail(error.TypeMismatch, "argument 1 (package root) of 'hpy_package_open' must be a str", .{});
-                    return .ptr;
-                }
-                if (std.mem.eql(u8, name, "hpy_package_close")) {
-                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'hpy_package_close' takes exactly 1 argument (handle: ptr)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 of 'hpy_package_close' must be a ptr", .{});
-                    return .none;
-                }
-                if (std.mem.eql(u8, name, "hpy_package_close_obj")) {
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'hpy_package_close_obj' takes exactly 2 arguments (handle: ptr, object: ptr)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "'hpy_package_close_obj' arguments must be ptr", .{});
-                    return .none;
-                }
-                if (std.mem.eql(u8, name, "hpy_package_call_int") or std.mem.eql(u8, name, "hpy_package_call_bool") or std.mem.eql(u8, name, "hpy_package_call_float") or std.mem.eql(u8, name, "hpy_package_call_str") or std.mem.eql(u8, name, "hpy_package_call_obj")) {
-                    if (c.args.len != 2) return self.fail(error.ArgumentCountMismatch, "'{s}' takes exactly 2 arguments (handle: ptr, name: str)", .{name});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 of '{s}' must be a ptr", .{name});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 of '{s}' must be a str", .{name});
-                    if (std.mem.eql(u8, name, "hpy_package_call_bool")) return .boolean;
-                    if (std.mem.eql(u8, name, "hpy_package_call_float")) return .float;
-                    if (std.mem.eql(u8, name, "hpy_package_call_str")) return .str;
-                    if (std.mem.eql(u8, name, "hpy_package_call_obj")) return .ptr;
-                    return .int;
-                }
-                if (std.mem.eql(u8, name, "hpy_package_call_int_arg")) {
-                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_int_arg' takes exactly 3 arguments (handle: ptr, name: str, arg: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str or try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'hpy_package_call_int_arg' expects ptr, str, int", .{});
-                    return .int;
-                }
-                if (std.mem.eql(u8, name, "hpy_package_call_float_arg")) {
-                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_float_arg' takes exactly 3 arguments (handle: ptr, name: str, arg: float)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str or try self.checkExpr(ctx, c.args[2]) != .float) return self.fail(error.TypeMismatch, "'hpy_package_call_float_arg' expects ptr, str, float", .{});
-                    return .float;
-                }
-                if (std.mem.eql(u8, name, "hpy_package_call_str_arg")) {
-                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_str_arg' takes exactly 3 arguments (handle: ptr, name: str, arg: str)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str or try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_package_call_str_arg' expects ptr, str, str", .{});
-                    return .str;
-                }
-                if (std.mem.eql(u8, name, "hpy_package_call_bytes")) {
-                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_bytes' takes exactly 3 arguments (handle: ptr, name: str, arg: list[int])", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "'hpy_package_call_bytes' expects ptr, str, list[int]", .{});
-                    switch (try self.checkExpr(ctx, c.args[2])) {
-                        .list => |elem| if (elem.* != .int) return self.fail(error.TypeMismatch, "'hpy_package_call_bytes' expects ptr, str, list[int]", .{}),
-                        else => return self.fail(error.TypeMismatch, "'hpy_package_call_bytes' expects ptr, str, list[int]", .{}),
-                    }
-                    const boxed = try self.allocator.create(Type);
-                    boxed.* = .int;
-                    return .{ .list = boxed };
-                }
-                if (std.mem.eql(u8, name, "hpy_package_call_int_keyword")) {
-                    if (c.args.len != 4) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_int_keyword' takes exactly 4 arguments (handle: ptr, name: str, key: str, arg: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str or try self.checkExpr(ctx, c.args[2]) != .str or try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "'hpy_package_call_int_keyword' expects ptr, str, str, int", .{});
-                    return .int;
-                }
-                if (std.mem.eql(u8, name, "hpy_package_call_method")) {
-                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_call_method' takes exactly 3 arguments (handle: ptr, object: ptr, name: str)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .ptr or try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "'hpy_package_call_method' expects ptr, ptr, str", .{});
-                    return .int;
-                }
-                if (std.mem.eql(u8, name, "hpy_package_method_int")) {
-                    if (c.args.len != 4) return self.fail(error.ArgumentCountMismatch, "'hpy_package_method_int' takes exactly 4 arguments (handle: ptr, object: ptr, name: str, arg: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .ptr or try self.checkExpr(ctx, c.args[2]) != .str or try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "'hpy_package_method_int' expects ptr, ptr, str, int", .{});
-                    return .int;
-                }
-                if (std.mem.eql(u8, name, "hpy_package_new")) {
-                    if (c.args.len != 3) return self.fail(error.ArgumentCountMismatch, "'hpy_package_new' takes exactly 3 arguments (handle: ptr, class_name: str, arg: int)", .{});
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr or try self.checkExpr(ctx, c.args[1]) != .str or try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "'hpy_package_new' expects ptr, str, int", .{});
-                    return .ptr;
-                }
-                // Faz 17 (bkz. plan dosyası "kalıcı tutamaçlı HPy çağrılarına
-                // çoklu-argüman + list/dict/class marshalling"): `hpy_call_on`/
-                // `hpy_call_str_on`nin SADECE TEK bir `int`/`str` argüman kabul
-                // ettiği v1 sınırı KALDIRILDI — dördü de ARTIK `handle`/
-                // `func_name`den SONRA SIFIR VEYA DAHA FAZLA, HETEROJEN tipli
-                // (int/float/bool/str/list[T]/dict[K,V]/class — HEPSİ SKALER,
-                // bkz. `isHpyMarshalableArgType`) trailing argüman kabul eder;
-                // dönüş tipi (int/float/bool/str) HALA her birinin KENDİ,
-                // SABİT tipi (geriye-dönük tip çıkarımı OLMADIĞINDAN list/dict/
-                // class dönüş tipi bu fazda DESTEKLENMEZ).
-                // Faz 19 (bkz. plan dosyası "opak HPy nesne tutamaçları"):
-                // `hpy_call_obj_on` — DÖNÜŞ tipi `ptr` (bir `HPyType_
-                // FromSpec` İLE tanımlanmış C eklenti tipinin OPAK bir
-                // örnek tutamacı, ör. `make_counter`nin döndürdüğü) —
-                // AYNI arg-doğrulama şeklini paylaşır.
-                if (std.mem.eql(u8, name, "hpy_call_on") or std.mem.eql(u8, name, "hpy_call_str_on") or std.mem.eql(u8, name, "hpy_call_float_on") or std.mem.eql(u8, name, "hpy_call_bool_on") or std.mem.eql(u8, name, "hpy_call_obj_on")) {
-                    if (c.args.len < 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'{s}' takes at least 2 arguments (handle: ptr, function_name: str, [argument, ...])", .{name});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of '{s}' must be a ptr (the return value of 'hpy_open')", .{name});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (function name) of '{s}' must be a str", .{name});
-                    if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 2 (function name) of '{s}' can only be a string LITERAL", .{name});
-                    }
-                    for (c.args[2..], 2..) |*arg_expr, idx| {
-                        const arg_ty = try self.checkExpr(ctx, arg_expr.*);
-                        if (!self.isHpyMarshalableArgType(arg_ty)) {
-                            return self.fail(error.TypeMismatch, "'{s}' argument {d} CANNOT be marshalled — only int/float/bool/str, list[T]/dict[K,V] with SCALAR elements, classes whose fields are ALL scalar, AND opaque 'ptr' handles (obtained from ANOTHER 'hpy_call_obj_on') can be passed to HPy", .{ name, idx + 1 });
-                        }
-                        // Faz 19: `ptr`-tipli bir argüman, codegen'in HİÇBİR
-                        // `Value` alanından (`.ptr` `int` İLE BİREBİR AYNI
-                        // QBE temsiline sahiptir, ayırt edici bir HeapKind
-                        // YOK) STATİK olarak AYIRT edilemez — bu YÜZDEN
-                        // checker (TEK, `Type` bilgisine sahip taraf) BU
-                        // argümanı, doğrulama TAMAMLANDIKTAN SONRA, gizli/
-                        // derleyici-dahili bir işaretleyici çağrıya SARAR
-                        // (`__nox_reflect_*`nin AYNI "kullanıcı asla
-                        // DOĞRUDAN çağırmaz" deseni) — codegen'in per-
-                        // argüman döngüsü BU ŞEKLİ (AST-YAPISAL olarak)
-                        // tanıyıp `$nox_hpy_args_add_handle`e YÖNLENDİRİR.
-                        if (arg_ty == .ptr) {
-                            const inner = try self.allocator.create(ast.Expr);
-                            inner.* = arg_expr.*;
-                            const callee = try self.allocator.create(ast.Expr);
-                            callee.* = .{ .identifier = "__nox_hpy_obj_arg" };
-                            const wrapped_args = try self.allocator.alloc(ast.Expr, 1);
-                            wrapped_args[0] = inner.*;
-                            arg_expr.* = .{ .call = .{ .callee = callee, .args = wrapped_args } };
-                        }
-                    }
-                    if (std.mem.eql(u8, name, "hpy_call_on")) return .int;
-                    if (std.mem.eql(u8, name, "hpy_call_str_on")) return .str;
-                    if (std.mem.eql(u8, name, "hpy_call_float_on")) return .float;
-                    if (std.mem.eql(u8, name, "hpy_call_obj_on")) return .ptr;
-                    return .boolean;
-                }
-                if (std.mem.eql(u8, name, "hpy_close")) {
-                    if (c.args.len != 1) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_close' takes exactly 1 argument (handle: ptr)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "the argument (handle) of 'hpy_close' must be a ptr (the return value of 'hpy_open')", .{});
-                    return .none;
-                }
-                // Faz 19: `hpy_close_obj` — `hpy_call_obj_on`nin döndürdüğü
-                // opak bir örnek tutamacını serbest bırakır (C eklentisinin
-                // KENDİ `tp_destroy`sunu tetikleyebilir).
-                if (std.mem.eql(u8, name, "hpy_close_obj")) {
-                    if (c.args.len != 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_close_obj' takes exactly 2 arguments (handle: ptr, object: ptr)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_close_obj' must be a ptr (the return value of 'hpy_open')", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (object) of 'hpy_close_obj' must be a ptr (the return value of 'hpy_call_obj_on')", .{});
-                    return .none;
-                }
-                // Faz 21 (bkz. plan dosyası "modül-seviyesi tip inşası +
-                // GETSET + NOARGS tip metodları"): `hpy_new_on` — `HPyType_
-                // FromSpec` İLE tanımlanmış, MODÜL nesnesinin KENDİ bir
-                // attribute'u OLAN bir tipi (ör. aHPy'nin `Box`u) İNŞA eder
-                // (`ctx_GetAttr_s(module, class_name)` + `ctx_Call`). `hpy_
-                // call_on`nin AYNI arg-doğrulama+marshalling şeklini
-                // PAYLAŞIR (AYRI bir `if` bloğu — mesajların "fonksiyon
-                // adı" YERİNE "sınıf adı" DEMESİ İçİn), dönüş `.ptr`.
-                if (std.mem.eql(u8, name, "hpy_new_on")) {
-                    if (c.args.len < 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_on' takes at least 2 arguments (handle: ptr, class_name: str, [argument, ...])", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_new_on' must be a ptr (the return value of 'hpy_open')", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (class name) of 'hpy_new_on' must be a str", .{});
-                    if (c.args[1] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 2 (class name) of 'hpy_new_on' can only be a string LITERAL", .{});
-                    }
-                    for (c.args[2..], 2..) |*arg_expr, idx| {
-                        const arg_ty = try self.checkExpr(ctx, arg_expr.*);
-                        if (!self.isHpyMarshalableArgType(arg_ty)) {
-                            return self.fail(error.TypeMismatch, "argument {d} of 'hpy_new_on' CANNOT be marshalled — only int/float/bool/str, list[T]/dict[K,V] with SCALAR elements, classes whose fields are ALL scalar, AND opaque 'ptr' handles (obtained from ANOTHER 'hpy_call_obj_on') can be passed to HPy", .{idx + 1});
-                        }
-                        if (arg_ty == .ptr) {
-                            const inner = try self.allocator.create(ast.Expr);
-                            inner.* = arg_expr.*;
-                            const callee = try self.allocator.create(ast.Expr);
-                            callee.* = .{ .identifier = "__nox_hpy_obj_arg" };
-                            const wrapped_args = try self.allocator.alloc(ast.Expr, 1);
-                            wrapped_args[0] = inner.*;
-                            arg_expr.* = .{ .call = .{ .callee = callee, .args = wrapped_args } };
-                        }
-                    }
-                    return .ptr;
-                }
-                // Faz 21: `hpy_getattr_int_on`/`hpy_setattr_int_on` — SABİT
-                // arity, DEĞİŞKEN argüman YOK (marshalling zinciri gerekmez).
-                if (std.mem.eql(u8, name, "hpy_getattr_int_on")) {
-                    if (c.args.len != 3) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_getattr_int_on' takes exactly 3 arguments (handle: ptr, object: ptr, attribute_name: str)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_getattr_int_on' must be a ptr (the return value of 'hpy_open')", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (object) of 'hpy_getattr_int_on' must be a ptr", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_getattr_int_on' must be a str", .{});
-                    if (c.args[2] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_getattr_int_on' can only be a string LITERAL", .{});
-                    }
-                    return .int;
-                }
-                if (std.mem.eql(u8, name, "hpy_setattr_int_on")) {
-                    if (c.args.len != 4) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_setattr_int_on' takes exactly 4 arguments (handle: ptr, object: ptr, attribute_name: str, value: int)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_setattr_int_on' must be a ptr (the return value of 'hpy_open')", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (object) of 'hpy_setattr_int_on' must be a ptr", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_setattr_int_on' must be a str", .{});
-                    if (c.args[2] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_setattr_int_on' can only be a string LITERAL", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[3]) != .int) return self.fail(error.TypeMismatch, "argument 4 (value) of 'hpy_setattr_int_on' must be an int", .{});
-                    return .none;
-                }
-                // Faz 21: `hpy_call_attr_on` — `obj`nin (bir örnek tutamacı)
-                // `attr_name` adlı BAĞLI METODUNU (`ctx_GetAttr_s`+`ctx_Call`)
-                // çağırır — `hpy_call_on`nin AYNI trailing-argüman marshalling
-                // ŞEKLİNİ paylaşır (SIFIR VEYA DAHA FAZLA argüman).
-                if (std.mem.eql(u8, name, "hpy_call_attr_on")) {
-                    if (c.args.len < 3) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_call_attr_on' takes at least 3 arguments (handle: ptr, object: ptr, attribute_name: str, [argument, ...])", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_call_attr_on' must be a ptr (the return value of 'hpy_open')", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (object) of 'hpy_call_attr_on' must be a ptr", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .str) return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_call_attr_on' must be a str", .{});
-                    if (c.args[2] != .string_lit) {
-                        return self.fail(error.TypeMismatch, "argument 3 (attribute name) of 'hpy_call_attr_on' can only be a string LITERAL", .{});
-                    }
-                    for (c.args[3..], 3..) |*arg_expr, idx| {
-                        const arg_ty = try self.checkExpr(ctx, arg_expr.*);
-                        if (!self.isHpyMarshalableArgType(arg_ty)) {
-                            return self.fail(error.TypeMismatch, "argument {d} of 'hpy_call_attr_on' CANNOT be marshalled — only int/float/bool/str, list[T]/dict[K,V] with SCALAR elements, classes whose fields are ALL scalar, AND opaque 'ptr' handles (obtained from ANOTHER 'hpy_call_obj_on') can be passed to HPy", .{idx + 1});
-                        }
-                        if (arg_ty == .ptr) {
-                            const inner = try self.allocator.create(ast.Expr);
-                            inner.* = arg_expr.*;
-                            const callee = try self.allocator.create(ast.Expr);
-                            callee.* = .{ .identifier = "__nox_hpy_obj_arg" };
-                            const wrapped_args = try self.allocator.alloc(ast.Expr, 1);
-                            wrapped_args[0] = inner.*;
-                            arg_expr.* = .{ .call = .{ .callee = callee, .args = wrapped_args } };
-                        }
-                    }
-                    return .int;
-                }
-                // Faz 22 (bkz. plan dosyası "bare attribute-nesnesi +
-                // gerçek slice tipi + numpy-tarzı skaler-broadcast slice
-                // ataması"): `hpy_new_object_on` — boş, TİPSİZ bir örnek
-                // İNŞA eder (`hpy_setattr_int_on` İLE SONRADAN attribute
-                // eklenebilir) — SADECE `handle:ptr` alır.
-                if (std.mem.eql(u8, name, "hpy_new_object_on")) {
-                    if (c.args.len != 1) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_object_on' takes exactly 1 argument (handle: ptr)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "the argument (handle) of 'hpy_new_object_on' must be a ptr (the return value of 'hpy_open')", .{});
-                    return .ptr;
-                }
-                // Faz 22: `hpy_getitem_int_on` — bir opak `.list_`/`.tuple_`
-                // tutamacının (ör. `hpy_call_obj_on`dan alınan bir dönüş
-                // tuple'ının) `index`teki elemanını `int` olarak okur.
-                if (std.mem.eql(u8, name, "hpy_getitem_int_on")) {
-                    if (c.args.len != 3) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_getitem_int_on' takes exactly 3 arguments (handle: ptr, object: ptr, index: int)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_getitem_int_on' must be a ptr (the return value of 'hpy_open')", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (object) of 'hpy_getitem_int_on' must be a ptr", .{});
-                    if (try self.checkExpr(ctx, c.args[2]) != .int) return self.fail(error.TypeMismatch, "argument 3 (index) of 'hpy_getitem_int_on' must be an int", .{});
-                    return .int;
-                }
-                // Faz 24 (bkz. plan dosyası "bellek-içi file-like writer/
-                // reader nesneleri"): `hpy_new_string_writer_on` —
-                // `hpy_new_object_on` İLE BİREBİR AYNI ŞEKİL (1 argüman,
-                // handle:ptr), SADECE `.io_writer_` İNŞA eder.
-                if (std.mem.eql(u8, name, "hpy_new_string_writer_on")) {
-                    if (c.args.len != 1) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_string_writer_on' takes exactly 1 argument (handle: ptr)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "the argument (handle) of 'hpy_new_string_writer_on' must be a ptr (the return value of 'hpy_open')", .{});
-                    return .ptr;
-                }
-                // Faz 24: `hpy_writer_get_str_on` — bir `.io_writer_`
-                // tutamacının BİRİKMİŞ İÇERİĞİNİ `str` olarak okur.
-                if (std.mem.eql(u8, name, "hpy_writer_get_str_on")) {
-                    if (c.args.len != 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_writer_get_str_on' takes exactly 2 arguments (handle: ptr, writer: ptr)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_writer_get_str_on' must be a ptr (the return value of 'hpy_open')", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .ptr) return self.fail(error.TypeMismatch, "argument 2 (writer) of 'hpy_writer_get_str_on' must be a ptr", .{});
-                    return .str;
-                }
-                // Faz 24: `hpy_new_string_reader_on` — `content`i (HERHANGİ
-                // bir ÇALIŞMA-ZAMANI `str` değeri, LİTERAL ZORUNLULUĞU
-                // YOK — `isHpyMarshalableArgType`nin `.str` kontrolüyle
-                // AYNI gevşeklik) SAHİPLENİLEN bir kopyayla `.io_reader_`
-                // İnşa eder.
-                if (std.mem.eql(u8, name, "hpy_new_string_reader_on")) {
-                    if (c.args.len != 2) {
-                        return self.fail(error.ArgumentCountMismatch, "'hpy_new_string_reader_on' takes exactly 2 arguments (handle: ptr, content: str)", .{});
-                    }
-                    if (try self.checkExpr(ctx, c.args[0]) != .ptr) return self.fail(error.TypeMismatch, "argument 1 (handle) of 'hpy_new_string_reader_on' must be a ptr (the return value of 'hpy_open')", .{});
-                    if (try self.checkExpr(ctx, c.args[1]) != .str) return self.fail(error.TypeMismatch, "argument 2 (content) of 'hpy_new_string_reader_on' must be a str", .{});
-                    return .ptr;
+                if (self.wasm_target and std.mem.eql(u8, name, "wasm_call")) {
+                    return self.fail(error.CapabilityNotGranted, "the builtin '{s}' cannot be used on the wasm32-wasi target (the WASM foreign bridge is not part of the wasm runtime)", .{name});
                 }
                 // Faz F.3 (bkz. plan dosyası "Dil uzantısı: 'lowlevel:'in
                 // 'manuel katman'a genişletilmesi"): 9 yeni `ptr`
@@ -10239,7 +9797,7 @@ pub const Checker = struct {
                 }
                 // Faz 1 decorator (bkz. plan dosyası "Decorator sözdizimi +
                 // metadata-tabanlı metaprogramming"): `stdlib/nox/reflect.
-                // nox`nin sardığı 6 SABİT-imzalı yerleşik — `hpy_call`nin
+                // nox`nin sardığı 6 SABİT-imzalı yerleşik — `wasm_call`ın
                 // AYNI "özel işlenen, kullanıcı TARAFINDAN yeniden
                 // tanımlanamayan builtin isim" deseni. İsimler HERHANGİ bir
                 // Nox tanımlayıcısıyla ÇAKIŞMAYACAK biçimde `__nox_reflect_`

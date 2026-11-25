@@ -32,7 +32,7 @@ Golden tests are non-negotiable (invariant 7); a change to code generation is no
 - **The seven invariants** ([Architecture](architecture.md#the-seven-non-negotiable-invariants)) are never traded away for convenience. If a task cannot be done without breaking one, stop and discuss it.
 - **Ask before architecture.** New language features, memory-model behaviour and ABI changes are proposed first, summarised, and agreed before implementation. Small reversible decisions need no ceremony.
 - **Zig style.** `zig fmt` before every commit; allocators are explicit parameters; errors use `!T` with per-module error sets; every public function has a test; memory tests run under the debug allocator.
-- **Native boundaries.** Anything that touches C/WASM/HPy needs an integration test with a real extension.
+- **Native boundaries.** Anything that touches C/WASM needs an integration test with a real extension.
 - **No tricks for green.** Do not skip, loosen or delete a test to make a change pass; fix the cause.
 
 ## Pull requests

@@ -103,7 +103,7 @@ print(abs(-4), abs(-1.5), round(2.567, 1), divmod(17, 5), divmod(-7, 2))
 
 ## Prelude classes
 
-`Exception`, `ValueError`, `IndexError`, `KeyError`, `ZeroDivisionError`, `AssertionError`, `CancelledError`, `HPyError`, and `JsonValue` (the
+`Exception`, `ValueError`, `IndexError`, `KeyError`, `ZeroDivisionError`, `AssertionError`, `CancelledError`, and `JsonValue` (the
 node type of [`nox.json`](../stdlib/json.md)). The generic types `Task[T]`, `Channel[T]`, `TaskLocal[T]`, `ThreadHandle[T]` and `ThreadChannel[T]`
 are built in ([Concurrency](concurrency.md)).
 

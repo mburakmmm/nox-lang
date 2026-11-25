@@ -5,7 +5,7 @@
 
 Sınıflandırma (WASM korpusuyla aynı ilke):
   ok        çıktı beklenenle birebir aynı
-  reddedildi derleyici modülü "cannot be used on a mobile target" iletisiyle reddetti: mobilde bulunmayan modül (hpy/native/plugin/process/sharedmem/mysql/postgres); başarı sayılır
+  reddedildi derleyici modülü "cannot be used on a mobile target" iletisiyle reddetti: mobilde bulunmayan modül (native/plugin/process/sharedmem/mysql/postgres); başarı sayılır
   atlandı   `tests/golden/mobile_corpus_denylist.txt` içinde gerekçeyle listelenmiş
   HATA      derleme/bağlama/çalıştırma hatası ya da çıktı farkı: betik 1 ile çıkar
 """

@@ -52,6 +52,17 @@ def main():
     c = collections.Counter(r["cmd"].split()[0] for r in raw)
     for k, n in c.most_common(a.top):
         print(f"  {n:5}  {k}")
+    adv = collections.Counter(r["adv"] for r in recs if r.get("adv"))
+    print(f"\n== hook uyarıları (advisory): {sum(adv.values())} ==")
+    names = {"R1": "ham sed -n/cat/head/tail", "R2": "gürültülü komut qrun'sız", "R3": "aynı dosya ≥3 okuma", "R4": "büyük aralıksız Read", "R5": "art arda arama", "R6": "rtk çıktısı borulu süzme"}
+    for k, n in adv.most_common():
+        print(f"  {n:5}  {k} {names.get(k, '')}")
+    # yinelenen atlama = aynı oturumda aynı kural ≥3 kez tetiklendi (uyarıya rağmen sürdürülen verimsiz kalıp)
+    per = collections.Counter((r["s"], r["adv"]) for r in recs if r.get("adv"))
+    rep2 = [(k, n) for k, n in per.items() if n >= 3]
+    print(f"  yinelenen (aynı oturum, aynı kural ≥3): {len(rep2)}")
+    for (s_, k), n in sorted(rep2, key=lambda x: -x[1])[: a.top]:
+        print(f"    {n}x  {s_}  {k} {names.get(k, '')}")
     print("\n== en büyük 5 çıktı ==")
     for r in sorted(recs, key=lambda r: -r["size"])[:5]:
         print(f"  {r['size']:8}  {r['tool']:5} {(r.get('path') or r.get('cmd') or r.get('pat') or '')[:90]}")

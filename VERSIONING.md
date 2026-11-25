@@ -25,6 +25,8 @@ Nox, standart [Semantic Versioning 2.0.0](https://semver.org/lang/tr/)
 
 > **2.2 serisi notu (kullanıcı kararı, 2026-11):** 2.2 yol haritası boyunca geriye dönük UYUMLU dil yüzeyi eklemeleri (`:=`, `;`, `for … else`, `raise … from`, yıldızlı açma, `type` takma adı vb.) MINOR değil **PATCH** artışıyla yayımlanır (`v2.2.20`–`v2.2.2x`); bu, yukarıdaki "yeni sözdizimi ⇒ MINOR" kuralından bilinçli ve geçici bir sapmadır. Garanti ters yönde bozulmaz: daha önce geçerli olan hiçbir program reddedilmez.
 
+> **HPy istisnası (kullanıcı kararı, 2026-11-25, v2.2.69):** HPy/CPython uyumluluk katmanı (`hpy_*` yerleşikleri, `nox.hpy`, `HPyError`, `nox-hpy-host-v1` paket profili) §3'teki "önce MINOR'da kullanımdan kaldır, sonraki MAJOR'da sök" kuralının DIŞINDA, 2.x içinde tek adımda kaldırıldı. Gerekçe: katman hiç kararlı (stable) ilan edilmemiş bir *preview* idi (`nox-hpy-host-v1`), C entegrasyonu `extern def`/`bindgen`/NNI ile yeterli hale geldi ve katman ~14 000 satır bakım/CI yükü taşıyordu. Bu bir emsal DEĞİLDİR: başka hiçbir kararlı yüzey bu istisnaya dayanarak kaldırılamaz.
+
 ## 2. Dil/Stdlib Kaynak Uyumluluğu Garantisi
 
 **Aynı MAJOR sürüm İÇİNDE:** `vX.0.0` altında DERLENEN/ÇALIŞAN geçerli
@@ -86,7 +88,7 @@ Kural şudur: **commit sıklığı düşürülür, commit ile sürüm eşleşmes
 Bir pakette birden fazla kategori varsa en yükseği alınır; paket başına TEK numara artar.
 
 **Mekanik** — sürüm commit'inde:
-1. `scripts/bump_version.sh {patch|minor|major}` (`build.zig.zon` `.version`; `shared/hpy_host_contract.zig` sürüm sabiti) + CHANGELOG girişi.
+1. `scripts/bump_version.sh {patch|minor|major}` (`build.zig.zon` `.version`) + CHANGELOG girişi.
 2. Tek `&&` zincirinde: commit + `git tag vX.Y.Z` + `git push origin main` + `git push origin vX.Y.Z`. (Ayrı "bump" commit'i yoktur.)
 3. Tag push'u `.github/workflows/release.yml`i tetikler (3 platform derlemesi + GitHub Release). Önceki sürümün Release'i bitmeden yenisi etiketlenmez.
 

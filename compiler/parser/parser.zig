@@ -844,7 +844,7 @@ pub const Parser = struct {
     /// `@isim` / `@isim(arg1, arg2, ...)`, HER biri kendi satırında, sıfır-
     /// veya-daha-fazla. Argümanlar burada HERHANGİ bir ifade olarak
     /// ayrıştırılır — "yalnızca literal" KISITI BİLEREK checker'a bırakılır
-    /// (`hpy_call`nin AYNI deseni, bkz. `checker.zig`).
+    /// (`wasm_call`ın AYNI deseni, bkz. `checker.zig`).
 
     // ---- enum / match (etiketli birleşim) -----------------------------------------------------------------------------------------------------------------------
     //

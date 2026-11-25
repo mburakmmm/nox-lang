@@ -17,16 +17,16 @@ This section explains how Nox is built, for contributors and the curious. It is 
 ```
 
 Both back ends consume the **same typed IR** through one emission seam (`qbe*` helpers that either write QBE text or LLVM text), so every code-generation change is exercised by both and the whole corpus
-runs on both. The Zig runtime provides allocation, reference counting, the cycle collector, the fiber scheduler, error values, strings, lists and dictionaries, the HPy/CPython bridge and the WASM bridge.
+runs on both. The Zig runtime provides allocation, reference counting, the cycle collector, the fiber scheduler, error values, strings, lists and dictionaries, and the WASM bridge.
 
 ## Repository layout
 
 ```text
 compiler/    lexer, parser, typecheck, ownership, codegen_qbe, fmt, pkg (fetch/index/install/upgrade), lsp, main
 runtime/     alloc (ASAP/ARC/cycle/lowlevel), async_rt (fibers, scheduler, worker pool, reactor), errors, collections,
-             stdlib_shims (Zig side of nox.*), hpy_bridge, cpython_compat, wasm_bridge, freestanding
+             stdlib_shims (Zig side of nox.*), wasm_bridge, freestanding
 stdlib/nox/  the standard library, written in Nox
-tests/       unit, golden (source → output and IR snapshots), compat (real C/HPy/WASM/NNI extensions), cli, fuzz
+tests/       unit, golden (source → output and IR snapshots), compat (real C/WASM/NNI extensions), cli, fuzz
 docs/        this documentation
 editors/     tree-sitter grammar, VS Code extension
 services/    the noxpkg registry and the website (both written in Nox)
@@ -59,7 +59,7 @@ Changes that would violate one of these are not accepted; they are raised with t
 | IR, back ends, optimisations | [Code generation](codegen.md) |
 | ARC, cycles, errors, strings | [The runtime](runtime.md) |
 | fibers, work stealing | [The scheduler](scheduler.md) |
-| Python/WASM bridges | [HPy and WASM](hpy-wasm.md) |
+| the WASM bridge | [WebAssembly bridge](wasm-bridge.md) |
 | test suites | [Testing internals](testing.md) |
 | how to send a change | [Contributing](contributing.md) |
 | how a release happens | [Releasing](releasing.md) |

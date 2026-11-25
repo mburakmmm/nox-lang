@@ -157,7 +157,6 @@ pub fn generate(a: Allocator, io: Io, nox_home: []const u8, project_dir: []const
         try props.append(a, .{ .name = "nox:resolved-commit", .value = p.resolved });
         try props.append(a, .{ .name = "nox:scanned", .value = if (scanned) "true" else "false" });
         if (scanned) try nativeProps(a, info, &props);
-        if (p.hpy_sha256.len > 0) try props.append(a, .{ .name = "nox:hpy-sha256", .value = p.hpy_sha256 });
         try w.writeAll(if (n == 0) "\n    " else ",\n    ");
         try w.print("{{\"type\": \"library\", \"bom-ref\": {f}, \"name\": {f}, \"version\": {f}, \"purl\": {f}, ", .{ std.json.fmt(ref_purl, .{}), std.json.fmt(p.alias, .{}), std.json.fmt(p.ref, .{}), std.json.fmt(ref_purl, .{}) });
         try writeProps(w, props.items);

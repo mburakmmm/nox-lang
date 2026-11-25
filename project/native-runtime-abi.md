@@ -8,7 +8,7 @@
 | Yüzey | Kapsam | Kararlılık | Port'ta |
 |---|---|---|---|
 | **Private iç ABI** | `nox_*` runtime export'ları (compiler üretimi kodun çağırdıkları), `RuntimeState` sıcak öneki, ARC/str/list/closure/trace düzenleri | sürüme özel | Nox'a taşınır; manifestle sabitlenir |
-| **Public NNI / NAPI / HPy / FFI** | `docs/apis/*`; opak handle, `extern def`, `@ffi.callback` | kararlı | **değişmez**; port sonrası aynı testler (R7) |
+| **Public NNI / NAPI / FFI** | `docs/apis/*`; opak handle, `extern def`, `@ffi.callback` | kararlı | **değişmez**; port sonrası aynı testler (R7) |
 | **Kernel allocator ABI** | `nox_allocator_install` (freestanding, AGENTS §9.5) | kararlı + güven sınırı | aynı kalır; allocator spike'ı (P06) bu ABI'den bağımsız bir link-zamanı sağlayıcı kullanır |
 
 ## 2. Makine-okunur manifest (üretilmiş, drift denetimli)
@@ -44,9 +44,9 @@ Amaç: derleyici/runtime uyumsuzluğunun sessiz bozulma yerine **link veya init 
 1. `native-runtime-layout.tsv` + sembol imzaları (`symbols.tsv` yalnız `symbol, rt_first, nparams, ret, params`) + özellik kümesi (`profile`, `target`) → **SHA-256 → 64 bit** `NOX_ABI_FINGERPRINT`.
 2. Derleyici bu değeri üretilen nesneye **veri sembolü** olarak gömer (`__nox_abi_fingerprint`); runtime nesnesi/arşivi aynı sembolü **tanımlar**. Link-zamanı `extern` referansı ile eşleşme zorunlu; sapma = çözülemeyen/çift sembol (link hatası).
 3. `nox_runtime_init` ilk iş değeri karşılaştırır; sapma ⇒ `rtcore_fatal(abi-mismatch)` (tahsissiz).
-4. Public ABI'ler (NNI/NAPI/HPy) parmak izine **girmez**; kendi sürüm anahtarları vardır.
+4. Public ABI'ler (NNI/NAPI) parmak izine **girmez**; kendi sürüm anahtarları vardır.
 
-Not: bugün `shared/hpy_host_contract.zig` ve sürüm artırma `build.zig.zon` ile birlikte değişir; parmak izi **ek** bir koruma olur, onların yerini almaz.
+Not: sürüm artırma `build.zig.zon` ile yapılır; parmak izi **ek** bir koruma olur, onun yerini almaz.
 
 ## 6. Ham-adres atomikler — PUBLIC API tasarım önerisi (kullanıcı kararı M.3; UYGULANMADI)
 

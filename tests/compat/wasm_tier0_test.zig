@@ -7,7 +7,6 @@
 
 const std = @import("std");
 const wasm = @import("wasm_bridge");
-const hpy = @import("hpy_bridge");
 
 fn readWasmFile(allocator: std.mem.Allocator) ![]u8 {
     const path = @import("build_options").addone_wasm_path;
@@ -39,24 +38,4 @@ test "gerçek WASM modülü: add_two(a, b) — fonksiyonlar arası `call` talima
     // add_two(10, 20) = add_one(10) + add_one(20) = 11 + 21 = 32
     const result = try wasm.interp.callFunc(allocator, &mod, idx, &.{ 10, 20 });
     try std.testing.expectEqual(@as(i32, 32), result.?);
-}
-
-test "gerçek WASM modülü: HPy ile AYNI handle sistemi üzerinden çağrı" {
-    const allocator = std.testing.allocator;
-    const bytes = try readWasmFile(allocator);
-    defer allocator.free(bytes);
-
-    var mod = try wasm.module.parse(allocator, bytes);
-    defer mod.deinit();
-
-    const ctx = try hpy.context.createContext(allocator);
-    defer hpy.context.destroyContext(allocator, ctx);
-
-    const arg = ctx.ctx_Long_FromInt64_t.?(ctx, 41);
-    defer ctx.ctx_Close.?(ctx, arg);
-
-    const result = try wasm.interp.callExport(allocator, ctx, &mod, "add_one", &.{arg});
-    defer ctx.ctx_Close.?(ctx, result);
-
-    try std.testing.expectEqual(@as(i64, 42), ctx.ctx_Long_AsInt64_t.?(ctx, result));
 }

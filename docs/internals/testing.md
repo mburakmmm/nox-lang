@@ -23,7 +23,7 @@ The default `zig build test` is the gate every change must pass. After intention
 | Formatter goldens | `tests/golden/fmt_cases/` | the formatter's output and idempotence |
 | Conformance | `backend_conformance_test.zig`, `conformance_cases/` | both back ends agree on tricky semantics (overflow, evaluation order, …) |
 | Differential corpus | `backend_differential_corpus_test.zig` (`zig build backend-differential-corpus-test`) | the *entire* fixture corpus produces identical output on LLVM and QBE |
-| Compat | `tests/compat/` | real C, Zig, HPy, WASM and NNI extensions; real HTTP/TLS/WebSocket servers over sockets |
+| Compat | `tests/compat/` | real C, Zig, WASM and NNI extensions; real HTTP/TLS/WebSocket servers over sockets |
 | CLI | `tests/cli/` | the `noxc` binary as a subprocess: subcommands, packages, install, upgrade, backends, plugins |
 | Fuzz | `tests/fuzz/` | the lexer, parser and checker never crash on random input; the WASM parser likewise |
 | Freestanding | `freestanding_*_test.zig`, `kernel_boot_x86_64_test.zig` | the kernel path, including booting a real image in QEMU |

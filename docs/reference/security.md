@@ -14,7 +14,7 @@ unwind tables or ownership syntax to get wrong.
 | `extern def … from "<lib>"` | raw native code with full OS authority | type marshalling and error translation only; the native function itself is **not** constrained |
 | `lowlevel` blocks | change the *allocation strategy*; `extern def` calls inside run with full native authority | types are still fully checked |
 | NNI plugins (`nox.native`) and Plugin API plugins (`nox.plugin`) | a shared library with full native authority | handles are opaque and generation-checked, so a plugin never sees a pointer into Nox's heap — but it is not sandboxed; Plugin API capabilities are *consent*, not enforcement |
-| HPy/CPython extensions and WASM modules | native code / WASM linear memory | opaque handles only; no raw `PyObject*` crosses; WASM is isolated to its linear memory |
+| WASM modules | WASM linear memory | WASM is isolated to its linear memory; the host exposes only the `Imports` you pass |
 | `nox_allocator_install` (freestanding) | supplies **all** heap memory | not validated — a wrong allocator corrupts the whole program |
 
 **Dependencies.** A `nox.json` dependency may declare its own `extern def`s (and so may its transitive dependencies), and its code runs as part of your program. Adding a package means trusting its code. `nox.lock` pins the

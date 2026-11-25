@@ -13,7 +13,7 @@
 //! `[ARC_HEADER_SIZE][STR_HEADER_SIZE (paketlenmiş)][baytlar...NUL]`.
 //! Kamuya açık `str_ptr` (bu dosyanın DÖNDÜRDÜĞÜ HER işaretçi) PAKETLENMİŞ
 //! başlığın HEMEN ARDINDAN, HÂLÂ geçerli bir NUL-sonlandırılmış bayt
-//! dizisine işaret eder (`extern def`/HPy geçişi BOZULMAZ). `arc.*`
+//! dizisine işaret eder (`extern def` geçişi BOZULMAZ). `arc.*`
 //! fonksiyonları (retain/predecrement/free) İSE `str_ptr - STR_HEADER_SIZE`
 //! (`strArcPtr`) üzerinde çağrılmalıdır — `list`/`class`nin AKSİNE, `str`
 //! İçin "kamuya açık işaretçi" İLE "arc payload işaretçisi" AYNI DEĞİLDİR.

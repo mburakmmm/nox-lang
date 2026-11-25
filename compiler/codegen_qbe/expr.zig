@@ -2326,9 +2326,7 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
 /// davranış, bkz. proje belleği "v3 sertleştirme yol haritası"). `>>`in
 /// KENDİSİ işaretliliğe göre `sar` (aritmetik, işaretli tipler/`int`) ya
 /// da `shr` (mantıksal, işaretsiz sabit-genişlikli tipler) İLE derlenir —
-/// C/Rust/Zig'in (VE nox-lang'in KENDİ HPy köprüsünün, `runtime/hpy_
-/// bridge/context.zig`nin `bitwiseBinOp`ının, orada `>>` Zig'in KENDİ
-/// işaretli `i64`i için HER ZAMAN aritmetik) AYNI emsali. `genParseOrRaise`
+/// C/Rust/Zig'in AYNI emsali. `genParseOrRaise`
 /// (calls.zig) İLE AYNI "önce doğrula, hata dalında raise et, phi'siz
 /// ok'e atla" deseni — TEK fark, ok-dalının hesapladığı DEĞER (`add`/`sub`
 /// GİBİ değil) `r0`ye DEĞİL `l0`nin genişliğine göre yeniden hesaplanır.

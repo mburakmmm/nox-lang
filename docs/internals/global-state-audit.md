@@ -10,7 +10,6 @@ AGENTS §2.6: runtime gizli/global mutable durum taşımaz, ayırıcıları aç�
 | `process` | işlem argv'si, Windows dinleme-soketi önbelleği | işlem-geneli OS kaynağı |
 | `shared-io` | tek `std.Io.Threaded` | `SIGIO`/`SIGPIPE` işleyicisi işlem-geneli |
 | `tl-sched` | iş parçacığının worker yuvası | M:N zamanlayıcının parçası |
-| `tl-hpy` | HPy hata metni, hash tohumu | bir `HPyContext` tek iş parçacığına aittir |
 | `tl-scratch` | JSON için geçici arena ve sınıf kimliği önbelleği | sonuç runtime ayırıcısına kopyalanır |
 | `diag` | `NOX_STACK_PAINT`, havuz ölçümü | salt-ölçüm |
 | `freestanding` | çekirdek bootstrap durumu | §2.6'daki belgeli istisna |

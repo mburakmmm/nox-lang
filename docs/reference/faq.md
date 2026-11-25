@@ -16,7 +16,7 @@ You never free memory yourself ([Memory](../language/memory.md)).
 
 **Why is `isinstance` missing / why no `*args`?** They are deliberately outside 2.0; adding them later will not break existing programs. Use protocols, base classes and explicit parameters.
 
-**Can I call C?** Yes: `extern def` ([Foreign functions](../language/ffi.md)). For distributable plugins use the [Nox Native Interface](../apis/nni.md) and [Plugin API](../apis/plugin-api.md). Python C extensions and WebAssembly modules can be loaded too ([Internals](../internals/hpy-wasm.md)).
+**Can I call C?** Yes: `extern def` ([Foreign functions](../language/ffi.md)). For distributable plugins use the [Nox Native Interface](../apis/nni.md) and [Plugin API](../apis/plugin-api.md). WebAssembly modules can be loaded too ([Internals](../internals/wasm-bridge.md)).
 
 ## Tools and platforms
 

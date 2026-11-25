@@ -74,8 +74,7 @@ pub fn nox_register_diag_sink(sink: ?DiagSinkFn) void {
 
 /// TÜM çağrı sitelerinin KULLANDIĞI, PAYLAŞILAN kolaylık sarmalayıcısı —
 /// `comptime fmt`i 512-baytlık bir YIĞIN arabelleğine biçimlendirir
-/// (`hpy_bridge/context.zig`nin `ctxErrSetFromErrnoWithFilename`ının
-/// AYNI, ZATEN kanıtlanmış boyutu) SONRA `diagSink()`i ÇAĞIRIR. Taşma
+/// (ZATEN kanıtlanmış boyut) SONRA `diagSink()`i ÇAĞIRIR. Taşma
 /// DURUMUNDA (mevcut HİÇBİR mesaj buna YAKLAŞMIYOR) SESSİZCE düşer —
 /// bir tanı mesajının KENDİSİNİN BAŞARISIZ olması PROGRAM davranışını
 /// ETKİLEMEMELİDİR.
