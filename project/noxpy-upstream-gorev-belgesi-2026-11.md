@@ -8,15 +8,15 @@ Doğrulama döngüsü: her UR bitince `noxPY/tests/reproducers/<ur>.sh` güncel 
 
 - [x] **UR-001 (v2.2.75)** — kodlandı + test (`tests/cli/desktop_lib_emit_test.zig`); macOS-arm64 ana makine + linux-x64/arm64/windows-x64/macos-x64 çapraz `.so/.dll/.dylib` bağlandı. Açık: Linux x86-64'te PIC runtime hız ölçümü (yerelde ölçülemedi)
 - [x] **UR-007 (v2.2.76)** — `noxc expand --json [--module <ad>]` (şema v1; `@export` üst-düzey işlevler; tip metni checker'dan; docstring = gövdenin ilk dize deyimi; `@export("<thread_policy>")`); `tests/cli/expand_json_test.zig`; NoxPy `parse_upstream_metadata_json` ile doğrulandı. Not: `c_symbol` UR-002'nin üreteceği ad (`nox_host_export_<modül>_<ad>`). Açık: sınıf/istisna dışa aktarımı (Phase 3), `bytes` tip adı
-- [ ] **UR-002** `include/nox_host.h` + açık dışa aktarım (`@export` thunk'ları, `NoxHostContext*`, init/fini)
-- [ ] **UR-005** Abort etmeyen hata (OOM/taşma → durum kodu) + public istisna inceleme (class_name/message/line)
-- [ ] **UR-003** Gizli sembol görünürlüğü + `dispatch_registry`/`halt_provider`/tl-errno durumunu RuntimeState'e taşıma (`native-runtime-*` planıyla örtüşür)
-- [ ] **UR-004** Yabancı iş parçacığı attach/detach sözleşmesi
-- [ ] **UR-006** Uzunluk-bilgili UTF-8/bytes span + nesil-denetimli `NoxHostHandle`
+- [x] **UR-002 (v2.2.78)** — `include/nox_host.h` + `--host-abi` (bkz. docs/apis/host-abi.md, spec §3.512)
+- [x] **UR-005 (v2.2.78, kısmen)** — istisna içerme + inceleme (class_name/message/line) YAPILDI; OOM/taşma tuzağının kurtarılabilir hataya çevrilmesi YAPILAMADI (unwind yok; belgelendi)
+- [x] **UR-003 (v2.2.78)** — dışa aktarım listesi (yalnız nox_host_*), çift-eklenti dlopen testi; Windows DLL/statik arşiv hariç
+- [x] **UR-004 (v2.2.78)** — bağlam kilidi (herhangi bir iş parçacığı, sıralı) + iş parçacığı başına bağlam (paralel); TSan ölçülmedi
+- [x] **UR-006 (v2.2.78)** — str/bytes span + NoxHostBuffer + nesil-denetimli NoxHostHandle
 
-## Açık dil kararı (kullanıcıya sorulacak)
+## Çözülen dil kararı
 
-- **Yerleşik `bytes` tipi yok** (2026-11-25 tespiti). Bugün: `str` (gömülü NUL/geçersiz UTF-8 saklar ama "metin" tipidir), `list[u8]` (bayt-paketli, değiştirilebilir), `nox.buffer.Buffer` (sahipli sabit arabellek), `nox.bytes` köprüsü. NoxPy'nin `bytes` parametre/dönüş tipi için ara çözüm: `list[u8]` ↔ `NoxHostSpan` (sınırda kopya). Gerçek `bytes` (değişmez, `b"..."` literali, dilimleme, hash) yeni dil özelliğidir (AGENTS.md §16.3): tasarım + onay gerekir; ABI (`NoxHostSpan`) bundan bağımsız kalır.
+- **Yerleşik `bytes` tipi** (v2.2.77, spec §3.511; görev belgesi `project/bytes-tipi-gorev-belgesi-2026-11.md`): değişmez tip, `b"..."`, bayt tabanlı işlemler; host ABI'de `bytes` = `(veri, uzunluk)` span'i. NoxPy `ir.py` `bytes` adını doğrudan kabul eder.
 
 ## Notlar
 

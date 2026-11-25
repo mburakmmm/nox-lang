@@ -93,6 +93,12 @@ extern fn typecheck_nox_ck_diag_int(rt: ?*anyopaque, i: i64, field: i64) i64;
 extern fn typecheck_nox_ck_bench(rt: ?*anyopaque, seed: i64, ns: i64, nn: i64, m: i64) i64;
 
 /// Aşama 3.2+: Nox tip denetleyicisinin (`selfhost/typecheck.nox`) Zig tarafı sarmalayıcısı. Ad = SymbolId (`TypeApi.sym`), tip = TypeId; yokluk = -1.
+/// Boş bir dilimin `ptr`ı Debug derlemelerinde `0xAAAA…` olabilir ve `i64`e sığmaz (`@intCast` paniği; fuzz boş dosya üretince nightly CI'ı kırdı). Boş girdide adres 0 geçilir (Nox tarafı `n == 0` iken okumaz).
+fn srcAddr(s: []const u8) i64 {
+    if (s.len == 0) return 0;
+    return @intCast(@intFromPtr(s.ptr));
+}
+
 pub const CheckApi = struct {
     rt: ?*anyopaque,
 
@@ -146,7 +152,7 @@ pub const CheckApi = struct {
     }
     /// Son Nox ayrıştırmasının modül gövdesinde `name` atanıyor mu (`stmtsAssignName`).
     pub fn assignsName(self: CheckApi, name: []const u8) bool {
-        return typecheck_nox_ck_assigns_name(self.rt, @intCast(@intFromPtr(name.ptr)), 0, @intCast(name.len)) != 0;
+        return typecheck_nox_ck_assigns_name(self.rt, srcAddr(name), 0, @intCast(name.len)) != 0;
     }
     pub fn mem(self: CheckApi) i64 {
         return typecheck_nox_ck_mem(self.rt);
@@ -294,7 +300,7 @@ pub const Runtime = struct {
 
     /// Zig `ast.Module`ünün düz-dizi kodlamasını Nox AST şemasına (`ast_schema.G`) yükler (denetleyici farksalı için; `astRoundtripDump`ın yükleme yarısı).
     pub fn loadAst(self: Runtime, flat: @import("parser/ast_flat.zig").Flat, src: []const u8) void {
-        _ = ast_schema_nox_ast_reset(self.rt, @intCast(@intFromPtr(src.ptr)), @intCast(src.len));
+        _ = ast_schema_nox_ast_reset(self.rt, srcAddr(src), @intCast(src.len));
         for (flat.n.items) |v| _ = ast_schema_nox_ast_push_n(self.rt, v);
         for (flat.l.items) |v| _ = ast_schema_nox_ast_push_l(self.rt, v);
         for (flat.sb.items) |b| _ = ast_schema_nox_ast_push_sb(self.rt, b);
@@ -309,7 +315,7 @@ pub const Runtime = struct {
 
     /// Aşama 2.B doğrulaması: Zig `ast.Module`ünün düz-dizi kodlamasını Nox AST şemasına yükler ve Nox `dump_module` yazıcısının ürettiği baytları döner (`noxc ast --full` ile BİREBİR aynı olmalı).
     pub fn astRoundtripDump(self: Runtime, a: std.mem.Allocator, flat: @import("parser/ast_flat.zig").Flat, src: []const u8) ![]u8 {
-        _ = ast_schema_nox_ast_reset(self.rt, @intCast(@intFromPtr(src.ptr)), @intCast(src.len));
+        _ = ast_schema_nox_ast_reset(self.rt, srcAddr(src), @intCast(src.len));
         for (flat.n.items) |v| _ = ast_schema_nox_ast_push_n(self.rt, v);
         for (flat.l.items) |v| _ = ast_schema_nox_ast_push_l(self.rt, v);
         for (flat.sb.items) |b| _ = ast_schema_nox_ast_push_sb(self.rt, b);
@@ -324,7 +330,7 @@ pub const Runtime = struct {
 
     /// Aşama 2.C: Nox parser'ı (`selfhost/parser.nox`) kaynağı ayrıştırır; başarıda `noxc ast --full` biçiminde döküm baytları, hatada `error.ParseFailed` ve `code` (1..4 sözcük, 10 UnexpectedToken, 11 InvalidNumberLiteral, 12 RecursionLimitExceeded).
     pub fn parseDump(self: Runtime, a: std.mem.Allocator, src: []const u8, code: *i64) ![]u8 {
-        code.* = parser_nox_parse_run(self.rt, @intCast(@intFromPtr(src.ptr)), @intCast(src.len));
+        code.* = parser_nox_parse_run(self.rt, srcAddr(src), @intCast(src.len));
         if (code.* != 0) return error.ParseFailed;
         const len: usize = @intCast(parser_nox_parse_dump(self.rt));
         const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(parser_nox_parse_out_buffer(self.rt))));
@@ -335,7 +341,7 @@ pub const Runtime = struct {
 
     /// Aşama 2.13: Nox biçimlendirici (`selfhost/formatter.nox`; Nox lexer + Nox parser). Başarıda biçimlenmiş kaynak, hatada `error.FormatFailed` ve `code` (1..4 sözcük hatası, 10..12 ayrıştırma hatası).
     pub fn formatSource(self: Runtime, a: std.mem.Allocator, src: []const u8, code: *i64) ![]u8 {
-        code.* = formatter_nox_fmt_run(self.rt, @intCast(@intFromPtr(src.ptr)), @intCast(src.len));
+        code.* = formatter_nox_fmt_run(self.rt, srcAddr(src), @intCast(src.len));
         if (code.* != 0) return error.FormatFailed;
         const len: usize = @intCast(formatter_nox_fmt_len(self.rt));
         const buf: [*]const u8 = @ptrFromInt(@as(usize, @intCast(formatter_nox_fmt_out_buffer(self.rt))));
@@ -356,7 +362,7 @@ pub const Runtime = struct {
 
     /// Yalnızca ayrıştırma (döküm yok): Nox parser'ını çalıştırır; 0 ya da hata kodu.
     pub fn parseRaw(self: Runtime, src: []const u8) i64 {
-        return parser_nox_parse_run(self.rt, @intCast(@intFromPtr(src.ptr)), @intCast(src.len));
+        return parser_nox_parse_run(self.rt, srcAddr(src), @intCast(src.len));
     }
 
     /// Son ayrıştırmanın canlı Nox verisi (bayt).
@@ -427,7 +433,7 @@ pub const Runtime = struct {
 
     /// Yalnızca Nox tarafının tarama süresi (token dizisine dönüştürme dahil değil): token sayısını ya da negatif hata kodunu döner (`lex-bench`).
     pub fn lexRaw(self: Runtime, source: []const u8) i64 {
-        return lexer_nox_lex_run(self.rt, @intCast(@intFromPtr(source.ptr)), @intCast(source.len), 0);
+        return lexer_nox_lex_run(self.rt, srcAddr(source), @intCast(source.len), 0);
     }
 
     /// Aşama 1: Nox lexer'ı (`selfhost/lexer.nox`). `compiler/lexer/lexer.zig` ile aynı sonucu (token dizisi ya da `LexError` + hata konumu) üretir; belirteçler `a` ile ayrılan bir dilime kopyalanır
@@ -442,7 +448,7 @@ pub const Runtime = struct {
     }
 
     fn lexImpl(self: Runtime, a: std.mem.Allocator, source: []const u8, want_trivia: bool) LexOut {
-        const code = lexer_nox_lex_run(self.rt, @intCast(@intFromPtr(source.ptr)), @intCast(source.len), @intFromBool(want_trivia));
+        const code = lexer_nox_lex_run(self.rt, srcAddr(source), @intCast(source.len), @intFromBool(want_trivia));
         if (code < 0) {
             const err: lexer.LexError = switch (-code) {
                 1 => error.UnexpectedCharacter,

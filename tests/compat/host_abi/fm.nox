@@ -1,0 +1,68 @@
+counter: int = 0
+
+@export
+def add(a: int, b: int) -> int:
+    return a + b
+
+@export
+def scale(x: float, k: float) -> float:
+    return x * k
+
+@export
+def is_even(n: int) -> bool:
+    return n % 2 == 0
+
+@export
+def greet(name: str) -> str:
+    return "hello, " + name
+
+@export
+def total(data: bytes) -> int:
+    t: int = 0
+    for b in data:
+        t = t + b
+    return t
+
+@export
+def rev(data: bytes) -> bytes:
+    out: list[int] = []
+    i: int = len(data) - 1
+    while i >= 0:
+        out.append(data[i])
+        i = i - 1
+    return bytes(out)
+
+@export
+def boom(msg: str) -> None:
+    raise ValueError(msg)
+
+@export
+def idiv(a: int, b: int) -> int:
+    return a // b
+
+@export
+def noop() -> None:
+    pass
+
+class Point:
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+
+@export
+def make_point(x: int, y: int) -> Point:
+    return Point(x, y)
+
+@export
+def point_sum(p: Point) -> int:
+    return p.x + p.y
+
+@export
+def point_move(p: Point, dx: int) -> None:
+    p.x = p.x + dx
+
+@export
+def bump() -> int:
+    global counter
+    counter = counter + 1
+    return counter

@@ -66,6 +66,9 @@ const build_options = @import("build_options");
 // ÜZERİNDEN yapılır.
 /// Faz 9.0 F6: `NOX_SANITIZE_THREAD=1` — LLVM yolunda derleme/bağlamaya `-fsanitize=thread -g` eklenir (noxrt.o `zig build -Dsanitize-thread` ile derlenmiş olmalı).
 var g_tsan: bool = false;
+/// UR-002 (NoxPy): `noxc build --host-abi [--module-name <ad>]` — `include/nox_host.h` sarmalayıcıları (yalnız kütüphane çıktısıyla; bkz. `host_abi.zig`).
+var g_host_abi: bool = false;
+var g_module_name: ?[]const u8 = null;
 var g_use_color: bool = false;
 
 fn detectUseColor(io: std.Io, environ_map: *const std.process.Environ.Map) bool {
@@ -2600,6 +2603,11 @@ fn parseBuildOpts(args: []const []const u8) BuildOpts {
             setEmit(&opts, .shared_lib);
         } else if (std.mem.eql(u8, arg, "--selfhost-obj")) {
             setEmit(&opts, .host_obj);
+        } else if (std.mem.eql(u8, arg, "--host-abi")) {
+            g_host_abi = true;
+        } else if (std.mem.eql(u8, arg, "--module-name")) {
+            i += 1;
+            if (i < args.len) g_module_name = args[i];
         } else if (opts.path == null) {
             opts.path = arg;
         }
@@ -2691,9 +2699,9 @@ fn isRunnableOnHost(profile: codegen.Profile, target: []const u8) bool {
 /// `parseBuildOpts`in tanıdığı derleme bayrakları: `null` = derleme bayrağı değil; `false` = tek başına bayrak; `true` = bir sonraki argümanı değer olarak alır. `cmdRun`
 /// betik yolunu (ilk bayrak-olmayan argüman) bulmak için kullanır; `parseBuildOpts` ile aynı listede kalmalıdır.
 fn buildFlagTakesValue(arg: []const u8) ?bool {
-    const valued = [_][]const u8{ "-o", "--backend", "--profile", "--target" };
+    const valued = [_][]const u8{ "-o", "--backend", "--profile", "--target", "--module-name" };
     for (valued) |f| if (std.mem.eql(u8, arg, f)) return true;
-    const bare = [_][]const u8{ "--dump", "-v", "-g", "--release", "--strict-spawn-shared", "--asyncify", "--threads", "--emit-asm", "--emit-obj", "--emit-static-lib", "--emit-shared-lib", "--selfhost-obj" };
+    const bare = [_][]const u8{ "--dump", "-v", "-g", "--release", "--strict-spawn-shared", "--asyncify", "--threads", "--emit-asm", "--emit-obj", "--emit-static-lib", "--emit-shared-lib", "--selfhost-obj", "--host-abi" };
     for (bare) |f| if (std.mem.eql(u8, arg, f)) return false;
     return null;
 }
@@ -3771,6 +3779,58 @@ fn cmdCheck(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []co
 /// ının topladığı `decorated_functions` listesi (`cmdCheck` İLE AYNI
 /// derleme adımlarından SONRA) DÖKÜLÜR. Kullanıcının decorator'larının
 /// DOĞRU ayrıştırıldığını/geçerli argümanlar TAŞIDIĞINI DOĞRULAMASI İçİndir.
+/// UR-002 (NoxPy): `@export` taşıyan ÜST-DÜZEY kullanıcı işlevlerini `--host-abi` sarmalayıcı betimleyicilerine çevirir (UR-007 `expand --json` ile AYNI küme). Desteklenen tipler:
+/// `int`, `float`, `bool`, `str`, `bytes` (parametre); dönüşte ayrıca `None`. Başka tip açık iletiyle reddedilir (sınıf/liste/Optional host sınırından geçmez).
+fn collectHostExports(a: std.mem.Allocator, user_module: ast.Module, st: *checker.Checker, module_name: []const u8) !codegen.HostAbiOpts {
+    for (module_name) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or c == '_')) {
+            printErr("--module-name '{s}': only letters, digits and '_' are allowed\n", .{module_name});
+            return error.BuildFailed;
+        }
+    }
+    var list: std.ArrayListUnmanaged(codegen.HostExport) = .empty;
+    for (user_module.body) |stmt| {
+        if (stmt.kind != .func_def) continue;
+        const fd = stmt.kind.func_def;
+        var is_export = false;
+        for (fd.decorators) |d| {
+            if (std.mem.eql(u8, d.name, "export")) is_export = true;
+        }
+        if (!is_export) continue;
+        const sig = st.functions.get(fd.name) orelse continue;
+        if (fd.is_async or fd.type_params.len > 0) {
+            printErr("--host-abi: '@export def {s}' cannot be async or generic\n", .{fd.name});
+            return error.BuildFailed;
+        }
+        const kinds = try a.alloc(codegen.HostKind, sig.params.len);
+        for (sig.params, 0..) |pt, i| {
+            kinds[i] = hostKindOf(pt, false) orelse {
+                printErr("--host-abi: '@export def {s}': parameter '{s}' has type '{s}' which cannot cross the host ABI (supported: int, float, bool, str, bytes, class instances as handles)\n", .{ fd.name, fd.params[i].name, tc_types.toAlloc(a, pt) catch "?" });
+                return error.BuildFailed;
+            };
+        }
+        const rk = hostKindOf(sig.return_type, true) orelse {
+            printErr("--host-abi: '@export def {s}': return type '{s}' cannot cross the host ABI (supported: int, float, bool, str, bytes, class instances as handles, None)\n", .{ fd.name, tc_types.toAlloc(a, sig.return_type) catch "?" });
+            return error.BuildFailed;
+        };
+        try list.append(a, .{ .name = fd.name, .params = kinds, .ret = rk });
+    }
+    return .{ .module_name = module_name, .exports = try list.toOwnedSlice(a) };
+}
+
+fn hostKindOf(t: tc_types.Type, is_ret: bool) ?codegen.HostKind {
+    return switch (t) {
+        .int => .int,
+        .float => .float,
+        .boolean => .bool,
+        .str => .str,
+        .bytes => .bytes,
+        .class => .handle, // UR-006: sınıf örnekleri `NoxHostHandle` olarak geçer
+        .none => if (is_ret) .none else null,
+        else => null,
+    };
+}
+
 /// UR-007 (NoxPy): `noxc expand --json` modül adı varsayılanı: dosya adı, `.nox`suz; geçersiz karakterler `_`.
 fn moduleNameFromPath(path: []const u8) []const u8 {
     const base = std.fs.path.basename(path);
@@ -4376,6 +4436,18 @@ fn linkDesktopLib(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem
     try ld.appendSlice(a, cc.items);
     try ld.append(a, "-shared");
     if (!target_win and !target_mac) try ld.append(a, "-Wl,--no-undefined");
+    // UR-003 (NoxPy): `--host-abi` ile YALNIZCA `nox_host_*` sembolleri dışa açılır; çalışma zamanı/kullanıcı sembolleri yerel olur (iki bağımsız Nox eklentisi aynı süreçte sembol
+    // karışmadan yaşar, `nm -gU` yalnızca `nox_host_*` gösterir). Windows DLL'inde şimdilik mingw varsayılanı (tüm semboller) geçerlidir.
+    if (g_host_abi and !target_win) {
+        const list_path = try std.fmt.allocPrint(a, "{s}.exports", .{base});
+        if (target_mac) {
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = list_path, .data = "_nox_host_*\n" });
+            try ld.append(a, try std.fmt.allocPrint(a, "-Wl,-exported_symbols_list,{s}", .{list_path}));
+        } else {
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = list_path, .data = "{ global: nox_host_*; local: *; };\n" });
+            try ld.append(a, try std.fmt.allocPrint(a, "-Wl,--version-script={s}", .{list_path}));
+        }
+    }
     try ld.appendSlice(a, &.{ "-o", shared, obj_path, rt_path });
     if (swap_path) |sp| try ld.append(a, sp);
     try ld.append(a, "-lm");
@@ -4599,8 +4671,21 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     const debug_source_path: ?[]const u8 = if (debug_info) path_arg else null;
 
     const library_mode = emit != .exe;
+    // UR-002: `--host-abi` — `@export` işlevlerinin C ABI sarmalayıcıları (yalnız masaüstü LLVM kütüphane çıktısı).
+    var host_abi_opts: ?codegen.HostAbiOpts = null;
+    if (g_host_abi) {
+        if (emit == .exe or emit == .host_obj) {
+            printErr("--host-abi requires --emit-obj, --emit-static-lib or --emit-shared-lib\n", .{});
+            return error.BuildFailed;
+        }
+        if (hosted_info != null and !hosted_info.?.isDesktop()) {
+            printErr("--host-abi supports desktop targets only\n", .{});
+            return error.BuildFailed;
+        }
+        host_abi_opts = try collectHostExports(a, user_module, &analysis.state, g_module_name orelse moduleNameFromPath(path_arg));
+    }
     const llvm_triple: []const u8 = if (hosted_info) |ht| (if (ht.llvmOnly() or (release and ht.isDesktop())) ht.llvmTriple() else "") else "";
-    const ir = frontend.emit(a, module, &analysis, fe_cfg, .{ .debug_source_path = debug_source_path, .library_mode = library_mode, .lib_split = emit == .host_obj, .llvm_triple = llvm_triple }, .{}) catch |e| switch (e) {
+    const ir = frontend.emit(a, module, &analysis, fe_cfg, .{ .debug_source_path = debug_source_path, .library_mode = library_mode, .lib_split = emit == .host_obj or host_abi_opts != null, .host_abi = host_abi_opts, .llvm_triple = llvm_triple }, .{}) catch |e| switch (e) {
         error.BuildFailed => return error.BuildFailed,
         else => return e,
     };

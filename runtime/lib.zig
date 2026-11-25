@@ -30,6 +30,7 @@ pub const std_options: std.Options = .{
 
 pub const asap = @import("alloc/asap.zig");
 pub const embed = @import("embed.zig");
+pub const host = @import("host.zig"); // v2.2.78: NoxPy `nox_host.h` çalışma zamanı ilkelleri
 /// TODO 1.5: çoklu-runtime izolasyon korpusu (yalnızca test keşfi için kayıtlı).
 pub const multi_runtime_test = @import("multi_runtime_test.zig");
 pub const arc = @import("alloc/arc.zig");
@@ -177,6 +178,7 @@ comptime {
     _ = shared_obj;
     _ = @import("wasm_printf.zig"); // yalnızca std'ye bağlı saf biçimleyici; birim testi (1 KiB'den uzun %s kırpılmaz) yerel test kökünde de koşar
     _ = embed;
+    _ = host;
     _ = http_client;
     _ = @import("stdlib_shims/net_dial.zig");
     _ = @import("stdlib_shims/tcp_native.zig");

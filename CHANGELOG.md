@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.78]
+
+NoxPy UR-002/003/004/005/006: Host ABI (`include/nox_host.h`, deneysel v1). Ayrıntı: `docs/apis/host-abi.md`, spec §3.512, `project/noxpy-ur002-host-abi-tasarim-2026-11.md`.
+
+- `noxc build --emit-obj|--emit-static-lib|--emit-shared-lib --host-abi [--module-name <ad>]`: `@export` işlevleri için `nox_host_export_<modül>_<ad>` C sarmalayıcıları (skaler/`str`/`bytes`/sınıf-handle), `nox_host_module_init_/fini_<modül>`; Nox istisnası `NOX_HOST_ERR_EXCEPTION` ile içerilir ve sınıf/ileti/satır incelenir (UR-005); paylaşılan kütüphanede yalnızca `nox_host_*` dışa açılır (UR-003); bağlam kilidiyle herhangi bir iş parçacığı kullanabilir, bağlam-başına-iş-parçacığı paralel (UR-004); nesil-denetimli `NoxHostHandle` (UR-006).
+- `runtime/host.zig`, `compiler/codegen_qbe/host_abi.zig`, `tests/cli/host_abi_test.zig` + `tests/compat/host_abi/` (C ana makineleri). Sınır: bellek yetersizliği ve sabit-genişlikli taşma tuzağı süreci sonlandırır (kurtarılamaz).
+
 ## [2.2.77]
 
 Yerleşik `bytes` tipi (NoxPy ön koşulu). Ayrıntı: `project/bytes-tipi-gorev-belgesi-2026-11.md`, spec §3.511.

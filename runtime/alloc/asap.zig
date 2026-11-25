@@ -821,6 +821,17 @@ pub fn arcOwnerThreadOk(state: *RuntimeState) bool {
     return true;
 }
 
+/// v2.2.78 (NoxPy `nox_host.h`, UR-004): ARC sahipliğini ÇAĞIRAN iş parçacığına devreder (Debug sahip-iş-parçacığı denetimi için). Bir `NoxHostContext` kilit altında
+/// (`nox_host_enter`) farklı OS iş parçacıklarınca SIRAYLA kullanılabildiğinden, her girişte havuz yalnızca bu iş parçacığını içerecek şekilde sıfırlanır. Release'de no-op.
+pub fn handOverArcOwner(state: *RuntimeState) void {
+    if (!debug_thread_check) return;
+    const current = thread_spawn.currentId();
+    state.arc_owner_pool_lock.lock();
+    defer state.arc_owner_pool_lock.unlock();
+    state.arc_owner_pool.members[0] = current;
+    state.arc_owner_pool.count = 1;
+}
+
 /// Faz MN.1: gelecekteki bir worker havuzunun (bkz. proje planı "Faz
 /// MN.3b") `arc_owner_pool` KAPASİTESİNİ YÜKSELTMESİ İçİn — henüz HİÇBİR
 /// çağrı sitesi YOK (MN.3b'nin KENDİ Worker soyutlaması BUNU çağıracak),

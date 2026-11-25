@@ -211,6 +211,7 @@ const inlining = @import("inlining.zig");
 const local_escape = @import("local_escape.zig");
 const closures = @import("closures.zig");
 const ffi_callback = @import("ffi_callback.zig");
+const host_abi_mod = @import("host_abi.zig");
 const layout = @import("layout.zig");
 const globals_mod = @import("globals.zig");
 const shared_globals = @import("shared_globals.zig");
@@ -301,6 +302,11 @@ const InlineReturnTarget = inlining.InlineReturnTarget;
 /// zamanlamada, bu YÜZDEN BURADA, `pub const Codegen = struct {...}`
 /// AÇILMADAN HEMEN ÖNCE).
 pub const QbeArg = qbe_emit.QbeArg;
+
+/// UR-002 (NoxPy, v2.2.78): `--host-abi` için dışa aktarılan işlevlerin C ABI tipi sınıfı (checker'ın çözdüğü tiplerden; `str` ve `bytes` aynı `HeapKind.str`tir ama `str` UTF-8 doğrulanır).
+pub const HostKind = enum { int, float, bool, str, bytes, handle, none };
+pub const HostExport = struct { name: []const u8, params: []const HostKind, ret: HostKind };
+pub const HostAbiOpts = struct { module_name: []const u8, exports: []const HostExport };
 pub const QbeCallDst = qbe_emit.QbeCallDst;
 pub const QbeAllocSize = qbe_emit.QbeAllocSize;
 
@@ -362,6 +368,7 @@ pub const Codegen = struct {
     pub const genClosureRelease = closures.genClosureRelease;
     pub const genFunctionValueTrampoline = closures.genFunctionValueTrampoline;
     pub const genFfiCallbackTrampoline = ffi_callback.genFfiCallbackTrampoline;
+    pub const genHostAbi = host_abi_mod.genHostAbi;
     pub const genClosureCallbackTrampoline = ffi_callback.genClosureCallbackTrampoline;
 
     /// `nox.ffi.Callback[F]` (sınıf adı `nox_ffi_Callback__...`, alanları `fn` + `box`) bu modülde somutlaştırılmış mı?
@@ -1173,6 +1180,8 @@ pub const Codegen = struct {
     library_mode: bool = false,
     /// `library_mode` + ayrı init/fini girişleri (bkz. `generateModuleWithMetaSinkSplit`).
     lib_split: bool = false,
+    /// UR-002: `--host-abi` (yalnız `lib_split` ile); `nox_host_export_*`/`nox_host_module_*` sarmalayıcılarını üretir.
+    host_abi: ?HostAbiOpts = null,
     /// Doluysa LLVM modülünün ilk satırı `target triple` olur.
     llvm_triple: []const u8 = "",
     /// Faz LLVM.2: `llvm_emit.zig`nin kendi kendini onaran `qbeLabel`i
@@ -1917,12 +1926,12 @@ pub fn generateModuleWithMeta(allocator: std.mem.Allocator, module: ast.Module, 
 
 /// `generateModuleWithMeta` ile aynı; codegen iletileri (desteklenmeyen yapı vb.) `diag_sink`e yazılır (tarayıcıdaki WASM derleyici için stderr yoktur, spec §3.353).
 pub fn generateModuleWithMetaSink(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8, resolved_bases: std.StringHashMapUnmanaged([]const u8), class_ctors: []const decorators_mod.ClassCtorInfo, library_mode: bool, llvm_triple: []const u8, diag_sink: report_sink.Sink) CodegenError![]u8 {
-    return generateModuleWithMetaSinkSplit(allocator, module, extra_functions, generic_template_names, extra_classes, generic_class_template_names, debug_source_path, closure_infos, defer_synthetic_names, from_imports, functions_used_as_value, module_aliases, decorated_functions, backend, profile, explain_opts, callback_targets, resolved_bases, class_ctors, library_mode, llvm_triple, diag_sink, false);
+    return generateModuleWithMetaSinkSplit(allocator, module, extra_functions, generic_template_names, extra_classes, generic_class_template_names, debug_source_path, closure_infos, defer_synthetic_names, from_imports, functions_used_as_value, module_aliases, decorated_functions, backend, profile, explain_opts, callback_targets, resolved_bases, class_ctors, library_mode, llvm_triple, diag_sink, false, null);
 }
 
 /// `lib_split`: `noxc build --selfhost-obj` (noxc-nightly, Aşama 0.3) — `library_mode` ile birlikte `main` yerine `$nox_lib_init(rt)` (dispatch kaydı + global ayırma/başlatma + üst düzey kod) ve `$nox_lib_fini(rt)` (`nox_deinit_globals`) üretir; böylece Zig çağıran işlevleri çağırmadan ÖNCE/SONRA init/fini'yi ayrı çalıştırabilir.
-pub fn generateModuleWithMetaSinkSplit(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8, resolved_bases: std.StringHashMapUnmanaged([]const u8), class_ctors: []const decorators_mod.ClassCtorInfo, library_mode: bool, llvm_triple: []const u8, diag_sink: report_sink.Sink, lib_split: bool) CodegenError![]u8 {
-    var gen: Codegen = .{ .diag_sink = diag_sink, .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend, .profile = profile, .resolved_bases = resolved_bases, .library_mode = library_mode, .lib_split = lib_split, .llvm_triple = llvm_triple };
+pub fn generateModuleWithMetaSinkSplit(allocator: std.mem.Allocator, module: ast.Module, extra_functions: []const ast.FuncDef, generic_template_names: []const []const u8, extra_classes: []const ast.ClassDef, generic_class_template_names: []const []const u8, debug_source_path: ?[]const u8, closure_infos: std.StringHashMapUnmanaged([]const []const u8), defer_synthetic_names: std.AutoHashMapUnmanaged(usize, []const u8), from_imports: std.StringHashMapUnmanaged([]const u8), functions_used_as_value: []const []const u8, module_aliases: std.StringHashMapUnmanaged([]const []const u8), decorated_functions: []const decorators_mod.DecoratedFuncInfo, backend: Backend, profile: Profile, explain_opts: ?ExplainOptions, callback_targets: []const []const u8, resolved_bases: std.StringHashMapUnmanaged([]const u8), class_ctors: []const decorators_mod.ClassCtorInfo, library_mode: bool, llvm_triple: []const u8, diag_sink: report_sink.Sink, lib_split: bool, host_abi: ?HostAbiOpts) CodegenError![]u8 {
+    var gen: Codegen = .{ .diag_sink = diag_sink, .allocator = allocator, .out = .init(allocator), .closure_infos = closure_infos, .defer_synthetic_names = defer_synthetic_names, .from_imports = from_imports, .module_aliases = module_aliases, .backend = backend, .profile = profile, .resolved_bases = resolved_bases, .library_mode = library_mode, .lib_split = lib_split, .host_abi = host_abi, .llvm_triple = llvm_triple };
     // v2.1.111 (TODO 5.3): hosted QBE'de, `spawn`/async/çok çekirdekli havuz kullanan programlar LLVM ile aynı M:N paylaşımlı çalışma zamanını kullanır. v2.1.117: paylaşılan DEĞİŞKEN modül
     // durumu olan programlar iki backend'de de TEK işçide çalıştırılır (`genMain` `pin_single_worker`).
     gen.mn_qbe = gen.backend == .qbe and profile == .hosted and !library_mode and (moduleUsesAsync(module, extra_functions) or moduleUsesMulticorePool(module, extra_functions));
@@ -2122,6 +2131,8 @@ pub fn generateModuleWithMetaSinkSplit(allocator: std.mem.Allocator, module: ast
     // "HERHANGİ bir fonksiyon GÖVDESİ üretilmeden ÖNCEKİ TEK nokta" —
     // `@ffi.callback` hedeflerinin C-ABI trampoline'ları BURADA üretilir.
     for (callback_targets) |name| try gen.genFfiCallbackTrampoline(name);
+    // UR-002: host C ABI sarmalayıcıları (aynı konum: tüm imzalar kayıtlı, gövde yok).
+    if (gen.host_abi) |h| try gen.genHostAbi(h);
     // v2.1.101 (TODO 3.4 F2): `nox.ffi.Callback[F]` somutlaştırılmışsa (`nox_ffi_Callback__...` sınıfı, `fn` + `box` alanlı) her `@ffi.callback` extern def'i için
     // closure-trampoline'ı üretilir (ad sırasına göre: IR deterministik). `Callback` kullanmayan modüllerin IR'ı değişmez.
     if (gen.usesFfiCallbackHandles()) {

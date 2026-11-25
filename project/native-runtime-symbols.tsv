@@ -1,6 +1,6 @@
 symbol	file	line	rt_first	nparams	ret	params
 _start	runtime/wasm_libc.zig	56	0	0	callconv(.c) void	
-nox_alloc	runtime/alloc/asap.zig	1253	1	2	?*anyopaque	rt: ?*anyopaque, size: usize
+nox_alloc	runtime/alloc/asap.zig	1264	1	2	?*anyopaque	rt: ?*anyopaque, size: usize
 nox_alloc_page	runtime/freestanding/x86_64/kernel.zig	336	0	0	callconv(.c) i64	
 nox_allocator_install	runtime/lib_freestanding.zig	146	0	2	callconv(.c) void	alloc_fn: NoxKernelAllocFn, free_fn: NoxKernelFreeFn
 nox_app_create	runtime/embed.zig	324	0	2	callconv(.c) i32	config: ?*const HostConfig, out: ?*?*anyopaque
@@ -196,9 +196,9 @@ nox_evq_pending	runtime/stdlib_shims/ffi_events.zig	145	0	1	callconv(.c) i64	p: 
 nox_evq_pop	runtime/stdlib_shims/ffi_events.zig	113	0	1	callconv(.c) i64	p: ?*anyopaque
 nox_evq_set_return	runtime/stdlib_shims/ffi_events.zig	159	0	2	callconv(.c) void	p: ?*anyopaque, v: i64
 nox_evq_supported	runtime/stdlib_shims/ffi_events.zig	166	0	0	callconv(.c) i64	
-nox_exception_pending	runtime/errors/handle.zig	106	1	1	i32	rt: ?*anyopaque
+nox_exception_pending	runtime/errors/handle.zig	111	1	1	i32	rt: ?*anyopaque
 nox_exception_release	runtime/embed.zig	292	1	2	callconv(.c) void	rt: ?*anyopaque, exception: ?*anyopaque
-nox_exception_take	runtime/errors/handle.zig	113	1	1	?*anyopaque	rt: ?*anyopaque
+nox_exception_take	runtime/errors/handle.zig	118	1	1	?*anyopaque	rt: ?*anyopaque
 nox_ffi_alloc_raw	runtime/stdlib_shims/ffi_cb.zig	121	0	1	callconv(.c) ?*anyopaque	n: i64
 nox_ffi_cstr_n_raw	runtime/stdlib_shims/ffi_cb.zig	114	1	3	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, p: ?*anyopaque, n: i64
 nox_ffi_cstr_raw	runtime/stdlib_shims/ffi_cb.zig	107	1	2	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, p: ?*anyopaque
@@ -215,7 +215,7 @@ nox_format_float_raw	runtime/format.zig	443	1	4	?[*:0]u8	rt: ?*anyopaque, v: f64
 nox_format_int_raw	runtime/format.zig	430	1	4	?[*:0]u8	rt: ?*anyopaque, v: i64, spec: ?[*:0]const u8
 nox_format_spec_check	runtime/format.zig	110	0	3	i64	kind: i64, spec: ?[*:0]const u8
 nox_format_str_raw	runtime/format.zig	452	1	5	?[*:0]u8	rt: ?*anyopaque, v: ?[*:0]const u8, spec: ?[*:0]const u8
-nox_free	runtime/alloc/asap.zig	1273	1	3	void	rt: ?*anyopaque, ptr: ?*anyopaque, size: usize
+nox_free	runtime/alloc/asap.zig	1284	1	3	void	rt: ?*anyopaque, ptr: ?*anyopaque, size: usize
 nox_free_page	runtime/freestanding/x86_64/kernel.zig	346	0	1	callconv(.c) void	addr: i64
 nox_free_pages	runtime/freestanding/x86_64/kernel.zig	354	0	0	callconv(.c) i64	
 nox_freestanding_early_init	runtime/freestanding/aarch64/kernel.zig	82	0	0	callconv(.c) void	
@@ -246,8 +246,8 @@ nox_fs_stat_raw	runtime/stdlib_shims/fs.zig	475	1	3	callconv(.c) void	rt: ?*anyo
 nox_fs_stat_size_raw	runtime/stdlib_shims/fs.zig	511	0	0	callconv(.c) i64	
 nox_fs_write_fd_raw	runtime/stdlib_shims/fs.zig	811	0	3	callconv(.c) void	fd: i64, content: ?[*:0]const u8
 nox_fs_write_string_raw	runtime/stdlib_shims/fs.zig	363	1	5	callconv(.c) void	rt: ?*anyopaque, path: ?[*:0]const u8, content: ?[*:0]const u8
-nox_globals_get	runtime/alloc/asap.zig	1349	1	1	?*anyopaque	rt: ?*anyopaque
-nox_globals_set	runtime/alloc/asap.zig	1354	1	2	void	rt: ?*anyopaque, block: ?*anyopaque
+nox_globals_get	runtime/alloc/asap.zig	1360	1	1	?*anyopaque	rt: ?*anyopaque
+nox_globals_set	runtime/alloc/asap.zig	1365	1	2	void	rt: ?*anyopaque, block: ?*anyopaque
 nox_grpc_call_raw	runtime/stdlib_shims/grpc.zig	778	0	7	callconv(.c) ?*anyopaque	conn: ?*anyopaque, path: ?[*:0]const u8, meta: ?[*:0]const u8, reqs: ?*anyopaque, timeout_ms: i64
 nox_grpc_close_raw	runtime/stdlib_shims/grpc.zig	766	0	1	callconv(.c) void	conn: ?*anyopaque
 nox_grpc_errmsg_raw	runtime/stdlib_shims/grpc.zig	761	1	2	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, conn: ?*anyopaque
@@ -279,18 +279,37 @@ nox_gzip_last_op_ok	runtime/stdlib_shims/gzip.zig	309	0	0	i32
 nox_hash_float	runtime/collections/dict.zig	806	1	2	i64	rt: ?*anyopaque, f: f64
 nox_hash_int	runtime/collections/dict.zig	802	1	2	i64	rt: ?*anyopaque, k: i64
 nox_hash_str	runtime/collections/dict.zig	811	1	3	i64	rt: ?*anyopaque, s: ?[*:0]const u8
+nox_host_abi_version	runtime/host.zig	56	0	0	u32	
 nox_host_abi_version	runtime/wasm_libc.zig	63	0	0	callconv(.c) u32	
 nox_host_alloc	runtime/stdlib_shims/http_fetch.zig	498	0	1	callconv(.c) ?[*]u8	len: usize
+nox_host_buffer_release	runtime/host.zig	138	0	1	void	buf: ?*Buffer
 nox_host_caps_set	runtime/stdlib_shims/http_fetch.zig	493	0	1	callconv(.c) void	mask: u32
+nox_host_capture	runtime/host.zig	146	0	2	i32	ctx_ptr: ?*anyopaque, out_err: ?*?*anyopaque
+nox_host_context_create	runtime/host.zig	60	0	2	i32	config: ?*const Config, out: ?*?*anyopaque
+nox_host_context_destroy	runtime/host.zig	77	0	1	void	ctx_ptr: ?*anyopaque
+nox_host_enter	runtime/host.zig	98	0	1	?*anyopaque	ctx_ptr: ?*anyopaque
+nox_host_error_class_name	runtime/host.zig	203	0	2	i32	err_ptr: ?*anyopaque, out: ?*Span
+nox_host_error_line	runtime/host.zig	197	0	1	i64	err_ptr: ?*anyopaque
+nox_host_error_message	runtime/host.zig	216	0	2	i32	err_ptr: ?*anyopaque, out: ?*Span
+nox_host_error_release	runtime/host.zig	185	0	1	void	err_ptr: ?*anyopaque
 nox_host_fetch_complete	runtime/stdlib_shims/http_fetch.zig	561	0	7	callconv(.c) i32	id: u32, status: i32, error_kind: i32, hdr_ptr: ?[*]const u8, hdr_len: usize, body_ptr: ?[*]const u8, body_len: usize
 nox_host_fetch_pending	runtime/stdlib_shims/http_fetch.zig	528	0	1	callconv(.c) ?[*]u8	out_len: *usize
 nox_host_free	runtime/stdlib_shims/http_fetch.zig	503	0	2	callconv(.c) void	ptr: ?[*]u8, len: usize
+nox_host_handle_is_valid	runtime/host.zig	274	0	2	i32	ctx_ptr: ?*anyopaque, h: u64
+nox_host_handle_new	runtime/host.zig	255	0	2	u64	ctx_ptr: ?*anyopaque, obj: ?*anyopaque
+nox_host_handle_obj	runtime/host.zig	268	0	2	?*anyopaque	ctx_ptr: ?*anyopaque, h: u64
+nox_host_handle_release	runtime/host.zig	282	0	2	i32	ctx_ptr: ?*anyopaque, h: u64
+nox_host_handle_retain	runtime/host.zig	299	0	3	i32	ctx_ptr: ?*anyopaque, h: u64, out_h: ?*u64
 nox_host_http_dispatch	runtime/stdlib_shims/http_server_wasm.zig	294	0	11	callconv(.c) i32	id: u32, m: [*]const u8, m_len: usize, t: [*]const u8, t_len: usize, h: [*]const u8, h_len: usize, b: [*]const u8, b_len: usize, p: [*]const u8, p_len: usize
 nox_host_http_stop	runtime/stdlib_shims/http_server_wasm.zig	330	0	0	callconv(.c) void	
 nox_host_http_take_responses	runtime/stdlib_shims/http_server_wasm.zig	309	0	1	callconv(.c) ?[*]u8	out_len: *usize
+nox_host_leave	runtime/host.zig	105	0	1	void	ctx_ptr: ?*anyopaque
 nox_host_resume	runtime/stdlib_shims/http_fetch.zig	591	0	0	callconv(.c) void	
 nox_host_signal	runtime/stdlib_shims/signal.zig	30	0	1	callconv(.c) i32	sig: i32
 nox_host_status	runtime/stdlib_shims/http_fetch.zig	509	0	0	callconv(.c) i32	
+nox_host_str_new	runtime/host.zig	117	1	3	?[*:0]u8	rt: ?*anyopaque, data: ?[*]const u8, len: usize
+nox_host_str_out	runtime/host.zig	124	0	3	i32	s: ?[*:0]const u8, out: ?*Buffer
+nox_host_utf8_ok	runtime/host.zig	110	0	2	i32	data: ?[*]const u8, len: usize
 nox_http_build_tls_ctx	runtime/stdlib_shims/http_server.zig	766	0	4	callconv(.c) ?*anyopaque	cert_path: ?[*:0]const u8, key_path: ?[*:0]const u8
 nox_http_build_tls_ctx	runtime/stdlib_shims/http_wasm.zig	321	0	4	callconv(.c) ?*anyopaque	cert_path: ?[*:0]const u8, key_path: ?[*:0]const u8
 nox_http_client_pool_idle_raw	runtime/stdlib_shims/http_client.zig	729	0	0	callconv(.c) i64	
@@ -424,8 +443,8 @@ nox_http_stream_status	runtime/stdlib_shims/http_wasm.zig	237	0	1	callconv(.c) i
 nox_http_stream_write_raw	runtime/stdlib_shims/http_stream.zig	630	0	3	callconv(.c) i32	h: ?*anyopaque, content: ?[*:0]const u8
 nox_http_stream_write_raw	runtime/stdlib_shims/http_wasm.zig	258	0	3	callconv(.c) i32	h: ?*anyopaque, content: ?[*:0]const u8
 nox_int_list_from_c	runtime/stdlib_shims/regex.zig	1092	1	3	callconv(.c) ?*anyopaque	rt: ?*anyopaque, vals: ?[*]const i64, n: usize
-nox_int_overflow_trap	runtime/errors/handle.zig	227	1	3	noreturn	rt: ?*anyopaque, kind_name: ?[*:0]const u8
-nox_int_pow	runtime/errors/handle.zig	186	0	2	callconv(.c) i64	base: i64, exp: i64
+nox_int_overflow_trap	runtime/errors/handle.zig	232	1	3	noreturn	rt: ?*anyopaque, kind_name: ?[*:0]const u8
+nox_int_pow	runtime/errors/handle.zig	191	0	2	callconv(.c) i64	base: i64, exp: i64
 nox_int_pow_mod_raw	runtime/stdlib_shims/math.zig	91	0	3	callconv(.c) i64	b: i64, e: i64, m: i64
 nox_int_to_base_raw	runtime/str.zig	1202	1	3	?[*:0]u8	rt: ?*anyopaque, n: i64, base: i64
 nox_int_to_str	runtime/str.zig	672	1	2	?[*:0]u8	rt: ?*anyopaque, n: i64
@@ -570,7 +589,7 @@ nox_os_getenv_raw	runtime/stdlib_shims/os.zig	99	1	3	callconv(.c) ?[*:0]u8	rt: ?
 nox_os_has_env	runtime/stdlib_shims/os.zig	93	0	2	callconv(.c) i32	name: ?[*:0]const u8
 nox_os_init	runtime/stdlib_shims/os.zig	34	0	3	callconv(.c) void	argc: i32, argv: ?[*]const ?[*:0]const u8
 nox_os_set_var_raw	runtime/stdlib_shims/os.zig	191	0	4	callconv(.c) void	name: ?[*:0]const u8, value: ?[*:0]const u8
-nox_out_of_memory	runtime/errors/handle.zig	222	0	0	noreturn	
+nox_out_of_memory	runtime/errors/handle.zig	227	0	0	noreturn	
 nox_page_init	runtime/freestanding/x86_64/kernel.zig	331	0	0	callconv(.c) i64	
 nox_path_basename_raw	runtime/stdlib_shims/path.zig	114	1	3	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, p: ?[*:0]const u8
 nox_path_canonicalize_raw	runtime/stdlib_shims/path.zig	192	1	3	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, p: ?[*:0]const u8
@@ -678,11 +697,11 @@ nox_regex_group_names_raw	runtime/stdlib_shims/regex.zig	1131	1	3	callconv(.c) ?
 nox_regex_is_match_raw	runtime/stdlib_shims/regex.zig	1197	0	4	callconv(.c) i32	pattern: ?[*:0]const u8, text: ?[*:0]const u8
 nox_regex_slice_raw	runtime/stdlib_shims/regex.zig	1176	1	5	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, text: ?[*:0]const u8, start: i64, end: i64
 nox_register_dispatch_table	runtime/alloc/dispatch_registry.zig	67	0	5	void	trace_fn: ?TraceFn, gc_free_fn: ?GcFreeFn, class_release_fn: ?ClassReleaseFn, class_name_fn: ?ClassNameFn, make_json_value_fn: ?MakeJsonValueFn,
-nox_runtime_deinit	runtime/alloc/asap.zig	1029	1	1	void	rt: ?*anyopaque
-nox_runtime_init	runtime/alloc/asap.zig	973	0	0	?*anyopaque	
+nox_runtime_deinit	runtime/alloc/asap.zig	1040	1	1	void	rt: ?*anyopaque
+nox_runtime_init	runtime/alloc/asap.zig	984	0	0	?*anyopaque	
 nox_runtime_init_freestanding	runtime/lib_freestanding.zig	194	0	0	callconv(.c) ?*anyopaque	
 nox_scan_str_end	runtime/str.zig	1266	0	4	i64	base: i64, start: i64, n: i64, q: i64
-nox_server_handler_exception	runtime/errors/handle.zig	162	1	1	void	rt: ?*anyopaque
+nox_server_handler_exception	runtime/errors/handle.zig	167	1	1	void	rt: ?*anyopaque
 nox_shm_close_raw	runtime/stdlib_shims/shared_mem.zig	347	0	1	callconv(.c) void	handle: ?*anyopaque
 nox_shm_is_null_ptr	runtime/stdlib_shims/shared_mem.zig	268	0	1	callconv(.c) i64	p: ?*anyopaque
 nox_shm_lock_raw	runtime/stdlib_shims/shared_mem.zig	275	0	1	callconv(.c) void	handle: ?*anyopaque
@@ -891,7 +910,7 @@ nox_udp_recv_status_raw	runtime/stdlib_shims/udp.zig	287	0	1	callconv(.c) i64	h:
 nox_udp_send_raw	runtime/stdlib_shims/udp.zig	197	0	6	callconv(.c) i64	h: ?*anyopaque, host: ?[*:0]const u8, port: i64, data: ?[*:0]const u8
 nox_udp_supported_raw	runtime/stdlib_shims/udp.zig	117	0	0	callconv(.c) i64	
 nox_uint_to_str	runtime/str.zig	690	1	2	?[*:0]u8	rt: ?*anyopaque, n: u64
-nox_unhandled_exception	runtime/errors/handle.zig	141	1	1	noreturn	rt: ?*anyopaque
+nox_unhandled_exception	runtime/errors/handle.zig	146	1	1	noreturn	rt: ?*anyopaque
 nox_unicode_normalize_raw	runtime/stdlib_shims/unicode.zig	8	1	4	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const u8, form: i64
 nox_vfs_close	runtime/wasm_libc_sqlite.zig	162	0	1	callconv(.c) void	fd: c_int
 nox_vfs_exists	runtime/wasm_libc_sqlite.zig	194	0	2	callconv(.c) c_int	path: [*:0]const u8

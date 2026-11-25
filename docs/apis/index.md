@@ -16,6 +16,7 @@ Nox 2.x
 | [**NAPI**](napi.md) | writing a library or framework in Nox (a web framework, an ORM, a CLI toolkit) | `.nox` source | source compatibility for the whole 2.x series |
 | [**NNI**](nni.md) | writing native code that Nox programs call and that must not depend on runtime internals | C, C++, Rust or Zig against `nox_nni.h` | binary compatibility: a plugin built against NNI v1 loads in every Nox that implements v1 |
 | [**Plugin API**](plugin-api.md) | shipping or consuming a native plugin as a *product* — with a name, a version, declared functions and capabilities | a `nox-plugin.json` manifest next to an NNI library | manifest format and `nox.plugin` semantics are stable within `plugin_api: 1` |
+| [**Host ABI**](host-abi.md) (experimental) | calling Nox from C or Python (the reverse of NNI) | `@export` Nox + a host using `nox_host.h` | none yet — versioned (`abi_version`) but may change until validated by real hosts |
 | [Internal ABI](internal-abi.md) | contributing to the compiler/runtime | Zig | **none** — may change in any release |
 
 The single hard rule: **the public interfaces and the internal runtime ABI must never be confused.** The layout of reference-counted objects,

@@ -101,6 +101,11 @@ pub export fn nox_raise(rt: ?*anyopaque, obj: ?*anyopaque, line: i64) void {
     pe.line.* = line;
 }
 
+/// v2.2.78 (NoxPy `nox_host.h`): bekleyen istisnanın `raise` satırı (host hata incelemesi; `nox_exception_take`ten ÖNCE okunmalı).
+pub fn pendingLine(state: *asap.RuntimeState) i64 {
+    return pendingException(state).line.*;
+}
+
 /// Şu an bekleyen bir istisna olup olmadığını bildirir (0/1 — QBE `w` ile
 /// çağrılır; ABI belirsizliğinden kaçınmak için `bool` yerine `i32` kullanılır).
 pub export fn nox_exception_pending(rt: ?*anyopaque) i32 {

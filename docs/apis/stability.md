@@ -12,6 +12,7 @@ This page is the single compatibility matrix for Nox 2.x. The long-form policy i
 | `nox.json` manifest, `nox.lock` format | compatible; new optional fields may be added | file formats |
 | `noxc` subcommands and documented flags | existing behaviour kept; new flags may be added | CLI |
 | **NNI v1** | **binary compatibility** — a plugin built against NNI v1 loads on every Nox implementing NNI v1; members are only appended to `NoxApiV1` | C ABI |
+| **Host ABI v1 (`nox_host.h`)** | **experimental** — versioned (`abi_version`/`struct_size`) but may change incompatibly until validated by real hosts | C ABI |
 | **Plugin API 1** | manifest format and `nox.plugin` semantics fixed; optional fields may be added | manifest + Nox module |
 | `extern def` C-ABI type mapping | fixed | FFI |
 | **Internal runtime ABI**, IR, generated symbols | **none** | — |
