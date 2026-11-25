@@ -11,6 +11,12 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.71]
+
+Aşama 3.4 dilim A: kalıtımsız basit sınıflar (kapsam-kapılı Nox tip denetimi). Ayrıntı: plan §6 3.4, spec §3.505.
+
+- `selfhost/typecheck.nox.in`: sınıf kaydı/imzaları/gövdeleri, alan okuma/atama, örnek metodu çağrısı, kurucu çağrısı, `has_dunder` ayrımı, `xs[i] = v`/`d[k] = v`; `scripts/ck_gen.py` sınıf üretir.
+
 ## [2.2.70]
 
 Aşama 3.3 dilim B-1 (kapsam-kapılı Nox tip denetimi genişledi): tip ifadeleri, liste/sözlük, `for`, `constIntValue`. Ayrıntı: plan §6 3.3, spec §3.504.

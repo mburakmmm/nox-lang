@@ -47,6 +47,7 @@ class Gen:
         self.funcs = []  # (name, [param types], ret)
         self.lines = []
         self.counter = 0
+        self.classes = {}  # ad -> {"fields": {ad: tip}, "methods": {ad: ([ptipler], ret)}, "init": [ptipler]}
 
     def fresh(self, p="v"):
         self.counter += 1
@@ -61,6 +62,28 @@ class Gen:
             return "None"
         cands = [v for v, vt in scope.items() if vt == t]
         k = r.random()
+        if t in self.classes:
+            if cands and k < 0.6:
+                return r.choice(cands)
+            init = self.classes[t]["init"]
+            n = len(init) + (r.choice([1, -1]) if r.random() < 0.1 else 0)
+            return f"{t}({', '.join(self.expr(scope, init[i] if 0 <= i < len(init) else 'int', depth + 1) for i in range(max(n, 0)))})"
+        # sınıf örneği üzerinden alan okuma / metod çağrısı
+        objs = [(v, vt) for v, vt in scope.items() if vt in self.classes and "." not in v]
+        if objs and depth < 3 and r.random() < 0.18:
+            ov, ot = r.choice(objs)
+            ci = self.classes[ot]
+            fs = [f for f, ft in ci["fields"].items() if ft == t]
+            ms = [m for m, (pt, rt) in ci["methods"].items() if rt == t]
+            if fs and (not ms or r.random() < 0.5):
+                return f"{ov}.{r.choice(fs)}"
+            if ms:
+                m = r.choice(ms)
+                pts = ci["methods"][m][0]
+                n = len(pts) + (r.choice([1, -1]) if r.random() < 0.1 else 0)
+                return f"{ov}.{m}({', '.join(self.expr(scope, pts[i] if 0 <= i < len(pts) else 'int', depth + 1) for i in range(max(n, 0)))})"
+            if r.random() < 0.15:
+                return f"{ov}.nofield"
         if t in COMPOSITE:
             if cands and k < 0.6:
                 return r.choice(cands)
@@ -119,13 +142,23 @@ class Gen:
         for _ in range(n):
             k = r.random()
             if k < 0.30:
-                t = r.choice(DECL_TYPES)
+                t = r.choice(DECL_TYPES + list(self.classes))
                 name = self.fresh()
                 self.lines.append(f"{pad}{name}: {t} = {self.expr(scope, t)}")
                 scope[name] = t
             elif k < 0.42 and scope:
                 name = r.choice(list(scope))
-                self.lines.append(f"{pad}{name} = {self.expr(scope, scope[name])}")
+                objs = [(v, vt) for v, vt in scope.items() if vt in self.classes and "." not in v]
+                if objs and r.random() < 0.35:
+                    ov, ot = r.choice(objs)
+                    fl = list(self.classes[ot]["fields"])
+                    if fl:
+                        f = r.choice(fl)
+                        self.lines.append(f"{pad}{ov}.{f} = {self.expr(scope, self.classes[ot]['fields'][f])}")
+                    else:
+                        self.lines.append(f"{pad}{ov}.newf = {self.expr(scope, 'int')}")
+                else:
+                    self.lines.append(f"{pad}{name} = {self.expr(scope, scope[name])}")
             elif k < 0.50 and scope and r.random() < 0.3:
                 # yeniden bildirim (kimi zaman farklı tip)
                 name = r.choice(list(scope))
@@ -180,8 +213,57 @@ class Gen:
             else:
                 self.lines.append(f"{pad}_ = {self.expr(scope, r.choice(VALUE_TYPES))}")
 
+    def gen_class(self):
+        r = self.rnd
+        cname = self.fresh("C")
+        nf = r.randint(0, 3)
+        ftypes = {f"f{i}": r.choice(["int", "float", "str", "bool"]) for i in range(nf)}
+        init = [r.choice(["int", "float", "str", "bool"]) for _ in range(r.randint(0, 3))]
+        self.lines.append(f"class {cname}:")
+        declared = [f for f in ftypes if r.random() < 0.5]
+        for f in declared:
+            self.lines.append(f"    {f}: {ftypes[f]}")
+        scope0 = {f"p{i}": t for i, t in enumerate(init)}
+        if r.random() < 0.92:
+            params = "".join(f", p{i}: {t}" for i, t in enumerate(init))
+            self.lines.append(f"    def __init__(self{params}) -> None:")
+            body = []
+            for f, ft in ftypes.items():
+                if r.random() < 0.9:
+                    val = self.expr(scope0, ft, depth=1)
+                    if f in declared or r.random() < 0.6:
+                        body.append(f"        self.{f} = {val}")
+                    else:
+                        body.append(f"        self.{f}: {ft} = {val}")
+            self.lines.extend(body or ["        pass"])
+        methods = {}
+        for mi in range(r.randint(0, 2)):
+            mname = f"m{mi}"
+            pt = [r.choice(["int", "float", "str", "bool"]) for _ in range(r.randint(0, 2))]
+            ret = r.choice(["int", "float", "str", "bool", "None"])
+            ms = {f"p{i}": t for i, t in enumerate(pt)}
+            ms.update({f"self.{f}": t for f, t in ftypes.items()})
+            params = "".join(f", p{i}: {t}" for i, t in enumerate(pt))
+            self.lines.append(f"    def {mname}(self{params}) -> {ret}:")
+            if ret == "None":
+                if r.random() < 0.5 and ftypes:
+                    f = r.choice(list(ftypes))
+                    self.lines.append(f"        self.{f} = {self.expr(ms, ftypes[f], depth=1)}")
+                else:
+                    self.lines.append("        pass")
+            else:
+                self.lines.append(f"        return {self.expr(ms, ret, depth=1)}")
+            methods[mname] = (pt, ret)
+        if not declared and not ftypes and not methods:
+            self.lines.append("    pass")
+        self.lines.append("")
+        # yalnız __init__ kurulduysa alanlar kayıtlı sayılır (kasıtlı hatalar tutarsız olabilir; Zig karar verir)
+        self.classes[cname] = {"fields": ftypes, "methods": methods, "init": init}
+
     def program(self):
         r = self.rnd
+        for _ in range(r.choice([0, 0, 1, 1, 2])):
+            self.gen_class()
         for _ in range(r.randint(0, 3)):
             name = self.fresh("f")
             ptypes = [r.choice(VALUE_TYPES) for _ in range(r.randint(0, 3))]
