@@ -1203,7 +1203,7 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
     tag: int = a.n[kn]
     pay: int = a.n[kn + 1]
     if tag == {{T:StmtKind.expr_stmt}}:
-        # attribute çağrıları (grow/extend kancaları) kapsam dışı: check_call yalnız identifier callee kabul eder
+        grow_stmt_gate(ck, a, fx, pay)
         check_expr(ck, a, fx, pay)
         return
     if tag == {{T:StmtKind.var_decl}}:
@@ -1663,7 +1663,205 @@ def check_args_func_type(ck: Ck, a: Ast, fx: Fx, c: int, ft: int, nm: int) -> No
             mp(ck, "'")
             raise mk_fail(ck, "TypeMismatch")
 
-# `obj.metod(...)` (yalnız sınıf örneği; list/dict/str/task/... metodları 3.10'a ait)
+# ---- yerleşik list/dict metotları (`checkCall`in `.attribute` dalı; str/Task/Channel/... 3.10'un devamı) ----
+def fail2(ck: Ck, code: str, msg: str) -> None:
+    mp(ck, msg)
+    raise mk_fail(ck, code)
+
+def fail_attr(ck: Ck, a: Ast, attr: int, code: str, pre: str, post: str) -> None:
+    mp(ck, pre)
+    mp_sref(ck, a, attr)
+    mp(ck, post)
+    raise mk_fail(ck, code)
+
+def is_plain_field_chain(a: Ast, e: int) -> bool:
+    if a.n[e] == {{T:Expr.identifier}}:
+        return True
+    if a.n[e] == {{T:Expr.attribute}}:
+        return is_plain_field_chain(a, a.n[a.n[e + 1] + {{O:Attribute.obj}}])
+    return False
+
+# `checkGrowableListRecv`: append/insert alıcısı çıplak ad ya da `ad.alan[.alan...]` (kök sınıf örneği)
+def check_growable_recv(ck: Ck, a: Ast, fx: Fx, obj: int, what: str, example: str) -> None:
+    ok: bool = False
+    if a.n[obj] == {{T:Expr.identifier}}:
+        ok = True
+    elif a.n[obj] == {{T:Expr.attribute}}:
+        base: int = a.n[a.n[obj + 1] + {{O:Attribute.obj}}]
+        if is_plain_field_chain(a, base):
+            bt: int = check_expr(ck, a, fx, base)
+            ok = ck.tt.tag[bt] == 6
+    if not ok:
+        fail2(ck, "TypeMismatch", "'" + what + "' can only be called on a variable or on 'name.field[.field...]' (e.g. '" + example + "', 'self.items.append(v)')")
+
+# `tryCheckExtendStmt` / `tryCheckElementGrowStmt` (ifade deyimi olarak `xs.extend(ys)`, `xs[i].append/insert/extend(..)`): deyim yeniden yazılır → kapsam dışı
+def grow_stmt_gate(ck: Ck, a: Ast, fx: Fx, e: int) -> None:
+    if a.n[e] != {{T:Expr.call}}:
+        return
+    callee: int = a.n[a.n[e + 1] + {{O:Call.callee}}]
+    if a.n[callee] != {{T:Expr.attribute}}:
+        return
+    at: int = a.n[callee + 1]
+    attr: int = pk(a.n[at + {{O:Attribute.attr}}], a.n[at + {{O:Attribute.attr}} + 1])
+    obj: int = a.n[at + {{O:Attribute.obj}}]
+    is_ext: bool = sref_eq(a, attr, "extend")
+    if not (is_ext or sref_eq(a, attr, "append") or sref_eq(a, attr, "insert")):
+        return
+    if is_ext:
+        et: int = check_expr(ck, a, fx, obj)
+        if ck.tt.tag[et] == 5:
+            raise unsup(ck, "list_extend")
+    if a.n[obj] == {{T:Expr.index}}:
+        it: int = check_expr(ck, a, fx, obj)
+        if ck.tt.tag[it] == 5:
+            raise unsup(ck, "elem_grow")
+
+# `requireListElemComparable`
+def require_list_elem_comparable(ck: Ck, a: Ast, et: int, xt: int, attr: int) -> None:
+    g: int = ck.tt.tag[et]
+    if not (g == 0 or g == 1 or g == 2 or g == 3 or g == 16 or g == 6 or g == 5):
+        fail_attr(ck, a, attr, "TypeMismatch", "the list element type is not supported for '", "' (it must be int/float/bool/str/class/list)")
+    x: int = require_same_fixed(ck, xt, et)
+    if not ((is_numeric_t(ck, xt) and is_numeric_t(ck, et)) or xt == et):
+        fail_attr(ck, a, attr, "TypeMismatch", "the argument of '", "' does not match the list element type")
+
+def check_list_method(ck: Ck, a: Ast, fx: Fx, c: int, obj: int, attr: int, obj_t: int) -> int:
+    tt: TT = ck.tt
+    args: int = sl_at(a, c, {{O:Call.args}})
+    n: int = pky(args)
+    el: int = tt.xa[obj_t]
+    if sref_eq(a, attr, "append"):
+        check_growable_recv(ck, a, fx, obj, "append", "xs.append(v)")
+        if n != 1:
+            fail2(ck, "ArgumentCountMismatch", "'append' takes exactly 1 argument")
+        vt: int = check_expr_expected(ck, a, fx, stmt_at(a, args, 0), el)
+        if not ty_assignable(tt, el, vt):
+            fail2(ck, "TypeMismatch", "the argument of 'append' does not match the list's element type")
+        return 4
+    if sref_eq(a, attr, "sort"):
+        if n != 0:
+            for si in range(n):
+                sa: int = stmt_at(a, args, si)
+                okkw: bool = False
+                if a.n[sa] == {{T:Expr.kwarg}}:
+                    skn: int = pk(a.n[a.n[sa + 1] + {{O:Kwarg.name}}], a.n[a.n[sa + 1] + {{O:Kwarg.name}} + 1])
+                    okkw = sref_eq(a, skn, "key") or sref_eq(a, skn, "reverse")
+                if not okkw:
+                    fail2(ck, "ArgumentCountMismatch", "'sort' only takes the 'key=' and 'reverse=' keyword arguments")
+            raise unsup(ck, "list_sort_kwargs")
+        if el != 0 and el != 1 and el != 3:
+            fail2(ck, "TypeMismatch", "'sort' can only be called on list[int]/list[float]/list[str]")
+        return 4
+    if sref_eq(a, attr, "pop"):
+        if n > 1:
+            fail2(ck, "ArgumentCountMismatch", "'pop' takes 0 or 1 (index) arguments")
+        if n == 1:
+            it: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+            if it != 0:
+                fail2(ck, "TypeMismatch", "the index of 'pop' must be an 'int'")
+        return el
+    if sref_eq(a, attr, "reverse") or sref_eq(a, attr, "clear"):
+        if n != 0:
+            fail_attr(ck, a, attr, "ArgumentCountMismatch", "'", "' takes no arguments")
+        return 4
+    if sref_eq(a, attr, "copy"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'copy' takes no arguments")
+        return obj_t
+    if sref_eq(a, attr, "insert"):
+        check_growable_recv(ck, a, fx, obj, "insert", "xs.insert(i, v)")
+        if n != 2:
+            fail2(ck, "ArgumentCountMismatch", "'insert' takes exactly 2 arguments (index, value)")
+        ix: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        if ix != 0:
+            fail2(ck, "TypeMismatch", "the index of 'insert' must be an 'int'")
+        iv: int = check_expr_expected(ck, a, fx, stmt_at(a, args, 1), el)
+        if not ty_assignable(tt, el, iv):
+            fail2(ck, "TypeMismatch", "the value of 'insert' does not match the list's element type")
+        return 4
+    if sref_eq(a, attr, "extend"):
+        fail2(ck, "TypeMismatch", "'extend' can only be used as an expression statement (xs.extend(ys)); it produces no value")
+    if sref_eq(a, attr, "remove") or sref_eq(a, attr, "index") or sref_eq(a, attr, "count"):
+        if n != 1:
+            fail_attr(ck, a, attr, "ArgumentCountMismatch", "'", "' takes exactly 1 argument")
+        xt: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        require_list_elem_comparable(ck, a, el, xt, attr)
+        if sref_eq(a, attr, "remove"):
+            return 4
+        return 0
+    fail_attr(ck, a, attr, "UndefinedMethod", "list has no method '", "' (append/extend/insert/pop/remove/clear/index/count/sort/reverse/copy)")
+    return 4
+
+def check_dict_method(ck: Ck, a: Ast, fx: Fx, c: int, attr: int, obj_t: int) -> int:
+    tt: TT = ck.tt
+    args: int = sl_at(a, c, {{O:Call.args}})
+    n: int = pky(args)
+    k0: int = tt.xa[obj_t]
+    v0: int = tt.xb[obj_t]
+    if sref_eq(a, attr, "items"):
+        raise unsup(ck, "dict_items")
+    if sref_eq(a, attr, "contains"):
+        if n != 1:
+            fail2(ck, "ArgumentCountMismatch", "'contains' takes exactly 1 argument")
+        kt: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        if kt != k0:
+            fail2(ck, "TypeMismatch", "the argument of 'contains' does not match the dict's key type")
+        return 2
+    if sref_eq(a, attr, "len"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'len' takes no arguments")
+        return 0
+    if sref_eq(a, attr, "keys"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'keys' takes no arguments")
+        return ty_list(tt, k0)
+    if sref_eq(a, attr, "values"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'values' takes no arguments")
+        return ty_list(tt, v0)
+    if sref_eq(a, attr, "get") or sref_eq(a, attr, "pop"):
+        if n < 1 or n > 2:
+            fail_attr(ck, a, attr, "ArgumentCountMismatch", "'", "' takes 1 or 2 arguments (key[, default])")
+        gk: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        if gk != k0:
+            fail_attr(ck, a, attr, "TypeMismatch", "the key of '", "' does not match the dict's key type")
+        if n == 2:
+            gd: int = check_expr_expected(ck, a, fx, stmt_at(a, args, 1), v0)
+            if not ty_assignable(tt, v0, gd):
+                fail_attr(ck, a, attr, "TypeMismatch", "the default value of '", "' does not match the dict's value type")
+            return v0
+        if sref_eq(a, attr, "pop"):
+            return v0
+        return ty_optional(tt, v0)
+    if sref_eq(a, attr, "setdefault"):
+        if n != 2:
+            fail2(ck, "ArgumentCountMismatch", "'setdefault' takes exactly 2 arguments (key, default)")
+        sk: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        if sk != k0:
+            fail2(ck, "TypeMismatch", "the key of 'setdefault' does not match the dict's key type")
+        sd: int = check_expr_expected(ck, a, fx, stmt_at(a, args, 1), v0)
+        if not ty_assignable(tt, v0, sd):
+            fail2(ck, "TypeMismatch", "the default value of 'setdefault' does not match the dict's value type")
+        return v0
+    if sref_eq(a, attr, "clear"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'clear' takes no arguments")
+        return 4
+    if sref_eq(a, attr, "copy"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'copy' takes no arguments")
+        return obj_t
+    if sref_eq(a, attr, "update"):
+        if n != 1:
+            fail2(ck, "ArgumentCountMismatch", "'update' takes exactly 1 argument")
+        ut: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        if ut != obj_t:
+            fail2(ck, "TypeMismatch", "the argument of 'update' must be of the same dict[K, V] type")
+        return 4
+    fail_attr(ck, a, attr, "UndefinedMethod", "dict has no method '", "' (contains/len/keys/values/get/pop/setdefault/clear/copy/update)")
+    return 4
+
+# `obj.metod(...)` (sınıf örneği + list/dict yerleşikleri; str/task/channel/... metodları 3.10'un devamı)
 def check_method_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
     at: int = a.n[callee + 1]
     obj: int = a.n[at + {{O:Attribute.obj}}]
@@ -1675,13 +1873,15 @@ def check_method_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
         ocal: int = a.n[oc + {{O:Call.callee}}]
         if a.n[ocal] == {{T:Expr.identifier}} and sref_eq(a, pk(a.n[ocal + 1], a.n[ocal + 2]), "super"):
             raise unsup(ck, "check_method_call#super")
-    if sref_eq(a, attr, "append") or sref_eq(a, attr, "insert") or sref_eq(a, attr, "extend"):
-        raise unsup(ck, "check_method_call#grow")
     obj_t: int = check_expr(ck, a, fx, obj)
     require_not_optional_sref(ck, obj_t, a, attr)
     tt: TT = ck.tt
     g: int = tt.tag[obj_t]
-    if g == 5 or g == 13 or g == 3 or g == 7 or g == 8 or g == 9 or g == 10 or g == 11:
+    if g == 5:
+        return check_list_method(ck, a, fx, c, obj, attr, obj_t)
+    if g == 13:
+        return check_dict_method(ck, a, fx, c, attr, obj_t)
+    if g == 3 or g == 7 or g == 8 or g == 9 or g == 10 or g == 11:
         raise unsup(ck, "check_method_call#builtin_receiver")
     if g != 6:
         mp(ck, "a method call is only valid on class instances")

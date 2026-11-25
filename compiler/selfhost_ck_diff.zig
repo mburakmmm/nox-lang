@@ -395,6 +395,44 @@ pub fn checkLoaded(gpa: std.mem.Allocator, a: std.mem.Allocator, nrt: glue.Runti
 
 /// `ck-diff check`: her dosyayı iki ayrıştırıcıyla okur; Nox denetleyicisi KAPSAM İÇİ dediği (durum 0/1) programlarda GERÇEK `checker.check` ile sonuç (kabul/ret), hata kodu adı, ileti ve
 /// TÜM tanılamalar (kod, satır, ileti, span) eşit olmalıdır. Kapsam dışı (durum 2) dosyalar sayılır, karşılaştırılmaz.
+/// `ck-diff check --why-deep`: yalnızca Nox. `import X` / `from X import Y` satırları (tek satırlık) boş satıra çevrilir (satır numaraları korunur); Nox'un kapsam dışı
+/// nedeni import kapısına takılmadan sayılır. Sonuç Zig ile karşılaştırılmaz — yalnızca sıradaki taşıma önceliğini belirlemek içindir.
+pub fn runWhyDeep(gpa: std.mem.Allocator, io: std.Io, nrt: glue.Runtime, paths: []const []const u8, why: *std.StringHashMapUnmanaged(usize)) !CheckResult {
+    const api = nrt.check();
+    var res: CheckResult = .{ .files = 0, .skipped_parse = 0, .unsupported = 0, .accepted = 0, .rejected = 0, .diags = 0 };
+    for (paths) |path| {
+        var arena_state = std.heap.ArenaAllocator.init(gpa);
+        defer arena_state.deinit();
+        const a = arena_state.allocator();
+        const src = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(16 * 1024 * 1024)) catch {
+            res.skipped_parse += 1;
+            continue;
+        };
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        var lines = std.mem.splitScalar(u8, src, '\n');
+        while (lines.next()) |ln| {
+            const is_imp = std.mem.startsWith(u8, ln, "import ") or (std.mem.startsWith(u8, ln, "from ") and std.mem.indexOf(u8, ln, " import ") != null and std.mem.indexOfScalar(u8, ln, '(') == null);
+            if (!is_imp) try out.appendSlice(a, ln);
+            try out.append(a, '\n');
+        }
+        if (nrt.parseRaw(out.items) != 0) {
+            res.skipped_parse += 1;
+            continue;
+        }
+        res.files += 1;
+        _ = nrt.types().reset();
+        const status = api.checkRun();
+        if (status == 2) {
+            res.unsupported += 1;
+            const tag = try gpa.dupe(u8, try api.text(a, 4, 0));
+            const e = try why.getOrPut(gpa, tag);
+            if (!e.found_existing) e.value_ptr.* = 0;
+            e.value_ptr.* += 1;
+        } else if (status == 0) res.accepted += 1 else if (status == 1) res.rejected += 1;
+    }
+    return res;
+}
+
 pub fn runCheck(gpa: std.mem.Allocator, io: std.Io, nrt: glue.Runtime, paths: []const []const u8, verbose: bool, why: ?*std.StringHashMapUnmanaged(usize)) !CheckResult {
     const api = nrt.check();
     var res: CheckResult = .{ .files = 0, .skipped_parse = 0, .unsupported = 0, .accepted = 0, .rejected = 0, .diags = 0 };

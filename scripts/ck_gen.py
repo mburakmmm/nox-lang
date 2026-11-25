@@ -42,9 +42,10 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False):
+    def __init__(self, rnd, use_async=False, use_methods=False):
         self.rnd = rnd
         self.use_async = use_async
+        self.use_methods = use_methods
         self.funcs = []  # (name, [param types], ret)
         self.lines = []
         self.counter = 0
@@ -296,8 +297,36 @@ class Gen:
         if r.random() < 0.3:  # Task olmayan operand
             self.lines.append(f"{self.fresh('b')}: int = await {r.choice([lit(r, 'int'), lit(r, 'str')])}")
 
+    def gen_methods(self):
+        """list/dict yerleşik metotları: doğru kullanım + yanlış argüman sayısı/tipi, büyüme alıcısı, Optional/int alıcı, tanımsız metot."""
+        r = self.rnd
+        self.lines += ["xs: list[int] = [1, 2, 3]", 'ys: list[str] = ["a"]', "fs: list[float] = [1.5]", "bs: list[bool] = [True]", "zs: list[list[int]] = [[1]]", "us: list[u8] = []",
+                       'd: dict[str, int] = {"a": 1}', "n: int = 3", "o: int | None = None", "def mk() -> list[int]:", "    return [1, 2]", ""]
+        iv = lambda: r.choice(["1", "2", "7", "n", "xs[0]", "1.5", '"a"', "True"])
+        sv = lambda: r.choice(['"a"', '"b"', "ys[0]", "1"])
+        tpl = [
+            lambda: f"xs.append({iv()})", lambda: "xs.append()", lambda: "xs.append(1, 2)", lambda: f"ys.append({sv()})", lambda: f"fs.append({iv()})",
+            lambda: f"us.append({r.choice(['1', '300', 'n'])})", lambda: f"xs.insert({iv()}, {iv()})", lambda: "xs.insert(1)", lambda: f"ys.insert(0, {sv()})",
+            lambda: "xs.pop()", lambda: f"xs.pop({iv()})", lambda: "xs.pop(1, 2)", lambda: "xs.sort()", lambda: "ys.sort()", lambda: r.choice(["zs.sort()", "bs.sort()", "us.sort()"]),
+            lambda: "xs.sort(1)", lambda: f"xs.{r.choice(['reverse', 'clear'])}({r.choice(['', '1'])})", lambda: "c: list[int] = xs.copy()", lambda: "c: list[str] = xs.copy()",
+            lambda: "xs.copy(1)", lambda: f"xs.remove({iv()})", lambda: f"ys.remove({sv()})", lambda: f"bs.remove({r.choice(['True', '1'])})", lambda: f"zs.remove({r.choice(['[1]', '1'])})",
+            lambda: f"i: int = xs.index({iv()})", lambda: f"i: int = fs.count({iv()})", lambda: "i: int = xs.index()", lambda: f"xs.{r.choice(['foo', 'push', 'add'])}(1)",
+            lambda: "mk().append(1)", lambda: "mk().pop()", lambda: f"n.{r.choice(['append', 'pop', 'keys'])}(1)", lambda: f"o.{r.choice(['append', 'get', 'pop'])}(1)",
+            lambda: f"undefined_var.{r.choice(['append', 'get'])}(1)",
+            lambda: f"d.contains({sv()})", lambda: "d.contains()", lambda: "d.len()", lambda: "d.len(1)", lambda: "k: list[str] = d.keys()", lambda: "v: list[int] = d.values()",
+            lambda: "k: list[int] = d.keys()", lambda: "d.keys(1)", lambda: f"g: int | None = d.get({sv()})", lambda: f"g: int = d.get({sv()}, {iv()})", lambda: "d.get()", lambda: f"zs[{r.choice(['0', 'n', '1.5'])}].{r.choice(['append', 'insert'])}({r.choice(['1', '0, 1', '\"a\"'])})", lambda: "zs[mk()[0]].append(1)", lambda: f"xs.extend({r.choice(['xs', 'ys', '[1]', '1'])})", lambda: "e: int = xs.extend(xs)", lambda: "ys.extend()", lambda: "d.extend(1)", lambda: f"g: int = d.get({sv()})", lambda: "g: str | None = d.get(\"a\")",
+            lambda: f"p: int = d.pop({sv()})", lambda: f"p: int = d.pop({sv()}, {iv()}, 1)", lambda: f"d.setdefault({sv()}, {iv()})", lambda: "d.setdefault(1)",
+            lambda: "d.clear()", lambda: "d.clear(1)", lambda: "e: dict[str, int] = d.copy()", lambda: f"d.update({r.choice(['d', '1', 'xs'])})", lambda: "d.update()",
+            lambda: f"d.{r.choice(['nope', 'remove', 'add'])}()",
+        ]
+        for _ in range(r.randint(1, 5)):
+            self.lines.append(r.choice(tpl)())
+
     def program(self):
         r = self.rnd
+        if self.use_methods:
+            self.gen_methods()
+            return "\n".join(self.lines) + "\n"
         for _ in range(r.choice([0, 0, 1, 1, 2])):
             self.gen_class()
         if self.use_async:
@@ -329,11 +358,12 @@ def main():
     ap.add_argument("--count", type=int, default=500)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--async", dest="use_async", action="store_true")
+    ap.add_argument("--methods", dest="use_methods", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async).program()
+        src = Gen(rnd, args.use_async, args.use_methods).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

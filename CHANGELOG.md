@@ -11,6 +11,12 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.74]
+
+Aşama 3.10 dilim A: list/dict yerleşik metotları (kapsam-kapılı Nox tip denetimi). Ayrıntı: plan §6 3.10, spec §3.508.
+
+- `selfhost/typecheck.nox.in`: `list` (append/insert/pop/sort/reverse/clear/copy/remove/index/count) ve `dict` (contains/len/keys/values/get/pop/setdefault/clear/copy/update) metotları, `grow_stmt_gate`; `scripts/ck_gen.py --methods`; CI kapısına metot üreteç adımı; `ck-diff check --why-deep` (import kapısı arkasındaki gerçek kapsam dışı nedenler).
+
 ## [2.2.73]
 
 Aşama 3.8 dilim A: `async def` + `await` (kapsam-kapılı Nox tip denetimi). Ayrıntı: plan §6 3.8, spec §3.507.

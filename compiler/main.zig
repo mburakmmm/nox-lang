@@ -886,11 +886,16 @@ fn cmdCkDiff(io: std.Io, gpa: std.mem.Allocator, a: std.mem.Allocator, rest: []c
         }
         return;
     } else if (std.mem.eql(u8, rest[0], "check")) {
-        const want_why = rest.len > 1 and std.mem.eql(u8, rest[1], "--why");
+        // `--why-deep`: yalnızca Nox (Zig karşılaştırması YOK); import satırları boşaltılır → import kapısının ARKASINDAki gerçek kapsam dışı nedenler sayılır.
+        const want_deep = rest.len > 1 and std.mem.eql(u8, rest[1], "--why-deep");
+        const want_why = want_deep or (rest.len > 1 and std.mem.eql(u8, rest[1], "--why"));
         var why_arena = std.heap.ArenaAllocator.init(gpa);
         defer why_arena.deinit();
         var why: std.StringHashMapUnmanaged(usize) = .{};
-        const res = cd.runCheck(why_arena.allocator(), io, nrt.*, rest[if (want_why) 2 else 1 ..], false, if (want_why) &why else null) catch std.process.exit(1);
+        const res = (if (want_deep)
+            cd.runWhyDeep(why_arena.allocator(), io, nrt.*, rest[2..], &why)
+        else
+            cd.runCheck(why_arena.allocator(), io, nrt.*, rest[if (want_why) 2 else 1 ..], false, if (want_why) &why else null)) catch std.process.exit(1);
         try sw.interface.print("ck-diff: OK check files={d} unsupported={d} accepted={d} rejected={d} diagnostics={d} skipped_parse={d}\n", .{ res.files, res.unsupported, res.accepted, res.rejected, res.diags, res.skipped_parse });
         if (want_why) {
             const Item = struct { k: []const u8, n: usize };
