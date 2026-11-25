@@ -65,6 +65,7 @@ ok(".claude/settings.json git'te izleniyor (worktree/yeni klon güvenli)", track
 # 3) talimatlar
 cm = open(os.path.join(ROOT, "CLAUDE.md"), encoding="utf-8").read() if os.path.exists(os.path.join(ROOT, "CLAUDE.md")) else ""
 ok("CLAUDE.md @AGENTS.md içe aktarır", "@AGENTS.md" in cm)
+ok("CLAUDE.md 'graphify update .' çalıştırma talimatı içermez (Nox ek çıkarımını siler; graphify_refresh.sh kullanılır)", "run `graphify update" not in cm and "`graphify update .`'i çalıştır" not in cm)
 g = os.path.expanduser("~/.claude/CLAUDE.md")
 ok("~/.claude/CLAUDE.md @RTK.md içe aktarır", os.path.exists(g) and "@RTK.md" in open(g, encoding="utf-8").read())
 ok("~/.claude/RTK.md mevcut ve kısa", os.path.exists(os.path.expanduser("~/.claude/RTK.md")) and sum(1 for _ in open(os.path.expanduser("~/.claude/RTK.md"))) <= 20)

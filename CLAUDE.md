@@ -56,13 +56,7 @@ Kurallar:
 - **Proje düzeyi hook'lar (`.claude/settings.json` — ARTIK git'te izlenir: worktree/yeni klon/alt oturumda da yüklenir; `.claude/` altındaki geri kalan her şey yerelde kalır):** `SessionStart` ve `SubagentStart` → `scripts/hooks/session_rules.sh` (5 maddelik kural özeti + rtk/graf eksik/bayat uyarısı enjekte eder; alt oturumlarda JSON `additionalContext`); `PostToolUse` (Read|Grep|Glob|Bash) → `scripts/hooks/token_audit_hook.py`: kayıt (`.claude/token-audit/*.jsonl`) + hız-sınırlı, ENGELLEMEYEN `additionalContext` ipuçları (R1 ham `sed -n/cat/head/tail`, R2 gürültülü komut qrun'sız, R3 aynı dosya ≥3 okuma, R4 büyük aralıksız Read, R5 art arda arama, R6 rtk çıktısını boruyla süzme). Uyarılar yalnız ipucudur: tam/ham okuma ve tam tanılama HER ZAMAN serbesttir. Özet/yinelenen atlamalar: `python3 scripts/token_audit.py [--days N]`. Doğrulama (yeni oturum/worktree kanıtı): `python3 scripts/hooks/verify_enforcement.py`.
 - Kapsam dışı/çakışma riski: proje düzeyine ikinci bir rtk hook'u ya da `updatedInput` ile yeniden yazan/engelleyen herhangi bir PreToolUse/Bash hook'u eklenmez. Seçici engelleme (ör. aralıksız büyük `Read` reddi) yalnızca `token_audit.py` verisi israfı kanıtladıktan sonra ve kullanıcı onayıyla eklenir.
 
-## graphify
+## graphify (özet; ayrıntı §1)
 
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-Rules:
-- When graphify-out/graph.json exists, run `graphify query "<question>"` before your first grep, search or source-file read for a codebase question, and put this rule in every subagent prompt that explores code. Read raw files only for lines the graph or an earlier read already located. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. When the answer is under a Markdown heading, `graphify section "<heading>"` prints that section's text, so the .md need not be opened. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
-- A committed graphify-out/graph.json is rewritten whole on every build, so a large diff to it in a pull request is expected. Do not flag it as churn or suggest skipping the graph rebuild or its hooks.
+- `graphify-out/graph.json` varsa, bir kod sorusunda ilk grep/arama/kaynak okumasından ÖNCE `graphify query "<soru>"` (bkz. §1); alt oturum (Agent) istemlerine de bu kuralı yaz. Ham dosyayı yalnız graf/önceki okumanın verdiği satırlar için oku. İlişki: `graphify path "A" "B"`, kavram: `graphify explain "X"`, `.md` başlığı: `graphify section "<başlık>"`. `GRAPH_REPORT.md` yalnızca geniş mimari gözden geçirme için.
+- **Grafı YENİLEME komutu `sh scripts/graphify_refresh.sh --wait`'tir. `graphify update .` KULLANMA** (Nox'a özgü ek çıkarımı siler; AGENTS §0 / §1.5). graphify'ın kendi aracı yalnızca `.claude/settings.json`daki `hook-guard` hook'ları için kuruludur.

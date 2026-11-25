@@ -317,6 +317,82 @@ pub const CheckResult = struct { files: usize, skipped_parse: usize, unsupported
 
 /// `why` != null ise kapsam dışı nedenleri (etiket → dosya sayısı) buna toplanır.
 
+/// Nox durumu (`status`) ile GERÇEK Zig `checker.check` sonucunu karşılaştırır (tek dosya/modül). `status`: 0 kabul, 1 tanılama, 2 kapsam dışı.
+fn compareStatus(gpa: std.mem.Allocator, a: std.mem.Allocator, api: glue.CheckApi, module: @import("parser/ast.zig").Module, status: i64, path: []const u8, res: *CheckResult, why: ?*std.StringHashMapUnmanaged(usize)) !void {
+    if (status == 2) {
+        res.unsupported += 1;
+        if (why) |w| {
+            const tag = try gpa.dupe(u8, try api.text(a, 4, 0)); // gpa = çağıranın arena'sı (yaşam süresi komut boyunca)
+            const e = try w.getOrPut(gpa, tag);
+            if (!e.found_existing) e.value_ptr.* = 0;
+            e.value_ptr.* += 1;
+        }
+        return;
+    }
+    const outcome = checker.check(a, module);
+    switch (outcome) {
+        .ok => {
+            if (status != 0) {
+                std.debug.print("ck-diff: {s}: Zig kabul etti, Nox status={d}\n", .{ path, status });
+                return error.Mismatch;
+            }
+            res.accepted += 1;
+        },
+        .err => |e| {
+            if (status != 1) {
+                std.debug.print("ck-diff: {s}: Zig reddetti ({s}: {s}), Nox status={d}\n", .{ path, @errorName(e.code), e.message, status });
+                return error.Mismatch;
+            }
+            res.rejected += 1;
+            const ncode = try api.text(a, 0, 0);
+            const nmsg = try api.text(a, 1, 0);
+            if (!std.mem.eql(u8, ncode, @errorName(e.code)) or !std.mem.eql(u8, nmsg, e.message)) {
+                std.debug.print("ck-diff: {s}: sonuç farkı\n  zig: {s}: {s}\n  nox: {s}: {s}\n", .{ path, @errorName(e.code), e.message, ncode, nmsg });
+                return error.Mismatch;
+            }
+            if (e.all.len != @as(usize, @intCast(api.diagN()))) {
+                std.debug.print("ck-diff: {s}: tanılama sayısı zig={d} nox={d}\n", .{ path, e.all.len, api.diagN() });
+                for (e.all) |d| std.debug.print("  zig: {s} satır {d}: {s}\n", .{ @errorName(d.code), d.line, d.message });
+                var di: i64 = 0;
+                while (di < api.diagN()) : (di += 1) std.debug.print("  nox: {s} satır {d}: {s}\n", .{ try api.text(a, 2, di), api.diagInt(di, 0), try api.text(a, 3, di) });
+                return error.Mismatch;
+            }
+            for (e.all, 0..) |d, i| {
+                const ii: i64 = @intCast(i);
+                const dc = try api.text(a, 2, ii);
+                const dm = try api.text(a, 3, ii);
+                const sp = d.span;
+                const same = std.mem.eql(u8, dc, @errorName(d.code)) and std.mem.eql(u8, dm, d.message) and api.diagInt(ii, 0) == d.line and
+                    api.diagInt(ii, 1) == sp.start_byte and api.diagInt(ii, 2) == sp.end_byte and api.diagInt(ii, 3) == sp.start_line and
+                    api.diagInt(ii, 4) == sp.start_col and api.diagInt(ii, 5) == sp.end_line and api.diagInt(ii, 6) == sp.end_col;
+                if (!same) {
+                    std.debug.print("ck-diff: {s}: tanılama {d} farkı\n  zig: {s} satır {d}: {s} span {d}-{d} {d}:{d}-{d}:{d}\n  nox: {s} satır {d}: {s} span {d}-{d} {d}:{d}-{d}:{d}\n", .{
+                        path,                  i,                  @errorName(d.code),    d.line,                 d.message,              sp.start_byte,          sp.end_byte,            sp.start_line,          sp.start_col,
+                        sp.end_line,           sp.end_col,         dc,                    api.diagInt(ii, 0),     dm,                     api.diagInt(ii, 1),     api.diagInt(ii, 2),     api.diagInt(ii, 3),
+                        api.diagInt(ii, 4),    api.diagInt(ii, 5), api.diagInt(ii, 6),
+                    });
+                    return error.Mismatch;
+                }
+                res.diags += 1;
+            }
+        },
+    }
+}
+
+/// `ck-diff checkm`: Zig modül yükleyicisinin (import çözümü + prelude) ürettiği BİRLEŞİK modülü düz-dizi AST olarak Nox'a yükler; Nox denetleyicisi ile GERÇEK `checker.check` karşılaştırılır.
+pub fn checkLoaded(gpa: std.mem.Allocator, a: std.mem.Allocator, nrt: glue.Runtime, module: @import("parser/ast.zig").Module, flat: @import("parser/ast_flat.zig").Flat, src: []const u8, path: []const u8, res: *CheckResult, why: ?*std.StringHashMapUnmanaged(usize)) !void {
+    const api = nrt.check();
+    res.files += 1;
+    _ = nrt.types().reset();
+    nrt.loadAst(flat, src);
+    const status = api.checkLoaded(flat.body_start, flat.body_len);
+    if (status < 0) {
+        std.debug.print("ck-diff: {s}: Nox iç hata (beklenmeyen istisna)\n", .{path});
+        return error.Mismatch;
+    }
+    try compareStatus(gpa, a, api, module, status, path, res, why);
+}
+
 /// `ck-diff check`: her dosyayı iki ayrıştırıcıyla okur; Nox denetleyicisi KAPSAM İÇİ dediği (durum 0/1) programlarda GERÇEK `checker.check` ile sonuç (kabul/ret), hata kodu adı, ileti ve
 /// TÜM tanılamalar (kod, satır, ileti, span) eşit olmalıdır. Kapsam dışı (durum 2) dosyalar sayılır, karşılaştırılmaz.
 pub fn runCheck(gpa: std.mem.Allocator, io: std.Io, nrt: glue.Runtime, paths: []const []const u8, verbose: bool, why: ?*std.StringHashMapUnmanaged(usize)) !CheckResult {
@@ -354,64 +430,7 @@ pub fn runCheck(gpa: std.mem.Allocator, io: std.Io, nrt: glue.Runtime, paths: []
             std.debug.print("ck-diff: {s}: Nox iç hata (beklenmeyen istisna)\n", .{path});
             return error.Mismatch;
         }
-        if (status == 2) {
-            res.unsupported += 1;
-            if (why) |w| {
-                const tag = try gpa.dupe(u8, try api.text(a, 4, 0)); // gpa = çağıranın arena'sı (yaşam süresi komut boyunca)
-                const e = try w.getOrPut(gpa, tag);
-                if (!e.found_existing) e.value_ptr.* = 0;
-                e.value_ptr.* += 1;
-            }
-            continue;
-        }
-        const outcome = checker.check(a, module);
-        switch (outcome) {
-            .ok => {
-                if (status != 0) {
-                    std.debug.print("ck-diff: {s}: Zig kabul etti, Nox status={d}\n", .{ path, status });
-                    return error.Mismatch;
-                }
-                res.accepted += 1;
-            },
-            .err => |e| {
-                if (status != 1) {
-                    std.debug.print("ck-diff: {s}: Zig reddetti ({s}: {s}), Nox status={d}\n", .{ path, @errorName(e.code), e.message, status });
-                    return error.Mismatch;
-                }
-                res.rejected += 1;
-                const ncode = try api.text(a, 0, 0);
-                const nmsg = try api.text(a, 1, 0);
-                if (!std.mem.eql(u8, ncode, @errorName(e.code)) or !std.mem.eql(u8, nmsg, e.message)) {
-                    std.debug.print("ck-diff: {s}: sonuç farkı\n  zig: {s}: {s}\n  nox: {s}: {s}\n", .{ path, @errorName(e.code), e.message, ncode, nmsg });
-                    return error.Mismatch;
-                }
-                if (e.all.len != @as(usize, @intCast(api.diagN()))) {
-                    std.debug.print("ck-diff: {s}: tanılama sayısı zig={d} nox={d}\n", .{ path, e.all.len, api.diagN() });
-                    for (e.all) |d| std.debug.print("  zig: {s} satır {d}: {s}\n", .{ @errorName(d.code), d.line, d.message });
-                    var di: i64 = 0;
-                    while (di < api.diagN()) : (di += 1) std.debug.print("  nox: {s} satır {d}: {s}\n", .{ try api.text(a, 2, di), api.diagInt(di, 0), try api.text(a, 3, di) });
-                    return error.Mismatch;
-                }
-                for (e.all, 0..) |d, i| {
-                    const ii: i64 = @intCast(i);
-                    const dc = try api.text(a, 2, ii);
-                    const dm = try api.text(a, 3, ii);
-                    const sp = d.span;
-                    const same = std.mem.eql(u8, dc, @errorName(d.code)) and std.mem.eql(u8, dm, d.message) and api.diagInt(ii, 0) == d.line and
-                        api.diagInt(ii, 1) == sp.start_byte and api.diagInt(ii, 2) == sp.end_byte and api.diagInt(ii, 3) == sp.start_line and
-                        api.diagInt(ii, 4) == sp.start_col and api.diagInt(ii, 5) == sp.end_line and api.diagInt(ii, 6) == sp.end_col;
-                    if (!same) {
-                        std.debug.print("ck-diff: {s}: tanılama {d} farkı\n  zig: {s} satır {d}: {s} span {d}-{d} {d}:{d}-{d}:{d}\n  nox: {s} satır {d}: {s} span {d}-{d} {d}:{d}-{d}:{d}\n", .{
-                            path,                  i,                  @errorName(d.code),    d.line,                 d.message,              sp.start_byte,          sp.end_byte,            sp.start_line,          sp.start_col,
-                            sp.end_line,           sp.end_col,         dc,                    api.diagInt(ii, 0),     dm,                     api.diagInt(ii, 1),     api.diagInt(ii, 2),     api.diagInt(ii, 3),
-                            api.diagInt(ii, 4),    api.diagInt(ii, 5), api.diagInt(ii, 6),
-                        });
-                        return error.Mismatch;
-                    }
-                    res.diags += 1;
-                }
-            },
-        }
+        try compareStatus(gpa, a, api, module, status, path, &res, why);
         if (verbose) std.debug.print("ck-diff: {s}: eşit\n", .{path});
     }
     return res;

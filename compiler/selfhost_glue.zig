@@ -85,6 +85,7 @@ extern fn typecheck_nox_ck_tab_live(rt: ?*anyopaque, which: i64) i64;
 extern fn typecheck_nox_ck_assigns_name(rt: ?*anyopaque, base: i64, off: i64, n: i64) i64;
 extern fn typecheck_nox_ck_mem(rt: ?*anyopaque) i64;
 extern fn typecheck_nox_ck_check(rt: ?*anyopaque) i64;
+extern fn typecheck_nox_ck_check_loaded(rt: ?*anyopaque, body_start: i64, body_len: i64) i64;
 extern fn typecheck_nox_ck_text(rt: ?*anyopaque, which: i64, i: i64) i64;
 extern fn typecheck_nox_ck_out_buffer(rt: ?*anyopaque) i64;
 extern fn typecheck_nox_ck_diag_n(rt: ?*anyopaque) i64;
@@ -153,6 +154,10 @@ pub const CheckApi = struct {
     /// 3.3: son Nox ayrıştırmasının modülünü denetler. 0 = kabul, 1 = tanılama/hata, 2 = kapsam dışı (henüz taşınmamış yapı).
     pub fn checkRun(self: CheckApi) i64 {
         return typecheck_nox_ck_check(self.rt);
+    }
+    /// Zig'den `Runtime.loadAst` ile yüklenmiş birleşik modülü denetler (aynı durum kodları).
+    pub fn checkLoaded(self: CheckApi, body_start: i64, body_len: i64) i64 {
+        return typecheck_nox_ck_check_loaded(self.rt, body_start, body_len);
     }
     /// which: 0 sonuç hata kodu adı, 1 sonuç iletisi, 2 i. tanılamanın kodu, 3 i. tanılamanın iletisi.
     pub fn text(self: CheckApi, a: std.mem.Allocator, which: i64, i: i64) ![]u8 {
@@ -285,6 +290,16 @@ pub const Runtime = struct {
     /// Aşama 3.2+ tip denetleyici köprüsü (`selfhost/typecheck.nox`).
     pub fn check(self: Runtime) CheckApi {
         return .{ .rt = self.rt };
+    }
+
+    /// Zig `ast.Module`ünün düz-dizi kodlamasını Nox AST şemasına (`ast_schema.G`) yükler (denetleyici farksalı için; `astRoundtripDump`ın yükleme yarısı).
+    pub fn loadAst(self: Runtime, flat: @import("parser/ast_flat.zig").Flat, src: []const u8) void {
+        _ = ast_schema_nox_ast_reset(self.rt, @intCast(@intFromPtr(src.ptr)), @intCast(src.len));
+        for (flat.n.items) |v| _ = ast_schema_nox_ast_push_n(self.rt, v);
+        for (flat.l.items) |v| _ = ast_schema_nox_ast_push_l(self.rt, v);
+        for (flat.sb.items) |b| _ = ast_schema_nox_ast_push_sb(self.rt, b);
+        var i: usize = 0;
+        while (i + 1 < flat.sp.items.len) : (i += 2) _ = ast_schema_nox_ast_push_sp(self.rt, flat.sp.items[i], flat.sp.items[i + 1]);
     }
 
     pub fn stop(self: Runtime) void {

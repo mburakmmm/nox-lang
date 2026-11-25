@@ -576,7 +576,7 @@ fn realMain(init: std.process.Init) !void {
         .selfhost_contract => try cmdSelfhostContract(io, gpa, a),
         .types_diff => try cmdTypesDiff(io, gpa, rest),
         .types_bench => try cmdTypesBench(io, rest),
-        .ck_diff => try cmdCkDiff(io, gpa, rest),
+        .ck_diff => try cmdCkDiff(io, gpa, a, rest, nox_home, resource_dirs, fetch_policy),
         .tokens_cmd => try cmdTokens(gpa, io, a, rest),
         .ast_cmd => try cmdAst(gpa, io, a, rest),
     }
@@ -808,7 +808,7 @@ fn cmdTypesDiff(io: std.Io, gpa: std.mem.Allocator, rest: []const []const u8) !v
 }
 
 /// `noxc-nightly ck-diff scope [ops=20000] [tohum=1]` | `ck-diff assign <dosya...>` (Aşama 3.2+): Zig `typecheck/checker.zig` ↔ Nox `selfhost/typecheck.nox` farksal denetimi (bkz. `selfhost_ck_diff.zig`). Başarıda `ck-diff: OK ...`, farkta çıkış kodu 1. Gizli; yalnızca nightly.
-fn cmdCkDiff(io: std.Io, gpa: std.mem.Allocator, rest: []const []const u8) !void {
+fn cmdCkDiff(io: std.Io, gpa: std.mem.Allocator, a: std.mem.Allocator, rest: []const []const u8, nox_home: []const u8, resource_dirs: project.ResourceDirs, fetch_policy: fetch.FetchPolicy) !void {
     if (comptime !build_options.nightly) unreachable;
     const glue = @import("selfhost_glue.zig");
     const cd = @import("selfhost_ck_diff.zig");
@@ -892,6 +892,49 @@ fn cmdCkDiff(io: std.Io, gpa: std.mem.Allocator, rest: []const []const u8) !void
         var why: std.StringHashMapUnmanaged(usize) = .{};
         const res = cd.runCheck(why_arena.allocator(), io, nrt.*, rest[if (want_why) 2 else 1 ..], false, if (want_why) &why else null) catch std.process.exit(1);
         try sw.interface.print("ck-diff: OK check files={d} unsupported={d} accepted={d} rejected={d} diagnostics={d} skipped_parse={d}\n", .{ res.files, res.unsupported, res.accepted, res.rejected, res.diags, res.skipped_parse });
+        if (want_why) {
+            const Item = struct { k: []const u8, n: usize };
+            var items: std.ArrayListUnmanaged(Item) = .empty;
+            var it = why.iterator();
+            while (it.next()) |e| try items.append(why_arena.allocator(), .{ .k = e.key_ptr.*, .n = e.value_ptr.* });
+            std.mem.sort(Item, items.items, {}, struct {
+                fn lt(_: void, x: Item, y: Item) bool {
+                    return x.n > y.n;
+                }
+            }.lt);
+            for (items.items[0..@min(items.items.len, 25)]) |e| try sw.interface.print("  {d:>6}  {s}\n", .{ e.n, e.k });
+        }
+    } else if (std.mem.eql(u8, rest[0], "checkm")) {
+        // ck-diff checkm [--why] <dosya...>: `noxc check` ile AYNI yükleme (import çözümü + prelude) → birleşik modül → Nox ↔ Zig farksalı.
+        const want_why = rest.len > 1 and std.mem.eql(u8, rest[1], "--why");
+        var why_arena = std.heap.ArenaAllocator.init(gpa);
+        defer why_arena.deinit();
+        var why: std.StringHashMapUnmanaged(usize) = .{};
+        var res: cd.CheckResult = .{ .files = 0, .skipped_parse = 0, .unsupported = 0, .accepted = 0, .rejected = 0, .diags = 0 };
+        for (rest[if (want_why) 2 else 1 ..]) |path| {
+            var arena = std.heap.ArenaAllocator.init(gpa);
+            defer arena.deinit();
+            const aa = arena.allocator();
+            const source = std.Io.Dir.cwd().readFileAlloc(io, path, aa, .limited(1024 * 1024)) catch {
+                res.skipped_parse += 1;
+                continue;
+            };
+            const user_module = parseUserSource(aa, source, path) catch {
+                res.skipped_parse += 1;
+                continue;
+            };
+            const module = resolveImportsForBuild(io, aa, user_module, path, nox_home, resource_dirs, fetch_policy) catch {
+                res.skipped_parse += 1;
+                continue;
+            };
+            const flat = @import("parser/ast_flat.zig").encodeModule(aa, module, source) catch {
+                res.skipped_parse += 1;
+                continue;
+            };
+            cd.checkLoaded(why_arena.allocator(), aa, nrt.*, module, flat, source, path, &res, if (want_why) &why else null) catch std.process.exit(1);
+        }
+        _ = a;
+        try sw.interface.print("ck-diff: OK checkm files={d} unsupported={d} accepted={d} rejected={d} diagnostics={d} skipped={d}\n", .{ res.files, res.unsupported, res.accepted, res.rejected, res.diags, res.skipped_parse });
         if (want_why) {
             const Item = struct { k: []const u8, n: usize };
             var items: std.ArrayListUnmanaged(Item) = .empty;

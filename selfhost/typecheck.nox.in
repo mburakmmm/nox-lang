@@ -4,7 +4,7 @@
 # Durum: 3.2 (kapsam/sembol tabloları). Tip temsili `types.nox` (TypeId/SymbolId, hash-consing). Ad = SymbolId, tip = TypeId; `dict[str, T]` yerine tamsayı anahtarlı düz tablolar
 # (R2-G.1/G.2: dize anahtarlı sözlük ≈6× pahalı). Tablolar tek `Ck` nesnesindedir; kapsamlar derleme boyunca yaşar (Zig'in arena'sı gibi; tek tek serbest bırakılmaz).
 {{FROM_AST}}
-from ast_schema import build_sp_idx
+from ast_schema import build_sp_idx, loaded_ast
 from parser import pk, pkx, pky, parse_ast, parse_body, sref_eq, sref_len, sref_byte, utf8_bytes
 from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, lcg, sym_intern, sym_intern_list, ty_format, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed, ty_mk, ty_list, ty_dict, ty_optional, ty_class, cls_register
 
@@ -1268,7 +1268,7 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
             mp(ck, "'continue' can only be used inside a 'while'/'for' loop")
             raise mk_fail(ck, "TypeMismatch")
         return
-    raise unsup(ck, "check_stmt#4")
+    raise unsup(ck, "stmt_kind#" + str(tag))
 
 # `checkForIterable`: range(...) / list / str / dict (sınıf yineleyicisi, enumerate/zip kaynaşımı kapsam dışı). Dönüş: eleman tipi.
 def check_for_iterable(ck: Ck, a: Ast, fx: Fx, it: int) -> int:
@@ -2031,7 +2031,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
     for i in range(pky(body)):
         kn: int = a.n[a.n[stmt_at(a, body, i) + {{O:Stmt.kind}}]]
         if kn == {{T:StmtKind.protocol_def}} or kn == {{T:StmtKind.extern_def}} or kn == {{T:StmtKind.import_stmt}} or kn == {{T:StmtKind.from_import_stmt}} or kn == {{T:StmtKind.type_alias}}:
-            ck.why = "module_toplevel_kind"
+            ck.why = "toplevel#" + str(kn)
             return 2
     try:
         ck.sig_empty = new_sig(ck, [], [], 4)
@@ -2200,6 +2200,15 @@ def nox_ck_bench(seed: int, ns: int, nn: int, m: int) -> int:
     return acc + len(ck.caps.k1)
 
 # ---- 3.3: `check` farksal köprüsü ----
+# Zig'den düz-dizi olarak itilen (`ast_schema.G`) birleşik modülü denetler (`ck-diff checkm`).
+def nox_ck_check_loaded(body_start: int, body_len: int) -> int:
+    global CG
+    CG = Ck(ty_global())
+    try:
+        return check_module(CG, loaded_ast(), pk(body_start, body_len))
+    except Exception:
+        return -1
+
 def nox_ck_check() -> int:
     global CG
     CG = Ck(ty_global())
