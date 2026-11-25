@@ -145,6 +145,12 @@ class Ck:
     cls_meths: Map2
     cls_unas: Map2
     sig_empty: int
+    # 3.12: import tabloları (Zig `imported_modules`/`module_aliases`/`from_imports`/`from_imports_orig_name`); anahtar (0, sembol)
+    imod: Map2
+    alias: Map2
+    alp: list[int]
+    fimp: Map2
+    forig: Map2
 
     def __init__(self, tt: TT) -> None:
         self.tt = tt
@@ -189,6 +195,11 @@ class Ck:
         self.cls_meths = Map2()
         self.cls_unas = Map2()
         self.sig_empty = -1
+        self.imod = Map2()
+        self.alias = Map2()
+        self.alp = []
+        self.fimp = Map2()
+        self.forig = Map2()
 
 # ---- Scope (Zig `Scope`) ----
 def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
@@ -469,8 +480,29 @@ def type_expr_to_type(ck: Ck, a: Ast, te: int) -> int:
             mp(ck, "'None | None' or a nested Optional is invalid")
             raise mk_fail(ck, "UnknownType")
         return ty_optional(tt, inner)
+    if tag == 4:
+        # `pkg.mod.Sınıf` tip konumunda: takma ad ikamesi + modülün içe aktarıldığı + mangled sınıfın varlığı
+        qsegs: list[int] = subst_alias(ck, seg_syms(ck, a, te, 1))
+        qn: int = len(qsegs)
+        if qn < 2:
+            mp(ck, "invalid qualified type name")
+            raise mk_fail(ck, "UnknownType")
+        qmod: int = join_syms(ck, qsegs, qn - 1, 46)
+        if m2_get(ck.imod, 0, qmod) < 0:
+            mp(ck, "unknown module: ")
+            mp_sym(ck, qmod)
+            raise mk_fail(ck, "UnknownType")
+        qms: int = join_syms(ck, qsegs, qn, 95)
+        if class_idx(ck, qms) >= 0:
+            return ty_class(tt, qms)
+        mp(ck, "module '")
+        mp_sym(ck, qmod)
+        mp(ck, "' has no class named '")
+        mp_sym(ck, qsegs[qn - 1])
+        mp(ck, "'")
+        raise mk_fail(ck, "UnknownType")
     if tag != 0:
-        raise unsup(ck, "type_expr_to_type#qualified")
+        raise unsup(ck, "type_expr_to_type#" + str(tag))
     return simple_type(ck, a, pk(a.n[te + 1], a.n[te + 2]))
 
 # `typeExprToType(.{ .simple = ad })`: skaler adlar, sabit-genişlikli türler, kullanıcı sınıfı (`sizeof/alignof/offsetof` de bunu kullanır).
@@ -514,6 +546,10 @@ def simple_type(ck: Ck, a: Ast, v: int) -> int:
     # kullanıcı sınıfı (`self.classes.contains`); from-import/protokol tabloları bu dilimde boştur
     if class_idx(ck, sym_of(ck, a, v)) >= 0:
         return ty_class(tt, sym_of(ck, a, v))
+    # `from X import Widget`: çıplak ad, mangled sınıfa çözülür (yerel sınıf her zaman öncelikli)
+    fie: int = m2_get(ck.fimp, 0, sym_of(ck, a, v))
+    if fie >= 0 and class_idx(ck, ck.fimp.vv[fie]) >= 0:
+        return ty_class(tt, ck.fimp.vv[fie])
     if sref_eq(a, v, "__infer"):
         raise unsup(ck, "type_expr_to_type#infer")
     mp(ck, "unknown type: ")
@@ -693,6 +729,10 @@ def check_spawn(ck: Ck, a: Ast, fx: Fx, opd: int) -> int:
         fail2(ck, "NotCallable", "'spawn' can only wrap a direct function call")
     nm: int = pk(a.n[callee + 1], a.n[callee + 2])
     sym: int = sym_of(ck, a, nm)
+    if m2_get(ck.fmap, 0, sym) < 0:
+        sfe: int = m2_get(ck.fimp, 0, sym)
+        if sfe >= 0 and m2_get(ck.fmap, 0, ck.fimp.vv[sfe]) >= 0:
+            sym = ck.fimp.vv[sfe]
     if m2_get(ck.afn, 0, sym) < 0:
         mp(ck, "'spawn' can only start 'async def' functions: '")
         mp_sym(ck, sym)
@@ -902,6 +942,9 @@ def check_identifier(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
         for i in range(ck.fpn[fi]):
             ty_func_param(ck.tt, ck.fpar[st + i])
         return ty_func_end(ck.tt, ck.fret[fi])
+    # `from X import f` ile bağlanan adın değer olarak kullanımı (Zig: mangled işlev yoksa `functions.get(rn).?` null açılımı): kapsam dışı
+    if m2_get(ck.fimp, 0, sym) >= 0:
+        raise unsup(ck, "check_identifier#fromimport")
     mp(ck, "undefined variable: ")
     mp_sym(ck, sym)
     raise mk_fail(ck, "UndefinedVariable")
@@ -1648,6 +1691,10 @@ def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
         mp(ck, "' is not a function and cannot be called")
         raise mk_fail(ck, "TypeMismatch")
     if fi < 0 and ci < 0:
+        # `from X.Y import foo [as bar]` ile bağlanan çıplak çağrı (yerel tanım her zaman öncelikli)
+        fie: int = m2_get(ck.fimp, 0, sym)
+        if fie >= 0:
+            return resolve_mangled_call(ck, a, fx, c, ck.fimp.vv[fie], 0, sym, ck.fimp.vv[fie])
         mp(ck, "undefined function or class: ")
         mp_sym(ck, sym)
         raise mk_fail(ck, "UndefinedFunction")
@@ -1862,6 +1909,11 @@ def check_try(ck: Ck, a: Ast, fx: Fx, t: int) -> None:
         cn: int = pk(a.n[ec + 0], a.n[ec + 0 + 1])
         csym: int = sym_of(ck, a, cn)
         if class_idx(ck, csym) < 0:
+            # `from X import Err`: mangled sınıfa çözülür (bind tipi de mangled sınıf)
+            cfe: int = m2_get(ck.fimp, 0, csym)
+            if cfe >= 0 and class_idx(ck, ck.fimp.vv[cfe]) >= 0:
+                csym = ck.fimp.vv[cfe]
+        if class_idx(ck, csym) < 0:
             mp(ck, "unknown class: ")
             mp_sref(ck, a, cn)
             raise mk_fail(ck, "UndefinedClass")
@@ -1974,6 +2026,230 @@ def sym_lit(ck: Ck, s: str) -> int:
     for i in range(len(s)):
         xs.append(ord(s[i]))
     return sym_intern_list(ck.tt, xs, 0, len(xs))
+
+# ---- 3.12 modül sistemi/import (Zig `collectImports`, `substituteAlias`, `resolveMangledCall`, `tryResolveQualifiedCall`, `resolveReExportChains`) ----
+# Ham `check` kipi: tek dosya, yükleyici yok (`module_exports` boş, `requirePublic`/`validateModuleExports` işlemsiz); içe aktarılan modülün tanımları hiç yoktur, mangled adlar yalnız dosyada elle tanımlıysa bulunur.
+# `segs` öğelerinin ilk `n` tanesini `sep` (46 = '.', 95 = '_') ile birleştirip sembole çevirir (Zig `joinSegments`).
+def join_syms(ck: Ck, segs: list[int], n: int, sep: int) -> int:
+    tt: TT = ck.tt
+    bs: list[int] = []
+    for i in range(n):
+        if i > 0:
+            bs.append(sep)
+        o: int = tt.so[segs[i]]
+        for j in range(tt.sl[segs[i]]):
+            bs.append(tt.sb[o + j])
+    return sym_intern_list(tt, bs, 0, len(bs))
+
+# AST dize listesi (2 sözcüklük öğeler: `ImportStmt.segments`, `TypeExpr.qualified`) -> sembol listesi.
+def seg_syms(ck: Ck, a: Ast, node: int, off: int) -> list[int]:
+    s: int = sl_at(a, node, off)
+    out: list[int] = []
+    for i in range(pky(s)):
+        out.append(sym_of(ck, a, pk(a.l[pkx(s) + i * 2], a.l[pkx(s) + i * 2 + 1])))
+    return out
+
+def alias_put(ck: Ck, al: int, segs: list[int]) -> None:
+    off: int = len(ck.alp)
+    ck.alp.append(len(segs))
+    for i in range(len(segs)):
+        ck.alp.append(segs[i])
+    m2_put(ck.alias, 0, al, off)
+
+# Zig `substituteAlias`: ilk segment bir modül takma adıysa hedef modülün segmentleriyle değiştirilir.
+def subst_alias(ck: Ck, segs: list[int]) -> list[int]:
+    if len(segs) == 0:
+        return segs
+    e: int = m2_get(ck.alias, 0, segs[0])
+    if e < 0:
+        return segs
+    off: int = ck.alias.vv[e]
+    out: list[int] = []
+    for i in range(ck.alp[off]):
+        out.append(ck.alp[off + 1 + i])
+    for j in range(len(segs) - 1):
+        out.append(segs[j + 1])
+    return out
+
+# Zig `checkModuleCapabilitiesAllowed` (varsayılan yapılandırma: hosted profil, wasm/mobil/`--deny-capability` yok): yalnız `nox.arch` (`arch_x86_64` yeteneği, yalnız freestanding sağlar) reddedilir.
+def check_module_caps(ck: Ck, segs: list[int]) -> None:
+    if len(segs) < 2 or segs[0] != sym_lit(ck, "nox"):
+        return
+    if segs[1] == sym_lit(ck, "arch"):
+        mp(ck, "module 'nox.")
+        mp_sym(ck, segs[1])
+        mp(ck, "' cannot be used in the 'hosted' profile (required capability: 'arch_x86_64' — this profile does not provide it; it is only available in 'freestanding')")
+        raise mk_fail(ck, "HostedModuleForbidden")
+
+# Zig `collectImports` (Geçiş 0): `imported_modules`, `module_aliases`, `from_imports`, `from_imports_orig_name`.
+def collect_imports(ck: Ck, a: Ast, body: int) -> None:
+    for i in range(pky(body)):
+        st: int = stmt_at(a, body, i)
+        ck.cur_line = a.n[st + 1]
+        ck.cur_span = a.n[st + 2]
+        kn: int = a.n[st + 0]
+        pay: int = a.n[kn + 1]
+        if a.n[kn] == 15:
+            segs: list[int] = seg_syms(ck, a, pay, 0)
+            m2_put(ck.imod, 0, join_syms(ck, segs, len(segs), 46), 1)
+            if a.n[pay + 2] != -4611686018427387904:
+                alias_put(ck, sym_of(ck, a, pk(a.n[pay + 2], a.n[pay + 2 + 1])), segs)
+            check_module_caps(ck, segs)
+        elif a.n[kn] == 16:
+            fsegs: list[int] = seg_syms(ck, a, pay, 0)
+            m2_put(ck.imod, 0, join_syms(ck, fsegs, len(fsegs), 46), 1)
+            names: int = sl_at(a, pay, 2)
+            for k in range(pky(names)):
+                nm: int = a.l[pkx(names) + k]
+                nsym: int = sym_of(ck, a, pk(a.n[nm + 0], a.n[nm + 0 + 1]))
+                full: list[int] = []
+                for q in range(len(fsegs)):
+                    full.append(fsegs[q])
+                full.append(nsym)
+                local: int = nsym
+                if a.n[nm + 2] != -4611686018427387904:
+                    local = sym_of(ck, a, pk(a.n[nm + 2], a.n[nm + 2 + 1]))
+                m2_put(ck.fimp, 0, local, join_syms(ck, full, len(full), 95))
+                m2_put(ck.forig, 0, local, nsym)
+            check_module_caps(ck, fsegs)
+
+# Birleştirilmiş gövdede `mangled` adlı üst-düzey değişken/sabit bildirimi var mı (Zig `moduleDeclaresVar`).
+def module_declares_var(ck: Ck, a: Ast, body: int, ms: int) -> bool:
+    for i in range(pky(body)):
+        kn: int = a.n[stmt_at(a, body, i) + 0]
+        if a.n[kn] == 1:
+            vd: int = a.n[kn + 1]
+            if sym_of(ck, a, pk(a.n[vd + 0], a.n[vd + 0 + 1])) == ms:
+                return True
+    return False
+
+def name_resolves(ck: Ck, a: Ast, body: int, ms: int) -> bool:
+    return class_idx(ck, ms) >= 0 or m2_get(ck.fmap, 0, ms) >= 0 or module_declares_var(ck, a, body, ms)
+
+# Zig `resolveReExportChains` (idempotent; `registerSignatures`ten önce ve sonra): geçersiz `from_imports` girdilerini, aynı adı gerçekten tanımlayan başka bir `from` deyiminin mangled adıyla düzeltir.
+def resolve_reexport(ck: Ck, a: Ast, body: int) -> None:
+    ex: Map2 = Map2()
+    for i in range(pky(body)):
+        kn: int = a.n[stmt_at(a, body, i) + 0]
+        if a.n[kn] != 16:
+            continue
+        pay: int = a.n[kn + 1]
+        fsegs: list[int] = seg_syms(ck, a, pay, 0)
+        names: int = sl_at(a, pay, 2)
+        for k in range(pky(names)):
+            nm: int = a.l[pkx(names) + k]
+            nsym: int = sym_of(ck, a, pk(a.n[nm + 0], a.n[nm + 0 + 1]))
+            if m2_get(ex, 0, nsym) >= 0:
+                continue
+            full: list[int] = []
+            for q in range(len(fsegs)):
+                full.append(fsegs[q])
+            full.append(nsym)
+            ms: int = join_syms(ck, full, len(full), 95)
+            if name_resolves(ck, a, body, ms):
+                m2_put(ex, 0, nsym, ms)
+    fk: list[int] = []
+    fv: list[int] = []
+    for e in range(len(ck.fimp.k1)):
+        if ck.fimp.dead[e] != 0:
+            continue
+        cur: int = ck.fimp.vv[e]
+        if name_resolves(ck, a, body, cur):
+            continue
+        oe: int = m2_get(ck.forig, 0, ck.fimp.k2[e])
+        if oe < 0:
+            continue
+        ce: int = m2_get(ex, 0, ck.forig.vv[oe])
+        if ce < 0:
+            continue
+        fk.append(ck.fimp.k2[e])
+        fv.append(ex.vv[ce])
+    for u in range(len(fk)):
+        m2_put(ck.fimp, 0, fk[u], fv[u])
+
+# Zig `flattenDottedPath`: yalnız `.identifier`/`.attribute` zinciri ise sembolleri (soldan sağa) `out`a ekler.
+def flatten_dotted(ck: Ck, a: Ast, e: int, out: list[int]) -> bool:
+    if a.n[e] == 5:
+        out.append(sym_of(ck, a, pk(a.n[e + 1], a.n[e + 2])))
+        return True
+    if a.n[e] == 9:
+        at: int = a.n[e + 1]
+        if not flatten_dotted(ck, a, a.n[at + 0], out):
+            return False
+        out.append(sym_of(ck, a, pk(a.n[at + 1], a.n[at + 1 + 1])))
+        return True
+    return False
+
+# Zig `isVariableInScope`: yerel/parametre/yakalanan ya da modül düzeyi değişken.
+def is_variable_in_scope(ck: Ck, fx: Fx, sym: int) -> bool:
+    return sc_exists(ck, fx.scope, sym) or m2_get(ck.globs, 0, sym) >= 0
+
+# Zig `resolveMangledCall` (generic işlev/sınıf bu kipte yoktur): mangled ad işlev ya da sınıf mı; değilse `nf_kind` ile bulunamadı iletisi.
+# nf_kind 0 (from-import): "'<s1>' could not be imported (the source module has no member named '<s2>')"; 1 (nitelikli çağrı): "module '<s1>' has no member named '<s2>'".
+def resolve_mangled_call(ck: Ck, a: Ast, fx: Fx, c: int, ms: int, nf_kind: int, s1: int, s2: int) -> int:
+    fe: int = m2_get(ck.fmap, 0, ms)
+    if fe >= 0:
+        if m2_get(ck.afn, 0, ms) >= 0:
+            mp(ck, "'")
+            mp_sym(ck, ms)
+            mp(ck, "' is an 'async def' function and can only be started with 'spawn'")
+            raise mk_fail(ck, "TypeMismatch")
+        sid: int = ck.fmap.vv[fe]
+        check_args_sig(ck, a, fx, c, sid, ms)
+        return ck.fret[sid]
+    ci: int = class_idx(ck, ms)
+    if ci >= 0:
+        isid: int = ck.cls_init[ci]
+        if isid < 0:
+            isid = ck.sig_empty
+        check_args_sig(ck, a, fx, c, isid, ms)
+        return ty_class(ck.tt, ms)
+    if nf_kind == 0:
+        mp(ck, "'")
+        mp_sym(ck, s1)
+        mp(ck, "' could not be imported (the source module has no member named '")
+        mp_sym(ck, s2)
+        mp(ck, "')")
+    else:
+        mp(ck, "module '")
+        mp_sym(ck, s1)
+        mp(ck, "' has no member named '")
+        mp_sym(ck, s2)
+        mp(ck, "'")
+    raise mk_fail(ck, "UndefinedFunction")
+
+# `matchIntrinsicKind`: `nox.http.serve*` / `nox.thread.start|pool_run` çağrıları (özel çözümleme: kapsam dışı).
+def is_intrinsic_call(ck: Ck, segs: list[int]) -> bool:
+    if len(segs) != 3 or segs[0] != sym_lit(ck, "nox"):
+        return False
+    if m2_get(ck.imod, 0, join_syms(ck, segs, 2, 46)) < 0:
+        return False
+    if segs[1] == sym_lit(ck, "http"):
+        for nm in ["serve", "serve_fd", "serve_multicore", "serve_tls", "serve_ws", "serve_ws_tls", "serve_fd_tls", "serve_fd_ws", "serve_fd_ws_tls", "serve_multicore_tls", "serve_multicore_ws", "serve_multicore_ws_tls"]:
+            if segs[2] == sym_lit(ck, nm):
+                return True
+        return False
+    if segs[1] == sym_lit(ck, "thread"):
+        return segs[2] == sym_lit(ck, "start") or segs[2] == sym_lit(ck, "pool_run")
+    return False
+
+# Zig `tryResolveQualifiedCall` (öncesinde `matchIntrinsicKind`): modül-nitelikli çağrı `mod.f(...)`. -1: uygulanmaz (normal metod çağrısı çözümlemesine devam).
+def qualified_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
+    if len(ck.imod.k1) == 0:
+        return -1
+    raw: list[int] = []
+    if not flatten_dotted(ck, a, callee, raw) or len(raw) < 2:
+        return -1
+    segs: list[int] = subst_alias(ck, raw)
+    if is_intrinsic_call(ck, segs):
+        raise unsup(ck, "check_call#intrinsic")
+    if is_variable_in_scope(ck, fx, raw[0]):
+        return -1
+    n: int = len(segs)
+    mod: int = join_syms(ck, segs, n - 1, 46)
+    if m2_get(ck.imod, 0, mod) < 0:
+        return -1
+    return resolve_mangled_call(ck, a, fx, c, join_syms(ck, segs, n, 95), 1, mod, segs[n - 1])
 
 # `hasDunder`: sınıfta o adlı METOD var mı (varsa yeniden yazım gerekir: kapsam dışı).
 def has_dunder(ck: Ck, t: int, name: str) -> bool:
@@ -2680,8 +2956,9 @@ def check_method_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
     at: int = a.n[callee + 1]
     obj: int = a.n[at + 0]
     attr: int = pk(a.n[at + 1], a.n[at + 1 + 1])
-    if dotted_root_is(ck, a, obj, "nox"):
-        raise unsup(ck, "check_method_call#nox")
+    qc: int = qualified_call(ck, a, fx, c, callee)
+    if qc >= 0:
+        return qc
     if a.n[obj] == 8:
         oc: int = a.n[obj + 1]
         ocal: int = a.n[oc + 0]
@@ -3213,12 +3490,14 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
     # kapsam dışı üst-düzey deyim türleri (import/sınıf/protokol/extern/takma ad ...): bu geçişler henüz taşınmadı
     for i in range(pky(body)):
         kn: int = a.n[a.n[stmt_at(a, body, i) + 0]]
-        if kn == 9 or kn == 15 or kn == 16 or kn == 2:
+        if kn == 9 or kn == 2:
             ck.why = "toplevel#" + str(kn)
             return 2
     try:
         ck.sig_empty = new_sig(ck, [], [], 4)
+        collect_imports(ck, a, body)
         collect_class_names(ck, a, body)
+        resolve_reexport(ck, a, body)
         # registerSignatures
         for j in range(pky(body)):
             st: int = stmt_at(a, body, j)
@@ -3231,6 +3510,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
                 register_extern(ck, a, a.n[kn2 + 1])
             elif a.n[kn2] == 8:
                 register_class_sigs(ck, a, class_idx(ck, sym_of(ck, a, pk(a.n[a.n[kn2 + 1] + 0], a.n[a.n[kn2 + 1] + 0 + 1]))))
+        resolve_reexport(ck, a, body)
         collect_module_globals(ck, a, body)
     except CkUnsupported:
         return 2
@@ -3248,7 +3528,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
         try:
             if a.n[kn3] == 7:
                 check_function_body(ck, a, a.n[kn3 + 1])
-            elif a.n[kn3] == 10:
+            elif a.n[kn3] == 10 or a.n[kn3] == 15 or a.n[kn3] == 16:
                 pass
             elif a.n[kn3] == 8:
                 check_class(ck, a, class_idx(ck, sym_of(ck, a, pk(a.n[a.n[kn3 + 1] + 0], a.n[a.n[kn3 + 1] + 0 + 1]))))

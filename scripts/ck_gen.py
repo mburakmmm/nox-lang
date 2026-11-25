@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False):
         self.rnd = rnd
+        self.use_import = use_import
         self.use_spawn = use_spawn
         self.use_extern = use_extern
         self.use_ptr = use_ptr
@@ -565,8 +566,116 @@ class Gen:
         else:
             self.lines += ["def main_s() -> None:"] + ["    " + l for l in body]
 
+    def _valid_for(self, defined, prefix, mpath, mg, valid, vtypes):
+        mg = mpath.replace(".", "_")
+        if defined.get(f"{mg}_g") == "f":
+            valid.append(f"{prefix}.g(1)")
+        if defined.get(f"{mg}_K") == "c":
+            valid.append(f"{prefix}.K(1)")
+            vtypes.append(f"{prefix}.K")
+
+    def _valid_bare(self, defined, local, orig, mg, valid, vtypes, vasync):
+        kind = defined.get(f"{mg}_{orig}")
+        if kind in ("f", "c"):
+            valid.append(f"{local}(1)")
+        if kind == "c":
+            vtypes.append(local)
+        if kind == "a":
+            vasync.append(local)
+
+    def gen_import(self):
+        """import/from-import (ham `check` kipi: içe aktarılan modülün tanımı yok; mangled adlar dosyada elle tanımlıysa çözülür): takma ad, nitelikli çağrı/tip, from-import çağrı/tip/except/spawn/değer, `nox.arch`, intrinsic, gölgeleme, yeniden dışa aktarma zinciri."""
+        r = self.rnd
+        mods = [("lib.util", "lib_util"), ("lib", "lib"), ("nox.fs", "nox_fs"), ("nox.math", "nox_math"), ("pkg.mod", "pkg_mod")]
+        defined = {}
+        for _, mg in mods:
+            if r.random() < 0.6:
+                self.lines += [f"def {mg}_g(a: int) -> int:", "    return a", ""]
+                defined[f"{mg}_g"] = "f"
+            if r.random() < 0.4:
+                self.lines += [f"class {mg}_K:", "    a: int", "    def __init__(self, a: int) -> None:", "        self.a = a", ""]
+                defined[f"{mg}_K"] = "c"
+            if r.random() < 0.2:
+                self.lines += [f"async def {mg}_ag(a: int) -> int:", "    return a", ""]
+                defined[f"{mg}_ag"] = "a"
+            if r.random() < 0.15:
+                self.lines += [f"{mg}_V: int = 3", ""]
+        if r.random() < 0.3:
+            self.lines += ["class MyErr:", "    pass", ""]
+        pool = mods + [("nox.arch", "nox_arch"), ("nox.arch.x86_64", "nox_arch_x86_64"), ("nox.http", "nox_http"), ("nox.thread", "nox_thread"), ("zz.yy", "zz_yy")]
+        prefixes, bare = [], []
+        valid, vtypes, vasync = [], [], []
+        imps = []
+        for _ in range(r.randint(0, 4)):
+            m, mg = r.choice(pool)
+            kind = r.choice(["imp", "imp", "as", "from", "from", "fromas"])
+            if kind == "imp":
+                imps.append(f"import {m}")
+                prefixes.append(m)
+                self._valid_for(defined, m, m, mg, valid, vtypes)
+            elif kind == "as":
+                al = r.choice(["u", "w", "q", "lib"])
+                imps.append(f"import {m} as {al}")
+                prefixes.append(al)
+                self._valid_for(defined, al, m, mg, valid, vtypes)
+            elif kind == "from":
+                names = r.sample(["g", "K", "ag", "V", "h", "serve", "start"], k=r.randint(1, 2))
+                imps.append(f"from {m} import {', '.join(names)}")
+                bare += names
+                for nm_ in names:
+                    self._valid_bare(defined, nm_, nm_, mg, valid, vtypes, vasync)
+            else:
+                nm, al = r.choice(["g", "K", "ag", "h", "V"]), r.choice(["gg", "KK", "hh", "MyErr"])
+                imps.append(f"from {m} import {nm} as {al}")
+                bare.append(al)
+                self._valid_bare(defined, al, nm, mg, valid, vtypes, vasync)
+        shadow = r.random() < 0.15
+        calls = ["1", "n"]
+        for p in prefixes + r.sample(["u", "lib", "nox.fs", "zz", "nox.http"], k=r.randint(0, 2)):
+            calls += [f"{p}.g(1)", f"{p}.g()", f"{p}.K(1)", f"{p}.nope(1)", f"{p}.ag(1)", f"{p}.g(1, 2)", f"{p}.V", f"{p}.serve(1)", f"{p}.start(1)", f"{p}.pool_run(1)", f"{p}.get(n)"]
+        for b in bare + ["g", "K", "MyErr"]:
+            calls += [f"{b}(1)", f"{b}()", f"{b}(1, 2)", b]
+        types = ["int", "P"] + [f"{p}.K" for p in prefixes] + [f"{p}.Nope" for p in prefixes[:1]] + bare + ["u.K", "zz.K", "nox.fs.K", "a.b.c.K"]
+        lines = []
+        if self.rnd.random() < 0.5:
+            lines += ["class P:", "    a: int", "    def __init__(self, a: int) -> None:", "        self.a = a", "", "n: int = 3"]
+        else:
+            lines += ["n: int = 3"]
+        if shadow:
+            lines.append(f"{r.choice(['u', 'lib', 'w', 'q'])}: int = 1")
+        body = []
+        for _ in range(r.randint(1, 5)):
+            k = r.choice(["call", "call", "decl", "decl", "type", "try", "spawn", "value", "func"])
+            c = r.choice(valid) if valid and r.random() < 0.7 else r.choice(calls)
+            t = r.choice(vtypes) if vtypes and r.random() < 0.7 else r.choice(types)
+            if k == "call":
+                body.append(c)
+            elif k == "decl":
+                body.append(f"x{len(body)}: {r.choice(['int', 'str', t])} = {c}")
+            elif k == "type":
+                body.append(f"y{len(body)}: {t} = {r.choice(calls)}")
+            elif k == "try":
+                body += ["try:", f"    {c}", f"except {r.choice(bare + ['MyErr', 'Exception', 'Nope'])}:", "    pass"]
+            elif k == "spawn":
+                body.append(f"s{len(body)}: Task[int] = spawn {r.choice(vasync) if vasync and r.random() < 0.6 else r.choice(bare + ['lib_util_ag', 'g', 'ag'])}(1)")
+            elif k == "value":
+                body.append(f"z{len(body)}: int = {r.choice(bare + ['g'])}")
+            else:
+                body += [f"def fn{len(body)}(p: {t}) -> {t}:", f"    {r.choice(calls)}", "    return p"]
+        # import deyimleri başta, gövdenin ortasında ya da bir işlev içinde
+        place = r.choice(["top", "top", "top", "mid", "nested"])
+        if place == "top":
+            self.lines += imps + lines + body
+        elif place == "mid":
+            self.lines += lines + body[:len(body) // 2] + imps + body[len(body) // 2:]
+        else:
+            self.lines += lines + ["def inner() -> None:"] + ["    " + i for i in imps] + ["    pass"] + body
+
     def program(self):
         r = self.rnd
+        if self.use_import:
+            self.gen_import()
+            return "\n".join(self.lines) + "\n"
         if self.use_spawn:
             self.gen_spawn()
             return "\n".join(self.lines) + "\n"
@@ -630,11 +739,12 @@ def main():
     ap.add_argument("--ptr", dest="use_ptr", action="store_true")
     ap.add_argument("--extern", dest="use_extern", action="store_true")
     ap.add_argument("--spawn", dest="use_spawn", action="store_true")
+    ap.add_argument("--import", dest="use_import", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

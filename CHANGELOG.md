@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.87]
+
+Selfhost Aşama 3.12 dilim B: `import` / `from … import` / modül-nitelikli çağrı ve tip Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.521, `project/noxc-nightly-selfhost-plani-2026-11.md`.
+
+- `selfhost/typecheck.nox.in`: `collect_imports`, `resolve_reexport`, `qualified_call`/`resolve_mangled_call`, nitelikli ve from-import tipleri, from-import çağrı/`except`/`spawn` geri düşüşleri, `nox.arch` hosted reddi. Kapsam dışı: `nox.http.serve*`/`nox.thread.start|pool_run`, from-import adının değer olarak kullanımı, iç içe `import`. Depo korpusunda kapsam dışı 833 → 548 (Zig ile tüm tanılamalar eşit).
+- `scripts/ck_gen.py --import` (ck_regress.sh'a eklendi), `tests/fixtures/ck_edge/import/` (elle kenar durumlar), kalıcı mutasyon aracı `scripts/ck_mutate.py` + `scripts/ck_mutants_import.py` (49 mutant; kapsam dışına düşenler imza karşılaştırmasıyla yakalanır).
+
 ## [2.2.86]
 
 NoxPy UR-008 dilim 2: `--host-abi` ile `T | None`, `list[T]`, `dict[K, V]`, `tuple[...]` parametre/dönüş marshaling'i; `nox_host.h` ABI v2 (v1'e geriye uyumlu). Ayrıntı: spec §3.520, `docs/apis/host-abi.md`.
