@@ -3550,6 +3550,13 @@ def nox_parse_run(base: int, n: int) -> int:
     G_DG_NOTE = p.dg_note
     return err
 
+# Aşama 3: tip denetleyicisi son ayrıştırmanın AST'sini ve modül gövdesini (paketli dilim) buradan alır.
+def parse_ast() -> Ast:
+    return G_AST
+
+def parse_body() -> int:
+    return pk(G_BODY_START, G_BODY_LEN)
+
 # R2-E.1 (v2.2.59): düz dizi AST invariant denetimi (hata ayıklama/farksal test kapısı; üretim yolunda ÇAĞRILMAZ). 0 = tamam; 1 = span tablosu kimliği/dizin sınır dışı; 2 = span kaydı `n` dışına taşıyor;
 # 3 = modül gövde dilimi `l` dışında; 4 = gövde deyim kimliği `n` dışında; 5 = span tablosu uzunlukları uyumsuz.
 def nox_parse_validate() -> int:

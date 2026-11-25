@@ -67,6 +67,90 @@ extern fn types_nox_ty_validate(rt: ?*anyopaque) i64;
 extern fn types_nox_ty_mem(rt: ?*anyopaque) i64;
 extern fn types_nox_ty_bench(rt: ?*anyopaque, seed: i64, k: i64, m: i64) i64;
 
+extern fn typecheck_nox_ck_reset(rt: ?*anyopaque) i64;
+extern fn typecheck_nox_ck_scope_new(rt: ?*anyopaque, parent: i64, has_caps: i64) i64;
+extern fn typecheck_nox_ck_declare(rt: ?*anyopaque, scope: i64, sym: i64, ty: i64) i64;
+extern fn typecheck_nox_ck_lookup_local(rt: ?*anyopaque, scope: i64, sym: i64) i64;
+extern fn typecheck_nox_ck_lookup(rt: ?*anyopaque, scope: i64, sym: i64) i64;
+extern fn typecheck_nox_ck_exists(rt: ?*anyopaque, scope: i64, sym: i64) i64;
+extern fn typecheck_nox_ck_declare_var(rt: ?*anyopaque, scope: i64, sym: i64, ty: i64) i64;
+extern fn typecheck_nox_ck_set_nonarc(rt: ?*anyopaque, sym: i64, flag: i64) i64;
+extern fn typecheck_nox_ck_caps_n(rt: ?*anyopaque, scope: i64) i64;
+extern fn typecheck_nox_ck_cap(rt: ?*anyopaque, scope: i64, i: i64, which: i64) i64;
+extern fn typecheck_nox_ck_tab_put(rt: ?*anyopaque, which: i64, sym: i64, v: i64) i64;
+extern fn typecheck_nox_ck_tab_has(rt: ?*anyopaque, which: i64, sym: i64) i64;
+extern fn typecheck_nox_ck_tab_get(rt: ?*anyopaque, which: i64, sym: i64) i64;
+extern fn typecheck_nox_ck_tab_remove(rt: ?*anyopaque, which: i64, sym: i64) i64;
+extern fn typecheck_nox_ck_tab_live(rt: ?*anyopaque, which: i64) i64;
+extern fn typecheck_nox_ck_assigns_name(rt: ?*anyopaque, base: i64, off: i64, n: i64) i64;
+extern fn typecheck_nox_ck_mem(rt: ?*anyopaque) i64;
+extern fn typecheck_nox_ck_bench(rt: ?*anyopaque, seed: i64, ns: i64, nn: i64, m: i64) i64;
+
+/// Aşama 3.2+: Nox tip denetleyicisinin (`selfhost/typecheck.nox`) Zig tarafı sarmalayıcısı. Ad = SymbolId (`TypeApi.sym`), tip = TypeId; yokluk = -1.
+pub const CheckApi = struct {
+    rt: ?*anyopaque,
+
+    pub fn reset(self: CheckApi) void {
+        _ = typecheck_nox_ck_reset(self.rt);
+    }
+    pub fn scopeNew(self: CheckApi, parent: i64, has_caps: bool) i64 {
+        return typecheck_nox_ck_scope_new(self.rt, parent, @intFromBool(has_caps));
+    }
+    pub fn declare(self: CheckApi, scope: i64, sym: i64, ty: i64) void {
+        _ = typecheck_nox_ck_declare(self.rt, scope, sym, ty);
+    }
+    pub fn lookupLocal(self: CheckApi, scope: i64, sym: i64) i64 {
+        return typecheck_nox_ck_lookup_local(self.rt, scope, sym);
+    }
+    pub fn lookup(self: CheckApi, scope: i64, sym: i64) i64 {
+        return typecheck_nox_ck_lookup(self.rt, scope, sym);
+    }
+    pub fn exists(self: CheckApi, scope: i64, sym: i64) bool {
+        return typecheck_nox_ck_exists(self.rt, scope, sym) != 0;
+    }
+    /// 0 = bildirildi, 1 = uyuşmazlık.
+    pub fn declareVar(self: CheckApi, scope: i64, sym: i64, ty: i64) i64 {
+        return typecheck_nox_ck_declare_var(self.rt, scope, sym, ty);
+    }
+    pub fn setNonArc(self: CheckApi, sym: i64, flag: bool) void {
+        _ = typecheck_nox_ck_set_nonarc(self.rt, sym, @intFromBool(flag));
+    }
+    pub fn capsN(self: CheckApi, scope: i64) i64 {
+        return typecheck_nox_ck_caps_n(self.rt, scope);
+    }
+    /// which: 0 sembol, 1 tip.
+    pub fn cap(self: CheckApi, scope: i64, i: i64, which: i64) i64 {
+        return typecheck_nox_ck_cap(self.rt, scope, i, which);
+    }
+    /// which: 0 module_globals (tip), 1 module_int_consts (değer).
+    pub fn tabPut(self: CheckApi, which: i64, sym: i64, v: i64) void {
+        _ = typecheck_nox_ck_tab_put(self.rt, which, sym, v);
+    }
+    pub fn tabHas(self: CheckApi, which: i64, sym: i64) bool {
+        return typecheck_nox_ck_tab_has(self.rt, which, sym) != 0;
+    }
+    pub fn tabGet(self: CheckApi, which: i64, sym: i64) i64 {
+        return typecheck_nox_ck_tab_get(self.rt, which, sym);
+    }
+    pub fn tabRemove(self: CheckApi, which: i64, sym: i64) bool {
+        return typecheck_nox_ck_tab_remove(self.rt, which, sym) != 0;
+    }
+    pub fn tabLive(self: CheckApi, which: i64) i64 {
+        return typecheck_nox_ck_tab_live(self.rt, which);
+    }
+    /// Son Nox ayrıştırmasının modül gövdesinde `name` atanıyor mu (`stmtsAssignName`).
+    pub fn assignsName(self: CheckApi, name: []const u8) bool {
+        return typecheck_nox_ck_assigns_name(self.rt, @intCast(@intFromPtr(name.ptr)), 0, @intCast(name.len)) != 0;
+    }
+    pub fn mem(self: CheckApi) i64 {
+        return typecheck_nox_ck_mem(self.rt);
+    }
+    /// `ck-bench` Nox tarafı iş yükü (sağlama toplamı Zig `benchZig` ile aynı olmalı).
+    pub fn bench(self: CheckApi, seed: i64, ns: i64, nn: i64, m: i64) i64 {
+        return typecheck_nox_ck_bench(self.rt, seed, ns, nn, m);
+    }
+};
+
 /// Aşama 3.1: Nox tip tablosunun (`selfhost/types.nox`) Zig tarafı sarmalayıcısı. TypeId'ler düz `i64`dür.
 pub const TypeApi = struct {
     rt: ?*anyopaque,
@@ -171,6 +255,11 @@ pub const Runtime = struct {
 
     /// Aşama 3.1 tip tablosu köprüsü (`selfhost/types.nox`).
     pub fn types(self: Runtime) TypeApi {
+        return .{ .rt = self.rt };
+    }
+
+    /// Aşama 3.2+ tip denetleyici köprüsü (`selfhost/typecheck.nox`).
+    pub fn check(self: Runtime) CheckApi {
         return .{ .rt = self.rt };
     }
 

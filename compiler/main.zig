@@ -466,7 +466,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, lex_bench, ast_roundtrip, parse_nox, parse_bench, fmt_bench, selfhost_contract, types_diff, types_bench, tokens_cmd, ast_cmd, legacy };
+    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, lex_bench, ast_roundtrip, parse_nox, parse_bench, fmt_bench, selfhost_contract, types_diff, types_bench, ck_diff, tokens_cmd, ast_cmd, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -502,6 +502,7 @@ fn realMain(init: std.process.Init) !void {
         if (build_options.nightly and std.mem.eql(u8, first, "selfhost-contract")) break :blk .selfhost_contract;
         if (build_options.nightly and std.mem.eql(u8, first, "types-diff")) break :blk .types_diff;
         if (build_options.nightly and std.mem.eql(u8, first, "types-bench")) break :blk .types_bench;
+        if (build_options.nightly and std.mem.eql(u8, first, "ck-diff")) break :blk .ck_diff;
         if (std.mem.eql(u8, first, "tokens")) break :blk .tokens_cmd;
         if (std.mem.eql(u8, first, "ast")) break :blk .ast_cmd;
         if (std.mem.eql(u8, first, "expand")) break :blk .expand;
@@ -576,6 +577,7 @@ fn realMain(init: std.process.Init) !void {
         .selfhost_contract => try cmdSelfhostContract(io, gpa, a),
         .types_diff => try cmdTypesDiff(io, gpa, rest),
         .types_bench => try cmdTypesBench(io, rest),
+        .ck_diff => try cmdCkDiff(io, gpa, rest),
         .tokens_cmd => try cmdTokens(gpa, io, a, rest),
         .ast_cmd => try cmdAst(gpa, io, a, rest),
     }
@@ -803,6 +805,94 @@ fn cmdTypesDiff(io: std.Io, gpa: std.mem.Allocator, rest: []const []const u8) !v
     var stdout_buf: [512]u8 = undefined;
     var sw = std.Io.File.stdout().writer(io, &stdout_buf);
     try sw.interface.print("types-diff: OK seed={d} types={d} distinct={d} pairs={d} assignable_true={d} nox_bytes={d}\n", .{ seed, res.types_built, res.distinct, res.pairs, res.assign_true, res.nox_bytes });
+    try sw.interface.flush();
+}
+
+/// `noxc-nightly ck-diff scope [ops=20000] [tohum=1]` | `ck-diff assign <dosya...>` (Aşama 3.2+): Zig `typecheck/checker.zig` ↔ Nox `selfhost/typecheck.nox` farksal denetimi (bkz. `selfhost_ck_diff.zig`). Başarıda `ck-diff: OK ...`, farkta çıkış kodu 1. Gizli; yalnızca nightly.
+fn cmdCkDiff(io: std.Io, gpa: std.mem.Allocator, rest: []const []const u8) !void {
+    if (comptime !build_options.nightly) unreachable;
+    const glue = @import("selfhost_glue.zig");
+    const cd = @import("selfhost_ck_diff.zig");
+    if (rest.len == 0) {
+        printErr("usage: noxc-nightly ck-diff scope [ops] [seed] | ck-diff assign <file.nox...>\n", .{});
+        std.process.exit(1);
+    }
+    const nrt: *glue.Runtime = @ptrCast(@alignCast(g_nightly_rt.?));
+    var stdout_buf: [512]u8 = undefined;
+    var sw = std.Io.File.stdout().writer(io, &stdout_buf);
+    if (std.mem.eql(u8, rest[0], "scope")) {
+        const ops: usize = if (rest.len > 1) std.fmt.parseInt(usize, rest[1], 10) catch 20000 else 20000;
+        const seed: u64 = if (rest.len > 2) std.fmt.parseInt(u64, rest[2], 10) catch 1 else 1;
+        const res = cd.runScope(gpa, nrt.*, seed, ops) catch std.process.exit(1);
+        try sw.interface.print("ck-diff: OK scope seed={d} ops={d} scopes={d} captures={d} redecl_rejected={d}\n", .{ seed, res.ops, res.scopes, res.captures, res.redecl_rejected });
+    } else if (std.mem.eql(u8, rest[0], "bench")) {
+        // ck-diff bench [ns=64] [nn=2000] [m=2000000] [tekrar=5] [--max-ratio=x] [--allow-debug]
+        var ns: usize = 64;
+        var nn: usize = 2000;
+        var m: usize = 2_000_000;
+        var reps: usize = 5;
+        var max_ratio: f64 = 0;
+        var allow_debug = false;
+        var pos: usize = 0;
+        for (rest[1..]) |arg| {
+            if (std.mem.eql(u8, arg, "--allow-debug")) {
+                allow_debug = true;
+            } else if (std.mem.startsWith(u8, arg, "--max-ratio=")) {
+                max_ratio = std.fmt.parseFloat(f64, arg["--max-ratio=".len..]) catch 0;
+            } else {
+                const v = std.fmt.parseInt(usize, arg, 10) catch 0;
+                switch (pos) {
+                    0 => ns = v,
+                    1 => nn = v,
+                    2 => m = v,
+                    else => reps = v,
+                }
+                pos += 1;
+            }
+        }
+        benchGate("ck-bench", ns, reps, allow_debug);
+        const nowNs = struct {
+            fn f() u64 {
+                var ts: std.c.timespec = undefined;
+                _ = std.c.clock_gettime(.MONOTONIC, &ts);
+                return @as(u64, @intCast(ts.sec)) * 1_000_000_000 + @as(u64, @intCast(ts.nsec));
+            }
+        }.f;
+        var best_zig: u64 = std.math.maxInt(u64);
+        var best_nox: u64 = std.math.maxInt(u64);
+        var zig_mem: usize = 0;
+        for (0..reps) |_| {
+            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena.deinit();
+            const names = try arena.allocator().alloc([]const u8, nn);
+            for (names, 0..) |*nm, i| nm.* = try std.fmt.allocPrint(arena.allocator(), "name_{d}", .{i});
+            var t = nowNs();
+            const zsum = cd.benchZig(arena.allocator(), names, 12345, ns, m) catch std.process.exit(1);
+            best_zig = @min(best_zig, nowNs() - t);
+            zig_mem = arena.queryCapacity();
+            t = nowNs();
+            const nsum = nrt.check().bench(12345, @intCast(ns), @intCast(nn), @intCast(m));
+            best_nox = @min(best_nox, nowNs() - t);
+            if (nsum != zsum) {
+                printErr("ck-bench: saglama toplami farki zig={d} nox={d}\n", .{ zsum, nsum });
+                std.process.exit(1);
+            }
+        }
+        const ratio = @as(f64, @floatFromInt(best_nox)) / @as(f64, @floatFromInt(@max(best_zig, 1)));
+        try sw.interface.print("kapsam {d}, ad {d}, islem {d}\nzig Scope (StringHashMap) {d:>8} us, {d} B arena-ayrilmis\nnox SymbolId tablolari      {d:>8} us ({d:.2}x)\n", .{ ns, nn, m, best_zig / 1000, zig_mem, best_nox / 1000, ratio });
+        try sw.interface.flush();
+        if (max_ratio > 0 and ratio > max_ratio) {
+            printErr("ck-bench: Nox over budget (time {d:.2}x)\n", .{ratio});
+            std.process.exit(1);
+        }
+        return;
+    } else if (std.mem.eql(u8, rest[0], "assign")) {
+        const res = cd.runAssign(gpa, io, nrt.*, rest[1..]) catch std.process.exit(1);
+        try sw.interface.print("ck-diff: OK assign files={d} skipped={d} names={d} assigned={d}\n", .{ res.files, res.skipped, res.names, res.assigned });
+    } else {
+        printErr("ck-diff: bilinmeyen alt komut {s}\n", .{rest[0]});
+        std.process.exit(1);
+    }
     try sw.interface.flush();
 }
 

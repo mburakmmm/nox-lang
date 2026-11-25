@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""noxc-nightly Aşama 2.C: `selfhost/parser.nox.in` ve `selfhost/formatter.nox.in` şablonlarından `selfhost/parser.nox` ve `selfhost/formatter.nox` üretir.
+"""noxc-nightly Aşama 2.C/3: `selfhost/{parser,formatter,typecheck}.nox.in` şablonlarından `selfhost/{parser,formatter,typecheck}.nox` üretir.
 
 Tek kaynaktan türetilenler (elle çoğaltılmaz; ast.zig/token.zig değişince `--check` kırılır):
   {{K:ad}}          `compiler/lexer/token.zig` `TokenKind` sayısı
@@ -25,6 +25,7 @@ ROOT = ga.ROOT
 TEMPLATES = [
     (os.path.join(ROOT, "selfhost/parser.nox.in"), os.path.join(ROOT, "selfhost/parser.nox")),
     (os.path.join(ROOT, "selfhost/formatter.nox.in"), os.path.join(ROOT, "selfhost/formatter.nox")),
+    (os.path.join(ROOT, "selfhost/typecheck.nox.in"), os.path.join(ROOT, "selfhost/typecheck.nox")),
 ]
 
 HEADER = """# ÜRETİLMİŞ DOSYA: elle DÜZENLEMEYİN. Kaynak: selfhost/parser.nox.in (+ compiler/lexer/token.zig, compiler/parser/ast.zig şeması).

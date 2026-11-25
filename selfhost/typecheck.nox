@@ -1,0 +1,387 @@
+# ÜRETİLMİŞ DOSYA: elle DÜZENLEMEYİN. Kaynak: selfhost/parser.nox.in (+ compiler/lexer/token.zig, compiler/parser/ast.zig şeması).
+# Yeniden üretmek için: scripts/gen_selfhost_parser.py   (güncel mi: --check)
+# noxc-nightly Aşama 3: Nox tip denetleyicisi (compiler/typecheck/checker.zig'in portu). Bu dosya ŞABLONDUR: `scripts/gen_selfhost_parser.py` K/T/O/E/SZ yer tutucularını doldurup
+# `selfhost/typecheck.nox`u yazar (elle düzenlenen kaynak BU dosyadır).
+#
+# Durum: 3.2 (kapsam/sembol tabloları). Tip temsili `types.nox` (TypeId/SymbolId, hash-consing). Ad = SymbolId, tip = TypeId; `dict[str, T]` yerine tamsayı anahtarlı düz tablolar
+# (R2-G.1/G.2: dize anahtarlı sözlük ≈6× pahalı). Tablolar tek `Ck` nesnesindedir; kapsamlar derleme boyunca yaşar (Zig'in arena'sı gibi; tek tek serbest bırakılmaz).
+from ast_schema import Ast, at, dump_module, put
+from parser import pk, pkx, pky, parse_ast, parse_body
+from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, lcg
+
+# ---- (k1, k2) -> değer tablosu: açık adresleme, ekleme sırası korunur, silme = ölü işareti (yeniden `put` canlandırır) ----
+class Map2:
+    slots: list[int]
+    mask: int
+    k1: list[int]
+    k2: list[int]
+    vv: list[int]
+    dead: list[int]
+    live: int
+
+    def __init__(self) -> None:
+        self.slots = []
+        self.mask = 255
+        for i in range(256):
+            self.slots.append(0)
+        self.k1 = []
+        self.k2 = []
+        self.vv = []
+        self.dead = []
+        self.live = 0
+
+def m2_hash(k1: int, k2: int) -> int:
+    return sym_hash_step(sym_hash_step(1469598103, k1), k2)
+
+# Anahtarın giriş indeksi (ölü olsa da) ya da -1.
+def m2_find(m: Map2, k1: int, k2: int) -> int:
+    i: int = m2_hash(k1, k2) & m.mask
+    while True:
+        s: int = m.slots[i]
+        if s == 0:
+            return -1
+        e: int = s - 1
+        if m.k1[e] == k1 and m.k2[e] == k2:
+            return e
+        i = (i + 1) & m.mask
+    return -1
+
+# CANLI girişin indeksi ya da -1.
+def m2_get(m: Map2, k1: int, k2: int) -> int:
+    e: int = m2_find(m, k1, k2)
+    if e >= 0 and m.dead[e] == 0:
+        return e
+    return -1
+
+def m2_grow(m: Map2) -> None:
+    cap: int = (m.mask + 1) * 2
+    m.mask = cap - 1
+    m.slots = []
+    for i in range(cap):
+        m.slots.append(0)
+    for e in range(len(m.k1)):
+        j: int = m2_hash(m.k1[e], m.k2[e]) & m.mask
+        while m.slots[j] != 0:
+            j = (j + 1) & m.mask
+        m.slots[j] = e + 1
+
+def m2_put(m: Map2, k1: int, k2: int, v: int) -> None:
+    e: int = m2_find(m, k1, k2)
+    if e >= 0:
+        m.vv[e] = v
+        if m.dead[e] != 0:
+            m.dead[e] = 0
+            m.live = m.live + 1
+        return
+    i: int = m2_hash(k1, k2) & m.mask
+    while m.slots[i] != 0:
+        i = (i + 1) & m.mask
+    ne: int = len(m.k1)
+    m.k1.append(k1)
+    m.k2.append(k2)
+    m.vv.append(v)
+    m.dead.append(0)
+    m.slots[i] = ne + 1
+    m.live = m.live + 1
+    if len(m.k1) * 2 > m.mask + 1:
+        m2_grow(m)
+
+def m2_remove(m: Map2, k1: int, k2: int) -> bool:
+    e: int = m2_find(m, k1, k2)
+    if e >= 0 and m.dead[e] == 0:
+        m.dead[e] = 1
+        m.live = m.live - 1
+        return True
+    return False
+
+# ---- denetleyici durumu ----
+class Ck:
+    tt: TT
+    # kapsamlar (Zig `Scope`): `sp` = üst kapsam (-1 yok), `sc` = yakalama kümesi kimliği (-1: kayıt yok; yalnız iç içe `def` kapsamında dolu)
+    sp: list[int]
+    sc: list[int]
+    ncaps: int
+    vars: Map2
+    caps: Map2
+    # modül düzeyi: `module_globals` (ad -> bildirilen tip), `module_int_consts` (ad -> değer)
+    globs: Map2
+    iconsts: Map2
+    top_scope: int
+    # `declare_var` uyuşmazlığında önceki tip (hata iletisi için)
+    e_prev: int
+
+    def __init__(self, tt: TT) -> None:
+        self.tt = tt
+        self.sp = []
+        self.sc = []
+        self.ncaps = 0
+        self.vars = Map2()
+        self.caps = Map2()
+        self.globs = Map2()
+        self.iconsts = Map2()
+        self.top_scope = -1
+        self.e_prev = -1
+
+# ---- Scope (Zig `Scope`) ----
+def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
+    id: int = len(ck.sp)
+    ck.sp.append(parent)
+    if has_caps:
+        ck.sc.append(ck.ncaps)
+        ck.ncaps = ck.ncaps + 1
+    else:
+        ck.sc.append(-1)
+    return id
+
+def sc_declare(ck: Ck, scope: int, sym: int, ty: int) -> None:
+    m2_put(ck.vars, scope, sym, ty)
+
+# Yalnızca bu kapsam (üst zincire DÜŞMEZ): TypeId ya da -1.
+def sc_lookup_local(ck: Ck, scope: int, sym: int) -> int:
+    e: int = m2_get(ck.vars, scope, sym)
+    if e < 0:
+        return -1
+    return ck.vars.vv[e]
+
+# Üst zincire düşer; bulunursa ve kapsamın yakalama kümesi varsa adı (ilk karşılaşmada) yakalama olarak kaydeder (zincirdeki her ara kapsam da kendi kaydını yapar).
+def sc_lookup(ck: Ck, scope: int, sym: int) -> int:
+    e: int = m2_get(ck.vars, scope, sym)
+    if e >= 0:
+        return ck.vars.vv[e]
+    p: int = ck.sp[scope]
+    if p >= 0:
+        t: int = sc_lookup(ck, p, sym)
+        if t >= 0:
+            cs: int = ck.sc[scope]
+            if cs >= 0 and m2_get(ck.caps, cs, sym) < 0:
+                m2_put(ck.caps, cs, sym, t)
+            return t
+    return -1
+
+# `lookup` ile aynı zincir, yan etkisiz (yakalama kaydı yok).
+def sc_exists(ck: Ck, scope: int, sym: int) -> bool:
+    if m2_get(ck.vars, scope, sym) >= 0:
+        return True
+    p: int = ck.sp[scope]
+    if p >= 0:
+        return sc_exists(ck, p, sym)
+    return False
+
+# `Checker.declareVar` (v1.148.0): aynı kapsamda FARKLI tiple yeniden bildirimi reddeder. 0 = bildirildi, 1 = uyuşmazlık (`ck.e_prev` = önceki tip; ileti 3.13'te biçimlenir).
+def declare_var(ck: Ck, scope: int, sym: int, ty: int) -> int:
+    tt: TT = ck.tt
+    ex: int = sc_lookup_local(ck, scope, sym)
+    if ex >= 0:
+        both_classes: bool = False
+        if tt.tag[ex] == 6 and tt.tag[ty] == 6:
+            if tt.xa[ex] == tt.xa[ty]:
+                both_classes = True
+            elif tt.cnonarc[tt.xa[ex]] == 0 and tt.cnonarc[tt.xa[ty]] == 0:
+                both_classes = True
+        if ex != ty and not both_classes:
+            ck.e_prev = ex
+            return 1
+    sc_declare(ck, scope, sym, ty)
+    return 0
+
+# ---- AST erişimi (düz dizi; bkz. project/selfhost-ast-tasarimi-2026-11.md) ----
+def sl_at(a: Ast, node: int, off: int) -> int:
+    return pk(a.n[node + off], a.n[node + off + 1])
+
+# Dize başvurusu `v` (paketli) ham bayt aralığı `base[off:off+n]` ile aynı mı.
+def sref_is_bytes(a: Ast, v: int, base: int, off: int, n: int) -> bool:
+    x: int = pkx(v)
+    ln: int = pky(v)
+    if x >= 0:
+        ln = ln - x
+    if ln != n:
+        return False
+    for i in range(n):
+        c: int = 0
+        if x >= 0:
+            c = at(a.src, x + i)
+        else:
+            c = a.sb[0 - x - 1 + i]
+        if c != tat(base, off + i):
+            return False
+    return True
+
+# `Checker.stmtsAssignName`: `name`e modülün herhangi bir yerinde (iç içe bloklar, işlev/metot gövdeleri dahil) atama var mı (muhafazakâr: yerel gölgelemeler dahil).
+def stmts_assign_name(a: Ast, s: int, base: int, off: int, n: int) -> bool:
+    cnt: int = pky(s)
+    for i in range(cnt):
+        st: int = a.l[pkx(s) + i]
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 3:
+            tg: int = a.n[pay + 0]
+            if a.n[tg] == 5 and sref_is_bytes(a, pk(a.n[tg + 1], a.n[tg + 2]), base, off, n):
+                return True
+        elif tag == 4:
+            if stmts_assign_name(a, sl_at(a, pay, 1), base, off, n):
+                return True
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                ec: int = a.l[pkx(ecs) + j]
+                if stmts_assign_name(a, sl_at(a, ec, 1), base, off, n):
+                    return True
+            if a.n[pay + 5] != -4611686018427387904:
+                if stmts_assign_name(a, sl_at(a, pay, 5), base, off, n):
+                    return True
+        elif tag == 5:
+            if stmts_assign_name(a, sl_at(a, pay, 1), base, off, n):
+                return True
+        elif tag == 6:
+            if sref_is_bytes(a, pk(a.n[pay + 0], a.n[pay + 0 + 1]), base, off, n):
+                return True
+            if stmts_assign_name(a, sl_at(a, pay, 3), base, off, n):
+                return True
+        elif tag == 13:
+            if stmts_assign_name(a, sl_at(a, pay, 0), base, off, n):
+                return True
+            exs: int = sl_at(a, pay, 2)
+            for k in range(pky(exs)):
+                ex: int = a.l[pkx(exs) + k]
+                if stmts_assign_name(a, sl_at(a, ex, 4), base, off, n):
+                    return True
+            if a.n[pay + 4] != -4611686018427387904:
+                if stmts_assign_name(a, sl_at(a, pay, 4), base, off, n):
+                    return True
+        elif tag == 21:
+            if stmts_assign_name(a, sl_at(a, pay, 3), base, off, n):
+                return True
+        elif tag == 14:
+            if stmts_assign_name(a, sl_at(a, pay, 0), base, off, n):
+                return True
+        elif tag == 7:
+            if stmts_assign_name(a, sl_at(a, pay, 8), base, off, n):
+                return True
+        elif tag == 8:
+            ms: int = sl_at(a, pay, 16)
+            for q in range(pky(ms)):
+                m: int = a.l[pkx(ms) + q]
+                if stmts_assign_name(a, sl_at(a, m, 8), base, off, n):
+                    return True
+    return False
+
+# ---- Zig <-> Nox test köprüsü (noxc-nightly `ck-diff`) ----
+CG: Ck = Ck(ty_global())
+
+def nox_ck_reset() -> int:
+    global CG
+    CG = Ck(ty_global())
+    return 0
+
+def nox_ck_scope_new(parent: int, has_caps: int) -> int:
+    return sc_new(CG, parent, has_caps != 0)
+
+def nox_ck_declare(scope: int, sym: int, ty: int) -> int:
+    sc_declare(CG, scope, sym, ty)
+    return 0
+
+def nox_ck_lookup_local(scope: int, sym: int) -> int:
+    return sc_lookup_local(CG, scope, sym)
+
+def nox_ck_lookup(scope: int, sym: int) -> int:
+    return sc_lookup(CG, scope, sym)
+
+def nox_ck_exists(scope: int, sym: int) -> int:
+    if sc_exists(CG, scope, sym):
+        return 1
+    return 0
+
+def nox_ck_declare_var(scope: int, sym: int, ty: int) -> int:
+    return declare_var(CG, scope, sym, ty)
+
+def nox_ck_set_nonarc(sym: int, flag: int) -> int:
+    cls_set_nonarc(CG.tt, sym, flag)
+    return 0
+
+# Kapsamın yakalama sayısı ve i. yakalama (0: sembol, 1: tip), ekleme sırasıyla.
+def nox_ck_caps_n(scope: int) -> int:
+    cs: int = CG.sc[scope]
+    if cs < 0:
+        return 0
+    n: int = 0
+    for e in range(len(CG.caps.k1)):
+        if CG.caps.k1[e] == cs and CG.caps.dead[e] == 0:
+            n = n + 1
+    return n
+
+def nox_ck_cap(scope: int, i: int, which: int) -> int:
+    cs: int = CG.sc[scope]
+    n: int = 0
+    for e in range(len(CG.caps.k1)):
+        if CG.caps.k1[e] == cs and CG.caps.dead[e] == 0:
+            if n == i:
+                if which == 0:
+                    return CG.caps.k2[e]
+                return CG.caps.vv[e]
+            n = n + 1
+    return -1
+
+# Modül düzeyi tablolar. which: 0 = module_globals, 1 = module_int_consts. Değerler: tip kimliği / tamsayı.
+def ck_tab(which: int) -> Map2:
+    if which == 0:
+        return CG.globs
+    return CG.iconsts
+
+def nox_ck_tab_put(which: int, sym: int, v: int) -> int:
+    m2_put(ck_tab(which), 0, sym, v)
+    return 0
+
+# Var mı: 1/0 (değer ayrı çağrıyla).
+def nox_ck_tab_has(which: int, sym: int) -> int:
+    if m2_get(ck_tab(which), 0, sym) >= 0:
+        return 1
+    return 0
+
+def nox_ck_tab_get(which: int, sym: int) -> int:
+    m: Map2 = ck_tab(which)
+    e: int = m2_get(m, 0, sym)
+    if e < 0:
+        return 0
+    return m.vv[e]
+
+def nox_ck_tab_remove(which: int, sym: int) -> int:
+    if m2_remove(ck_tab(which), 0, sym):
+        return 1
+    return 0
+
+def nox_ck_tab_live(which: int) -> int:
+    return ck_tab(which).live
+
+# `stmtsAssignName(son ayrıştırılan modülün gövdesi, ad)`; ad: `base[off:off+n]` baytları (`types.nox` `nox_ty_names` tamponu değil; çağıran `base` verir).
+def nox_ck_assigns_name(base: int, off: int, n: int) -> int:
+    if stmts_assign_name(parse_ast(), parse_body(), base, off, n):
+        return 1
+    return 0
+
+def nox_ck_mem() -> int:
+    c: Ck = CG
+    return (len(c.sp) * 2 + len(c.vars.k1) * 4 + len(c.vars.slots) + len(c.caps.k1) * 4 + len(c.caps.slots) + len(c.globs.k1) * 4 + len(c.globs.slots) + len(c.iconsts.k1) * 4 + len(c.iconsts.slots)) * 8
+
+# ---- ölçüm (ck-bench): Zig `selfhost_ck_diff.zig` `benchZig` ile AYNI iş yükü ve sağlama toplamı ----
+# ns kapsam zinciri (i. kapsamın üstü i-1; i % 4 == 3 olanlar yakalamalı), nn ad, m işlem (%70 lookup, %30 declare).
+def nox_ck_bench(seed: int, ns: int, nn: int, m: int) -> int:
+    ck: Ck = Ck(ty_global())
+    for i in range(ns):
+        par: int = i - 1
+        sc_new(ck, par, i % 4 == 3)
+    x: int = seed & 2147483647
+    acc: int = 0
+    for j in range(m):
+        x = lcg(x)
+        op: int = (x >> 6) % 10
+        x = lcg(x)
+        s: int = (x >> 4) % ns
+        x = lcg(x)
+        sym: int = (x >> 4) % nn
+        if op < 7:
+            acc = acc + sc_lookup(ck, s, sym) + 1
+        else:
+            x = lcg(x)
+            sc_declare(ck, s, sym, (x >> 4) % 5)
+    return acc + len(ck.caps.k1)
+

@@ -132,3 +132,23 @@ test "types-diff: Zig tip temsili ile Nox tip tablosu farksiz (3 tohum)" {
         try std.testing.expect(std.mem.indexOf(u8, r.stdout, "types-diff: OK") != null);
     }
 }
+
+// Aşama 3.2: Zig `checker.Scope`/`stmtsAssignName` ↔ Nox `selfhost/typecheck.nox` (kapsam/sembol tabloları). Nightly yoksa atlanır.
+test "ck-diff: kapsam tabloları ve stmtsAssignName Zig ile farksiz" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    if (!have(io, "zig-out/bin/noxc-nightly")) return error.SkipZigTest;
+    for ([_][]const u8{ "1", "5" }) |seed| {
+        const r = try run(&.{ "zig-out/bin/noxc-nightly", "ck-diff", "scope", "10000", seed });
+        defer std.testing.allocator.free(r.stdout);
+        defer std.testing.allocator.free(r.stderr);
+        try std.testing.expect(r.term == .exited and r.term.exited == 0);
+        try std.testing.expect(std.mem.indexOf(u8, r.stdout, "ck-diff: OK scope") != null);
+    }
+    const r = try run(&.{ "zig-out/bin/noxc-nightly", "ck-diff", "assign", "selfhost/types.nox", "selfhost/typecheck.nox", "stdlib/nox/json.nox" });
+    defer std.testing.allocator.free(r.stdout);
+    defer std.testing.allocator.free(r.stderr);
+    try std.testing.expect(r.term == .exited and r.term.exited == 0);
+    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "ck-diff: OK assign") != null);
+}
+

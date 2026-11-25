@@ -11,7 +11,7 @@ const glue = @import("selfhost_glue.zig");
 const Type = types.Type;
 
 /// Sınıf adı havuzu (UTF-8 dahil); hepsi tek bitişik tampona yazılır (Nox `sym_intern` ofset/uzunlukla okur).
-const class_names = [_][]const u8{ "Point", "Vector", "Shape", "Circle", "Box__int", "Ünï", "世界", "A", "__nox_FnBox__x", "Unregistered" };
+pub const class_names = [_][]const u8{ "Point", "Vector", "Shape", "Circle", "Box__int", "Ünï", "世界", "A", "__nox_FnBox__x", "Unregistered" };
 const registered_count = class_names.len - 1; // son ad HİÇ kaydedilmez (`classes.get(..) orelse false` yolu)
 
 const Hier = struct {
@@ -49,7 +49,7 @@ fn refAssignable(h: *const Hier, declared: Type, value: Type) bool {
     return false;
 }
 
-fn gen(r: std.Random, a: std.mem.Allocator, depth: u32) !Type {
+pub fn gen(r: std.Random, a: std.mem.Allocator, depth: u32) !Type {
     const leaf = depth == 0 or r.intRangeLessThan(u8, 0, 10) < 3;
     const pick = r.intRangeLessThan(u8, 0, if (leaf) 8 else 18);
     switch (pick) {
@@ -94,7 +94,7 @@ fn gen(r: std.Random, a: std.mem.Allocator, depth: u32) !Type {
 }
 
 /// Nox tarafında `t`yi kurar ve TypeId döner (Zig `Type` birleşim sırası = Nox etiketleri; bkz. `selfhost/types.nox` başlığı).
-fn build(api: glue.TypeApi, syms: []const i64, t: Type) i64 {
+pub fn build(api: glue.TypeApi, syms: []const i64, t: Type) i64 {
     return switch (t) {
         .int => api.scalar(0),
         .float => api.scalar(1),

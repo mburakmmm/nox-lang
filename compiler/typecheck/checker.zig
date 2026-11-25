@@ -334,7 +334,7 @@ const ProtocolInfo = struct {
     methods: []const ProtocolMethod,
 };
 
-const Scope = struct {
+pub const Scope = struct {
     vars: std.StringHashMapUnmanaged(Type) = .{},
     /// Faz U.4.2: yalnızca bir İÇ İÇE `def`in KENDİ scope'unda NON-null —
     /// dış (kapsayan) fonksiyonun scope'una işaret eder. Üst-düzey bir
@@ -346,21 +346,21 @@ const Scope = struct {
     /// `.func_def` dalı, `checkNestedFuncDef`).
     captures: ?*std.StringHashMapUnmanaged(Type) = null,
 
-    fn declare(self: *Scope, allocator: std.mem.Allocator, name: []const u8, ty: Type) !void {
+    pub fn declare(self: *Scope, allocator: std.mem.Allocator, name: []const u8, ty: Type) !void {
         try self.vars.put(allocator, name, ty);
     }
 
     /// YALNIZCA bu scope'un KENDİ değişkenlerine bakar — `parent` zincirine
     /// DÜŞMEZ (bkz. `checkAssign`in `.identifier` dalı, "yakalanan bir
     /// değişkene ATAMA denemesi" ayrımı İÇİN kullanılır).
-    fn lookupLocal(self: *Scope, name: []const u8) ?Type {
+    pub fn lookupLocal(self: *Scope, name: []const u8) ?Type {
         return self.vars.get(name);
     }
 
     /// KENDİ değişkenlerinde bulunamazsa `parent` zincirine DÜŞER — bulunursa
     /// VE `self.captures` AYARLIYSA bu ismi (İLK karşılaşmada) bir "serbest
     /// değişken" (capture) olarak KAYDEDER.
-    fn lookup(self: *Scope, allocator: std.mem.Allocator, name: []const u8) !?Type {
+    pub fn lookup(self: *Scope, allocator: std.mem.Allocator, name: []const u8) !?Type {
         if (self.vars.get(name)) |t| return t;
         if (self.parent) |p| {
             if (try p.lookup(allocator, name)) |t| {
@@ -377,7 +377,7 @@ const Scope = struct {
     /// yalnızca "bu isim BULUNABİLİR Mİ" sorusuna yanıt verir (bkz.
     /// `checkAssign`in `.identifier` dalı, "yakalanan bir değişkene ATAMA
     /// denemesi" İÇİN daha İYİ bir hata mesajı ÜRETMEK amacıyla kullanılır).
-    fn existsInChain(self: *Scope, name: []const u8) bool {
+    pub fn existsInChain(self: *Scope, name: []const u8) bool {
         if (self.vars.contains(name)) return true;
         if (self.parent) |p| return p.existsInChain(name);
         return false;
@@ -1963,7 +1963,7 @@ pub const Checker = struct {
     }
 
     /// `name`e modülün herhangi bir yerinde (iç içe bloklar, işlev/metot gövdeleri dahil) atama var mı? (Muhafazakâr: yerel gölgelemeler de sayılır.)
-    fn stmtsAssignName(stmts: []const ast.Stmt, name: []const u8) bool {
+    pub fn stmtsAssignName(stmts: []const ast.Stmt, name: []const u8) bool {
         for (stmts) |st| switch (st.kind) {
             .assign => |a| if (a.target == .identifier and std.mem.eql(u8, a.target.identifier, name)) return true,
             .if_stmt => |s| {

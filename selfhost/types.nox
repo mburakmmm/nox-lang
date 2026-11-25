@@ -26,6 +26,8 @@ class TT:
     creg: list[int]
     cbase: list[int]
     cmix: list[int]
+    # 3.2: `classHasNonArcFields` sonucu (sınıf kaydı 3.4'te doldurur; `declare_var` kullanır)
+    cnonarc: list[int]
     mxs: list[int]
     out: list[int]
 
@@ -50,6 +52,7 @@ class TT:
         self.creg = []
         self.cbase = []
         self.cmix = []
+        self.cnonarc = []
         self.mxs = []
         self.out = []
 
@@ -95,6 +98,7 @@ def sym_intern(tt: TT, base: int, off: int, n: int) -> int:
     tt.creg.append(0)
     tt.cbase.append(-1)
     tt.cmix.append(-1)
+    tt.cnonarc.append(0)
     tt.ssl[i0] = nid + 1
     if len(tt.so) * 2 > tt.smask + 1:
         sym_grow(tt)
@@ -429,6 +433,9 @@ def ty_is_bitwise(tt: TT, id: int) -> bool:
 def cls_register(tt: TT, sym: int) -> None:
     tt.creg[sym] = 1
 
+def cls_set_nonarc(tt: TT, sym: int, flag: int) -> None:
+    tt.cnonarc[sym] = flag
+
 def cls_set_base(tt: TT, sym: int, base: int) -> None:
     tt.creg[sym] = 1
     tt.cbase[sym] = base
@@ -529,6 +536,10 @@ def ty_validate(tt: TT) -> int:
 # ---- Zig <-> Nox test köprüsü (noxc-nightly `types-diff`): TypeId'ler tamsayı olarak taşınır ----
 TG: TT = TT()
 TG_BASE: int = 0
+
+# Diğer modüller (typecheck) için paylaşılan tip tablosu (modül-düzeyi global başka modülden doğrudan okunmaz).
+def ty_global() -> TT:
+    return TG
 
 def nox_ty_reset() -> int:
     global TG
