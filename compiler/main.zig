@@ -3851,6 +3851,68 @@ fn writeJsonString(w: *std.Io.Writer, s: []const u8) !void {
     try w.writeByte('"');
 }
 
+/// UR-008 (NoxPy, v2.2.85): sabit varsayılan değer `{"type": ..., "value": ...}` olarak (checker yalnızca sabit literalleri kabul eder; `-` ön ekli sayılar dahil, `None` → `{"type": "None", "value": null}`);
+/// varsayılan yoksa `null`. Baytlar küçük harf onaltılık dizge olarak (`"hex"`).
+fn writeDefaultJson(w: *std.Io.Writer, d: ?ast.Expr) !void {
+    const e = d orelse return w.writeAll("null");
+    switch (e) {
+        .int_lit => |v| try w.print("{{\"type\": \"int\", \"value\": {d}}}", .{v}),
+        .float_lit => |v| try w.print("{{\"type\": \"float\", \"value\": {d}}}", .{v}),
+        .bool_lit => |v| try w.print("{{\"type\": \"bool\", \"value\": {s}}}", .{if (v) "true" else "false"}),
+        .none_lit => try w.writeAll("{\"type\": \"None\", \"value\": null}"),
+        .string_lit => |s| {
+            try w.writeAll("{\"type\": \"str\", \"value\": ");
+            try writeJsonString(w, s);
+            try w.writeAll("}");
+        },
+        .bytes_lit => |b| {
+            try w.writeAll("{\"type\": \"bytes\", \"hex\": \"");
+            for (b) |c| try w.print("{x:0>2}", .{c});
+            try w.writeAll("\"}");
+        },
+        .unary => |u| switch (u.operand.*) {
+            .int_lit => |v| try w.print("{{\"type\": \"int\", \"value\": {d}}}", .{-v}),
+            .float_lit => |v| try w.print("{{\"type\": \"float\", \"value\": {d}}}", .{-v}),
+            else => try w.writeAll("null"),
+        },
+        else => try w.writeAll("null"),
+    }
+}
+
+/// UR-008 (NoxPy, v2.2.85): `expand --json` tip dizgeleri KANONİK yüzey yazımıyla verilir: sentezlenmiş `tuple__int_str` sınıfı `tuple[int, str]` olarak yazılır
+/// (eleman tipleri `Checker.tuple_elem_types`ten); `list`/`dict`/`T | None` içlerinde de özyinelemeli uygulanır. Diğer tipler `types.format` ile birebir aynıdır.
+fn formatCanonicalType(checker_state: *checker.Checker, t: tc_types.Type, w: *std.Io.Writer) std.Io.Writer.Error!void {
+    switch (t) {
+        .class => |name| {
+            if (checker_state.tuple_elem_types.get(name)) |elems| {
+                try w.writeAll("tuple[");
+                for (elems, 0..) |e, i| {
+                    if (i > 0) try w.writeAll(", ");
+                    try formatCanonicalType(checker_state, e, w);
+                }
+                try w.writeAll("]");
+            } else try w.writeAll(name);
+        },
+        .list => |elem| {
+            try w.writeAll("list[");
+            try formatCanonicalType(checker_state, elem.*, w);
+            try w.writeAll("]");
+        },
+        .dict => |d| {
+            try w.writeAll("dict[");
+            try formatCanonicalType(checker_state, d.key.*, w);
+            try w.writeAll(", ");
+            try formatCanonicalType(checker_state, d.value.*, w);
+            try w.writeAll("]");
+        },
+        .optional => |elem| {
+            try formatCanonicalType(checker_state, elem.*, w);
+            try w.writeAll(" | None");
+        },
+        else => try tc_types.format(t, w),
+    }
+}
+
 /// UR-007 (NoxPy): `@export` taşıyan ÜST-DÜZEY kullanıcı işlevlerinin tipli metadata'sı (şema v1, bkz. NoxPy `python/noxpy/ir.py`). Tipler/imzalar checker'ın çözümlediği
 /// `functions` tablosundan (`types.format`) gelir; docstring gövdenin ilk dize deyimidir; ilk konumsal dize argümanı `thread_policy`dir (`@export("instance_locked")`).
 /// `c_symbol` UR-002'nin üreteceği host sarmalayıcı adıdır (`nox_host_export_<modül>_<ad>`). Yalnızca `user_module` (birleştirilmemiş) taranır: stdlib dışa aktarılmaz.
@@ -3902,14 +3964,16 @@ fn writeExportMetadataJson(a: std.mem.Allocator, w: *std.Io.Writer, user_module:
             try writeJsonString(w, p.name);
             try w.writeAll(", \"type\": ");
             var tbuf: std.Io.Writer.Allocating = .init(a);
-            if (i < sig.params.len) try tc_types.format(sig.params[i], &tbuf.writer);
+            if (i < sig.params.len) try formatCanonicalType(checker_state, sig.params[i], &tbuf.writer);
             try writeJsonString(w, tbuf.written());
             const kind: []const u8 = if (p.variadic) "var_positional" else if (p.var_kw) "var_keyword" else if (p.kw_only) "keyword_only" else if (p.pos_only) "positional_only" else "positional_or_keyword";
-            try w.print(", \"kind\": \"{s}\", \"has_default\": {s}}}", .{ kind, if (p.default != null) "true" else "false" });
+            try w.print(", \"kind\": \"{s}\", \"has_default\": {s}, \"default\": ", .{ kind, if (p.default != null) "true" else "false" });
+            try writeDefaultJson(w, p.default);
+            try w.writeAll("}");
         }
         try w.writeAll("], \"return_type\": ");
         var rbuf: std.Io.Writer.Allocating = .init(a);
-        try tc_types.format(sig.return_type, &rbuf.writer);
+        try formatCanonicalType(checker_state, sig.return_type, &rbuf.writer);
         try writeJsonString(w, rbuf.written());
         try w.writeAll("}");
     }

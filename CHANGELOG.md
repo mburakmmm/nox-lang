@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.85]
+
+NoxPy UR-008 dilim 1: `noxc expand --json` kanonik tip yazımı ve sabit varsayılan değerler. Ayrıntı: spec §3.519, `docs/apis/host-abi.md`.
+
+- `expand --json`: sentezlenmiş `tuple__int_str` yerine `tuple[int, str]`; `list`/`dict`/`T | None` içlerinde özyinelemeli (`list[tuple[int, str]]`, `dict[str, tuple[int, float]]`). Diğer tip dizgeleri birebir aynı.
+- `expand --json`: her parametrede `default` alanı (`null` ya da `{"type": ..., "value": ...}`; `has_default` korunur). Şema sürümü 1 (eklemeli).
+- Test: `tests/cli/expand_json_test.zig` (tuple/iç içe konteyner/varsayılan değerler).
+- **Hâlâ açık (UR-008 dilim 2):** `--host-abi` ile `T | None`, `list[T]`, `dict[K, V]`, `tuple[...]` parametre/dönüş marshaling'i (opak değer-ağacı API'si, `nox_host.h` ABI v2); `--host-abi` bunları hâlâ reddeder.
+
 ## [2.2.84]
 
 Selfhost Aşama 3.13-A: `spawn f(...)` ifadesi Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.518, `project/noxc-nightly-selfhost-plani-2026-11.md`.

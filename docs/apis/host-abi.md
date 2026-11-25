@@ -51,6 +51,12 @@ context per thread**. There is no fixed table of thread slots, so threads may co
 A class instance crosses the boundary as an opaque `NoxHostHandle` (generation-checked, owned by the context that produced it). A released, forged or foreign
 handle is rejected with `NOX_HOST_ERR_INVALID_HANDLE`; the raw object layout is never visible. `nox_host_handle_retain` makes a second handle to the same object.
 
+## Export metadata (`noxc expand --json`)
+
+Types are spelled canonically as written in Nox source: `tuple[int, str]`, `list[int | None]`, `dict[str, tuple[int, float]]`, `int | None` (never the compiler-internal
+`tuple__int_str`). Each parameter carries `has_default` and, since v2.2.85, `default`: `null` when there is none, otherwise `{"type": "int|float|bool|str|None|bytes", "value": ...}`
+(`bytes` uses `"hex"`). Defaults are always constant literals (the checker rejects anything else), so a host can apply them without running Nox code.
+
 ## Known limits
 
 - Out-of-memory and fixed-width integer overflow traps terminate the process; they cannot be turned into a recoverable error (Nox has no unwind tables).
