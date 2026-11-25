@@ -463,7 +463,11 @@ def type_expr_to_type(ck: Ck, a: Ast, te: int) -> int:
         return ty_optional(tt, inner)
     if tag != {{T:TypeExpr.simple}}:
         raise unsup(ck, "type_expr_to_type#qualified")
-    v: int = pk(a.n[te + 1], a.n[te + 2])
+    return simple_type(ck, a, pk(a.n[te + 1], a.n[te + 2]))
+
+# `typeExprToType(.{ .simple = ad })`: skaler adlar, sabit-genişlikli türler, kullanıcı sınıfı (`sizeof/alignof/offsetof` de bunu kullanır).
+def simple_type(ck: Ck, a: Ast, v: int) -> int:
+    tt: TT = ck.tt
     if sref_eq(a, v, "int"):
         return 0
     if sref_eq(a, v, "float"):
@@ -568,11 +572,11 @@ def type_expr_generic(ck: Ck, a: Ast, g: int) -> int:
         kt: int = type_expr_to_type(ck, a, stmt_at(a, gargs, 0))
         vt: int = type_expr_to_type(ck, a, stmt_at(a, gargs, 1))
         if kt != 0 and kt != 2 and kt != 3 and kt != 1:
-            mp(ck, "the 'dict' key type can only be int/float/bool/str")
+            mp(ck, "the 'dict' key type can only be int/float/bool/str/bytes")
             raise mk_fail(ck, "UnknownType")
         vg: int = tt.tag[vt]
         if vt != 0 and vt != 1 and vt != 2 and vt != 3 and vg != 6 and vg != 5 and vg != 13:
-            mp(ck, "the 'dict' value type can only be int/float/bool/str/class/list/dict")
+            mp(ck, "the 'dict' value type can only be int/float/bool/str/bytes/class/list/dict")
             raise mk_fail(ck, "UnknownType")
         return ty_dict(tt, kt, vt)
     # `__nox_*` (parser'ın Iterator/Generator → `__nox_Gen[T]` haritası, prelude jenerikleri): kapsam dışı
@@ -712,10 +716,10 @@ def check_dict_lit(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
     fk: int = check_expr(ck, a, fx, a.n[p0 + {{O:DictPair.key}}])
     fv: int = check_expr(ck, a, fx, a.n[p0 + {{O:DictPair.value}}])
     if not dict_key_ok(ck, fk):
-        mp(ck, "the 'dict' key type can only be int/float/bool/str")
+        mp(ck, "the 'dict' key type can only be int/float/bool/str/bytes")
         raise mk_fail(ck, "TypeMismatch")
     if not dict_value_ok(ck, fv):
-        mp(ck, "the 'dict' value type can only be int/float/bool/str/class/list/dict")
+        mp(ck, "the 'dict' value type can only be int/float/bool/str/bytes/class/list/dict")
         raise mk_fail(ck, "TypeMismatch")
     for i in range(1, n):
         pp: int = a.l[st + i]
@@ -910,7 +914,7 @@ def check_binary(ck: Ck, a: Ast, fx: Fx, b: int) -> int:
                 mp(ck, "only a str can be searched for inside a str with 'in'")
                 raise mk_fail(ck, "TypeMismatch")
             return 2
-        mp(ck, "'in'/'not in' can only be used on list, dict and str")
+        mp(ck, "'in'/'not in' can only be used on list, dict, str and bytes")
         raise mk_fail(ck, "TypeMismatch")
     if op == {{E:BinaryOp.bit_and}} or op == {{E:BinaryOp.bit_or}} or op == {{E:BinaryOp.bit_xor}}:
         if l == 2 and r == 2:
@@ -1145,9 +1149,200 @@ def check_len(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
     if has_dunder(ck, t, "__len__"):
         raise unsup(ck, "check_len#dunder")
     if t != 3 and g != 5 and g != 13:
-        mp(ck, "'len' only works on str/list/dict/tuple (define `__len__` for classes)")
+        mp(ck, "'len' only works on str/list/dict/bytes/tuple (define `__len__` for classes)")
         raise mk_fail(ck, "TypeMismatch")
     return 0
+
+# ---- yerleşik dönüşüm/ölçü çağrıları (Zig `checkCallInner` yerleşik dalları; 3.10 dilim B) ----
+# `FixedIntKind` adı -> tür sırası (u8 0 ... isize 9); değilse -1.
+def fixed_kind_of(a: Ast, v: int) -> int:
+    if sref_eq(a, v, "u8"):
+        return 0
+    if sref_eq(a, v, "u16"):
+        return 1
+    if sref_eq(a, v, "u32"):
+        return 2
+    if sref_eq(a, v, "u64"):
+        return 3
+    if sref_eq(a, v, "usize"):
+        return 4
+    if sref_eq(a, v, "i8"):
+        return 5
+    if sref_eq(a, v, "i16"):
+        return 6
+    if sref_eq(a, v, "i32"):
+        return 7
+    if sref_eq(a, v, "i64"):
+        return 8
+    if sref_eq(a, v, "isize"):
+        return 9
+    return -1
+
+# argüman listesinde anahtarlı (`kwarg`) argüman yok mu (Zig `positional == c.args.len`).
+def all_positional(a: Ast, args: int) -> bool:
+    for i in range(pky(args)):
+        if a.n[stmt_at(a, args, i)] == {{T:Expr.kwarg}}:
+            return False
+    return True
+
+def argc_fail(ck: Ck, a: Ast, cv: int, want: str) -> None:
+    mp(ck, "'")
+    mp_sref(ck, a, cv)
+    mp(ck, "' takes exactly ")
+    mp(ck, want)
+    raise mk_fail(ck, "ArgumentCountMismatch")
+
+# Bir yerleşik çağrının tek tip-argümanı: çıplak tanımlayıcı olmalı (değişken araması YAPILMAZ).
+def builtin_type_arg(ck: Ck, a: Ast, args: int, i: int, msg_a: str, cv: int, msg_b: str) -> int:
+    e: int = stmt_at(a, args, i)
+    if a.n[e] != {{T:Expr.identifier}}:
+        mp(ck, msg_a)
+        if len(msg_b) > 0:
+            mp(ck, "'")
+            mp_sref(ck, a, cv)
+            mp(ck, msg_b)
+        raise mk_fail(ck, "TypeMismatch")
+    return pk(a.n[e + 1], a.n[e + 2])
+
+# -1: `cv` bu dilimin yerleşiklerinden biri değil (normal çağrı yolu sürer); aksi halde sonuç tipi.
+def check_builtin_call(ck: Ck, a: Ast, fx: Fx, c: int, cv: int) -> int:
+    args: int = sl_at(a, c, {{O:Call.args}})
+    n: int = pky(args)
+    tt: TT = ck.tt
+    if sref_eq(a, cv, "__nox_bind_method"):
+        raise unsup(ck, "check_call#bind_method")
+    if sref_eq(a, cv, "__nox_str_chars"):
+        if n != 1:
+            mp(ck, "'__nox_str_chars' (internal) takes exactly 1 argument")
+            raise mk_fail(ck, "ArgumentCountMismatch")
+        if check_expr(ck, a, fx, stmt_at(a, args, 0)) != 3:
+            mp(ck, "'__nox_str_chars' (internal) expects a str")
+            raise mk_fail(ck, "TypeMismatch")
+        return ty_list(tt, 3)
+    if sref_eq(a, cv, "__nox_hash"):
+        if n != 1:
+            mp(ck, "'__nox_hash' (internal) takes exactly 1 argument")
+            raise mk_fail(ck, "ArgumentCountMismatch")
+        check_expr(ck, a, fx, stmt_at(a, args, 0))
+        return 0
+    if sref_eq(a, cv, "super"):
+        mp(ck, "'super()' can only be used in the 'super().method(...)' or 'super().__init__(...)' form, directly as the receiver of a method call")
+        raise mk_fail(ck, "TypeMismatch")
+    # `int(s, taban)` (2 konumsal argüman) prelude'a yönlendirilir (`__nox_int_base`): kapsam dışı
+    if sref_eq(a, cv, "int") and n == 2 and all_positional(a, args):
+        raise unsup(ck, "check_call#prelude")
+    if sref_eq(a, cv, "repr") and m2_get(ck.fmap, 0, sym_of(ck, a, cv)) < 0:
+        if n != 1:
+            argc_fail(ck, a, cv, "1 argument")
+        rt: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        if tt.tag[rt] == 14 or rt == 4:
+            mp(ck, "'repr' does not work on function/None values")
+            raise mk_fail(ck, "TypeMismatch")
+        return 3
+    if sref_eq(a, cv, "bytes"):
+        bsym: int = sym_of(ck, a, cv)
+        if m2_get(ck.fmap, 0, bsym) < 0 and class_idx(ck, bsym) < 0:
+            raise unsup(ck, "check_call#bytes")
+        return -1
+    if sref_eq(a, cv, "str"):
+        if n != 1:
+            argc_fail(ck, a, cv, "1 argument")
+        st: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        if has_dunder(ck, st, "__str__"):
+            raise unsup(ck, "check_str#dunder")
+        sg: int = tt.tag[st]
+        if sg == 5 or sg == 13 or sg == 6:
+            return 3
+        if st != 0 and st != 1 and st != 3 and st != 2 and sg != 16:
+            mp(ck, "'str' works on int/float/str/bool/list/dict/class (for an Optional, narrow out None first)")
+            raise mk_fail(ck, "TypeMismatch")
+        return 3
+    if sref_eq(a, cv, "int"):
+        if n != 1:
+            argc_fail(ck, a, cv, "1 argument")
+        it: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        if it != 3 and it != 1 and it != 2 and tt.tag[it] != 16:
+            mp(ck, "'int' only works on str/float/bool/fixed-width integers")
+            raise mk_fail(ck, "TypeMismatch")
+        return 0
+    if sref_eq(a, cv, "float"):
+        if n != 1:
+            argc_fail(ck, a, cv, "1 argument")
+        ft: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        if ft != 3 and ft != 0 and ft != 1 and ft != 2 and tt.tag[ft] != 16:
+            mp(ck, "'float' only works on str/int/float/bool/fixed-width integers")
+            raise mk_fail(ck, "TypeMismatch")
+        return 1
+    fk: int = fixed_kind_of(a, cv)
+    if fk >= 0:
+        if n != 1:
+            argc_fail(ck, a, cv, "1 argument")
+        xt: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        if xt != 0 and xt != 1 and tt.tag[xt] != 16:
+            mp(ck, "'")
+            mp_sref(ck, a, cv)
+            mp(ck, "' only works on int/float/fixed-width integer types")
+            raise mk_fail(ck, "TypeMismatch")
+        return 6 + fk
+    if sref_eq(a, cv, "sizeof") or sref_eq(a, cv, "alignof"):
+        if n != 1:
+            argc_fail(ck, a, cv, "1 argument")
+        tn: int = builtin_type_arg(ck, a, args, 0, "the argument of ", cv, "' must be a type name (a bare identifier)")
+        simple_type(ck, a, tn)
+        return 10
+    if sref_eq(a, cv, "offsetof"):
+        if n != 2:
+            mp(ck, "'offsetof' takes exactly 2 arguments (Class, \"field\")")
+            raise mk_fail(ck, "ArgumentCountMismatch")
+        cn: int = builtin_type_arg(ck, a, args, 0, "argument 1 of 'offsetof' must be a class name (a bare identifier)", cv, "")
+        ot: int = simple_type(ck, a, cn)
+        if tt.tag[ot] != 6:
+            mp(ck, "'offsetof' only works on a class type: ")
+            mp_sref(ck, a, cn)
+            raise mk_fail(ck, "TypeMismatch")
+        fe: int = stmt_at(a, args, 1)
+        if a.n[fe] != {{T:Expr.string_lit}}:
+            mp(ck, "argument 2 of 'offsetof' can only be a string LITERAL")
+            raise mk_fail(ck, "TypeMismatch")
+        oci: int = class_idx_of_type(ck, ot)
+        if oci < 0:
+            mp(ck, "unknown class: ")
+            mp_sym(ck, tt.xa[ot])
+            raise mk_fail(ck, "UndefinedClass")
+        fnm: int = pk(a.n[fe + 1], a.n[fe + 2])
+        if m2_get(ck.cls_fields, oci, sym_of(ck, a, fnm)) < 0:
+            mp(ck, "class '")
+            mp_sym(ck, ck.cls_sym[oci])
+            mp(ck, "' has no field '")
+            mp_sref(ck, a, fnm)
+            mp(ck, "'")
+            raise mk_fail(ck, "UndefinedAttribute")
+        return 10
+    return -1
+
+# Zig'de ayrı yolu olan (prelude yönlendirmesi, ptr/lowlevel ailesi, dahili `__nox_*`) ama bu dilimde taşınmayan ad: kapsam dışı etiketi; "" = yok.
+def call_gap_label(ck: Ck, a: Ast, cv: int, fi: int, ci: int) -> str:
+    if sref_len(cv) >= 6 and sref_byte(a, cv, 0) == 95 and sref_byte(a, cv, 1) == 95 and sref_byte(a, cv, 2) == 110 and sref_byte(a, cv, 3) == 111 and sref_byte(a, cv, 4) == 120 and sref_byte(a, cv, 5) == 95:
+        return "check_call#internal"
+    if sref_eq(a, cv, "ptr_from_int") or sref_eq(a, cv, "ptr_to_int") or sref_eq(a, cv, "ptr_of") or sref_eq(a, cv, "ffi_box") or sref_eq(a, cv, "ptr_add") or sref_eq(a, cv, "ptr_offset"):
+        return "check_call#lowlevel"
+    if sref_eq(a, cv, "ptr_read") or sref_eq(a, cv, "ptr_write") or sref_eq(a, cv, "ptr_read_int") or sref_eq(a, cv, "ptr_read_float") or sref_eq(a, cv, "ptr_read_bool"):
+        return "check_call#lowlevel"
+    if sref_eq(a, cv, "ptr_write_int") or sref_eq(a, cv, "ptr_write_float") or sref_eq(a, cv, "ptr_write_bool") or sref_eq(a, cv, "ptr_read_volatile") or sref_eq(a, cv, "ptr_write_volatile"):
+        return "check_call#lowlevel"
+    if sref_eq(a, cv, "memory_fence") or sref_eq(a, cv, "compiler_fence") or sref_eq(a, cv, "detach") or sref_eq(a, cv, "adopt") or sref_eq(a, cv, "wasm_call"):
+        return "check_call#lowlevel"
+    # `tryDesugarPreludeCall`: kullanıcı aynı adlı (prelude-dışı) işlev/sınıf tanımlamadıysa çağrı prelude yardımcılarına yönlendirilir
+    prel: bool = False
+    if sref_eq(a, cv, "max") or sref_eq(a, cv, "min") or sref_eq(a, cv, "sorted") or sref_eq(a, cv, "sum") or sref_eq(a, cv, "round") or sref_eq(a, cv, "map") or sref_eq(a, cv, "filter") or sref_eq(a, cv, "any") or sref_eq(a, cv, "all"):
+        return "check_call#prelude"
+    if sref_eq(a, cv, "list") or sref_eq(a, cv, "set") or sref_eq(a, cv, "bool") or sref_eq(a, cv, "next") or sref_eq(a, cv, "zip") or sref_eq(a, cv, "enumerate") or sref_eq(a, cv, "reversed"):
+        prel = True
+    if sref_eq(a, cv, "hex") or sref_eq(a, cv, "oct") or sref_eq(a, cv, "bin") or sref_eq(a, cv, "pow") or sref_eq(a, cv, "format"):
+        prel = True
+    if prel and fi < 0 and ci < 0:
+        return "check_call#prelude"
+    return ""
 
 def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
     callee: int = a.n[c + {{O:Call.callee}}]
@@ -1160,14 +1355,28 @@ def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
         return check_print(ck, a, fx, c)
     if sref_eq(a, cv, "len"):
         return check_len(ck, a, fx, c)
+    bt: int = check_builtin_call(ck, a, fx, c, cv)
+    if bt >= 0:
+        return bt
     sym: int = sym_of(ck, a, cv)
     fi: int = m2_get(ck.fmap, 0, sym)
     ci: int = class_idx(ck, sym)
+    gap: str = call_gap_label(ck, a, cv, fi, ci)
+    if len(gap) > 0:
+        raise unsup(ck, gap)
+    # yerel değer çağrısı (Zig: önce kapsam): işlev-tipli değer kapsam dışı, diğeri hata
+    lt: int = sc_lookup(ck, fx.scope, sym)
+    if lt >= 0:
+        if ck.tt.tag[lt] == 14:
+            raise unsup(ck, "check_call#fnvalue")
+        mp(ck, "'")
+        mp_sym(ck, sym)
+        mp(ck, "' is not a function and cannot be called")
+        raise mk_fail(ck, "TypeMismatch")
     if fi < 0 and ci < 0:
-        raise unsup(ck, "check_call#2")
-    # yerel bir ad işlevi/sınıfı gölgeliyorsa (iç içe/closure değeri) kapsam dışı
-    if sc_lookup(ck, fx.scope, sym) >= 0:
-        raise unsup(ck, "check_call#3")
+        mp(ck, "undefined function or class: ")
+        mp_sym(ck, sym)
+        raise mk_fail(ck, "UndefinedFunction")
     if fi >= 0 and m2_get(ck.afn, 0, sym) >= 0:
         mp(ck, "'")
         mp_sym(ck, sym)
@@ -1577,6 +1786,9 @@ def check_attribute(ck: Ck, a: Ast, fx: Fx, at: int) -> int:
     fe: int = m2_get(ck.cls_fields, ci, asym)
     if fe >= 0:
         return ck.cls_fields.vv[fe]
+    # `nesne.metod` değer olarak (bağlı metod: Zig `bound_method_fixup` ile yeniden yazılır) kapsam dışı
+    if m2_get(ck.cls_meths, ci, asym) >= 0:
+        raise unsup(ck, "attr#bound_method")
     mp(ck, "class '")
     mp_sym(ck, ck.cls_sym[ci])
     mp(ck, "' has no field '")

@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.79]
+
+Selfhost Aşama 3.10 dilim B: yerleşik dönüşüm/ölçü çağrıları Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.513, `project/noxc-nightly-selfhost-plani-2026-11.md`.
+
+- `selfhost/typecheck.nox.in`: `str/int/float/repr`, sabit-genişlikli daraltma cast'leri (`u8(x)`...), `sizeof/alignof/offsetof`, çıplak `super()` hatası, `__nox_str_chars/__nox_hash`, yerel değer çağrısı hatası ("is not a function") ve `UndefinedFunction` (Zig `checkCallInner` sırasıyla); prelude yönlendirmeli adlar/ptr ailesi/`__nox_*` ayrı kapsam dışı etiketlerle ayrıldı (`check_call#prelude/lowlevel/internal/fnvalue/bytes`).
+- Düzeltme (v2.2.77'den kalan sapma): Nox iletileri `bytes` sözcüğünü içerecek şekilde güncellendi (`len`, `in`, dict anahtar/değer tipi); `nesne.metod` değer olarak (bağlı metod) kapsam dışı (`attr#bound_method`).
+- `scripts/ck_gen.py --builtins` üreteci. Kanıt: 8 üreteç dizini + 347 golden + 953 depo dosyası Zig ile eşit.
+
 ## [2.2.78]
 
 NoxPy UR-002/003/004/005/006: Host ABI (`include/nox_host.h`, deneysel v1). Ayrıntı: `docs/apis/host-abi.md`, spec §3.512, `project/noxpy-ur002-host-abi-tasarim-2026-11.md`.

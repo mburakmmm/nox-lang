@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False):
         self.rnd = rnd
+        self.use_builtins = use_builtins
         self.use_async = use_async
         self.use_methods = use_methods
         self.funcs = []  # (name, [param types], ret)
@@ -322,8 +323,41 @@ class Gen:
         for _ in range(r.randint(1, 5)):
             self.lines.append(r.choice(tpl)())
 
+    def gen_builtins(self):
+        """yerleşik dönüşüm/ölçü çağrıları (3.10 dilim B): str/int/float/repr, sabit-genişlikli cast, sizeof/alignof/offsetof, super(), tanımsız/yerel değer çağrısı, prelude yönlendirmeli adlar."""
+        r = self.rnd
+        self.lines += ["class P:", "    a: int", "    b: str", "    def __init__(self, a: int, b: str) -> None:", "        self.a = a", "        self.b = b", "",
+                       "def f1(x: int) -> int:", "    return x + 1", "",
+                       "n: int = 3", "x: float = 1.5", 's: str = "12"', "t: bool = True", "u: u8 = 5", "k: i32 = 7", "xs: list[int] = [1, 2]", 'd: dict[str, int] = {"a": 1}', "o: int | None = None",
+                       "p: P = P(1, \"q\")", ""]
+        a1 = lambda: r.choice(["n", "x", "s", "t", "u", "k", "xs", "d", "o", "p", "1", "2.5", '"7"', "True", "None", "xs[0]", "f1(1)", "undefined_v"])
+        two = lambda: f"{a1()}, {a1()}"
+        tpl = [
+            lambda: f"a: str = str({a1()})", lambda: "a: str = str()", lambda: f"a: str = str({two()})", lambda: f"a: int = int({a1()})", lambda: "a: int = int()", lambda: f"a: int = int({two()})",
+            lambda: f"a: float = float({a1()})", lambda: "a: float = float()", lambda: f"a: float = float({two()})", lambda: f"a: str = repr({a1()})", lambda: "a: str = repr()", lambda: f"a: str = repr({two()})",
+            lambda: f"a: str = repr({r.choice(['f1', 'None'])})",
+            lambda: f"a: {r.choice(['u8', 'u16', 'u32', 'u64', 'usize', 'i8', 'i16', 'i32', 'i64', 'isize'])} = {r.choice(['u8', 'u16', 'u32', 'u64', 'usize', 'i8', 'i16', 'i32', 'i64', 'isize'])}({a1()})",
+            lambda: f"a: u8 = u8({two()})", lambda: "a: i32 = i32()", lambda: f"a: usize = {r.choice(['sizeof', 'alignof'])}({r.choice(['int', 'float', 'bool', 'str', 'u8', 'i64', 'P', 'ptr', 'Nope', 'n', '1', 'f1'])})",
+            lambda: f"a: usize = {r.choice(['sizeof', 'alignof'])}()", lambda: f"a: usize = sizeof(int, int)", lambda: f"a: usize = offsetof({r.choice(['P', 'int', 'Nope', 'n', '1'])}, {r.choice(['\"a\"', '\"b\"', '\"zz\"', 'n', '1'])})",
+            lambda: "a: usize = offsetof(P)", lambda: "a: usize = offsetof(P, \"a\", 1)", lambda: f"a: int = {r.choice(['sizeof', 'alignof', 'offsetof'])}(P, \"a\")",
+            lambda: f"a: int = {r.choice(['super', 'nope', 'n', 'o', 'xs', 'p', 'u'])}({r.choice(['', '1', 'n'])})",
+            lambda: f"a: int = {r.choice(['abs', 'chr', 'ord', 'divmod', 'isinstance', 'input'])}({a1()})",
+            lambda: f"a = {r.choice(['max', 'min', 'sorted', 'sum', 'round', 'map', 'filter', 'any', 'all', 'list', 'set', 'bool', 'next', 'zip', 'enumerate', 'reversed', 'hex', 'oct', 'bin', 'pow', 'format'])}({a1()})",
+            lambda: f"a: int = int({r.choice(['s', '\"7\"'])}, {r.choice(['2', '16', 'n'])})",
+            lambda: f"a: str = str({a1()}, end=\"\")", lambda: f"a: int = int(x={a1()})", lambda: f"a: usize = sizeof(int, x=1)",
+            lambda: f"a: int = f1({r.choice(['n', 'x', 's'])})", lambda: f"a: int = n(1)", lambda: f"a: int = s({a1()})", lambda: f"a: int = {r.choice(['P', 'f1'])}({a1()})",
+            lambda: f"a: int = {r.choice(['bytes', 'ptr_to_int', 'ptr_read', 'detach', '__nox_foo', '__nox_hash', '__nox_str_chars'])}({a1()})",
+            lambda: f"print(str({a1()}), int({a1()}), float({a1()}))",
+            lambda: f"a: int = len(str({a1()}))",
+        ]
+        for _ in range(r.randint(1, 5)):
+            self.lines.append(r.choice(tpl)())
+
     def program(self):
         r = self.rnd
+        if self.use_builtins:
+            self.gen_builtins()
+            return "\n".join(self.lines) + "\n"
         if self.use_methods:
             self.gen_methods()
             return "\n".join(self.lines) + "\n"
@@ -359,11 +393,12 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--async", dest="use_async", action="store_true")
     ap.add_argument("--methods", dest="use_methods", action="store_true")
+    ap.add_argument("--builtins", dest="use_builtins", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 
