@@ -12124,66 +12124,7 @@ pub const Checker = struct {
     }
 
     fn appendMangledType(self: *Checker, buf: *std.ArrayListUnmanaged(u8), t: Type) TypeError!void {
-        switch (t) {
-            .int => try buf.appendSlice(self.allocator, "int"),
-            .float => try buf.appendSlice(self.allocator, "float"),
-            .boolean => try buf.appendSlice(self.allocator, "bool"),
-            .str => try buf.appendSlice(self.allocator, "str"),
-            .none => try buf.appendSlice(self.allocator, "None"),
-            .ptr => try buf.appendSlice(self.allocator, "ptr"),
-            .fixed_int => |k| try buf.appendSlice(self.allocator, k.name()),
-            .class => |n| try buf.appendSlice(self.allocator, n),
-            .list => |elem| {
-                try buf.appendSlice(self.allocator, "list_");
-                try self.appendMangledType(buf, elem.*);
-            },
-            .task => |elem| {
-                try buf.appendSlice(self.allocator, "Task_");
-                try self.appendMangledType(buf, elem.*);
-            },
-            .channel => |elem| {
-                try buf.appendSlice(self.allocator, "Channel_");
-                try self.appendMangledType(buf, elem.*);
-            },
-            .thread_handle => |elem| {
-                try buf.appendSlice(self.allocator, "ThreadHandle_");
-                try self.appendMangledType(buf, elem.*);
-            },
-            .thread_channel => |elem| {
-                try buf.appendSlice(self.allocator, "ThreadChannel_");
-                try self.appendMangledType(buf, elem.*);
-            },
-            .task_local => |elem| {
-                try buf.appendSlice(self.allocator, "TaskLocal_");
-                try self.appendMangledType(buf, elem.*);
-            },
-            .dict => |d| {
-                try buf.appendSlice(self.allocator, "dict_");
-                try self.appendMangledType(buf, d.key.*);
-                try buf.appendSlice(self.allocator, "_");
-                try self.appendMangledType(buf, d.value.*);
-            },
-            // Faz U.4.1: `unifyTypeExpr`in AYNI kısıtı gereği bir generic
-            // fonksiyon HİÇBİR ZAMAN func-tipi bir tip parametresine
-            // BAĞLANAMAZ — bu dal PRATİKTE tetiklenmez, yalnızca exhaustive
-            // switch GEREKSİNİMİNİ karşılar.
-            .func => |f| {
-                try buf.appendSlice(self.allocator, "func_");
-                for (f.params) |p| {
-                    try self.appendMangledType(buf, p);
-                    try buf.appendSlice(self.allocator, "_");
-                }
-                try self.appendMangledType(buf, f.return_type.*);
-            },
-            .optional => |elem| {
-                try buf.appendSlice(self.allocator, "Optional_");
-                try self.appendMangledType(buf, elem.*);
-            },
-            .typed_ptr => |elem| {
-                try buf.appendSlice(self.allocator, "ptr_");
-                try self.appendMangledType(buf, elem.*);
-            },
-        }
+        try types.appendMangled(self.allocator, buf, t);
     }
 
     /// Bir generic fonksiyon çağrısını (`gfd`) somutlaştırır: argümanları

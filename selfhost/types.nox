@@ -1,0 +1,690 @@
+# noxc-nightly Aşama 3.1: Nox tip temsili (compiler/typecheck/types.zig + checker.zig `assignable`/`isSubclassOf`/`typeText`/`appendMangledType` eşdeğeri).
+# Tasarım kararları: project/asama3-tasarim-kararlari-2026-11-24.md (R2-J.1/J.3, R2-G.1/G.2).
+#
+# Temsil: tüm tipler tek `TT` nesnesinde DÜZ SÜTUNLARDA (`tag/xa/xb/xc` + işlev parametre havuzu `fp`); bir tip `TypeId` (= sütun indeksi). Yapısal tip = TEK TypeId (hash-consing):
+#   `types.eql(a, b)`  <=>  `id(a) == id(b)` (sınıf adları `SymbolId` ile karşılaştırılır). Tahsissiz, ARC'siz; çocuk her zaman ebeveynden KÜÇÜK id'dedir (aşağıdan yukarı kurulur).
+# Dizeler `SymbolId` (derleme-ömürlü intern havuzu `sb/so/sl`); havuz `TT` ile birlikte yaratılır/bırakılır (sınırsız büyüyen global havuz YOK).
+#
+# Etiketler (Zig `Type` birleşim sırası): 0 int, 1 float, 2 bool, 3 str, 4 None, 5 list, 6 class, 7 Task, 8 Channel, 9 ThreadHandle, 10 ThreadChannel, 11 TaskLocal, 12 ptr, 13 dict, 14 func, 15 optional, 16 fixed_int, 17 typed_ptr.
+# Sütunlar: tek-tip-parametreli (5,7..11,15,17): xa = eleman; sınıf (6): xa = SymbolId; fixed_int (16): xa = tür (0..9); dict (13): xa = anahtar, xb = değer; func (14): xa = `fp` başlangıcı, xb = dönüş, xc = parametre sayısı.
+# Sabit kimlikler (önceden internlenmiş): int 0, float 1, bool 2, str 3, None 4, ptr 5, fixed_int(k) = 6 + k (k: u8 u16 u32 u64 usize i8 i16 i32 i64 isize).
+
+class TT:
+    tag: list[int]
+    xa: list[int]
+    xb: list[int]
+    xc: list[int]
+    fp: list[int]
+    tmp: list[int]
+    slots: list[int]
+    mask: int
+    sb: list[int]
+    so: list[int]
+    sl: list[int]
+    ssl: list[int]
+    smask: int
+    creg: list[int]
+    cbase: list[int]
+    cmix: list[int]
+    mxs: list[int]
+    out: list[int]
+
+    def __init__(self) -> None:
+        self.tag = []
+        self.xa = []
+        self.xb = []
+        self.xc = []
+        self.fp = []
+        self.tmp = []
+        self.slots = []
+        self.mask = 1023
+        for i in range(1024):
+            self.slots.append(0)
+        self.sb = []
+        self.so = []
+        self.sl = []
+        self.ssl = []
+        self.smask = 255
+        for j in range(256):
+            self.ssl.append(0)
+        self.creg = []
+        self.cbase = []
+        self.cmix = []
+        self.mxs = []
+        self.out = []
+
+# ---- bayt okuma (Zig tarafının verdiği ham bellek) ----
+def tat(base: int, i: int) -> int:
+    c: int = 0
+    lowlevel:
+        c = int(ptr_read(ptr_offset(ptr[u8](base), i)))
+    return c
+
+# ---- sembol havuzu (SymbolId) ----
+# Hash adımı: 40 bit maske (çarpım 2^63'ü aşmaz → sarmalama/taşma davranışı backend'e bağlı değildir).
+def sym_hash_step(h: int, v: int) -> int:
+    return ((h ^ (v & 1099511627775)) * 1000003) & 1099511627775
+
+# `base[off:off+n]` baytlarını internler; var olan SymbolId'yi ya da yenisini döner.
+def sym_intern(tt: TT, base: int, off: int, n: int) -> int:
+    h: int = 14695981039
+    for i in range(n):
+        h = sym_hash_step(h, tat(base, off + i))
+    h = sym_hash_step(h, n)
+    i0: int = h & tt.smask
+    while True:
+        s: int = tt.ssl[i0]
+        if s == 0:
+            break
+        id: int = s - 1
+        if tt.sl[id] == n:
+            same: bool = True
+            o: int = tt.so[id]
+            for k in range(n):
+                if tt.sb[o + k] != tat(base, off + k):
+                    same = False
+                    break
+            if same:
+                return id
+        i0 = (i0 + 1) & tt.smask
+    nid: int = len(tt.so)
+    tt.so.append(len(tt.sb))
+    tt.sl.append(n)
+    for k2 in range(n):
+        tt.sb.append(tat(base, off + k2))
+    tt.creg.append(0)
+    tt.cbase.append(-1)
+    tt.cmix.append(-1)
+    tt.ssl[i0] = nid + 1
+    if len(tt.so) * 2 > tt.smask + 1:
+        sym_grow(tt)
+    return nid
+
+def sym_hash_of(tt: TT, id: int) -> int:
+    h: int = 14695981039
+    o: int = tt.so[id]
+    n: int = tt.sl[id]
+    for i in range(n):
+        h = sym_hash_step(h, tt.sb[o + i])
+    return sym_hash_step(h, n)
+
+def sym_grow(tt: TT) -> None:
+    cap: int = (tt.smask + 1) * 2
+    tt.smask = cap - 1
+    tt.ssl = []
+    for i in range(cap):
+        tt.ssl.append(0)
+    for id in range(len(tt.so)):
+        j: int = sym_hash_of(tt, id) & tt.smask
+        while tt.ssl[j] != 0:
+            j = (j + 1) & tt.smask
+        tt.ssl[j] = id + 1
+
+# ---- tip tablosu: hash-consing ----
+def ty_hash(tag: int, a: int, b: int, c: int) -> int:
+    h: int = 1469598103
+    h = sym_hash_step(h, tag)
+    h = sym_hash_step(h, a)
+    h = sym_hash_step(h, b)
+    return sym_hash_step(h, c)
+
+def ty_hash_func(tt: TT, a: int, ret: int, n: int) -> int:
+    h: int = 1469598103
+    h = sym_hash_step(h, 14)
+    h = sym_hash_step(h, ret)
+    h = sym_hash_step(h, n)
+    for i in range(n):
+        h = sym_hash_step(h, tt.fp[a + i])
+    return h
+
+def ty_hash_of(tt: TT, id: int) -> int:
+    if tt.tag[id] == 14:
+        return ty_hash_func(tt, tt.xa[id], tt.xb[id], tt.xc[id])
+    return ty_hash(tt.tag[id], tt.xa[id], tt.xb[id], tt.xc[id])
+
+def ty_grow(tt: TT) -> None:
+    cap: int = (tt.mask + 1) * 2
+    tt.mask = cap - 1
+    tt.slots = []
+    for i in range(cap):
+        tt.slots.append(0)
+    for id in range(len(tt.tag)):
+        j: int = ty_hash_of(tt, id) & tt.mask
+        while tt.slots[j] != 0:
+            j = (j + 1) & tt.mask
+        tt.slots[j] = id + 1
+
+# func DIŞI tipler: (tag, a, b) -> TypeId.
+def ty_mk(tt: TT, tag: int, a: int, b: int) -> int:
+    i0: int = ty_hash(tag, a, b, 0) & tt.mask
+    while True:
+        s: int = tt.slots[i0]
+        if s == 0:
+            break
+        id: int = s - 1
+        if tt.tag[id] == tag and tt.xa[id] == a and tt.xb[id] == b and tt.xc[id] == 0:
+            return id
+        i0 = (i0 + 1) & tt.mask
+    nid: int = len(tt.tag)
+    tt.tag.append(tag)
+    tt.xa.append(a)
+    tt.xb.append(b)
+    tt.xc.append(0)
+    tt.slots[i0] = nid + 1
+    if len(tt.tag) * 2 > tt.mask + 1:
+        ty_grow(tt)
+    return nid
+
+# Önce `tt.tmp` içine parametre TypeId'leri `func_param` ile yazılır, sonra `ty_func_end`.
+def ty_func_begin(tt: TT) -> None:
+    tt.tmp = []
+
+def ty_func_param(tt: TT, p: int) -> None:
+    tt.tmp.append(p)
+
+def ty_func_end(tt: TT, ret: int) -> int:
+    n: int = len(tt.tmp)
+    h: int = 1469598103
+    h = sym_hash_step(h, 14)
+    h = sym_hash_step(h, ret)
+    h = sym_hash_step(h, n)
+    for i in range(n):
+        h = sym_hash_step(h, tt.tmp[i])
+    i0: int = h & tt.mask
+    while True:
+        s: int = tt.slots[i0]
+        if s == 0:
+            break
+        id: int = s - 1
+        if tt.tag[id] == 14 and tt.xb[id] == ret and tt.xc[id] == n:
+            same: bool = True
+            a: int = tt.xa[id]
+            for k in range(n):
+                if tt.fp[a + k] != tt.tmp[k]:
+                    same = False
+                    break
+            if same:
+                return id
+        i0 = (i0 + 1) & tt.mask
+    nid: int = len(tt.tag)
+    tt.tag.append(14)
+    tt.xa.append(len(tt.fp))
+    tt.xb.append(ret)
+    tt.xc.append(n)
+    for k2 in range(n):
+        tt.fp.append(tt.tmp[k2])
+    tt.slots[i0] = nid + 1
+    if len(tt.tag) * 2 > tt.mask + 1:
+        ty_grow(tt)
+    return nid
+
+# Önceden internlenmiş sabit kimlikler: int 0, float 1, bool 2, str 3, None 4, ptr 5, fixed_int(k) 6 + k.
+def ty_init_scalars(tt: TT) -> None:
+    ty_mk(tt, 0, 0, 0)
+    ty_mk(tt, 1, 0, 0)
+    ty_mk(tt, 2, 0, 0)
+    ty_mk(tt, 3, 0, 0)
+    ty_mk(tt, 4, 0, 0)
+    ty_mk(tt, 12, 0, 0)
+    for k in range(10):
+        ty_mk(tt, 16, k, 0)
+
+def ty_list(tt: TT, e: int) -> int:
+    return ty_mk(tt, 5, e, 0)
+
+def ty_class(tt: TT, sym: int) -> int:
+    return ty_mk(tt, 6, sym, 0)
+
+def ty_dict(tt: TT, k: int, v: int) -> int:
+    return ty_mk(tt, 13, k, v)
+
+def ty_optional(tt: TT, e: int) -> int:
+    return ty_mk(tt, 15, e, 0)
+
+def ty_fixed(kind: int) -> int:
+    return 6 + kind
+
+# ---- FixedIntKind ----
+# tür sırası: 0 u8, 1 u16, 2 u32, 3 u64, 4 usize, 5 i8, 6 i16, 7 i32, 8 i64, 9 isize
+def fx_bits(k: int) -> int:
+    if k == 0 or k == 5:
+        return 8
+    if k == 1 or k == 6:
+        return 16
+    if k == 2 or k == 7:
+        return 32
+    return 64
+
+def fx_signed(k: int) -> bool:
+    return k >= 5
+
+def fx_fits(k: int, v: int) -> bool:
+    bits: int = fx_bits(k)
+    if fx_signed(k):
+        if bits == 8:
+            return v >= -128 and v <= 127
+        if bits == 16:
+            return v >= -32768 and v <= 32767
+        if bits == 32:
+            return v >= -2147483648 and v <= 2147483647
+        return True
+    if v < 0:
+        return False
+    if bits == 8:
+        return v <= 255
+    if bits == 16:
+        return v <= 65535
+    if bits == 32:
+        return v <= 4294967295
+    return True
+
+# ---- yazıcı çıktısı ----
+def put(tt: TT, s: str) -> None:
+    for i in range(len(s)):
+        tt.out.append(ord(s[i]))
+
+def put_sym(tt: TT, sym: int) -> None:
+    o: int = tt.so[sym]
+    for i in range(tt.sl[sym]):
+        tt.out.append(tt.sb[o + i])
+
+def put_fx_name(tt: TT, k: int) -> None:
+    if k == 0:
+        put(tt, "u8")
+    elif k == 1:
+        put(tt, "u16")
+    elif k == 2:
+        put(tt, "u32")
+    elif k == 3:
+        put(tt, "u64")
+    elif k == 4:
+        put(tt, "usize")
+    elif k == 5:
+        put(tt, "i8")
+    elif k == 6:
+        put(tt, "i16")
+    elif k == 7:
+        put(tt, "i32")
+    elif k == 8:
+        put(tt, "i64")
+    else:
+        put(tt, "isize")
+
+# `types.format` (Zig `typeText`): list[int], Task[T], T | None, (int, int) -> int ...
+def ty_format(tt: TT, id: int) -> None:
+    t: int = tt.tag[id]
+    if t == 0:
+        put(tt, "int")
+    elif t == 1:
+        put(tt, "float")
+    elif t == 2:
+        put(tt, "bool")
+    elif t == 3:
+        put(tt, "str")
+    elif t == 4:
+        put(tt, "None")
+    elif t == 12:
+        put(tt, "ptr")
+    elif t == 6:
+        put_sym(tt, tt.xa[id])
+    elif t == 16:
+        put_fx_name(tt, tt.xa[id])
+    elif t == 15:
+        ty_format(tt, tt.xa[id])
+        put(tt, " | None")
+    elif t == 13:
+        put(tt, "dict[")
+        ty_format(tt, tt.xa[id])
+        put(tt, ", ")
+        ty_format(tt, tt.xb[id])
+        put(tt, "]")
+    elif t == 14:
+        put(tt, "(")
+        a: int = tt.xa[id]
+        for i in range(tt.xc[id]):
+            if i != 0:
+                put(tt, ", ")
+            ty_format(tt, tt.fp[a + i])
+        put(tt, ") -> ")
+        ty_format(tt, tt.xb[id])
+    else:
+        # tek parametreli: list / Task / Channel / ThreadHandle / ThreadChannel / TaskLocal / ptr[T]
+        if t == 5:
+            put(tt, "list[")
+        elif t == 7:
+            put(tt, "Task[")
+        elif t == 8:
+            put(tt, "Channel[")
+        elif t == 9:
+            put(tt, "ThreadHandle[")
+        elif t == 10:
+            put(tt, "ThreadChannel[")
+        elif t == 11:
+            put(tt, "TaskLocal[")
+        else:
+            put(tt, "ptr[")
+        ty_format(tt, tt.xa[id])
+        put(tt, "]")
+
+# `Checker.appendMangledType`: generic somutlaştırma adlarında kullanılan düz ad.
+def ty_mangle(tt: TT, id: int) -> None:
+    t: int = tt.tag[id]
+    if t == 0:
+        put(tt, "int")
+    elif t == 1:
+        put(tt, "float")
+    elif t == 2:
+        put(tt, "bool")
+    elif t == 3:
+        put(tt, "str")
+    elif t == 4:
+        put(tt, "None")
+    elif t == 12:
+        put(tt, "ptr")
+    elif t == 6:
+        put_sym(tt, tt.xa[id])
+    elif t == 16:
+        put_fx_name(tt, tt.xa[id])
+    elif t == 13:
+        put(tt, "dict_")
+        ty_mangle(tt, tt.xa[id])
+        put(tt, "_")
+        ty_mangle(tt, tt.xb[id])
+    elif t == 14:
+        put(tt, "func_")
+        a: int = tt.xa[id]
+        for i in range(tt.xc[id]):
+            ty_mangle(tt, tt.fp[a + i])
+            put(tt, "_")
+        ty_mangle(tt, tt.xb[id])
+    else:
+        if t == 5:
+            put(tt, "list_")
+        elif t == 7:
+            put(tt, "Task_")
+        elif t == 8:
+            put(tt, "Channel_")
+        elif t == 9:
+            put(tt, "ThreadHandle_")
+        elif t == 10:
+            put(tt, "ThreadChannel_")
+        elif t == 11:
+            put(tt, "TaskLocal_")
+        elif t == 15:
+            put(tt, "Optional_")
+        else:
+            put(tt, "ptr_")
+        ty_mangle(tt, tt.xa[id])
+
+# ---- yüklemler ----
+def ty_is_numeric(tt: TT, id: int) -> bool:
+    t: int = tt.tag[id]
+    return t == 0 or t == 1 or t == 16
+
+def ty_is_bitwise(tt: TT, id: int) -> bool:
+    t: int = tt.tag[id]
+    return t == 0 or t == 16
+
+# ---- sınıf hiyerarşisi (Checker.classes: base + mixins) ----
+def cls_register(tt: TT, sym: int) -> None:
+    tt.creg[sym] = 1
+
+def cls_set_base(tt: TT, sym: int, base: int) -> None:
+    tt.creg[sym] = 1
+    tt.cbase[sym] = base
+
+def cls_add_mixin(tt: TT, sym: int, m: int) -> None:
+    tt.creg[sym] = 1
+    # tek yönlü bağlı liste: mxs = [sembol, sonraki] çiftleri; sona ekle (Zig `info.mixins` sırası korunur)
+    node: int = len(tt.mxs)
+    tt.mxs.append(m)
+    tt.mxs.append(-1)
+    cur: int = tt.cmix[sym]
+    if cur < 0:
+        tt.cmix[sym] = node
+        return
+    while tt.mxs[cur + 1] >= 0:
+        cur = tt.mxs[cur + 1]
+    tt.mxs[cur + 1] = node
+
+# `Checker.isSubclassOf`
+def is_subclass(tt: TT, sub: int, sup: int) -> bool:
+    cur: int = sub
+    while cur >= 0:
+        if cur == sup:
+            return True
+        if tt.creg[cur] == 0:
+            return False
+        m: int = tt.cmix[cur]
+        while m >= 0:
+            if is_subclass(tt, tt.mxs[m], sup):
+                return True
+            m = tt.mxs[m + 1]
+        cur = tt.cbase[cur]
+    return False
+
+# `Checker.assignable` (tek-kalıtım kovaryansı + float<-int + T | None otomatik sarma)
+def ty_assignable(tt: TT, d: int, v: int) -> bool:
+    if d == v:
+        return True
+    if tt.tag[d] == 1 and v == 0:
+        return True
+    if tt.tag[d] == 6 and tt.tag[v] == 6:
+        return is_subclass(tt, tt.xa[v], tt.xa[d])
+    if tt.tag[d] == 15:
+        if v == 4:
+            return True
+        return ty_assignable(tt, tt.xa[d], v)
+    return False
+
+# ---- invariant denetimi (R2-E.1 deseni; 0 = tamam, aksi halde hata kodu) ----
+# 1: bilinmeyen etiket, 2: çocuk id >= kendi id (DAG sırası), 3: sembol/aralık dışı, 4: func parametre havuzu aralık dışı, 5: hash tablosunda yok/yinelenen, 6: sabit kimlik bozuk
+def ty_validate(tt: TT) -> int:
+    n: int = len(tt.tag)
+    if n < 16:
+        return 6
+    if tt.tag[0] != 0 or tt.tag[1] != 1 or tt.tag[2] != 2 or tt.tag[3] != 3 or tt.tag[4] != 4 or tt.tag[5] != 12:
+        return 6
+    for k in range(10):
+        if tt.tag[6 + k] != 16 or tt.xa[6 + k] != k:
+            return 6
+    for id in range(n):
+        t: int = tt.tag[id]
+        if t < 0 or t > 17:
+            return 1
+        if t == 5 or t == 7 or t == 8 or t == 9 or t == 10 or t == 11 or t == 15 or t == 17:
+            if tt.xa[id] < 0 or tt.xa[id] >= id:
+                return 2
+        elif t == 13:
+            if tt.xa[id] < 0 or tt.xa[id] >= id or tt.xb[id] < 0 or tt.xb[id] >= id:
+                return 2
+        elif t == 6:
+            if tt.xa[id] < 0 or tt.xa[id] >= len(tt.so):
+                return 3
+        elif t == 16:
+            if tt.xa[id] < 0 or tt.xa[id] > 9:
+                return 3
+        elif t == 14:
+            a: int = tt.xa[id]
+            c: int = tt.xc[id]
+            if a < 0 or c < 0 or a + c > len(tt.fp):
+                return 4
+            if tt.xb[id] < 0 or tt.xb[id] >= id:
+                return 2
+            for i in range(c):
+                p: int = tt.fp[a + i]
+                if p < 0 or p >= id:
+                    return 2
+        # hash tablosunda tam bir kez bulunmalı
+        j: int = ty_hash_of(tt, id) & tt.mask
+        found: int = 0
+        while tt.slots[j] != 0:
+            if tt.slots[j] == id + 1:
+                found = found + 1
+            j = (j + 1) & tt.mask
+        if found != 1:
+            return 5
+    return 0
+
+# ---- Zig <-> Nox test köprüsü (noxc-nightly `types-diff`): TypeId'ler tamsayı olarak taşınır ----
+TG: TT = TT()
+TG_BASE: int = 0
+
+def nox_ty_reset() -> int:
+    global TG
+    TG = TT()
+    ty_init_scalars(TG)
+    return len(TG.tag)
+
+def nox_ty_names(base: int) -> int:
+    global TG_BASE
+    TG_BASE = base
+    return 0
+
+def nox_ty_sym(off: int, n: int) -> int:
+    return sym_intern(TG, TG_BASE, off, n)
+
+def nox_ty_scalar(tag: int) -> int:
+    return ty_mk(TG, tag, 0, 0)
+
+def nox_ty_fixed(kind: int) -> int:
+    return ty_mk(TG, 16, kind, 0)
+
+def nox_ty_unary(tag: int, e: int) -> int:
+    return ty_mk(TG, tag, e, 0)
+
+def nox_ty_class(sym: int) -> int:
+    return ty_class(TG, sym)
+
+def nox_ty_dict(k: int, v: int) -> int:
+    return ty_dict(TG, k, v)
+
+def nox_ty_func_begin() -> int:
+    ty_func_begin(TG)
+    return 0
+
+def nox_ty_func_param(p: int) -> int:
+    ty_func_param(TG, p)
+    return 0
+
+def nox_ty_func_end(ret: int) -> int:
+    return ty_func_end(TG, ret)
+
+def nox_ty_class_base(sym: int, base: int) -> int:
+    cls_set_base(TG, sym, base)
+    return 0
+
+def nox_ty_class_mixin(sym: int, m: int) -> int:
+    cls_add_mixin(TG, sym, m)
+    return 0
+
+def nox_ty_class_reg(sym: int) -> int:
+    cls_register(TG, sym)
+    return 0
+
+def nox_ty_format(id: int) -> int:
+    TG.out = []
+    ty_format(TG, id)
+    return len(TG.out)
+
+def nox_ty_mangle(id: int) -> int:
+    TG.out = []
+    ty_mangle(TG, id)
+    return len(TG.out)
+
+def nox_ty_out_buffer() -> int:
+    xs: list[int] = TG.out
+    p: int = 0
+    lowlevel:
+        p = ptr_to_int(ptr_of(xs))
+    return p
+
+def nox_ty_numeric(id: int) -> int:
+    if ty_is_numeric(TG, id):
+        return 1
+    return 0
+
+def nox_ty_bitwise(id: int) -> int:
+    if ty_is_bitwise(TG, id):
+        return 1
+    return 0
+
+def nox_ty_assignable(d: int, v: int) -> int:
+    if ty_assignable(TG, d, v):
+        return 1
+    return 0
+
+# which: 0 bitWidth, 1 isSigned, 2 fitsValue(v)
+def nox_ty_fx(which: int, kind: int, v: int) -> int:
+    if which == 0:
+        return fx_bits(kind)
+    if which == 1:
+        if fx_signed(kind):
+            return 1
+        return 0
+    if fx_fits(kind, v):
+        return 1
+    return 0
+
+def nox_ty_count() -> int:
+    return len(TG.tag)
+
+def nox_ty_validate() -> int:
+    return ty_validate(TG)
+
+# Nox yığınında canlı veri (bayt): sütunlar + havuzlar + sembol havuzu + tablolar.
+def nox_ty_mem() -> int:
+    t: TT = TG
+    return (len(t.tag) * 4 + len(t.fp) + len(t.slots) + len(t.sb) + len(t.so) * 2 + len(t.ssl) + len(t.creg) * 3 + len(t.mxs)) * 8
+
+# ---- ölçüm (types-bench): Zig `selfhost_types_diff.zig` `benchZig` ile AYNI iş yükü + AYNI sağlama toplamı (ayrıca anlamsal eşdeğerlik kanıtı) ----
+# LCG 31 bit: çarpım 2^62'yi aşmaz (taşma yok). Sınıf sembolleri 0..7 (Zig önce `class_names[0..8]`i internler).
+def lcg(x: int) -> int:
+    return (x * 1103515245 + 12345) & 2147483647
+
+def nox_ty_bench(seed: int, k: int, m: int) -> int:
+    tt: TT = TG
+    pool: list[int] = [0, 1, 2, 3, 4]
+    x: int = seed & 2147483647
+    for i in range(k):
+        x = lcg(x)
+        kind: int = (x >> 8) % 7
+        x = lcg(x)
+        a: int = pool[(x >> 4) % len(pool)]
+        x = lcg(x)
+        b: int = pool[(x >> 4) % len(pool)]
+        x = lcg(x)
+        c: int = pool[(x >> 4) % len(pool)]
+        if kind == 0:
+            pool.append(ty_list(tt, a))
+        elif kind == 1:
+            pool.append(ty_optional(tt, a))
+        elif kind == 2:
+            pool.append(ty_dict(tt, a, b))
+        elif kind == 3:
+            ty_func_begin(tt)
+            ty_func_param(tt, a)
+            ty_func_param(tt, b)
+            pool.append(ty_func_end(tt, c))
+        elif kind == 4:
+            pool.append(ty_class(tt, (x >> 3) % 8))
+        elif kind == 5:
+            pool.append(ty_mk(tt, 7, a, 0))
+        else:
+            pool.append(ty_fixed((x >> 3) % 10))
+    acc: int = 0
+    n: int = len(pool)
+    for j in range(m):
+        x = lcg(x)
+        p: int = pool[(x >> 4) % n]
+        x = lcg(x)
+        q: int = pool[(x >> 4) % n]
+        if p == q:
+            acc = acc + 1
+        if ty_assignable(tt, p, q):
+            acc = acc + 3
+        if j % 64 == 0:
+            tt.out = []
+            ty_format(tt, p)
+            acc = acc + len(tt.out)
+    return acc + len(tt.tag)

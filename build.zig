@@ -845,6 +845,9 @@ pub fn build(b: *std.Build) void {
     // R1-P1.7/P1.8: Zig↔Nox sınırı sözleşmesi (ardışık çağrılar, hata sonrası temizlik/fini, yeniden init, iki bağımsız çalışma zamanı).
     const selfhost_contract_cmd = b.addSystemCommand(&.{ "zig-out/bin/noxc-nightly", "selfhost-contract" });
     selfhost_contract_cmd.step.dependOn(&install_nightly.step);
+    // Aşama 3.1: Zig types.zig ↔ Nox types.nox farksal denetimi (tohumlu rastgele tip ağaçları; bkz. compiler/selfhost_types_diff.zig).
+    const types_diff_cmd = b.addSystemCommand(&.{ "zig-out/bin/noxc-nightly", "types-diff", "4000", "1" });
+    types_diff_cmd.step.dependOn(&install_nightly.step);
     // R1-P1.10/P1.12: fixture oracle (pozitif gerçekten ayrışır, negatif hata türü+konum sabit) ve biçimlendirici özellik denetimi (idempotence + semantik koruma + CRLF; bilinen ihlaller tabanda).
     const fixture_oracle_cmd = b.addSystemCommand(&.{ "python3", "scripts/fixture_oracle.py" });
     const fmt_properties_cmd = b.addSystemCommand(&.{ "python3", "scripts/fmt_properties.py", "--baseline", "scripts/fmt_properties_baseline.txt" });
@@ -852,6 +855,7 @@ pub fn build(b: *std.Build) void {
     const frontend_diff_check = b.addSystemCommand(&.{ "python3", "scripts/frontend_diff.py", "--component", "check" });
     frontend_diff_check.step.dependOn(&fmt_properties_cmd.step);
     frontend_diff_check.step.dependOn(&selfhost_contract_cmd.step);
+    frontend_diff_check.step.dependOn(&types_diff_cmd.step);
     frontend_diff_check.step.dependOn(&frontend_diff_fmt.step);
     frontend_diff_check.step.dependOn(&frontend_diff_parser.step);
     frontend_diff_check.step.dependOn(&frontend_diff_astdump.step);

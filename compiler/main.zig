@@ -466,7 +466,7 @@ fn realMain(init: std.process.Init) !void {
     if (init.environ_map.get("NOX_INDEX_URL")) |v| registry_policy.index_url = try a.dupe(u8, v);
     if (init.environ_map.get("NOX_PUBLISH_API_BASE")) |v| registry_policy.publish_api_base = try a.dupe(u8, v);
 
-    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, lex_bench, ast_roundtrip, parse_nox, parse_bench, fmt_bench, selfhost_contract, tokens_cmd, ast_cmd, legacy };
+    const Subcommand = enum { sbom, sign, build, run, test_cmd, fmt, fetch, update, search, add, delete, publish, login, logout, whoami, init, check, expand, explain, bindgen, version, help, upgrade, install, uninstall, list_installed, refresh, cache, selfhost_info, lex_bench, ast_roundtrip, parse_nox, parse_bench, fmt_bench, selfhost_contract, types_diff, types_bench, tokens_cmd, ast_cmd, legacy };
     const sub: Subcommand = blk: {
         // Bulundu (kullanıcı geri bildirimi): çıplak `noxc` ÖNCEDEN `.legacy`ye
         // düşüp `cmdBuild`i argümansız çağırıyordu — tek satırlık bir
@@ -500,6 +500,8 @@ fn realMain(init: std.process.Init) !void {
         if (build_options.nightly and std.mem.eql(u8, first, "parse-bench")) break :blk .parse_bench;
         if (build_options.nightly and std.mem.eql(u8, first, "fmt-bench")) break :blk .fmt_bench;
         if (build_options.nightly and std.mem.eql(u8, first, "selfhost-contract")) break :blk .selfhost_contract;
+        if (build_options.nightly and std.mem.eql(u8, first, "types-diff")) break :blk .types_diff;
+        if (build_options.nightly and std.mem.eql(u8, first, "types-bench")) break :blk .types_bench;
         if (std.mem.eql(u8, first, "tokens")) break :blk .tokens_cmd;
         if (std.mem.eql(u8, first, "ast")) break :blk .ast_cmd;
         if (std.mem.eql(u8, first, "expand")) break :blk .expand;
@@ -572,6 +574,8 @@ fn realMain(init: std.process.Init) !void {
         .parse_bench => try cmdParseBench(io, a, rest),
         .fmt_bench => try cmdFmtBench(io, a, rest),
         .selfhost_contract => try cmdSelfhostContract(io, gpa, a),
+        .types_diff => try cmdTypesDiff(io, gpa, rest),
+        .types_bench => try cmdTypesBench(io, rest),
         .tokens_cmd => try cmdTokens(gpa, io, a, rest),
         .ast_cmd => try cmdAst(gpa, io, a, rest),
     }
@@ -784,6 +788,100 @@ fn benchGate(kind: []const u8, src_len: usize, reps: usize, allow_debug: bool) v
 fn benchSane(kind: []const u8, best_zig: u64, best_nox: u64, zig_mem: usize, nox_mem: i64) void {
     if (best_zig == 0 or best_nox == 0 or best_nox == std.math.maxInt(u64) or zig_mem == 0 or nox_mem <= 0) {
         printErr("{s}: anlamsiz olcum (zig={d} ns/{d} B, nox={d} ns/{d} B); sonuc reddedildi\n", .{ kind, best_zig, zig_mem, best_nox, nox_mem });
+        std.process.exit(1);
+    }
+}
+
+/// `noxc-nightly types-diff [adet=2000] [tohum=1]` (Aşama 3.1): Zig `types.zig` ↔ Nox `selfhost/types.nox` farksal denetimi (bkz. `selfhost_types_diff.zig`). Başarıda `types-diff: OK ...`, farkta çıkış kodu 1. Gizli; yalnızca nightly.
+fn cmdTypesDiff(io: std.Io, gpa: std.mem.Allocator, rest: []const []const u8) !void {
+    if (comptime !build_options.nightly) unreachable;
+    const glue = @import("selfhost_glue.zig");
+    const count: usize = if (rest.len > 0) std.fmt.parseInt(usize, rest[0], 10) catch 2000 else 2000;
+    const seed: u64 = if (rest.len > 1) std.fmt.parseInt(u64, rest[1], 10) catch 1 else 1;
+    const nrt: *glue.Runtime = @ptrCast(@alignCast(g_nightly_rt.?));
+    const res = @import("selfhost_types_diff.zig").run(gpa, nrt.*, seed, count) catch std.process.exit(1);
+    var stdout_buf: [512]u8 = undefined;
+    var sw = std.Io.File.stdout().writer(io, &stdout_buf);
+    try sw.interface.print("types-diff: OK seed={d} types={d} distinct={d} pairs={d} assignable_true={d} nox_bytes={d}\n", .{ seed, res.types_built, res.distinct, res.pairs, res.assign_true, res.nox_bytes });
+    try sw.interface.flush();
+}
+
+/// `noxc-nightly types-bench [k=4096] [m=2000000] [tekrar=5] [--max-ratio=x] [--allow-debug]` (Aşama 3.1): Zig `types.zig` yapısal `eql`/`assignable`/`format` iş yükü ↔ Nox tip tablosu (hash-consing; kurma + sorgu) en iyi süre oranı. Sağlama toplamları EŞİT olmalıdır (anlamsal eşdeğerlik). Gizli; yalnızca nightly.
+fn cmdTypesBench(io: std.Io, rest: []const []const u8) !void {
+    if (comptime !build_options.nightly) unreachable;
+    const glue = @import("selfhost_glue.zig");
+    const td = @import("selfhost_types_diff.zig");
+    var k: usize = 4096;
+    var m: usize = 2_000_000;
+    var reps: usize = 5;
+    var max_ratio: f64 = 0;
+    var allow_debug = false;
+    var pos: usize = 0;
+    for (rest) |arg| {
+        if (std.mem.eql(u8, arg, "--allow-debug")) {
+            allow_debug = true;
+        } else if (std.mem.startsWith(u8, arg, "--max-ratio=")) {
+            max_ratio = std.fmt.parseFloat(f64, arg["--max-ratio=".len..]) catch 0;
+        } else {
+            const v = std.fmt.parseInt(usize, arg, 10) catch 0;
+            switch (pos) {
+                0 => k = v,
+                1 => m = v,
+                else => reps = v,
+            }
+            pos += 1;
+        }
+    }
+    benchGate("types-bench", k, reps, allow_debug);
+    const nrt: glue.Runtime = @as(*glue.Runtime, @ptrCast(@alignCast(g_nightly_rt.?))).*;
+    const api = nrt.types();
+    const nowNs = struct {
+        fn f() u64 {
+            var ts: std.c.timespec = undefined;
+            _ = std.c.clock_gettime(.MONOTONIC, &ts);
+            return @as(u64, @intCast(ts.sec)) * 1_000_000_000 + @as(u64, @intCast(ts.nsec));
+        }
+    }.f;
+    var best_zig: u64 = std.math.maxInt(u64);
+    var best_nox: u64 = std.math.maxInt(u64);
+    var zig_mem: usize = 0;
+    var nox_mem: i64 = 0;
+    for (0..reps) |_| {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        var t = nowNs();
+        const zsum = td.benchZig(arena.allocator(), 12345, k, m) catch {
+            printErr("types-bench: Zig tarafi basarisiz\n", .{});
+            std.process.exit(1);
+        };
+        best_zig = @min(best_zig, nowNs() - t);
+        zig_mem = arena.queryCapacity();
+        td.benchPrepare(arena.allocator(), api) catch {
+            printErr("types-bench: Nox hazirlik basarisiz\n", .{});
+            std.process.exit(1);
+        };
+        t = nowNs();
+        const nsum = api.bench(12345, @intCast(k), @intCast(m));
+        best_nox = @min(best_nox, nowNs() - t);
+        nox_mem = api.mem();
+        if (nsum != zsum) {
+            printErr("types-bench: saglama toplami farki zig={d} nox={d}\n", .{ zsum, nsum });
+            std.process.exit(1);
+        }
+        const inv = api.validate();
+        if (inv != 0) {
+            printErr("types-bench: ty_validate hata kodu {d}\n", .{inv});
+            std.process.exit(1);
+        }
+    }
+    benchSane("types-bench", best_zig, best_nox, zig_mem, nox_mem);
+    var stdout_buf: [512]u8 = undefined;
+    var w = std.Io.File.stdout().writer(io, &stdout_buf);
+    const ratio = @as(f64, @floatFromInt(best_nox)) / @as(f64, @floatFromInt(@max(best_zig, 1)));
+    w.interface.print("tip havuzu {d}, sorgu {d}\nzig yapisal eql/assignable/format {d:>8} us, {d} B arena-ayrilmis\nnox hash-consing kurma+sorgu     {d:>8} us ({d:.2}x), {d} B mantiksal-canli\n", .{ k, m, best_zig / 1000, zig_mem, best_nox / 1000, ratio, nox_mem }) catch return;
+    w.interface.flush() catch return;
+    if (max_ratio > 0 and ratio > max_ratio) {
+        printErr("types-bench: Nox over budget (time {d:.2}x)\n", .{ratio});
         std.process.exit(1);
     }
 }

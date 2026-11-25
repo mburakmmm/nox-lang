@@ -33,3 +33,7 @@ Plan ve takip listesi: `project/noxc-nightly-selfhost-plani-2026-11.md`. Bu dizi
 
 `formatter.nox` ÜRETİLMİŞTİR (`formatter.nox.in` + `scripts/gen_selfhost_parser.py`). `noxc-nightly fmt <dosya>` Nox hattını kullanır; doğrulama: `scripts/frontend_diff.py --component fmt` (`noxc fmt --stdout` ↔ `noxc-nightly fmt --stdout`); bütçe: `noxc-nightly fmt-bench <dosya> [tekrar] --max-ratio=3 --max-mem=2`. Modül-düzeyi global adları modüller arasında benzersiz olmalıdır (bkz. dogfood D2.3).
 
+## Aşama 3 (tip denetleyici)
+
+`types.nox` (3.1, ELLE yazılmış; üretilmiş değil): tip tablosu `TT` (düz sütunlar + hash-consing → `TypeId`), `SymbolId` intern havuzu, sınıf hiyerarşisi, `assignable`/`format`/`mangle`/`ty_validate`. Tasarım: `project/asama3-tasarim-kararlari-2026-11-24.md`. Doğrulama: `noxc-nightly types-diff [adet] [tohum]` (Zig `typecheck/types.zig` ↔ Nox; `zig build frontend-diff-test` ve `tests/cli/selfhost_contract_test.zig` içinde) ve bütçe: `noxc-nightly types-bench [k] [m] [tekrar] --max-ratio=1.3` (ReleaseFast nightly gerekir). Kurallar: tip = `TypeId` (tamsayı), asla Nox nesnesi/ağacı değil; sembol = `SymbolId`; `func` tipinden önce çocuklar kurulur; hash adımı 40 bit maskeli (taşmaya bağımlı değil).
+

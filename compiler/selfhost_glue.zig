@@ -40,6 +40,122 @@ extern fn formatter_nox_fmt_mem(rt: ?*anyopaque) i64;
 extern fn formatter_nox_fmt_len(rt: ?*anyopaque) i64;
 extern fn formatter_nox_fmt_out_buffer(rt: ?*anyopaque) i64;
 
+// Aşama 3.1 (selfhost/types.nox): tip tablosu (TypeId/hash-consing/SymbolId) test köprüsü.
+extern fn types_nox_ty_reset(rt: ?*anyopaque) i64;
+extern fn types_nox_ty_names(rt: ?*anyopaque, base: i64) i64;
+extern fn types_nox_ty_sym(rt: ?*anyopaque, off: i64, n: i64) i64;
+extern fn types_nox_ty_scalar(rt: ?*anyopaque, tag: i64) i64;
+extern fn types_nox_ty_fixed(rt: ?*anyopaque, kind: i64) i64;
+extern fn types_nox_ty_unary(rt: ?*anyopaque, tag: i64, e: i64) i64;
+extern fn types_nox_ty_class(rt: ?*anyopaque, sym: i64) i64;
+extern fn types_nox_ty_dict(rt: ?*anyopaque, k: i64, v: i64) i64;
+extern fn types_nox_ty_func_begin(rt: ?*anyopaque) i64;
+extern fn types_nox_ty_func_param(rt: ?*anyopaque, p: i64) i64;
+extern fn types_nox_ty_func_end(rt: ?*anyopaque, ret: i64) i64;
+extern fn types_nox_ty_class_base(rt: ?*anyopaque, sym: i64, base: i64) i64;
+extern fn types_nox_ty_class_mixin(rt: ?*anyopaque, sym: i64, m: i64) i64;
+extern fn types_nox_ty_class_reg(rt: ?*anyopaque, sym: i64) i64;
+extern fn types_nox_ty_format(rt: ?*anyopaque, id: i64) i64;
+extern fn types_nox_ty_mangle(rt: ?*anyopaque, id: i64) i64;
+extern fn types_nox_ty_out_buffer(rt: ?*anyopaque) i64;
+extern fn types_nox_ty_numeric(rt: ?*anyopaque, id: i64) i64;
+extern fn types_nox_ty_bitwise(rt: ?*anyopaque, id: i64) i64;
+extern fn types_nox_ty_assignable(rt: ?*anyopaque, d: i64, v: i64) i64;
+extern fn types_nox_ty_fx(rt: ?*anyopaque, which: i64, kind: i64, v: i64) i64;
+extern fn types_nox_ty_count(rt: ?*anyopaque) i64;
+extern fn types_nox_ty_validate(rt: ?*anyopaque) i64;
+extern fn types_nox_ty_mem(rt: ?*anyopaque) i64;
+extern fn types_nox_ty_bench(rt: ?*anyopaque, seed: i64, k: i64, m: i64) i64;
+
+/// Aşama 3.1: Nox tip tablosunun (`selfhost/types.nox`) Zig tarafı sarmalayıcısı. TypeId'ler düz `i64`dür.
+pub const TypeApi = struct {
+    rt: ?*anyopaque,
+
+    pub fn reset(self: TypeApi) i64 {
+        return types_nox_ty_reset(self.rt);
+    }
+    pub fn names(self: TypeApi, base: []const u8) void {
+        _ = types_nox_ty_names(self.rt, @intCast(@intFromPtr(base.ptr)));
+    }
+    pub fn sym(self: TypeApi, off: usize, n: usize) i64 {
+        return types_nox_ty_sym(self.rt, @intCast(off), @intCast(n));
+    }
+    pub fn scalar(self: TypeApi, tag: i64) i64 {
+        return types_nox_ty_scalar(self.rt, tag);
+    }
+    pub fn fixed(self: TypeApi, kind: i64) i64 {
+        return types_nox_ty_fixed(self.rt, kind);
+    }
+    pub fn unary(self: TypeApi, tag: i64, e: i64) i64 {
+        return types_nox_ty_unary(self.rt, tag, e);
+    }
+    pub fn class(self: TypeApi, s: i64) i64 {
+        return types_nox_ty_class(self.rt, s);
+    }
+    pub fn dict(self: TypeApi, k: i64, v: i64) i64 {
+        return types_nox_ty_dict(self.rt, k, v);
+    }
+    pub fn funcBegin(self: TypeApi) void {
+        _ = types_nox_ty_func_begin(self.rt);
+    }
+    pub fn funcParam(self: TypeApi, p: i64) void {
+        _ = types_nox_ty_func_param(self.rt, p);
+    }
+    pub fn funcEnd(self: TypeApi, ret: i64) i64 {
+        return types_nox_ty_func_end(self.rt, ret);
+    }
+    pub fn classBase(self: TypeApi, s: i64, base: i64) void {
+        _ = types_nox_ty_class_base(self.rt, s, base);
+    }
+    pub fn classMixin(self: TypeApi, s: i64, m: i64) void {
+        _ = types_nox_ty_class_mixin(self.rt, s, m);
+    }
+    pub fn classReg(self: TypeApi, s: i64) void {
+        _ = types_nox_ty_class_reg(self.rt, s);
+    }
+    /// `format`/`mangle` çıktısını (Nox `list[int]`, her bayt bir i64) `a` ile ayrılan bir bayt dilimine kopyalar.
+    pub fn copyOut(self: TypeApi, a: std.mem.Allocator, len: i64) ![]u8 {
+        const n: usize = @intCast(len);
+        const buf: [*]const i64 = @ptrFromInt(@as(usize, @intCast(types_nox_ty_out_buffer(self.rt))));
+        const out = try a.alloc(u8, n);
+        for (out, 0..) |*b, k| b.* = @intCast(buf[k]);
+        return out;
+    }
+    pub fn formatAlloc(self: TypeApi, a: std.mem.Allocator, id: i64) ![]u8 {
+        return self.copyOut(a, types_nox_ty_format(self.rt, id));
+    }
+    pub fn mangleAlloc(self: TypeApi, a: std.mem.Allocator, id: i64) ![]u8 {
+        return self.copyOut(a, types_nox_ty_mangle(self.rt, id));
+    }
+    pub fn numeric(self: TypeApi, id: i64) bool {
+        return types_nox_ty_numeric(self.rt, id) != 0;
+    }
+    pub fn bitwise(self: TypeApi, id: i64) bool {
+        return types_nox_ty_bitwise(self.rt, id) != 0;
+    }
+    pub fn assignable(self: TypeApi, d: i64, v: i64) bool {
+        return types_nox_ty_assignable(self.rt, d, v) != 0;
+    }
+    /// which: 0 bitWidth, 1 isSigned, 2 fitsValue(v)
+    pub fn fx(self: TypeApi, which: i64, kind: i64, v: i64) i64 {
+        return types_nox_ty_fx(self.rt, which, kind, v);
+    }
+    pub fn count(self: TypeApi) i64 {
+        return types_nox_ty_count(self.rt);
+    }
+    /// 0 = invariantlar sağlam (bkz. `ty_validate`).
+    pub fn validate(self: TypeApi) i64 {
+        return types_nox_ty_validate(self.rt);
+    }
+    pub fn mem(self: TypeApi) i64 {
+        return types_nox_ty_mem(self.rt);
+    }
+    /// `types-bench` Nox tarafı iş yükü (sağlama toplamı Zig `benchZig` ile aynı olmalı).
+    pub fn bench(self: TypeApi, seed: i64, k: i64, m: i64) i64 {
+        return types_nox_ty_bench(self.rt, seed, k, m);
+    }
+};
+
 pub const LexOut = lexer.HookResult;
 
 /// Bir Nox çalışma zamanı bağlamı: `start` ... `stop`. Bileşen çağrıları arasında paylaşılır; iş parçacıkları arası kullanım yok (derleyici tek iş parçacıklıdır).
@@ -51,6 +167,11 @@ pub const Runtime = struct {
         const rt = nox_runtime_init() orelse return error.RuntimeInitFailed;
         nox_lib_init(rt);
         return .{ .rt = rt };
+    }
+
+    /// Aşama 3.1 tip tablosu köprüsü (`selfhost/types.nox`).
+    pub fn types(self: Runtime) TypeApi {
+        return .{ .rt = self.rt };
     }
 
     pub fn stop(self: Runtime) void {

@@ -302,6 +302,70 @@ pub fn toAlloc(allocator: std.mem.Allocator, t: Type) ![]u8 {
     return aw.toOwnedSlice();
 }
 
+/// `Checker.appendMangledType` (generic somutlaştırma adı parçası): tek doğruluk kaynağı burada; checker bunu çağırır, Nox karşılığı `selfhost/types.nox` `ty_mangle` (farksal: `noxc-nightly types-diff`).
+pub fn appendMangled(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), t: Type) std.mem.Allocator.Error!void {
+    switch (t) {
+        .int => try buf.appendSlice(allocator, "int"),
+        .float => try buf.appendSlice(allocator, "float"),
+        .boolean => try buf.appendSlice(allocator, "bool"),
+        .str => try buf.appendSlice(allocator, "str"),
+        .none => try buf.appendSlice(allocator, "None"),
+        .ptr => try buf.appendSlice(allocator, "ptr"),
+        .fixed_int => |k| try buf.appendSlice(allocator, k.name()),
+        .class => |n| try buf.appendSlice(allocator, n),
+        .list => |elem| {
+            try buf.appendSlice(allocator, "list_");
+            try appendMangled(allocator, buf, elem.*);
+        },
+        .task => |elem| {
+            try buf.appendSlice(allocator, "Task_");
+            try appendMangled(allocator, buf, elem.*);
+        },
+        .channel => |elem| {
+            try buf.appendSlice(allocator, "Channel_");
+            try appendMangled(allocator, buf, elem.*);
+        },
+        .thread_handle => |elem| {
+            try buf.appendSlice(allocator, "ThreadHandle_");
+            try appendMangled(allocator, buf, elem.*);
+        },
+        .thread_channel => |elem| {
+            try buf.appendSlice(allocator, "ThreadChannel_");
+            try appendMangled(allocator, buf, elem.*);
+        },
+        .task_local => |elem| {
+            try buf.appendSlice(allocator, "TaskLocal_");
+            try appendMangled(allocator, buf, elem.*);
+        },
+        .dict => |d| {
+            try buf.appendSlice(allocator, "dict_");
+            try appendMangled(allocator, buf, d.key.*);
+            try buf.appendSlice(allocator, "_");
+            try appendMangled(allocator, buf, d.value.*);
+        },
+        // Faz U.4.1: `unifyTypeExpr`in AYNI kısıtı gereği bir generic
+        // fonksiyon HİÇBİR ZAMAN func-tipi bir tip parametresine
+        // BAĞLANAMAZ — bu dal PRATİKTE tetiklenmez, yalnızca exhaustive
+        // switch GEREKSİNİMİNİ karşılar.
+        .func => |f| {
+            try buf.appendSlice(allocator, "func_");
+            for (f.params) |p| {
+                try appendMangled(allocator, buf, p);
+                try buf.appendSlice(allocator, "_");
+            }
+            try appendMangled(allocator, buf, f.return_type.*);
+        },
+        .optional => |elem| {
+            try buf.appendSlice(allocator, "Optional_");
+            try appendMangled(allocator, buf, elem.*);
+        },
+        .typed_ptr => |elem| {
+            try buf.appendSlice(allocator, "ptr_");
+            try appendMangled(allocator, buf, elem.*);
+        },
+    }
+}
+
 test "eql aynı iç içe list tiplerini eşit sayar" {
     var elem: Type = .int;
     const a: Type = .{ .list = &elem };
@@ -340,4 +404,25 @@ test "Faz U.4.1: func tipi eql farklı parametre SAYISINI farklı sayar" {
     const a: Type = .{ .func = .{ .params = &one_param, .return_type = &ret } };
     const b: Type = .{ .func = .{ .params = &two_params, .return_type = &ret } };
     try std.testing.expect(!eql(a, b));
+}
+
+test "Aşama 3.1: appendMangled generic somutlaştırma adı parçasını üretir" {
+    const a = std.testing.allocator;
+    var elem: Type = .int;
+    var key: Type = .str;
+    var ret: Type = .{ .optional = &elem };
+    const params = [_]Type{ .{ .list = &elem }, .{ .class = "Point" } };
+    const cases = [_]struct { t: Type, want: []const u8 }{
+        .{ .t = .{ .list = &elem }, .want = "list_int" },
+        .{ .t = .{ .dict = .{ .key = &key, .value = &elem } }, .want = "dict_str_int" },
+        .{ .t = .{ .func = .{ .params = &params, .return_type = &ret } }, .want = "func_list_int_Point_Optional_int" },
+        .{ .t = .{ .fixed_int = .u16 }, .want = "u16" },
+        .{ .t = .{ .typed_ptr = &elem }, .want = "ptr_int" },
+    };
+    for (cases) |c| {
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
+        defer buf.deinit(a);
+        try appendMangled(a, &buf, c.t);
+        try std.testing.expectEqualStrings(c.want, buf.items);
+    }
 }

@@ -118,3 +118,17 @@ test "selfhost.o sembol sozlesmesi: glue extern'leri tanimli, init/fini tekil, c
     }
     try std.testing.expect(checked >= 20);
 }
+
+// Aşama 3.1: Zig `typecheck/types.zig` ↔ Nox `selfhost/types.nox` farksal denetimi (format/mangle/eql⇔TypeId/assignable/FixedIntKind/invariantlar). Nightly yoksa atlanır.
+test "types-diff: Zig tip temsili ile Nox tip tablosu farksiz (3 tohum)" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const io = std.testing.io;
+    if (!have(io, "zig-out/bin/noxc-nightly")) return error.SkipZigTest;
+    for ([_][]const u8{ "1", "7", "99" }) |seed| {
+        const r = try run(&.{ "zig-out/bin/noxc-nightly", "types-diff", "1500", seed });
+        defer std.testing.allocator.free(r.stdout);
+        defer std.testing.allocator.free(r.stderr);
+        try std.testing.expect(r.term == .exited and r.term.exited == 0);
+        try std.testing.expect(std.mem.indexOf(u8, r.stdout, "types-diff: OK") != null);
+    }
+}

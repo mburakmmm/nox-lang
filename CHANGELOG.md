@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.66]
+
+Aşama 3 (Nox tip denetleyici) başladı — **3.1 tip temsili**. Ayrıntı: plan §6 3.1, spec §3.500.
+
+- `selfhost/types.nox` (yeni): düz sütun tip tablosu + `TypeId` + hash-consing (`types.eql` ⇔ TypeId eşitliği), derleme-ömürlü `SymbolId` havuzu, `FixedIntKind`, `format`/`appendMangled`, sınıf hiyerarşisi + `isSubclassOf`/`assignable`, `ty_validate` invariantları.
+- `compiler/typecheck/types.zig`: `appendMangled` (önceki `Checker.appendMangledType`; Zig+Nox tek doğruluk kaynağı) + birim testi; davranış değişmedi.
+- Nightly (gizli): `types-diff` (Zig↔Nox farksal; `frontend-diff-test` + `tests/cli/selfhost_contract_test.zig`) ve `types-bench` (süre 0,72× Zig yapısal iş yükü, bellek 148 KB ↔ 1,2 MB arena).
+
 ## [2.2.65]
 
 Aşama 3 öncesi kapanış turu: CI kırmızılarının kök nedenleri, kalan sağlamlaştırma artıkları ve kalıcı Aether yük kapısı.

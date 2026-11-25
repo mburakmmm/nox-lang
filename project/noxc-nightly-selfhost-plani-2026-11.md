@@ -140,7 +140,7 @@ Girdi: `compiler/typecheck/` (12 dosya, ~16 600 satır; `checker.zig` 12 640 sat
 
 Alt aşamalar (her biri ayrı kapanır, bir önceki bitmeden sonrakine geçilmez):
 
-- [ ] 3.1 Tip temsili (`types.zig` eşdeğeri), tip eşitliği/atanabilirlik, `typeText`.
+- [x] 3.1 Tip temsili (`types.zig` eşdeğeri), tip eşitliği/atanabilirlik, `typeText` — **v2.2.66.** `selfhost/types.nox`: düz sütun tablosu `TT` + `TypeId` + hash-consing (yapısal eşitlik = TypeId eşitliği; `types.eql` ⇔ `id==id`) + derleme-ömürlü `SymbolId` intern havuzu (R2-G.1/G.2, R2-J.1/J.3 kararları); 18 `Type` varyantı, `FixedIntKind` (bitWidth/isSigned/fitsValue/ad), `format` (= `typeText`), `appendMangled` (Zig tarafı tek doğruluk kaynağı olarak `types.zig`e taşındı; checker çağırır), `isNumeric`/`isBitwiseEligible`, sınıf hiyerarşisi (`creg/cbase/cmix`) + `isSubclassOf`, `assignable` (eql, float←int, taban-sınıf kovaryansı, `T|None` otomatik sarma), `ty_validate` invariantları (DAG sırası, havuz aralıkları, hash tablosunda tam-bir-kez). Kanıt: `noxc-nightly types-diff <adet> <tohum>` (rastgele tip ağaçları; format/mangle/yüklemler/eql⇔TypeId/assignable (referans = `Checker.assignable`)/FixedIntKind/yeniden-kurmada kimlik kararlılığı/invariant; mutasyon testiyle fark yakaladığı doğrulandı) + `types-bench` (ReleaseFast: yapısal Zig iş yüküne göre **0,72×** süre, 148 KB canlı vs 1,2 MB arena; sağlama toplamları EŞİT). **Kapsam sınırı (başka alt aşamalara bilerek devredildi):** `assignableOrCoerce`/`classSatisfiesProtocol` (protokol kutulama yeniden yazımı: 3.4/3.6), `typeToTypeExpr` (AST üretir: 3.6), `Backend`/`Profile` seçenekleri (sürücü/checker seçenekleri: 3.12/Aşama 5). `func` tipi kurarken önce çocuklar kurulur (tek `tmp` alanı; iç içe `begin` yok).
 - [ ] 3.2 Kapsam/sembol tabloları, `declareVar`, modül düzeyi global terfi.
 - [ ] 3.3 Temel ifadeler/deyimler: literal, aritmetik, karşılaştırma, atama, kontrol akışı, fonksiyon çağrıları.
 - [ ] 3.4 Sınıflar: alanlar, `__init__`, metodlar, tekli/çoklu kalıtım, vtable kararı, mixin (`mixin_flatten`).
@@ -229,7 +229,7 @@ Bütçe aşılırsa: önce `NOX_RC_STATS`/`sample` ile bellek yönetimi payına 
 | 0 Altyapı | 11 | 11 | **bitti (v2.2.32)** — sıradaki Aşama 1 (lexer) |
 | 1 Lexer | 13 | 13 | **bitti (v2.2.33–35; tam-geçiş kuralına göre denetlendi)** — sıradaki Aşama 2 (parser/AST) |
 | 2 Parser/AST | 15 | 15 | **bitti (v2.2.42 parser, v2.2.44 biçimlendirici, v2.2.45 dogfood kapanışı)** — sıradaki Aşama 3 (tip denetleyici) |
-| 3 Tip denetleyici | 17 | 0 | açık |
+| 3 Tip denetleyici | 17 | 1 | **sürüyor** — 3.1 bitti (v2.2.66, tip tablosu); sıradaki 3.2 (kapsam/sembol tabloları) |
 | 4 Sahiplik + codegen | 13 | 0 | açık |
 | 5 Sürücü | 5 | 0 | açık |
 | 6 Sabit nokta | 5 | 0 | açık |
