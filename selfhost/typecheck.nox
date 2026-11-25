@@ -476,6 +476,9 @@ def type_expr_to_type(ck: Ck, a: Ast, te: int) -> int:
         return 3
     if sref_eq(a, v, "None"):
         return 4
+    if sref_eq(a, v, "bytes"):
+        # v2.2.77: yerleşik `bytes` (bayt tabanlı işlemler/yeniden yazımlar) Nox denetleyicisinde HENÜZ yok → kapsam dışı
+        raise unsup(ck, "type#bytes")
     if sref_eq(a, v, "ptr"):
         return 5
     if sref_eq(a, v, "u8"):

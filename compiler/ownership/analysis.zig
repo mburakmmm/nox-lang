@@ -477,7 +477,7 @@ pub const Analyzer = struct {
                 self.scanExprEscapes(scope, index_of, idx.obj.*);
                 self.scanExprEscapes(scope, index_of, idx.index.*);
             },
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
             // `spawn <çağrı>`nın operandı ZATEN bir `.call`dır — bu dalın
             // MEVCUT mantığı (yukarıda) argümanlarını ZATEN kaçış olarak
             // işaretler, ki bu spawn için hatta DAHA da gereklidir (görev
@@ -713,7 +713,7 @@ pub const Analyzer = struct {
 
     fn nameEscapesExpr(self: *Analyzer, expr: ast.Expr, name: []const u8) bool {
         switch (expr) {
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => return false,
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => return false,
             .list_lit => |elems| {
                 for (elems) |el| {
                     if (el == .identifier and std.mem.eql(u8, el.identifier, name)) return true;

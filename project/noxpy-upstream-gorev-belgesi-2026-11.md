@@ -14,6 +14,10 @@ Doğrulama döngüsü: her UR bitince `noxPY/tests/reproducers/<ur>.sh` güncel 
 - [ ] **UR-004** Yabancı iş parçacığı attach/detach sözleşmesi
 - [ ] **UR-006** Uzunluk-bilgili UTF-8/bytes span + nesil-denetimli `NoxHostHandle`
 
+## Açık dil kararı (kullanıcıya sorulacak)
+
+- **Yerleşik `bytes` tipi yok** (2026-11-25 tespiti). Bugün: `str` (gömülü NUL/geçersiz UTF-8 saklar ama "metin" tipidir), `list[u8]` (bayt-paketli, değiştirilebilir), `nox.buffer.Buffer` (sahipli sabit arabellek), `nox.bytes` köprüsü. NoxPy'nin `bytes` parametre/dönüş tipi için ara çözüm: `list[u8]` ↔ `NoxHostSpan` (sınırda kopya). Gerçek `bytes` (değişmez, `b"..."` literali, dilimleme, hash) yeni dil özelliğidir (AGENTS.md §16.3): tasarım + onay gerekir; ABI (`NoxHostSpan`) bundan bağımsız kalır.
+
 ## Notlar
 
 - NoxPy belgesi v2.2.70 tabanlı; güncel sürümle reproducer'lar baştan koşulmalı.

@@ -7,7 +7,7 @@
 # Temsil (docs: project/selfhost-ast-tasarimi-2026-11.md): AST düz dizilerdedir (`Ast`: n/l/sb/sp). Dize = (x, y) çifti, burada tek `int`e paketlenir:
 # `pk(x, y) = x * 2^32 + y` (x >= 0: kaynak [x, y); x < 0: `sb[-x-1 : -x-1+y]`); -1 = yok. Düğüm başvurusu = `n` indeksi (-1 = null).
 # Hata: istisna (`ErrUnexpected`/`ErrNumber`/`ErrRecursion`); tanılama (`last_diagnostic`) `P.dg_*` alanlarındadır.
-from ast_schema import Ast, at, dump_module, mk_Assign, mk_Attribute, mk_Binary, mk_Call, mk_ClassAttrRef, mk_ClassDef, mk_CompClause_for_clause, mk_CompClause_if_clause, mk_CompForClause, mk_ConstDecl, mk_Decorator, mk_DeferStmt, mk_DictComp, mk_DictPair, mk_ElifClause, mk_EnumVariant, mk_ExceptClause, mk_Expr_attribute, mk_Expr_await_expr, mk_Expr_binary, mk_Expr_bool_lit, mk_Expr_call, mk_Expr_dict_comp, mk_Expr_dict_lit, mk_Expr_float_lit, mk_Expr_generic_construct, mk_Expr_identifier, mk_Expr_index, mk_Expr_int_lit, mk_Expr_kwarg, mk_Expr_lambda, mk_Expr_list_comp, mk_Expr_list_lit, mk_Expr_none_lit, mk_Expr_slice, mk_Expr_spawn_expr, mk_Expr_string_lit, mk_Expr_ternary, mk_Expr_tuple_lit, mk_Expr_unary, mk_ExternDef, mk_FieldDecl, mk_ForStmt, mk_FromImportName, mk_FromImportStmt, mk_FuncDef, mk_FuncTypeExpr, mk_Generic, mk_GenericConstruct, mk_IfStmt, mk_ImportStmt, mk_Index, mk_Kwarg, mk_Lambda, mk_ListComp, mk_LoopElseOrigin, mk_LowLevelStmt, mk_MatchCase, mk_MatchOrigin, mk_MatchPatternArg, mk_Param, mk_ProtocolDef, mk_Slice, mk_Span, mk_Stmt, mk_StmtKind_assign, mk_StmtKind_break_stmt, mk_StmtKind_class_def, mk_StmtKind_continue_stmt, mk_StmtKind_defer_stmt, mk_StmtKind_del_stmt, mk_StmtKind_expr_stmt, mk_StmtKind_extern_def, mk_StmtKind_for_stmt, mk_StmtKind_from_import_stmt, mk_StmtKind_func_def, mk_StmtKind_if_stmt, mk_StmtKind_import_stmt, mk_StmtKind_lowlevel_stmt, mk_StmtKind_pass_stmt, mk_StmtKind_protocol_def, mk_StmtKind_raise_stmt, mk_StmtKind_return_stmt, mk_StmtKind_try_stmt, mk_StmtKind_type_alias, mk_StmtKind_var_decl, mk_StmtKind_while_stmt, mk_StmtKind_with_stmt, mk_Ternary, mk_TryElseOrigin, mk_TryStmt, mk_TypeAliasStmt, mk_TypeExpr_func_type, mk_TypeExpr_generic, mk_TypeExpr_optional, mk_TypeExpr_qualified, mk_TypeExpr_simple, mk_Unary, mk_UnpackOrigin, mk_UnpackTarget, mk_VarDecl, mk_WhileStmt, mk_WithStmt, put
+from ast_schema import Ast, at, dump_module, mk_Assign, mk_Attribute, mk_Binary, mk_Call, mk_ClassAttrRef, mk_ClassDef, mk_CompClause_for_clause, mk_CompClause_if_clause, mk_CompForClause, mk_ConstDecl, mk_Decorator, mk_DeferStmt, mk_DictComp, mk_DictPair, mk_ElifClause, mk_EnumVariant, mk_ExceptClause, mk_Expr_attribute, mk_Expr_await_expr, mk_Expr_binary, mk_Expr_bool_lit, mk_Expr_bytes_lit, mk_Expr_call, mk_Expr_dict_comp, mk_Expr_dict_lit, mk_Expr_float_lit, mk_Expr_generic_construct, mk_Expr_identifier, mk_Expr_index, mk_Expr_int_lit, mk_Expr_kwarg, mk_Expr_lambda, mk_Expr_list_comp, mk_Expr_list_lit, mk_Expr_none_lit, mk_Expr_slice, mk_Expr_spawn_expr, mk_Expr_string_lit, mk_Expr_ternary, mk_Expr_tuple_lit, mk_Expr_unary, mk_ExternDef, mk_FieldDecl, mk_ForStmt, mk_FromImportName, mk_FromImportStmt, mk_FuncDef, mk_FuncTypeExpr, mk_Generic, mk_GenericConstruct, mk_IfStmt, mk_ImportStmt, mk_Index, mk_Kwarg, mk_Lambda, mk_ListComp, mk_LoopElseOrigin, mk_LowLevelStmt, mk_MatchCase, mk_MatchOrigin, mk_MatchPatternArg, mk_Param, mk_ProtocolDef, mk_Slice, mk_Span, mk_Stmt, mk_StmtKind_assign, mk_StmtKind_break_stmt, mk_StmtKind_class_def, mk_StmtKind_continue_stmt, mk_StmtKind_defer_stmt, mk_StmtKind_del_stmt, mk_StmtKind_expr_stmt, mk_StmtKind_extern_def, mk_StmtKind_for_stmt, mk_StmtKind_from_import_stmt, mk_StmtKind_func_def, mk_StmtKind_if_stmt, mk_StmtKind_import_stmt, mk_StmtKind_lowlevel_stmt, mk_StmtKind_pass_stmt, mk_StmtKind_protocol_def, mk_StmtKind_raise_stmt, mk_StmtKind_return_stmt, mk_StmtKind_try_stmt, mk_StmtKind_type_alias, mk_StmtKind_var_decl, mk_StmtKind_while_stmt, mk_StmtKind_with_stmt, mk_Ternary, mk_TryElseOrigin, mk_TryStmt, mk_TypeAliasStmt, mk_TypeExpr_func_type, mk_TypeExpr_generic, mk_TypeExpr_optional, mk_TypeExpr_qualified, mk_TypeExpr_simple, mk_Unary, mk_UnpackOrigin, mk_UnpackTarget, mk_VarDecl, mk_WhileStmt, mk_WithStmt, put
 from lexer import Lx, lex
 
 class ParseError(Exception):
@@ -263,6 +263,9 @@ def ex_ident_lit(a: Ast, s: str) -> int:
 
 def ex_str(a: Ast, s: int) -> int:
     return mk_Expr_string_lit(a, pkx(s), pky(s))
+
+def ex_bytes(a: Ast, s: int) -> int:
+    return mk_Expr_bytes_lit(a, pkx(s), pky(s))
 
 def ex_str_lit(a: Ast, s: str) -> int:
     v: int = syn(a, s)
@@ -1201,6 +1204,57 @@ def norm_crlf(p: P, s: int, e: int) -> int:
             i = i + 1
     return pk(0 - off - 1, len(a.sb) - off)
 
+# v2.2.77: `b"…"` / `B'…'` (üç tırnaklı dahil) → ham baytlar (Zig `decodeBytes`): kaçışlar `\n \t \r \\ \' \" \0` ve `\xHH` (0x00-0xFF); ASCII dışı kaynak baytı ve tanınmayan kaçış hata.
+def decode_bytes(p: P, ti: int) -> int:
+    a: Ast = p.a
+    s: int = t_s(p, ti)
+    e: int = t_e(p, ti)
+    qs: int = s + 1
+    lo_: int = qs + 1
+    hi_: int = e - 1
+    if (e - qs) >= 6 and at(a.src, qs) == at(a.src, qs + 1) and at(a.src, qs + 1) == at(a.src, qs + 2):
+        lo_ = qs + 3
+        hi_ = e - 3
+    off: int = len(a.sb)
+    i: int = lo_
+    while i < hi_:
+        c: int = at(a.src, i)
+        if c >= 128:
+            bad_str(p, 2, "bytes can only contain ASCII literal characters (use \\xHH escapes for other byte values)")
+        if c != 92 or i + 1 >= hi_:
+            a.sb.append(c)
+            i = i + 1
+            continue
+        esc: int = at(a.src, i + 1)
+        if esc == 120:
+            hv: int = -1
+            lv: int = -1
+            if i + 2 < hi_:
+                hv = hex_digit(at(a.src, i + 2))
+            if i + 3 < hi_:
+                lv = hex_digit(at(a.src, i + 3))
+            if hv < 0 or lv < 0:
+                bad_str(p, 2, "invalid '\\x' escape: it needs exactly two hexadecimal digits (for example \\x41)")
+            a.sb.append(hv * 16 + lv)
+            i = i + 4
+            continue
+        dec: int = -1
+        if esc == 110:
+            dec = 10
+        elif esc == 116:
+            dec = 9
+        elif esc == 114:
+            dec = 13
+        elif esc == 92 or esc == 39 or esc == 34:
+            dec = esc
+        elif esc == 48:
+            dec = 0
+        if dec < 0:
+            bad_str(p, 2, "unknown escape in a bytes literal (supported: \\n \\t \\r \\\\ \\' \\\" \\0 \\xHH)")
+        a.sb.append(dec)
+        i = i + 2
+    return pk(0 - off - 1, len(a.sb) - off)
+
 def decode_string(p: P, ti: int) -> int:
     a: Ast = p.a
     s: int = t_s(p, ti)
@@ -1233,12 +1287,21 @@ def parse_string_atoms(p: P) -> int:
     while chk(p, 2) or chk(p, 3):
         t: int = adv(p)
         piece: int = 0
-        if kd_at(p, t) == 2:
+        is_bytes: bool = kd_at(p, t) == 2 and (t_e(p, t) - t_s(p, t)) >= 3 and (at(a.src, t_s(p, t)) == 98 or at(a.src, t_s(p, t)) == 66)
+        if is_bytes:
+            piece = ex_bytes(a, decode_bytes(p, t))
+        elif kd_at(p, t) == 2:
             piece = ex_str(a, decode_string(p, t))
         else:
             piece = parse_fstring_lit(p, t_s(p, t), t_e(p, t))
         if acc >= 0:
-            if a.n[acc] == 3 and a.n[piece] == 3:
+            # v2.2.77: bitişik `b"a" b"b"` birleşir; bayt ile metin dizesi karıştırılamaz
+            if (a.n[acc] == 23) != (a.n[piece] == 23):
+                bad_str(p, 2, "cannot mix bytes and str literals")
+            if a.n[acc] == 23 and a.n[piece] == 23:
+                catb: int = concat_sref(a, pk(a.n[acc + 1], a.n[acc + 2]), pk(a.n[piece + 1], a.n[piece + 2]))
+                acc = ex_bytes(a, catb)
+            elif a.n[acc] == 3 and a.n[piece] == 3:
                 cat: int = concat_sref(a, pk(a.n[acc + 1], a.n[acc + 2]), pk(a.n[piece + 1], a.n[piece + 2]))
                 acc = ex_str(a, cat)
             else:

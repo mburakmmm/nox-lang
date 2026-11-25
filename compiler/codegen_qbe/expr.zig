@@ -29,6 +29,7 @@ const TAG_SIZE = types.TAG_SIZE;
 const LIST_HEADER_SIZE = types.LIST_HEADER_SIZE;
 const ARC_HEADER_SIZE = types.ARC_HEADER_SIZE;
 const STR_HEADER_SIZE = types.STR_HEADER_SIZE;
+const abi_layout = @import("abi_layout");
 const packStrHeader = types.packStrHeader;
 const STR_ASCII_TRUE = types.STR_ASCII_TRUE;
 const CLOSURE_HEADER_SIZE = types.CLOSURE_HEADER_SIZE;
@@ -372,6 +373,8 @@ pub fn genExpr(self: *Codegen, expr: ast.Expr) CodegenError!Value {
         .float_lit => |v| .{ .text = try std.fmt.allocPrint(self.allocator, "d_{d}", .{v}), .qtype = .d },
         .bool_lit => |v| .{ .text = if (v) "1" else "0", .qtype = .w },
         .string_lit => |s| try self.emitStringLiteral(s),
+        // v2.2.77: `bytes` değerleri `str` ile AYNI bellek düzeni/yığın türü (`HeapKind.str`); bayt-tabanlı işlemler `__nox_bytes_*` iç yerleşikleriyle yapılır.
+        .bytes_lit => |s| try self.emitStringLiteral(s),
         .identifier => |name| blk: {
             if (self.vars.get(name)) |info| {
                 const t = try self.newTemp();
@@ -1495,7 +1498,7 @@ pub fn genStrEqLiteral(self: *Codegen, op: ast.BinaryOp, s: Value, lit: []const 
     const false_label = try self.newLabel("streq_false");
     const join_label = try self.newLabel("streq_join");
     var k: usize = 0;
-    while (k <= lit.len) : (k += 1) {
+    while (k < lit.len) : (k += 1) {
         var addr: []const u8 = s.text;
         if (k > 0) {
             const a = try self.newTemp();
@@ -1505,17 +1508,21 @@ pub fn genStrEqLiteral(self: *Codegen, op: ast.BinaryOp, s: Value, lit: []const 
         const byte = try self.newTemp();
         try self.qbeLoadUB(byte, addr);
         const next_label = try self.newLabel("streq_next");
-        if (k < lit.len) {
-            const ne = try self.newTemp();
-            try self.qbeOp2Imm(ne, .w, "cnew", byte, @intCast(lit[k]));
-            try self.qbeJnz(ne, false_label, next_label);
-        } else {
-            const isz = try self.newTemp();
-            try self.qbeOp2Imm(isz, .w, "ceqw", byte, 0);
-            try self.qbeJnz(isz, true_label, false_label);
-        }
-        if (k < lit.len) try self.qbeLabel(next_label);
+        const ne = try self.newTemp();
+        try self.qbeOp2Imm(ne, .w, "cnew", byte, @intCast(lit[k]));
+        try self.qbeJnz(ne, false_label, next_label);
+        try self.qbeLabel(next_label);
     }
+    // v2.2.77: sondaki "terminatör sıfır mı" denetimi gömülü NUL'lu `s`i (ör. "ab\x00x" == "ab") yanlış eşit sayıyordu; bayt uzunluğu başlıktan (s - 8, alt 52 bit) okunup literal uzunluğuyla karşılaştırılır.
+    const hdr_addr = try self.newTemp();
+    try self.qbeOp2Imm(hdr_addr, .l, "sub", s.text, STR_HEADER_SIZE);
+    const hdr = try self.newTemp();
+    try self.qbeLoadL(hdr, hdr_addr);
+    const blen = try self.newTemp();
+    try self.qbeOp2Imm(blen, .l, "and", hdr, @intCast(abi_layout.STR_LENGTH_MASK));
+    const len_eq = try self.newTemp();
+    try self.qbeOp2Imm(len_eq, .w, "ceql", blen, @intCast(lit.len));
+    try self.qbeJnz(len_eq, true_label, false_label);
     try self.qbeLabel(true_label);
     try self.qbeStoreImmL(1, slot);
     try self.qbeJmp(join_label);
@@ -1608,11 +1615,12 @@ pub fn genOptionalEq(self: *Codegen, op: ast.BinaryOp, l0: Value, r0: Value) Cod
 }
 
 pub fn genStrCompare(self: *Codegen, op: ast.BinaryOp, l: Value, r: Value) CodegenError!Value {
-    const cmp_t = try self.newTemp();
-    try self.qbeCall(.{ .name = cmp_t, .ty = .w }, "$strcmp", &.{ .{ .ty = .l, .text = l.text }, .{ .ty = .l, .text = r.text } });
+    // v2.2.77: uzunluk-bilgili `nox_str_eq` (1 = eşit) — `strcmp` gömülü NUL'dan sonrasını görmüyordu.
+    const eq_t = try self.newTemp();
+    try self.qbeCall(.{ .name = eq_t, .ty = .w }, "$nox_str_eq", &.{ .{ .ty = .l, .text = l.text }, .{ .ty = .l, .text = r.text } });
     const result = try self.newTemp();
-    const mnemonic: []const u8 = if (op == .eq) "ceqw" else "cnew";
-    try self.qbeOp2Imm(result, .w, mnemonic, cmp_t, 0);
+    const mnemonic: []const u8 = if (op == .eq) "cnew" else "ceqw";
+    try self.qbeOp2Imm(result, .w, mnemonic, eq_t, 0);
     return .{ .text = result, .qtype = .w };
 }
 
@@ -2171,7 +2179,7 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
     // v1.153.0: `str < str` / `<=` / `>` / `>=` — `strcmp` (bayt sırası; UTF-8'de codepoint sırasıyla aynı).
     if (l0.heap == .str and r0.heap == .str and (b.op == .lt or b.op == .le or b.op == .gt or b.op == .ge)) {
         const cmp_t = try self.newTemp();
-        try self.qbeCall(.{ .name = cmp_t, .ty = .w }, "$strcmp", &.{ .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
+        try self.qbeCall(.{ .name = cmp_t, .ty = .w }, "$nox_str_cmp", &.{ .{ .ty = .l, .text = l0.text }, .{ .ty = .l, .text = r0.text } });
         const result = try self.newTemp();
         const mnemonic: []const u8 = switch (b.op) {
             .lt => "csltw",

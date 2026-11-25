@@ -112,7 +112,8 @@ fn keysEqual(key_is_str: bool, a: i64, b: i64) bool {
     if (a == 0 or b == 0) return false;
     const pa: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(a)))));
     const pb: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(b)))));
-    return std.mem.orderZ(u8, pa, pb) == .eq;
+    // v2.2.77: UZUNLUK-bilgili karşılaştırma (`orderZ` gömülü NUL'dan sonrasını görmüyordu: `b"a\x00b"` ile `b"a\x00c"` aynı anahtar sayılıyordu).
+    return std.mem.eql(u8, str_mod.nox_str_slice(pa), str_mod.nox_str_slice(pb));
 }
 
 /// Güvenlik bulgusu M-3 (bkz. güvenlik raporu) — DÜZELTİLDİ: `StrOrIntContext.
@@ -285,7 +286,7 @@ const StrOrIntContext = struct {
         if (!self.key_is_str) return mixInt(hashSeed(self.rt), key);
         if (key == 0) return 0;
         const p: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(key)))));
-        return std.hash.Wyhash.hash(hashSeed(self.rt), std.mem.sliceTo(p, 0));
+        return std.hash.Wyhash.hash(hashSeed(self.rt), str_mod.nox_str_slice(p)); // v2.2.77: uzunluk başlıktan (O(1), gömülü NUL dahil)
     }
 
     pub fn eql(self: @This(), a: i64, b: i64) bool {
@@ -809,7 +810,7 @@ pub export fn nox_hash_float(rt: ?*anyopaque, f: f64) i64 {
 
 pub export fn nox_hash_str(rt: ?*anyopaque, s: ?[*:0]const u8) i64 {
     const p = s orelse return 0;
-    const h = std.hash.Wyhash.hash(hashSeed(rt), std.mem.sliceTo(p, 0));
+    const h = std.hash.Wyhash.hash(hashSeed(rt), str_mod.nox_str_slice(p)); // v2.2.77: gömülü NUL dahil uzunluk-bilgili
     return @bitCast(h & 0x7fff_ffff_ffff_ffff);
 }
 
@@ -828,7 +829,7 @@ fn payloadsEqual(rt: ?*anyopaque, vkind: i32, veq: ?*const fn (abi_ptr.Arg, abi_
             if (a == b) return true;
             const pa = payloadToStrPtr(a) orelse return false;
             const pb = payloadToStrPtr(b) orelse return false;
-            return std.mem.orderZ(u8, pa, pb) == .eq;
+            return std.mem.eql(u8, str_mod.nox_str_slice(pa), str_mod.nox_str_slice(pb)); // v2.2.77: uzunluk-bilgili
         },
         DICT_VEQ_CALLBACK => {
             if (a == b) return true;

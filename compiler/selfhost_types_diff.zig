@@ -51,7 +51,7 @@ fn refAssignable(h: *const Hier, declared: Type, value: Type) bool {
 
 pub fn gen(r: std.Random, a: std.mem.Allocator, depth: u32) !Type {
     const leaf = depth == 0 or r.intRangeLessThan(u8, 0, 10) < 3;
-    const pick = r.intRangeLessThan(u8, 0, if (leaf) 8 else 18);
+    const pick = r.intRangeLessThan(u8, 0, if (leaf) 8 else 19);
     switch (pick) {
         0 => return .int,
         1 => return .float,
@@ -75,6 +75,7 @@ pub fn gen(r: std.Random, a: std.mem.Allocator, depth: u32) !Type {
                 else => .{ .typed_ptr = e },
             };
         },
+        17 => return .bytes, // v2.2.77
         16 => {
             const k = try a.create(Type);
             const v = try a.create(Type);
@@ -100,6 +101,7 @@ pub fn build(api: glue.TypeApi, syms: []const i64, t: Type) i64 {
         .float => api.scalar(1),
         .boolean => api.scalar(2),
         .str => api.scalar(3),
+        .bytes => api.scalar(18),
         .none => api.scalar(4),
         .ptr => api.scalar(12),
         .fixed_int => |k| api.fixed(@intFromEnum(k)),

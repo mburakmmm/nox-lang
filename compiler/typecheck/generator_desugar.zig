@@ -346,7 +346,7 @@ const Pass = struct {
 
     fn rename(self: *Pass, e: *ast.Expr) Error!void {
         switch (e.*) {
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => {},
             .identifier => |n| if (self.lookup(n)) |b| {
                 e.* = try self.readOf(b);
             },

@@ -918,6 +918,7 @@ pub const Checker = struct {
                 if (std.mem.eql(u8, name, "float")) return .float;
                 if (std.mem.eql(u8, name, "bool")) return .boolean;
                 if (std.mem.eql(u8, name, "str")) return .str;
+                if (std.mem.eql(u8, name, "bytes")) return .bytes;
                 if (std.mem.eql(u8, name, "None")) return .none;
                 if (std.mem.eql(u8, name, "ptr")) return .ptr;
                 // v2.0 madde 4 (bkz. nox-teknik-spesifikasyon.md §3.192):
@@ -1021,8 +1022,8 @@ pub const Checker = struct {
                     const value_t = try self.typeExprToType(g.args[1]);
                     // v1.152.0 (roadmap 1.6b): `float` anahtar eklendi (bit deseniyle hash/eşitlik; 0.0 ve -0.0 AYRI anahtardır,
                     // NaN anahtar kullanılmamalıdır).
-                    if (key_t != .int and key_t != .boolean and key_t != .str and key_t != .float) {
-                        return self.fail(error.UnknownType, "the 'dict' key type can only be int/float/bool/str", .{});
+                    if (key_t != .int and key_t != .boolean and key_t != .str and key_t != .float and key_t != .bytes) {
+                        return self.fail(error.UnknownType, "the 'dict' key type can only be int/float/bool/str/bytes", .{});
                     }
                     // Faz OO.4 (bkz. nox-teknik-spesifikasyon.md §3.85):
                     // `.class` DEĞER OLARAK KABUL EDİLİR — `nox_class_
@@ -1034,8 +1035,8 @@ pub const Checker = struct {
                     // Sınıf ANAHTAR olarak HÂLÂ REDDEDİLİR (hash/eşitlik
                     // AYRI, DAHA ZOR bir problem — bilinçli kapsam DIŞI).
                     // v1.152.0 (roadmap 1.6b): `list[T]` ve `dict[K2, V2]` değerler eklendi (sözlük `Dict.value_release` ile bırakır).
-                    if (value_t != .int and value_t != .float and value_t != .boolean and value_t != .str and value_t != .class and value_t != .list and value_t != .dict) {
-                        return self.fail(error.UnknownType, "the 'dict' value type can only be int/float/bool/str/class/list/dict", .{});
+                    if (value_t != .int and value_t != .float and value_t != .boolean and value_t != .str and value_t != .bytes and value_t != .class and value_t != .list and value_t != .dict) {
+                        return self.fail(error.UnknownType, "the 'dict' value type can only be int/float/bool/str/bytes/class/list/dict", .{});
                     }
                     const key_boxed = try self.allocator.create(Type);
                     key_boxed.* = key_t;
@@ -2477,7 +2478,8 @@ pub const Checker = struct {
             // `ptr` TAM OLARAK bu sınırdan geçmek İÇİN var (bkz. `Type.ptr`in
             // belge notu, Faz 20'nin ikinci artımı) — handle-tabanlı C
             // API'lerinin (`FILE*`/`sqlite3*`) parametre/dönüş tipi.
-            .int, .float, .boolean, .str, .none, .ptr => true,
+            // `bytes` `str` ile AYNI ABI'dir (uzunluk başlığı + NUL'lu bayt dizisi): `extern def` sınırında `str` gibi geçer (v2.2.77; `__nox_bytes_*` ilkelleri bunu kullanır).
+            .int, .float, .boolean, .str, .bytes, .none, .ptr => true,
             // `dict[str, str]` (YALNIZCA bu somut örnekleme) — stdlib fazı
             // §D.1 (Keşif 4): çalışma zamanı temsili ZATEN opak bir `ptr`
             // olduğundan (`HeapKind.dict`, ARC başlığı YOK) bunu bir
@@ -2581,7 +2583,7 @@ pub const Checker = struct {
     fn isSpawnParamSafeType(self: *const Checker, t: Type) bool {
         if (self.sharesRuntime()) {
             return switch (t) {
-                .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .typed_ptr, .thread_channel, .task_local, .list, .class, .dict, .fixed_int => true,
+                .int, .float, .boolean, .str, .bytes, .none, .task, .channel, .ptr, .typed_ptr, .thread_channel, .task_local, .list, .class, .dict, .fixed_int => true,
                 .thread_handle, .func, .optional => false,
             };
         }
@@ -2589,7 +2591,7 @@ pub const Checker = struct {
             // v2.0 madde 4: `int`in AYNI gerekçesiyle (sabit boyutlu,
             // ARC-dışı, KOPYALANABİLİR değer) HER İKİ backend'de spawn-
             // güvenli.
-            .int, .float, .boolean, .str, .none, .task, .channel, .ptr, .typed_ptr, .thread_channel, .task_local, .fixed_int => true,
+            .int, .float, .boolean, .str, .bytes, .none, .task, .channel, .ptr, .typed_ptr, .thread_channel, .task_local, .fixed_int => true,
             // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
             // gerekçesiyle, `Optional[T]` `spawn`ın kapanış paketlemesinden
             // GEÇEMEZ.
@@ -2632,13 +2634,13 @@ pub const Checker = struct {
     fn isThreadTransferSafeType(self: *const Checker, t: Type) bool {
         if (self.sharesRuntime()) {
             return switch (t) {
-                .int, .float, .boolean, .str, .none, .ptr, .typed_ptr, .thread_channel, .task, .channel, .task_local, .list, .class, .dict, .fixed_int => true,
+                .int, .float, .boolean, .str, .bytes, .none, .ptr, .typed_ptr, .thread_channel, .task, .channel, .task_local, .list, .class, .dict, .fixed_int => true,
                 .thread_handle, .func, .optional => false,
             };
         }
         return switch (t) {
             // v2.0 madde 4: `int`in AYNI gerekçesiyle taşıma-güvenli.
-            .int, .float, .boolean, .str, .none, .ptr, .typed_ptr, .thread_channel, .fixed_int => true,
+            .int, .float, .boolean, .str, .bytes, .none, .ptr, .typed_ptr, .thread_channel, .fixed_int => true,
             // Faz FF.6: bilinçli v1 sınırlaması — `isFfiSafeType`in AYNI
             // gerekçesiyle, `Optional[T]` `nox.thread.start`ın sınırından
             // GEÇEMEZ. `task_local` da (`task`/`channel` İLE AYNI
@@ -4519,7 +4521,7 @@ pub const Checker = struct {
 
     fn collectSpawnTargetsExpr(self: *Checker, e: ast.Expr) TypeError!void {
         switch (e) {
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
             .unary => |u| try self.collectSpawnTargetsExpr(u.operand.*),
             .kwarg => |k| try self.collectSpawnTargetsExpr(k.value.*),
             .ternary => |t| {
@@ -4931,7 +4933,7 @@ pub const Checker = struct {
 
     fn scanMutatesGraphExpr(self: *Checker, fname: []const u8, params: []const ast.Param, expr: ast.Expr, shared: []const SharedParam, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) TypeError!void {
         switch (expr) {
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
             .unary => |u| try self.scanMutatesGraphExpr(fname, params, u.operand.*, shared, seeds, reverse_edges),
             .kwarg => |k| try self.scanMutatesGraphExpr(fname, params, k.value.*, shared, seeds, reverse_edges),
             .ternary => |t| {
@@ -5209,7 +5211,7 @@ pub const Checker = struct {
             .await_expr => |op| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, op.*, params),
             .spawn_expr => |op| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, op.*, params),
             .generic_construct => |g| for (g.args) |a| try self.checkTransitiveSpawnSharedMutationExpr(fd_name, a, params),
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
         }
     }
 
@@ -5426,7 +5428,7 @@ pub const Checker = struct {
             },
             .spawn_expr => |op| try self.removeAwaitedTaskSharing(aa, op.*, task_spawn_ids, resource_owners, locked_resources),
             .generic_construct => |g| for (g.args) |a| try self.removeAwaitedTaskSharing(aa, a, task_spawn_ids, resource_owners, locked_resources),
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
         }
     }
 
@@ -7138,6 +7140,7 @@ pub const Checker = struct {
         const elem_t: Type = switch (t) {
             .list => |elem| elem.*,
             .str => .str,
+            .bytes => .int, // v2.2.77: `for x in b` → her bayt bir `int` (0..255)
             .dict => |d| d.key.*,
             else => return self.fail(error.NotIterable, "'for' cannot iterate over this expression (it must be a list/str/dict/range or a class with `__iter__`)", .{}),
         };
@@ -7154,6 +7157,12 @@ pub const Checker = struct {
                 const boxed = try self.allocator.create(Type);
                 boxed.* = .str;
                 list_type = .{ .list = boxed };
+            },
+            .bytes => {
+                const new_call = try self.mkCallExpr("__nox_bytes_ints", &.{dunder_iter orelse iterable});
+                const rt_ = try self.checkExpr(ctx, new_call);
+                new_iterable = new_call;
+                list_type = rt_;
             },
             .dict => |d| {
                 const obj = try self.allocator.create(ast.Expr);
@@ -7498,6 +7507,7 @@ pub const Checker = struct {
             .float_lit => .float,
             .bool_lit => .boolean,
             .string_lit => .str,
+            .bytes_lit => .bytes,
             .none_lit => .none,
             // Faz FF.6: daraltma örtüsü (bkz. `FnCtx.narrowed`in belge notu)
             // GERÇEK scope aramasından ÖNCE denetlenir.
@@ -7595,6 +7605,12 @@ pub const Checker = struct {
                     if (idx_t != .int) return self.fail(error.TypeMismatch, "a str index must be an int", .{});
                     break :blk .str;
                 }
+                // v2.2.77: `b[i]` → `int` (0..255); `__nox_bytes_index(b, i)` çağrısına yeniden yazılır (negatif indeks + `IndexError`, bkz. core.nox).
+                if (obj_t == .bytes) {
+                    const idx_t = try self.checkExpr(ctx, idx.index.*);
+                    if (idx_t != .int) return self.fail(error.TypeMismatch, "a bytes index must be an int", .{});
+                    break :blk try self.rewriteExprTo(ctx, @intFromPtr(idx.index), try self.mkCallExpr("__nox_bytes_index", &.{ idx.obj.*, idx.index.* }));
+                }
                 const idx_t = try self.checkExpr(ctx, idx.index.*);
                 if (idx_t != .int) return self.fail(error.TypeMismatch, "a list index must be an int", .{});
                 break :blk switch (obj_t) {
@@ -7622,11 +7638,11 @@ pub const Checker = struct {
                 if (pairs.len == 0) return self.fail(error.UnknownType, "the type of an empty dict literal cannot be inferred", .{});
                 const first_key = try self.checkExpr(ctx, pairs[0].key);
                 const first_value = try self.checkExpr(ctx, pairs[0].value);
-                if (first_key != .int and first_key != .boolean and first_key != .str and first_key != .float) {
-                    return self.fail(error.TypeMismatch, "the 'dict' key type can only be int/float/bool/str", .{});
+                if (first_key != .int and first_key != .boolean and first_key != .str and first_key != .float and first_key != .bytes) {
+                    return self.fail(error.TypeMismatch, "the 'dict' key type can only be int/float/bool/str/bytes", .{});
                 }
-                if (first_value != .int and first_value != .float and first_value != .boolean and first_value != .str and first_value != .class and first_value != .list and first_value != .dict) {
-                    return self.fail(error.TypeMismatch, "the 'dict' value type can only be int/float/bool/str/class/list/dict", .{});
+                if (first_value != .int and first_value != .float and first_value != .boolean and first_value != .str and first_value != .bytes and first_value != .class and first_value != .list and first_value != .dict) {
+                    return self.fail(error.TypeMismatch, "the 'dict' value type can only be int/float/bool/str/bytes/class/list/dict", .{});
                 }
                 for (pairs[1..]) |p| {
                     const kt = try self.checkExpr(ctx, p.key);
@@ -7896,6 +7912,15 @@ pub const Checker = struct {
         return has;
     }
 
+    /// v2.2.77: `ad(args...)` çağrı ifadesi (checker'ın iç yeniden yazımları için; ad prelude'daki `__nox_*` işlevidir).
+    fn mkCallExpr(self: *Checker, name: []const u8, args: []const ast.Expr) TypeError!ast.Expr {
+        const callee = try self.allocator.create(ast.Expr);
+        callee.* = .{ .identifier = name };
+        const a = try self.allocator.alloc(ast.Expr, args.len);
+        @memcpy(a, args);
+        return .{ .call = .{ .callee = callee, .args = a } };
+    }
+
     fn mkDunderCall(self: *Checker, obj: ast.Expr, name: []const u8, args: []const ast.Expr) TypeError!ast.Expr {
         const o = try self.allocator.create(ast.Expr);
         o.* = obj;
@@ -8018,6 +8043,8 @@ pub const Checker = struct {
             // aşağıdaki `numericPromote`ye düşülür ve orada reddedilir.
             .add => blk: {
                 if (l == .str and r == .str) break :blk .str;
+                // v2.2.77: `bytes + bytes` (aynı çalışma zamanı birleştirmesi; `str` ile karışmaz).
+                if (l == .bytes and r == .bytes) break :blk .bytes;
                 // v1.150.0: `list[T] + list[T]` — yeni bir liste (eleman tipleri birebir aynı olmalı).
                 if (l == .list and r == .list) {
                     if (!types.eql(l, r)) return self.fail(error.TypeMismatch, "'+' requires the element types of the two lists to be the same", .{});
@@ -8094,6 +8121,7 @@ pub const Checker = struct {
             .lt, .le, .gt, .ge => blk: {
                 // v1.153.0: `str < str` — bayt (UTF-8 ⇒ codepoint) sırasına göre sözlükbilimsel karşılaştırma.
                 if (l == .str and r == .str) break :blk .boolean;
+                if (l == .bytes and r == .bytes) break :blk .boolean; // v2.2.77: bayt sözlük sırası
                 if (!types.isNumeric(l) or !types.isNumeric(r)) {
                     return self.fail(error.TypeMismatch, "ordering comparisons only work on numeric types or between two strs", .{});
                 }
@@ -8127,7 +8155,18 @@ pub const Checker = struct {
                     .str => {
                         if (l != .str) return self.fail(error.TypeMismatch, "only a str can be searched for inside a str with 'in'", .{});
                     },
-                    else => return self.fail(error.TypeMismatch, "'in'/'not in' can only be used on list, dict and str", .{}),
+                    // v2.2.77: `bytes in bytes` (alt dizi; `str` ile aynı çalışma zamanı) ve `int in bytes` (bayt değeri; prelude işlevine yeniden yazılır).
+                    .bytes => {
+                        if (l == .int) {
+                            const call = try self.mkCallExpr("__nox_bytes_contains_byte", &.{ b.right.*, b.left.* });
+                            const rt_ = try self.checkExpr(ctx, call);
+                            if (rt_ != .boolean) return self.fail(error.TypeMismatch, "internal: __nox_bytes_contains_byte must return bool", .{});
+                            try self.expr_rewrites.put(self.allocator, @intFromPtr(b.left), if (b.op == .in_) call else try self.notOf(call));
+                        } else if (l != .bytes) {
+                            return self.fail(error.TypeMismatch, "only a bytes value or an int (0..255) can be searched for inside bytes with 'in'", .{});
+                        }
+                    },
+                    else => return self.fail(error.TypeMismatch, "'in'/'not in' can only be used on list, dict, str and bytes", .{}),
                 }
                 break :blk .boolean;
             },
@@ -8247,7 +8286,7 @@ pub const Checker = struct {
         if (self.effects == null) self.effects = field_effects.build(self.allocator, self.effect_body) catch return true;
         const eff = &self.effects.?;
         return switch (e) {
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => false,
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => false,
             .unary => |u| self.mayRunUserCode(u.operand.*),
             .binary => |b| self.mayRunUserCode(b.left.*) or self.mayRunUserCode(b.right.*),
             .call => |c| blk: {
@@ -9435,6 +9474,14 @@ pub const Checker = struct {
                         } else {
                             if (saw_kw) return self.fail(error.TypeMismatch, "positional arguments of 'print' must come before keyword arguments", .{});
                             const pt = try self.checkExpr(ctx, arg);
+                            // v2.2.77: `print(b)` Python gibi `repr` biçimini yazdırır: `print(__nox_bytes_repr(b))`.
+                            if (pt == .bytes) {
+                                if (print_args == null) {
+                                    print_args = try self.allocator.alloc(ast.Expr, c.args.len);
+                                    @memcpy(print_args.?, c.args);
+                                }
+                                print_args.?[pi] = try self.mkCallExpr("__nox_bytes_repr", &.{arg});
+                            }
                             // v1.163.0: `print(obj)` → `print(obj.__str__())` (sınıfta `__str__` tanımlıysa).
                             if (self.hasDunder(pt, "__str__")) {
                                 if (print_args == null) {
@@ -9476,8 +9523,10 @@ pub const Checker = struct {
                         if (rt != .int) return self.fail(error.TypeMismatch, "'__len__' must return an int", .{});
                         return .int;
                     }
+                    // v2.2.77: `len(b)` BAYT sayısıdır (str'nin codepoint sayısından farklı) → `__nox_bytes_len(b)`.
+                    if (t == .bytes) return try self.rewriteExprTo(ctx, @intFromPtr(c.callee), try self.mkCallExpr("__nox_bytes_len", &.{c.args[0]}));
                     if (t != .str and t != .list and t != .dict) {
-                        return self.fail(error.TypeMismatch, "'len' only works on str/list/dict/tuple (define `__len__` for classes)", .{});
+                        return self.fail(error.TypeMismatch, "'len' only works on str/list/dict/bytes/tuple (define `__len__` for classes)", .{});
                     }
                     return .int;
                 }
@@ -9494,7 +9543,25 @@ pub const Checker = struct {
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'repr' takes exactly 1 argument", .{});
                     const t = try self.checkExpr(ctx, c.args[0]);
                     if (t == .func or t == .none) return self.fail(error.TypeMismatch, "'repr' does not work on function/None values", .{});
+                    // v2.2.77: `repr(b)` → Python biçimi `b'...'` (`__nox_bytes_repr`).
+                    if (t == .bytes) return try self.rewriteExprTo(ctx, @intFromPtr(c.callee), try self.mkCallExpr("__nox_bytes_repr", &.{c.args[0]}));
                     return .str;
+                }
+                // v2.2.77: `bytes()` (boş), `bytes(list[int|u8])` (0..255 doğrulanır, `ValueError`), `bytes(bytes)` (aynı değer). `str` verilirse `s.encode()` kullanılmalıdır.
+                if (std.mem.eql(u8, name, "bytes") and !self.functions.contains("bytes") and !self.classes.contains("bytes")) {
+                    if (c.args.len == 0) return try self.rewriteExprTo(ctx, @intFromPtr(c.callee), .{ .bytes_lit = "" });
+                    if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'bytes' takes 0 or 1 argument", .{});
+                    const at = try self.checkExpr(ctx, c.args[0]);
+                    if (at == .bytes) return try self.rewriteExprTo(ctx, @intFromPtr(c.callee), c.args[0]);
+                    if (at == .list and at.list.* == .int) {
+                        return try self.rewriteExprTo(ctx, @intFromPtr(c.callee), try self.mkCallExpr("__nox_bytes_new_ints", &.{c.args[0]}));
+                    }
+                    // `list[u8]` (ve diğer sabit genişlikler): `int(x)` açık genişletmesiyle; u8 için 0..255 zaten garantilidir, `i8`/`i32` negatif/büyük değerde `& 0xFF` DEĞİL — aralık dışı ValueError.
+                    if (at == .list and at.list.* == .fixed_int) {
+                        return try self.rewriteExprTo(ctx, @intFromPtr(c.callee), try self.mkCallExpr("__nox_bytes_new", &.{c.args[0]}));
+                    }
+                    if (at == .str) return self.fail(error.TypeMismatch, "'bytes' cannot take a str: use s.encode()", .{});
+                    return self.fail(error.TypeMismatch, "'bytes' takes a list[int]/list[u8] or a bytes value", .{});
                 }
                 if (std.mem.eql(u8, name, "str")) {
                     if (c.args.len != 1) return self.fail(error.ArgumentCountMismatch, "'str' takes exactly 1 argument", .{});
@@ -10373,6 +10440,7 @@ pub const Checker = struct {
                     return self.fail(error.UndefinedMethod, "list has no method '{s}' (append/extend/insert/pop/remove/clear/index/count/sort/reverse/copy)", .{a.attr});
                 }
                 if (obj_t == .str) return self.checkStrMethod(ctx, a, c);
+                if (obj_t == .bytes) return self.checkBytesMethod(ctx, a, c);
                 const class_name = switch (obj_t) {
                     .class => |n| n,
                     else => return self.fail(error.TypeMismatch, "a method call is only valid on class instances", .{}),
@@ -10538,11 +10606,11 @@ pub const Checker = struct {
         const key_t = try self.checkExpr(ctx, dc.key.*);
         const value_t = try self.checkExprExpected(ctx, dc.value.*, value_expected);
         restoreCompScope(ctx, &saved);
-        if (key_t != .int and key_t != .boolean and key_t != .str and key_t != .float) {
-            return self.fail(error.TypeMismatch, "the 'dict' key type can only be int/float/bool/str", .{});
+        if (key_t != .int and key_t != .boolean and key_t != .str and key_t != .float and key_t != .bytes) {
+            return self.fail(error.TypeMismatch, "the 'dict' key type can only be int/float/bool/str/bytes", .{});
         }
-        if (value_t != .int and value_t != .float and value_t != .boolean and value_t != .str and value_t != .class and value_t != .list and value_t != .dict) {
-            return self.fail(error.TypeMismatch, "the 'dict' value type can only be int/float/bool/str/class/list/dict", .{});
+        if (value_t != .int and value_t != .float and value_t != .boolean and value_t != .str and value_t != .bytes and value_t != .class and value_t != .list and value_t != .dict) {
+            return self.fail(error.TypeMismatch, "the 'dict' value type can only be int/float/bool/str/bytes/class/list/dict", .{});
         }
         const kb = try self.allocator.create(Type);
         kb.* = key_t;
@@ -10708,6 +10776,22 @@ pub const Checker = struct {
 
     /// v1.156.0: `str` metodları — `s.upper()`, `s.split(sep)`, `sep.join(parts)`... (Python adları; `nox.strings` çalışma zamanı işlevlerine iner). ASCII
     /// büyük/küçük harf/boşluk semantiği (v1). Sonuçlar yeni değerlerdir.
+    /// v2.2.77: `bytes` metotları (`decode`, `hex`, `to_list`) — `core.nox`taki `__nox_bytes_<metod>(b)` prelude işlevlerine yeniden yazılır. `decode` yalnızca UTF-8
+    /// kabul eder (`b.decode()` ya da `b.decode("utf-8")`); geçersiz UTF-8 çalışma zamanında `ValueError` fırlatır.
+    fn checkBytesMethod(self: *Checker, ctx: *FnCtx, a: ast.Attribute, c: ast.Call) TypeError!Type {
+        const m = a.attr;
+        const known = std.mem.eql(u8, m, "decode") or std.mem.eql(u8, m, "hex") or std.mem.eql(u8, m, "to_list");
+        if (!known) return self.fail(error.UndefinedMethod, "bytes has no method '{s}' (decode/hex/to_list)", .{m});
+        if (std.mem.eql(u8, m, "decode") and c.args.len == 1) {
+            const ok = c.args[0] == .string_lit and (std.ascii.eqlIgnoreCase(c.args[0].string_lit, "utf-8") or std.ascii.eqlIgnoreCase(c.args[0].string_lit, "utf8"));
+            if (!ok) return self.fail(error.TypeMismatch, "bytes.decode only supports the UTF-8 encoding", .{});
+        } else if (c.args.len != 0) {
+            return self.fail(error.ArgumentCountMismatch, "bytes.{s} takes no arguments", .{m});
+        }
+        const name = try std.fmt.allocPrint(self.allocator, "__nox_bytes_{s}", .{m});
+        return try self.rewriteExprTo(ctx, @intFromPtr(c.callee), try self.mkCallExpr(name, &.{a.obj.*}));
+    }
+
     fn checkStrMethod(self: *Checker, ctx: *FnCtx, a: ast.Attribute, c: ast.Call) TypeError!Type {
         const args = c.args;
         const m = a.attr;
@@ -10775,8 +10859,21 @@ pub const Checker = struct {
     fn checkSlice(self: *Checker, ctx: *FnCtx, sl: ast.Slice) TypeError!Type {
         const obj_t = try self.checkExpr(ctx, sl.obj.*);
         try self.requireNotOptional(obj_t, "[:]");
+        if (obj_t == .bytes) {
+            // v2.2.77: `b[lo:hi]` → `bytes` (adım desteklenmez); `__nox_bytes_slice(b, lo, hi)`: eksik sınır 0 / en büyük int olur, negatifler sondan sayılır, aralık kırpılır.
+            if (sl.step != null) return self.fail(error.TypeMismatch, "bytes slices do not support a step", .{});
+            inline for (.{ sl.lo, sl.hi }) |maybe| {
+                if (maybe) |x| {
+                    const t = try self.checkExpr(ctx, x.*);
+                    if (t != .int) return self.fail(error.TypeMismatch, "slice bounds/step must be 'int'", .{});
+                }
+            }
+            const lo_e: ast.Expr = if (sl.lo) |x| x.* else .{ .int_lit = 0 };
+            const hi_e: ast.Expr = if (sl.hi) |x| x.* else .{ .int_lit = std.math.maxInt(i64) };
+            return self.rewriteExprTo(ctx, @intFromPtr(sl.obj), try self.mkCallExpr("__nox_bytes_slice", &.{ sl.obj.*, lo_e, hi_e }));
+        }
         if (obj_t != .list and obj_t != .str) {
-            return self.fail(error.TypeMismatch, "slicing ('[a:b]') only works on list/str", .{});
+            return self.fail(error.TypeMismatch, "slicing ('[a:b]') only works on list/str/bytes", .{});
         }
         inline for (.{ sl.lo, sl.hi, sl.step }) |maybe| {
             if (maybe) |x| {
@@ -11263,6 +11360,7 @@ pub const Checker = struct {
             .float => .{ .simple = "float" },
             .boolean => .{ .simple = "bool" },
             .str => .{ .simple = "str" },
+            .bytes => .{ .simple = "bytes" },
             .none => .{ .simple = "None" },
             .ptr => .{ .simple = "ptr" },
             .fixed_int => |k| .{ .simple = k.name() },
@@ -11372,7 +11470,7 @@ pub const Checker = struct {
     /// somutlaştırılmış `Box[int]`nin çözümü İSE `Box__int`e gider).
     fn substituteExpr(self: *Checker, e: ast.Expr, bindings: *const std.StringHashMapUnmanaged(Type)) TypeError!ast.Expr {
         return switch (e) {
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => e,
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => e,
             .unary => |u| blk: {
                 const operand = try self.allocator.create(ast.Expr);
                 operand.* = try self.substituteExpr(u.operand.*, bindings);

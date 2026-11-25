@@ -172,6 +172,8 @@ pub const Expr = union(enum) {
     tuple_lit: []Expr,
     list_comp: ListComp,
     dict_comp: DictComp,
+    /// v2.2.77: `b"..."` bayt dizesi literali (çözülmüş HAM baytlar, 0..255; ASCII dışı kaynak karakteri ve geçersiz kaçış derleme hatasıdır). Tip: `bytes`. Birleşimin SONUNA eklendi (selfhost Expr etiketleri değişmez).
+    bytes_lit: []const u8,
 };
 
 pub const Unary = struct { op: UnaryOp, operand: *Expr };

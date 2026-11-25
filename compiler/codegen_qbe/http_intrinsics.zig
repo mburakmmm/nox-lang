@@ -50,7 +50,7 @@ pub fn markRequestField(used: *UsedRequestFields, attr: []const u8) void {
 /// İŞARETLENİR (GG.2/GG.5/GG.9'un AYNI "kaçış ⇒ muhafazakâr" disiplini).
 pub fn visitExprForReqUsage(e: ast.Expr, param_name: []const u8, used: *UsedRequestFields) void {
     switch (e) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => {},
         .identifier => |name| if (std.mem.eql(u8, name, param_name)) {
             used.* = UsedRequestFields.allUsed();
         },

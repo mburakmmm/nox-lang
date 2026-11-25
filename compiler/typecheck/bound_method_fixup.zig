@@ -144,7 +144,7 @@ const Fixer = struct {
     /// DEĞİL).
     fn fixExpr(self: *Fixer, e: *ast.Expr, value_pos: bool) std.mem.Allocator.Error!void {
         switch (e.*) {
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
             .unary => |*u| try self.fixExpr(u.operand, true),
             .kwarg => |*k| try self.fixExpr(k.value, true),
             .ternary => |*t| {

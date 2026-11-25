@@ -188,6 +188,8 @@ pub fn resolveType(self: *Codegen, te: ast.TypeExpr) CodegenError!TypeInfo {
             if (std.mem.eql(u8, name, "bool")) return .{ .qtype = .w };
             if (std.mem.eql(u8, name, "None")) return .{ .qtype = .none };
             if (std.mem.eql(u8, name, "str")) return .{ .qtype = .l, .heap = .str };
+            // v2.2.77: `bytes` = `str` ile AYNI çalışma zamanı temsili (statik ayrım yalnızca checker'dadır).
+            if (std.mem.eql(u8, name, "bytes")) return .{ .qtype = .l, .heap = .str };
             // `ptr` — Faz 20'nin ikinci artımı (bkz. nox-teknik-
             // spesifikasyon.md §3.20): ARC-İZLENMEYEN opak bir işaretçi
             // (`heap = .none`, `list`/`class` gibi ÖZEL bir dispatch
@@ -819,7 +821,7 @@ fn exprIsPromotedMethodCall(expr: ast.Expr, is_promoted: *const std.StringHashMa
 /// bir döngü değişkeniyle karıştırmamak için bağlanan adlar düşülür.
 fn collectFreeNamesExpr(a: std.mem.Allocator, expr: ast.Expr, bound: *const std.StringHashMapUnmanaged(void), out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
     switch (expr) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => {},
         .identifier => |name| if (!bound.contains(name)) try out.put(a, name, {}),
         .unary => |u| try collectFreeNamesExpr(a, u.operand.*, bound, out),
         .kwarg => |k| try collectFreeNamesExpr(a, k.value.*, bound, out),
@@ -1733,7 +1735,7 @@ pub fn collectIdentifierNamesStmts(a: std.mem.Allocator, stmts: []const ast.Stmt
 
 pub fn collectIdentifierNamesExpr(a: std.mem.Allocator, expr: ast.Expr, out: *std.StringHashMapUnmanaged(void)) CodegenError!void {
     switch (expr) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => {},
         .identifier => |name| try out.put(a, name, {}),
         .unary => |u| try collectIdentifierNamesExpr(a, u.operand.*, out),
         .kwarg => |k| try collectIdentifierNamesExpr(a, k.value.*, out),

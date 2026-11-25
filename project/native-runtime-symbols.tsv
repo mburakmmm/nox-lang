@@ -89,6 +89,15 @@ nox_bigint_sub	runtime/stdlib_shims/bigint.zig	296	1	5	callconv(.c) ?[*:0]u8	rt:
 nox_bigint_to_i64	runtime/stdlib_shims/bigint.zig	115	0	2	callconv(.c) i64	s: ?[*:0]const u8
 nox_bigint_to_string	runtime/stdlib_shims/bigint.zig	150	1	4	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const u8, base: i64
 nox_bigint_xor	runtime/stdlib_shims/bigint.zig	311	1	5	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u8
+nox_bt_from_ints	runtime/str.zig	1902	1	2	?[*:0]u8	rt: ?*anyopaque, list_ptr: ?*anyopaque
+nox_bt_get	runtime/str.zig	1886	0	3	i64	s: ?[*:0]const u8, idx: i64
+nox_bt_hex	runtime/str.zig	1941	1	3	?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const u8
+nox_bt_is_utf8	runtime/str.zig	1925	0	2	i64	s: ?[*:0]const u8
+nox_bt_len	runtime/str.zig	1881	0	2	i64	s: ?[*:0]const u8
+nox_bt_repr	runtime/str.zig	1990	1	3	?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const u8
+nox_bt_sub	runtime/str.zig	1891	1	5	?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const u8, lo: i64, hi: i64
+nox_bt_to_ints	runtime/str.zig	1916	1	3	?*anyopaque	rt: ?*anyopaque, s: ?[*:0]const u8
+nox_bt_to_str	runtime/str.zig	1931	1	3	?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const u8
 nox_bytes_last_ok_raw	runtime/stdlib_shims/gzip.zig	380	0	0	callconv(.c) i64	
 nox_bytes_str_from_list_raw	runtime/stdlib_shims/gzip.zig	384	1	2	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, list_ptr: ?*anyopaque
 nox_cb_box_free	runtime/stdlib_shims/ffi_cb.zig	87	1	2	callconv(.c) void	rt: ?*anyopaque, box: ?*anyopaque
@@ -144,30 +153,30 @@ nox_debug_worker_slot	runtime/async_rt/pool_bridge.zig	354	0	0	callconv(.c) i64
 nox_defer_stack_new	runtime/alloc/defer_stack.zig	47	1	1	callconv(.c) ?*anyopaque	rt: ?*anyopaque
 nox_defer_stack_push	runtime/alloc/defer_stack.zig	57	1	3	callconv(.c) void	rt: ?*anyopaque, stack_ptr: ?*anyopaque, closure_ptr: ?*anyopaque
 nox_defer_stack_run_all	runtime/alloc/defer_stack.zig	80	1	2	callconv(.c) void	rt: ?*anyopaque, stack_ptr: ?*anyopaque
-nox_dict_clear	runtime/collections/dict.zig	705	1	5	void	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32
-nox_dict_contains	runtime/collections/dict.zig	789	1	4	i32	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64
-nox_dict_entry_key	runtime/collections/dict.zig	887	0	2	i64	dp: ?*anyopaque, idx: i64
-nox_dict_entry_owned	runtime/collections/dict.zig	472	0	4	i64	dp: ?*anyopaque, idx: i64, want_value: i32, kind: i32
-nox_dict_entry_value	runtime/collections/dict.zig	897	0	2	i64	dp: ?*anyopaque, idx: i64
-nox_dict_eq	runtime/collections/dict.zig	847	1	5	callconv(.c) i32) i32	rt: ?*anyopaque, ap: ?*anyopaque, bp: ?*anyopaque, vkind: i32, veq: ?*const fn (abi_ptr.Arg, abi_ptr.Arg, abi_ptr.Arg
-nox_dict_get	runtime/collections/dict.zig	759	1	4	i64	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64
-nox_dict_get_owned	runtime/collections/dict.zig	770	1	5	i64	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64, value_kind: i32
-nox_dict_keys	runtime/collections/dict.zig	950	1	4	?*anyopaque	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key_elem_size: i64
-nox_dict_len	runtime/collections/dict.zig	866	0	1	i64	dp: ?*anyopaque
-nox_dict_make_shared	runtime/collections/dict.zig	454	1	2	void	rt: ?*anyopaque, dp: ?*anyopaque
-nox_dict_new	runtime/collections/dict.zig	560	1	2	?*anyopaque	rt: ?*anyopaque, key_is_str: i32
-nox_dict_pop	runtime/collections/dict.zig	693	1	4	i64	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64
-nox_dict_publish_begin	runtime/collections/dict.zig	462	1	2	i32	rt: ?*anyopaque, dp: ?*anyopaque
-nox_dict_release	runtime/collections/dict.zig	989	1	5	void	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32
-nox_dict_release_thunk	runtime/collections/dict.zig	1436	0	1	*const fn (abi_ptr.Arg, abi_ptr.Arg) callconv(.c) void	combo: i32
-nox_dict_remove	runtime/collections/dict.zig	677	1	6	i32	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32, key: i64
-nox_dict_set	runtime/collections/dict.zig	571	1	7	void	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32, key: i64, value: i64
+nox_dict_clear	runtime/collections/dict.zig	706	1	5	void	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32
+nox_dict_contains	runtime/collections/dict.zig	790	1	4	i32	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64
+nox_dict_entry_key	runtime/collections/dict.zig	888	0	2	i64	dp: ?*anyopaque, idx: i64
+nox_dict_entry_owned	runtime/collections/dict.zig	473	0	4	i64	dp: ?*anyopaque, idx: i64, want_value: i32, kind: i32
+nox_dict_entry_value	runtime/collections/dict.zig	898	0	2	i64	dp: ?*anyopaque, idx: i64
+nox_dict_eq	runtime/collections/dict.zig	848	1	5	callconv(.c) i32) i32	rt: ?*anyopaque, ap: ?*anyopaque, bp: ?*anyopaque, vkind: i32, veq: ?*const fn (abi_ptr.Arg, abi_ptr.Arg, abi_ptr.Arg
+nox_dict_get	runtime/collections/dict.zig	760	1	4	i64	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64
+nox_dict_get_owned	runtime/collections/dict.zig	771	1	5	i64	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64, value_kind: i32
+nox_dict_keys	runtime/collections/dict.zig	951	1	4	?*anyopaque	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key_elem_size: i64
+nox_dict_len	runtime/collections/dict.zig	867	0	1	i64	dp: ?*anyopaque
+nox_dict_make_shared	runtime/collections/dict.zig	455	1	2	void	rt: ?*anyopaque, dp: ?*anyopaque
+nox_dict_new	runtime/collections/dict.zig	561	1	2	?*anyopaque	rt: ?*anyopaque, key_is_str: i32
+nox_dict_pop	runtime/collections/dict.zig	694	1	4	i64	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, key: i64
+nox_dict_publish_begin	runtime/collections/dict.zig	463	1	2	i32	rt: ?*anyopaque, dp: ?*anyopaque
+nox_dict_release	runtime/collections/dict.zig	990	1	5	void	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32
+nox_dict_release_thunk	runtime/collections/dict.zig	1437	0	1	*const fn (abi_ptr.Arg, abi_ptr.Arg) callconv(.c) void	combo: i32
+nox_dict_remove	runtime/collections/dict.zig	678	1	6	i32	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32, key: i64
+nox_dict_set	runtime/collections/dict.zig	572	1	7	void	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32, key: i64, value: i64
 nox_dict_set_value_release	runtime/collections/dict.zig	88	0	2	callconv(.c) void) void	dp: ?*anyopaque, f: ?*const fn (abi_ptr.Arg, abi_ptr.Arg
-nox_dict_set_value_release_dict	runtime/collections/dict.zig	1429	0	2	void	dp: ?*anyopaque, combo: i32
-nox_dict_shallow_gc_free_class_values	runtime/collections/dict.zig	1015	1	3	void	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32
-nox_dict_trace_fill	runtime/collections/dict.zig	971	0	3	i64	dp: ?*anyopaque, buf: ?*anyopaque, start_idx: i64
-nox_dict_update	runtime/collections/dict.zig	726	1	6	void	rt: ?*anyopaque, dst: ?*anyopaque, src: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32
-nox_dict_values	runtime/collections/dict.zig	958	1	5	?*anyopaque	rt: ?*anyopaque, dp: ?*anyopaque, value_is_str: i32, value_is_class: i32, value_elem_size: i64
+nox_dict_set_value_release_dict	runtime/collections/dict.zig	1430	0	2	void	dp: ?*anyopaque, combo: i32
+nox_dict_shallow_gc_free_class_values	runtime/collections/dict.zig	1016	1	3	void	rt: ?*anyopaque, dp: ?*anyopaque, key_is_str: i32
+nox_dict_trace_fill	runtime/collections/dict.zig	972	0	3	i64	dp: ?*anyopaque, buf: ?*anyopaque, start_idx: i64
+nox_dict_update	runtime/collections/dict.zig	727	1	6	void	rt: ?*anyopaque, dst: ?*anyopaque, src: ?*anyopaque, key_is_str: i32, value_is_str: i32, value_is_class: i32
+nox_dict_values	runtime/collections/dict.zig	959	1	5	?*anyopaque	rt: ?*anyopaque, dp: ?*anyopaque, value_is_str: i32, value_is_class: i32, value_elem_size: i64
 nox_dns_at_raw	runtime/stdlib_shims/dns.zig	184	1	3	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, h: ?*anyopaque, i: i64
 nox_dns_count_raw	runtime/stdlib_shims/dns.zig	178	0	1	callconv(.c) i64	h: ?*anyopaque
 nox_dns_free_raw	runtime/stdlib_shims/dns.zig	191	0	1	callconv(.c) void	h: ?*anyopaque
@@ -267,9 +276,9 @@ nox_gzip_compress_str_raw	runtime/stdlib_shims/gzip.zig	343	1	3	?*anyopaque	rt: 
 nox_gzip_decompress_bytes_raw	runtime/stdlib_shims/gzip.zig	328	1	2	?*anyopaque	rt: ?*anyopaque, list_ptr: ?*anyopaque
 nox_gzip_decompress_to_str_raw	runtime/stdlib_shims/gzip.zig	357	1	2	?[*:0]u8	rt: ?*anyopaque, list_ptr: ?*anyopaque
 nox_gzip_last_op_ok	runtime/stdlib_shims/gzip.zig	309	0	0	i32	
-nox_hash_float	runtime/collections/dict.zig	805	1	2	i64	rt: ?*anyopaque, f: f64
-nox_hash_int	runtime/collections/dict.zig	801	1	2	i64	rt: ?*anyopaque, k: i64
-nox_hash_str	runtime/collections/dict.zig	810	1	3	i64	rt: ?*anyopaque, s: ?[*:0]const u8
+nox_hash_float	runtime/collections/dict.zig	806	1	2	i64	rt: ?*anyopaque, f: f64
+nox_hash_int	runtime/collections/dict.zig	802	1	2	i64	rt: ?*anyopaque, k: i64
+nox_hash_str	runtime/collections/dict.zig	811	1	3	i64	rt: ?*anyopaque, s: ?[*:0]const u8
 nox_host_abi_version	runtime/wasm_libc.zig	63	0	0	callconv(.c) u32	
 nox_host_alloc	runtime/stdlib_shims/http_fetch.zig	498	0	1	callconv(.c) ?[*]u8	len: usize
 nox_host_caps_set	runtime/stdlib_shims/http_fetch.zig	493	0	1	callconv(.c) void	mask: u32
@@ -467,9 +476,9 @@ nox_list_reserve	runtime/collections/list_ops.zig	277	1	4	?*anyopaque	rt: ?*anyo
 nox_list_reverse	runtime/collections/list_ops.zig	145	0	2	void	list: ?*anyopaque, esz_i: i64
 nox_list_shallow_gc_free	runtime/alloc/arc.zig	379	1	2	void	rt: ?*anyopaque, ptr: ?*anyopaque
 nox_list_slice	runtime/collections/list_ops.zig	122	1	10	?*anyopaque	rt: ?*anyopaque, a: ?*anyopaque, lo_i: i64, has_lo: i32, hi_i: i64, has_hi: i32, step_i: i64, has_step: i32, esz_i: i64, kind: i32
-nox_list_sort_float	runtime/collections/list_sort.zig	16	0	2	callconv(.c) void	data: [*]f64, len: i64
-nox_list_sort_int	runtime/collections/list_sort.zig	11	0	2	callconv(.c) void	data: [*]i64, len: i64
-nox_list_sort_str	runtime/collections/list_sort.zig	31	0	2	callconv(.c) void	data: [*]i64, len: i64
+nox_list_sort_float	runtime/collections/list_sort.zig	17	0	2	callconv(.c) void	data: [*]f64, len: i64
+nox_list_sort_int	runtime/collections/list_sort.zig	12	0	2	callconv(.c) void	data: [*]i64, len: i64
+nox_list_sort_str	runtime/collections/list_sort.zig	32	0	2	callconv(.c) void	data: [*]i64, len: i64
 nox_list_take_all	runtime/collections/list_ops.zig	235	1	3	?*anyopaque	rt: ?*anyopaque, list: ?*anyopaque, esz_i: i64
 nox_log_debug_raw	runtime/embed.zig	317	1	3	callconv(.c) void	rt: ?*anyopaque, msg: ?[*:0]const u8
 nox_math_atan2_raw	runtime/stdlib_shims/math.zig	85	0	2	callconv(.c) f64	y: f64, x: f64
@@ -752,10 +761,12 @@ nox_str_char_at	runtime/str.zig	927	1	4	?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const
 nox_str_char_class	runtime/str.zig	1644	0	3	i64	s: ?[*:0]const u8, kind: i32
 nox_str_char_count	runtime/str.zig	995	0	2	i64	s: ?[*:0]const u8
 nox_str_chars	runtime/str.zig	961	1	3	?*anyopaque	rt: ?*anyopaque, s: ?[*:0]const u8
+nox_str_cmp	runtime/str.zig	1834	0	4	i32	a: ?[*:0]const u8, b: ?[*:0]const u8
 nox_str_concat	runtime/str.zig	263	1	5	?[*:0]u8	rt: ?*anyopaque, a: ?[*:0]const u8, b: ?[*:0]const u8
 nox_str_concat_n	runtime/str.zig	292	1	3	?[*:0]u8	rt: ?*anyopaque, parts: ?[*]const i64, n: i64
 nox_str_contains	runtime/str.zig	145	0	4	i64	haystack: ?[*:0]const u8, needle: ?[*:0]const u8
 nox_str_count	runtime/str.zig	1627	0	4	i64	s: ?[*:0]const u8, needle: ?[*:0]const u8
+nox_str_eq	runtime/str.zig	1827	0	4	i32	a: ?[*:0]const u8, b: ?[*:0]const u8
 nox_str_find	runtime/str.zig	1615	0	4	i64	s: ?[*:0]const u8, needle: ?[*:0]const u8
 nox_str_free_now	runtime/str.zig	596	1	3	void	rt: ?*anyopaque, ptr: [*:0]u8
 nox_str_from_bytes_c	runtime/str.zig	112	1	3	?[*:0]u8	rt: ?*anyopaque, p: ?[*]const u8, n: usize
@@ -767,6 +778,7 @@ nox_str_just	runtime/str.zig	1680	1	7	?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const u
 nox_str_release	runtime/str.zig	578	1	3	void	rt: ?*anyopaque, ptr: ?[*:0]u8
 nox_str_repeat	runtime/str.zig	1558	1	4	?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const u8, n: i64
 nox_str_slice_op	runtime/str.zig	1499	1	9	?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const u8, lo: i64, has_lo: i32, hi: i64, has_hi: i32, step: i64, has_step: i32
+nox_str_to_bytes	runtime/str.zig	1936	1	3	?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const u8
 nox_str_to_float	runtime/str.zig	888	0	2	f64	s: ?[*:0]const u8
 nox_str_to_int	runtime/str.zig	877	0	2	i64	s: ?[*:0]const u8
 nox_strings_casefold_raw	runtime/stdlib_shims/strings.zig	303	1	3	callconv(.c) ?[*:0]u8	rt: ?*anyopaque, s: ?[*:0]const u8

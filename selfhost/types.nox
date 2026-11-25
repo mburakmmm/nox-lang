@@ -361,6 +361,8 @@ def ty_format(tt: TT, id: int) -> None:
         put(tt, "bool")
     elif t == 3:
         put(tt, "str")
+    elif t == 18:
+        put(tt, "bytes")  # v2.2.77: yerleşik bytes (etiket 18; Zig `Type`ın SONUNA eklendi)
     elif t == 4:
         put(tt, "None")
     elif t == 12:
@@ -417,6 +419,8 @@ def ty_mangle(tt: TT, id: int) -> None:
         put(tt, "bool")
     elif t == 3:
         put(tt, "str")
+    elif t == 18:
+        put(tt, "bytes")  # v2.2.77: yerleşik bytes (etiket 18; Zig `Type`ın SONUNA eklendi)
     elif t == 4:
         put(tt, "None")
     elif t == 12:
@@ -533,7 +537,7 @@ def ty_validate(tt: TT) -> int:
             return 6
     for id in range(n):
         t: int = tt.tag[id]
-        if t < 0 or t > 17:
+        if t < 0 or t > 18:  # v2.2.77: 18 = bytes
             return 1
         if t == 5 or t == 7 or t == 8 or t == 9 or t == 10 or t == 11 or t == 15 or t == 17:
             if tt.xa[id] < 0 or tt.xa[id] >= id:

@@ -577,6 +577,18 @@ pub fn build(b: *std.Build) void {
         "Windows: bir test bu kadar saniyede bitmezse adiyla dusurulur (0 kapali)",
     ) orelse 0;
 
+    // CI.4 (bkz. project/ci-hizlandirma-plani-2026-11.md): golden fixture korpusunu (`tests/golden/codegen_golden_test.zig`nin
+    // "TÜM golden fixture'lar" testi) runner'lara bölmek için. Varsayılanlar (1 parça, golden dahil) `zig build test`i DEĞİŞTİRMEZ.
+    //   zig build test-golden -Dtest-shard-count=4 -Dtest-shard-index=K   → yalnızca golden dosyası, K. parça (fixture'lar addan Wyhash ile bölünür)
+    //   zig build test -Dtest-skip-golden=true                            → golden dışındaki HER ŞEY (golden shard işleriyle birlikte tam kapsam)
+    // `test-golden`, `zig build` (tam kurulum) SONRASI çalıştırılmalıdır (ci.yml'in soğuk-önbellek yarışı notu).
+    const test_shard_count = b.option(u32, "test-shard-count", "golden fixture korpusunu kac parcaya boler (varsayilan 1)") orelse 1;
+    const test_shard_index = b.option(u32, "test-shard-index", "bu kosunun golden parcasi: 0..test-shard-count-1 (varsayilan 0)") orelse 0;
+    const test_skip_golden = b.option(bool, "test-skip-golden", "`zig build test`ten golden (codegen_golden_test) dosyasini cikarir") orelse false;
+    if (test_shard_count == 0 or test_shard_index >= test_shard_count) {
+        std.debug.panic("-Dtest-shard-index ({d}) 0 <= indeks < -Dtest-shard-count ({d}) olmali", .{ test_shard_index, test_shard_count });
+    }
+
     // Faz F.1 (bkz. plan dosyası "Cross-compile İSKELETİ"): Windows'un
     // KENDİ, ZATEN kanıtlanmış `target.result.os.tag == .windows` deseniyle
     // PARALEL bir kontrol — SADECE İSKELET (link_libc/WASM hariç tutma),
@@ -1474,6 +1486,11 @@ pub fn build(b: *std.Build) void {
     // DERLENDİĞİNİ garanti eder (`install_noxc`in YUKARIDAKİ AYNI gerekçesi).
     test_step.dependOn(&install_noxlsp.step);
 
+    // CI.4: `test-golden` aynı kurulum önkoşullarını paylaşır (yukarıdaki install_* adımları; bu noktada test_step'in
+    // bağımlılıkları YALNIZCA bunlardır) — golden dosyasını tek başına çalıştırmak ayrı bir kurulum listesi gerektirmez.
+    const test_golden_step = b.step("test-golden", "Yalnızca golden dosyasi (codegen_golden_test); -Dtest-shard-count/-Dtest-shard-index ile bolunur");
+    for (test_step.dependencies.items) |dep| test_golden_step.dependOn(dep);
+
     // "nox" modülünün kendi içindeki (lexer/parser dosyalarına gömülü) testler.
     const lib_test = b.addTest(.{ .root_module = nox_mod });
     test_step.dependOn(&addTimedTestRun(b, lib_test, win_test_timeout_s).step);
@@ -1721,7 +1738,11 @@ pub fn build(b: *std.Build) void {
     });
     const codegen_test = b.addTest(.{ .root_module = codegen_test_mod });
     const codegen_test_run = addTimedTestRun(b, codegen_test, win_test_timeout_s);
-    test_step.dependOn(&codegen_test_run.step);
+    if (test_shard_count > 1) {
+        codegen_test_run.setEnvironmentVariable("NOX_FIXTURE_SHARD", b.fmt("{d}/{d}", .{ test_shard_index, test_shard_count }));
+    }
+    if (!test_skip_golden) test_step.dependOn(&codegen_test_run.step);
+    test_golden_step.dependOn(&codegen_test_run.step);
 
     // ---- Faz 13: WASM köprüsü uyumluluk testi ----
     //

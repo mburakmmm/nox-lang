@@ -88,7 +88,37 @@ Aliases may refer to one another (a cycle is an error), may be used before their
 | `float` | IEEE-754 double | printed like Python's `repr` |
 | `bool` | `True`, `False` | never converts to or from `int` implicitly |
 | `str` | immutable UTF-8 text | indexed by code point ([Strings](strings.md)) |
+| `bytes` | immutable byte string | indexed by byte (`0..255`); never converts to or from `str` implicitly |
 | `None` | the single value `None` | the type of "no value"; also the return type of procedures |
+
+### Binary data: `bytes`
+
+`bytes` is an immutable sequence of bytes (`0..255`), distinct from `str`: a `str` is text, `bytes` is raw data (a network packet, a file's contents, a hash). The two never
+convert implicitly; use `s.encode()` (UTF-8) and `b.decode()` (raises `ValueError` on invalid UTF-8). Literals are `b"..."` with the escapes `\n \t \r \\ \' \" \0 \xHH`; only
+ASCII characters may appear literally.
+
+Everything is **byte-based**: `len(b)`, `b[i]` (an `int`, negative indices count from the end, out of range raises `IndexError`), `b[lo:hi]` (no step), `for x in b`
+(each `x` is an `int`), `+`, the comparisons (byte order), `x in b` (an `int` byte, or a `bytes` sub-sequence) and use as a `dict` key. Conversions: `bytes([104, 105])`
+(from `list[int]`/`list[u8]`, values must be `0..255`), `b.to_list()` (a `list[u8]`), `b.hex()`. `print(b)` and `repr(b)` show Python's `b'...'` form. Embedded
+zero bytes are ordinary data (comparison, hashing and dictionary keys are length-aware).
+
+```nox
+data: bytes = b"ab\x00\xff"
+print(len(data), data[1], data[1:3])
+print(data.hex(), "é".encode())
+total: int = 0
+for x in data:
+    total = total + x
+print(total, 255 in data, data + b"!" == b"ab\x00\xff!")
+print(bytes([72, 105]).decode())
+```
+
+```output
+4 98 b'b\x00'
+616200ff b'\xc3\xa9'
+450 True True
+Hi
+```
 
 ### Fixed-width integers
 

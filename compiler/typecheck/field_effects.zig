@@ -264,7 +264,7 @@ const Builder = struct {
 
     fn scanExpr(self: *Builder, e: ast.Expr) error{OutOfMemory}!void {
         switch (e) {
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
             .unary => |u| try self.scanExpr(u.operand.*),
             .binary => |b| {
                 try self.scanExpr(b.left.*);

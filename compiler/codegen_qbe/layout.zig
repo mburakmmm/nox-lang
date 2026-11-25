@@ -1204,11 +1204,10 @@ pub fn emitNonNullEq(
 ) CodegenError![]const u8 {
     switch (heap) {
         .str => {
-            const cmp = try self.newTemp();
-            try self.qbeCall(.{ .name = cmp, .ty = .w }, "$strcmp", &.{ .{ .ty = .l, .text = va }, .{ .ty = .l, .text = vb } });
-            const t = try self.newTemp();
-            try self.qbeOp2Imm(t, .w, "ceqw", cmp, 0);
-            return t;
+            // v2.2.77: uzunluk-bilgili eşitlik (`strcmp` gömülü NUL'u görmüyordu).
+            const eq = try self.newTemp();
+            try self.qbeCall(.{ .name = eq, .ty = .w }, "$nox_str_eq", &.{ .{ .ty = .l, .text = va }, .{ .ty = .l, .text = vb } });
+            return eq;
         },
         .class => {
             const t = try self.newTemp();

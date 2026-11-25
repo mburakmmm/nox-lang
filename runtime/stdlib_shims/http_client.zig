@@ -1867,9 +1867,10 @@ test "nox_http_get_raw: gerçek yerel HTTP sunucusuna GET isteği — status/bod
 
     const headers = nox_http_response_headers(rt, resp) orelse return error.NoHeaders;
     defer dict_mod.nox_dict_release(rt, headers, 1, 1, 0);
-    const key = try std.testing.allocator.dupeZ(u8, "X-Nox-Test");
-    defer std.testing.allocator.free(key);
-    const value_payload = dict_mod.nox_dict_get(rt, headers, 1, @bitCast(@intFromPtr(key.ptr)));
+    // v2.2.77: sözlük anahtar eşitliği/karması bayt uzunluğunu başlıktan okur → arama anahtarı gerçek bir Nox `str` (başlıklı) olmalıdır.
+    const key = str_mod.nox_str_from_bytes(rt, "X-Nox-Test") orelse return error.AllocFailed;
+    defer str_mod.nox_str_release(rt, key);
+    const value_payload = dict_mod.nox_dict_get(rt, headers, 1, @bitCast(@intFromPtr(key)));
     try std.testing.expect(value_payload != 0);
     const value_ptr: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(value_payload)));
     try std.testing.expectEqualStrings("merhaba", std.mem.sliceTo(value_ptr, 0));

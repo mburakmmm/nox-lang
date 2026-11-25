@@ -1821,3 +1821,211 @@ test "nox_int_to_str: uç değerler std.fmt ile aynı ve kısa kopya sınırlar�
         try std.testing.expectEqualStrings(src[0..40], std.mem.sliceTo(c, 0));
     }
 }
+
+/// v2.2.77: UZUNLUK-bilgili eşitlik/sıralama. Önceden `strcmp` (NUL sonlandırmalı) kullanılıyordu: gömülü `\x00` içeren `str`/`bytes` değerleri yanlış eşit/sıralı çıkıyordu
+/// (`"ab\x00x" == "ab"` doğru sanılıyordu). Başlıktaki bayt uzunluğu önce karşılaştırılır (uzunluk farkı ucuz kısa devre), sonra `memcmp`.
+pub export fn nox_str_eq(a: ?[*:0]const u8, b: ?[*:0]const u8) i32 {
+    const sa: []const u8 = if (a) |p| nox_str_slice(p) else "";
+    const sb: []const u8 = if (b) |p| nox_str_slice(p) else "";
+    return if (std.mem.eql(u8, sa, sb)) 1 else 0;
+}
+
+/// Bayt sözlük sırası (UTF-8'de codepoint sırasıyla aynı): <0, 0, >0. Ortak önek eşitse kısa olan küçüktür.
+pub export fn nox_str_cmp(a: ?[*:0]const u8, b: ?[*:0]const u8) i32 {
+    const sa: []const u8 = if (a) |p| nox_str_slice(p) else "";
+    const sb: []const u8 = if (b) |p| nox_str_slice(p) else "";
+    return switch (std.mem.order(u8, sa, sb)) {
+        .lt => -1,
+        .eq => 0,
+        .gt => 1,
+    };
+}
+
+test "nox_str_eq/nox_str_cmp gomulu NUL'u gorur" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const a = nox_str_from_bytes(rt, "ab\x00x") orelse return error.OutOfMemory;
+    defer nox_str_release(rt, a);
+    const b = nox_str_from_bytes(rt, "ab") orelse return error.OutOfMemory;
+    defer nox_str_release(rt, b);
+    try std.testing.expectEqual(@as(i32, 0), nox_str_eq(a, b));
+    try std.testing.expectEqual(@as(i32, 1), nox_str_eq(a, a));
+    try std.testing.expectEqual(@as(i32, 1), nox_str_cmp(a, b));
+    try std.testing.expectEqual(@as(i32, -1), nox_str_cmp(b, a));
+    const e = nox_str_from_bytes(rt, "") orelse return error.OutOfMemory;
+    defer nox_str_release(rt, e);
+    const z = nox_str_from_bytes(rt, "\x00") orelse return error.OutOfMemory;
+    defer nox_str_release(rt, z);
+    try std.testing.expectEqual(@as(i32, -1), nox_str_cmp(e, z));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// v2.2.77: yerleşik `bytes` tipi (bkz. `project/bytes-tipi-gorev-belgesi-2026-11.md`). `bytes` değerleri `str` ile AYNI bellek düzenindedir
+// (ARC başlığı + paketlenmiş uzunluk başlığı + baytlar + NUL); aşağıdakiler BAYT tabanlı ilkellerdir (codepoint semantiği YOK). Dil yüzeyi
+// (`len`, indeks, dilim, yineleme, `decode`...) `stdlib/nox/core.nox` içindeki `__nox_bytes_*` Nox işlevleriyle bunların üstüne kurulur.
+// Not: bu dosya WASM hedeflerine de derlenir — `std.heap.page_allocator` KULLANILMAZ; çıktılar `allocStrLen` ile yerinde doldurulur.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// `len` baytlık (içeriği çağıranın dolduracağı) yeni bir `str`/`bytes` ayırır: başlık yazılır, sondaki NUL konur; döner: veri işaretçisi.
+fn allocStrLen(rt: ?*anyopaque, len: usize) ?[*]u8 {
+    const raw = arc.nox_rc_alloc(rt, STR_HEADER_SIZE + len + 1) orelse return null;
+    const base: [*]u8 = @ptrCast(raw);
+    const header: *align(1) i64 = @ptrCast(base);
+    header.* = abi_layout.packStrHeader(len, ASCII_UNKNOWN);
+    const data = base + STR_HEADER_SIZE;
+    data[len] = 0;
+    return data;
+}
+
+pub export fn nox_bt_len(s: ?[*:0]const u8) i64 {
+    return nox_str_byte_len(s);
+}
+
+/// Çağıran `0 <= idx < len` doğruladı (Nox sarmalayıcısı `IndexError` fırlatır).
+pub export fn nox_bt_get(s: ?[*:0]const u8, idx: i64) i64 {
+    return nox_str_byte_at(s, idx);
+}
+
+/// `b[lo:hi]` için bayt kopyası; sınırlar `[0, len]`e KIRPILIR, `hi < lo` boş sonuç verir (Python dilim semantiği; negatif indeksler Nox sarmalayıcısında çözülür).
+pub export fn nox_bt_sub(rt: ?*anyopaque, s: ?[*:0]const u8, lo: i64, hi: i64) ?[*:0]u8 {
+    const p = s orelse return nox_str_from_bytes(rt, "");
+    const bytes = nox_str_slice(p);
+    const n: i64 = @intCast(bytes.len);
+    const l = std.math.clamp(lo, 0, n);
+    const h = std.math.clamp(hi, 0, n);
+    if (h <= l) return nox_str_from_bytes(rt, "");
+    return nox_str_from_bytes(rt, bytes[@intCast(l)..@intCast(h)]);
+}
+
+/// `bytes(list[int])`: her eleman 0..255 (Nox sarmalayıcısı aralığı ÖNCEDEN doğrular; burada `& 0xFF`).
+pub export fn nox_bt_from_ints(rt: ?*anyopaque, list_ptr: ?*anyopaque) ?[*:0]u8 {
+    const lp = list_ptr orelse return nox_str_from_bytes(rt, "");
+    const base: [*]u8 = @ptrCast(lp);
+    const len: usize = @intCast(@as(*align(1) i64, @ptrCast(base)).*);
+    const src = abi_layout.listData(base);
+    const out = allocStrLen(rt, len) orelse return null;
+    for (0..len) |i| {
+        const v = @as(*align(1) i64, @ptrCast(src + 8 * i)).*;
+        out[i] = @truncate(@as(u64, @bitCast(v)));
+    }
+    return @ptrCast(out);
+}
+
+/// `for x in b` / `b.to_list()`: baytları `list[int]` olarak (her eleman 8 bayt) döner.
+pub export fn nox_bt_to_ints(rt: ?*anyopaque, s: ?[*:0]const u8) ?*anyopaque {
+    const bytes: []const u8 = if (s) |p| nox_str_slice(p) else "";
+    const raw = arc.nox_list_new(rt, bytes.len, 8) orelse return null;
+    const base: [*]u8 = @ptrCast(raw);
+    const data = abi_layout.listData(base);
+    for (bytes, 0..) |b, i| @as(*align(1) i64, @ptrCast(data + 8 * i)).* = b;
+    return raw;
+}
+
+pub export fn nox_bt_is_utf8(s: ?[*:0]const u8) i64 {
+    const p = s orelse return 1;
+    return if (std.unicode.utf8ValidateSlice(nox_str_slice(p))) 1 else 0;
+}
+
+/// `bytes` -> `str` ve `str` -> `bytes`: bayt-tam kopya (UTF-8 doğrulaması Nox sarmalayıcısında: `decode`).
+pub export fn nox_bt_to_str(rt: ?*anyopaque, s: ?[*:0]const u8) ?[*:0]u8 {
+    const p = s orelse return nox_str_from_bytes(rt, "");
+    return nox_str_from_bytes(rt, nox_str_slice(p));
+}
+
+pub export fn nox_str_to_bytes(rt: ?*anyopaque, s: ?[*:0]const u8) ?[*:0]u8 {
+    const p = s orelse return nox_str_from_bytes(rt, "");
+    return nox_str_from_bytes(rt, nox_str_slice(p));
+}
+
+pub export fn nox_bt_hex(rt: ?*anyopaque, s: ?[*:0]const u8) ?[*:0]u8 {
+    const bytes: []const u8 = if (s) |p| nox_str_slice(p) else "";
+    const out = allocStrLen(rt, bytes.len * 2) orelse return null;
+    const digits = "0123456789abcdef";
+    for (bytes, 0..) |b, i| {
+        out[2 * i] = digits[b >> 4];
+        out[2 * i + 1] = digits[b & 0xF];
+    }
+    return @ptrCast(out);
+}
+
+/// `repr(bytes)` kaçışı: tek bir bayt için üretilen metin uzunluğu (`quote`: kaçışlanacak tırnak).
+fn bytesReprLen(b: u8, quote: u8) usize {
+    if (b == '\\' or b == '\n' or b == '\r' or b == '\t') return 2;
+    if (b >= 0x20 and b <= 0x7E) return if (b == quote) 2 else 1;
+    return 4;
+}
+
+fn bytesReprWrite(out: [*]u8, b: u8, quote: u8) usize {
+    const hex = "0123456789abcdef";
+    const esc: u8 = switch (b) {
+        '\\' => '\\',
+        '\n' => 'n',
+        '\r' => 'r',
+        '\t' => 't',
+        else => 0,
+    };
+    if (esc != 0) {
+        out[0] = '\\';
+        out[1] = esc;
+        return 2;
+    }
+    if (b >= 0x20 and b <= 0x7E) {
+        if (b == quote) {
+            out[0] = '\\';
+            out[1] = b;
+            return 2;
+        }
+        out[0] = b;
+        return 1;
+    }
+    out[0] = '\\';
+    out[1] = 'x';
+    out[2] = hex[b >> 4];
+    out[3] = hex[b & 0xF];
+    return 4;
+}
+
+/// Python `repr(bytes)` biçimi: `b'...'`; içerik yalnız `'` taşıyorsa `b"..."`, ikisini de taşıyorsa `'` ve `\'` kaçışı.
+pub export fn nox_bt_repr(rt: ?*anyopaque, s: ?[*:0]const u8) ?[*:0]u8 {
+    const bytes: []const u8 = if (s) |p| nox_str_slice(p) else "";
+    const has_sq = std.mem.indexOfScalar(u8, bytes, '\'') != null;
+    const has_dq = std.mem.indexOfScalar(u8, bytes, '"') != null;
+    const quote: u8 = if (has_sq and !has_dq) '"' else '\'';
+    var total: usize = 3; // b + açılış + kapanış tırnağı
+    for (bytes) |b| total += bytesReprLen(b, quote);
+    const out = allocStrLen(rt, total) orelse return null;
+    out[0] = 'b';
+    out[1] = quote;
+    var at: usize = 2;
+    for (bytes) |b| at += bytesReprWrite(out + at, b, quote);
+    out[at] = quote;
+    return @ptrCast(out);
+}
+
+test "bytes ilkelleri: uzunluk, kirpmali dilim, onaltilik, repr ve UTF-8" {
+    const asap = @import("alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const b = nox_str_from_bytes(rt, "a\x00\xffb'") orelse return error.OutOfMemory;
+    defer nox_str_release(rt, b);
+    try std.testing.expectEqual(@as(i64, 5), nox_bt_len(b));
+    try std.testing.expectEqual(@as(i64, 0xff), nox_bt_get(b, 2));
+    const sub = nox_bt_sub(rt, b, -3, 99) orelse return error.OutOfMemory;
+    defer nox_str_release(rt, sub);
+    try std.testing.expectEqual(@as(i64, 5), nox_bt_len(sub));
+    const sub2 = nox_bt_sub(rt, b, 1, 3) orelse return error.OutOfMemory;
+    defer nox_str_release(rt, sub2);
+    try std.testing.expectEqual(@as(i64, 2), nox_bt_len(sub2));
+    const hx = nox_bt_hex(rt, b) orelse return error.OutOfMemory;
+    defer nox_str_release(rt, hx);
+    try std.testing.expectEqualStrings("6100ff6227", std.mem.span(hx));
+    const rp = nox_bt_repr(rt, b) orelse return error.OutOfMemory;
+    defer nox_str_release(rt, rp);
+    try std.testing.expectEqualStrings("b\"a\\x00\\xffb'\"", std.mem.span(rp));
+    try std.testing.expectEqual(@as(i64, 0), nox_bt_is_utf8(b));
+    const ok = nox_str_from_bytes(rt, "caf\xc3\xa9") orelse return error.OutOfMemory;
+    defer nox_str_release(rt, ok);
+    try std.testing.expectEqual(@as(i64, 1), nox_bt_is_utf8(ok));
+    try std.testing.expectEqual(@as(i64, 5), nox_bt_len(ok)); // BAYT uzunluğu (codepoint değil)
+}

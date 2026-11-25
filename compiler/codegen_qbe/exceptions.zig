@@ -824,7 +824,7 @@ pub fn collectRaiseInfoExpr(self: *Codegen, expr: ast.Expr, info: *FuncSafetyInf
             try self.collectRaiseInfoExpr(p.key, info, class_ctx, var_types, poisoned);
             try self.collectRaiseInfoExpr(p.value, info, class_ctx, var_types, poisoned);
         },
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
     }
 }
 

@@ -158,6 +158,54 @@ fn ensureDriveTmp() void {
     std.Io.Dir.createDirAbsolute(std.testing.io, path, .default_dir) catch {};
 }
 
+/// CI.4: `NOX_FIXTURE_SHARD=<indeks>/<adet>` (build.zig: `-Dtest-shard-index/-Dtest-shard-count`) fixture korpusunu `adet`
+/// parçaya böler. Her fixture ADINA göre (Wyhash) tam olarak BİR parçaya düşer; korpus büyüyünce/yeni fixture eklenince
+/// diğerlerinin ataması kaymaz. Değişken yoksa ya da `adet == 1` ise HEPSİ çalışır (varsayılan davranış değişmez).
+/// Geçersiz değer SESSİZCE "hepsini çalıştır"a düşmez, yüksek sesle çöker: yanlış yapılandırılmış bir shard işi
+/// fixture'ları sessizce atlayıp yeşil görünemez.
+const Shard = struct {
+    index: usize = 0,
+    count: usize = 1,
+
+    fn contains(self: Shard, name: []const u8) bool {
+        if (self.count <= 1) return true;
+        return std.hash.Wyhash.hash(0, name) % self.count == self.index;
+    }
+
+    fn parse(text: []const u8) ?Shard {
+        const slash = std.mem.indexOfScalar(u8, text, '/') orelse return null;
+        const index = std.fmt.parseInt(usize, text[0..slash], 10) catch return null;
+        const count = std.fmt.parseInt(usize, text[slash + 1 ..], 10) catch return null;
+        if (count == 0 or index >= count) return null;
+        return .{ .index = index, .count = count };
+    }
+
+    fn fromEnv() Shard {
+        const raw = std.c.getenv("NOX_FIXTURE_SHARD") orelse return .{};
+        return parse(std.mem.sliceTo(raw, 0)) orelse @panic("NOX_FIXTURE_SHARD geçersiz: beklenen <indeks>/<adet> (0 <= indeks < adet)");
+    }
+};
+
+test "codegen(shard): fixture bölümlemesi her fixture'ı TAM olarak bir parçaya atar" {
+    const covered = try std.testing.allocator.alloc(u8, fixtures.len);
+    defer std.testing.allocator.free(covered);
+    for ([_]usize{ 1, 2, 3, 4, 5, 8 }) |count| {
+        @memset(covered, 0);
+        for (0..count) |index| {
+            const shard: Shard = .{ .index = index, .count = count };
+            for (fixtures, 0..) |fx, i| {
+                if (shard.contains(fx.name)) covered[i] += 1;
+            }
+        }
+        for (covered) |c| try std.testing.expectEqual(@as(u8, 1), c);
+    }
+    try std.testing.expectEqual(@as(usize, 3), Shard.parse("3/4").?.index);
+    try std.testing.expect(Shard.parse("4/4") == null);
+    try std.testing.expect(Shard.parse("0/0") == null);
+    try std.testing.expect(Shard.parse("x") == null);
+    try std.testing.expect(Shard.parse("1/") == null);
+}
+
 test "codegen(çalıştır): TÜM golden fixture'lar (gerçek iş-parçacığı paralelliğiyle)" {
     ensureDriveTmp();
     const results = try std.testing.allocator.alloc(FixtureResult, fixtures.len);
@@ -165,26 +213,38 @@ test "codegen(çalıştır): TÜM golden fixture'lar (gerçek iş-parçacığı 
     @memset(results, .{});
 
     var next_index: std.atomic.Value(usize) = .init(0);
+    var ran_count: std.atomic.Value(usize) = .init(0);
     const cpu_count = std.Thread.getCpuCount() catch 4;
     const n_workers = @min(fixtures.len, cpu_count * 2);
+    const shard = Shard.fromEnv();
 
     const WorkerCtx = struct {
         next_index: *std.atomic.Value(usize),
+        ran_count: *std.atomic.Value(usize),
         results: []FixtureResult,
+        shard: Shard,
         fn run(ctx: @This()) void {
             while (true) {
                 const i = ctx.next_index.fetchAdd(1, .monotonic);
                 if (i >= fixtures.len) return;
+                if (!ctx.shard.contains(fixtures[i].name)) {
+                    ctx.results[i] = .{ .ok = true };
+                    continue;
+                }
+                _ = ctx.ran_count.fetchAdd(1, .monotonic);
                 runOneFixture(&fixtures[i], &ctx.results[i]);
             }
         }
     };
-    const ctx: WorkerCtx = .{ .next_index = &next_index, .results = results };
+    const ctx: WorkerCtx = .{ .next_index = &next_index, .ran_count = &ran_count, .results = results, .shard = shard };
 
     const threads = try std.testing.allocator.alloc(std.Thread, n_workers);
     defer std.testing.allocator.free(threads);
     for (threads) |*t| t.* = try std.Thread.spawn(.{}, WorkerCtx.run, .{ctx});
     for (threads) |t| t.join();
+    if (shard.count > 1) {
+        std.debug.print("SHARD {d}/{d}: {d} / {d} fixture çalıştırıldı\n", .{ shard.index, shard.count, ran_count.load(.monotonic), fixtures.len });
+    }
 
     var any_failed = false;
     for (fixtures, results) |fx, r| {

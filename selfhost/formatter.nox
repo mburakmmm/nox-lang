@@ -1538,6 +1538,9 @@ def print_primary(pr: Pr, e: int) -> None:
     if t == 3:
         print_string_lit(pr, pk(a.n[e + 1], a.n[e + 2]))
         return
+    if t == 23:
+        print_bytes_lit(pr, pk(a.n[e + 1], a.n[e + 2]))
+        return
     if t == 4:
         w(pr, "None")
         return
@@ -1803,6 +1806,36 @@ def print_string_lit(pr: Pr, v: int) -> None:
         elif not write_control_escape(pr, c2):
             wb(pr, c2)
     w(pr, "\"")
+
+# v2.2.77: `b"..."` — yazdırılabilir ASCII olduğu gibi; `\\ \" \n \t \r` kaçışlı; diğer baytlar `\xHH` (Zig `printBytesLit`).
+def print_bytes_lit(pr: Pr, v: int) -> None:
+    a: Ast = pr.a
+    n: int = sref_len(v)
+    w(pr, "b\"")
+    for i in range(n):
+        c: int = sref_byte(a, v, i)
+        if c == 34:
+            w(pr, "\\\"")
+        elif c == 92:
+            w(pr, "\\\\")
+        elif c == 10:
+            w(pr, "\\n")
+        elif c == 9:
+            w(pr, "\\t")
+        elif c == 13:
+            w(pr, "\\r")
+        elif (c >= 32 and c <= 33) or (c >= 35 and c <= 91) or (c >= 93 and c <= 126):
+            wb(pr, c)
+        else:
+            w(pr, "\\x")
+            wb(pr, hex_lower(c >> 4))
+            wb(pr, hex_lower(c & 15))
+    w(pr, "\"")
+
+def hex_lower(d: int) -> int:
+    if d < 10:
+        return 48 + d
+    return 87 + d
 
 # --- giriş noktaları ---
 G_OUT: list[u8] = []

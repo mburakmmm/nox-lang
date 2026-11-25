@@ -562,7 +562,7 @@ pub fn resolveClassParamReceiver(expr: ast.Expr, class_params: []const ClassPara
 /// düzeltmesiyle TUTARLI).
 fn scanParamEscapesExpr(self: *Codegen, fname: []const u8, param_idx: u32, name: []const u8, expr: ast.Expr, class_params: []const ClassParam, seeds: *std.ArrayListUnmanaged(effect_graph.NodeKey), reverse_edges: *effect_graph.ReverseEdges) CodegenError!void {
     switch (expr) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => {},
         .identifier => |n| if (std.mem.eql(u8, n, name)) try addEscapeSeed(self, fname, param_idx, seeds),
         .unary => |u| try scanParamEscapesExpr(self, fname, param_idx, name, u.operand.*, class_params, seeds, reverse_edges),
         .kwarg => |k| try scanParamEscapesExpr(self, fname, param_idx, name, k.value.*, class_params, seeds, reverse_edges),
@@ -838,7 +838,7 @@ pub fn collectInlineSitesStmt(self: *Codegen, stmt: ast.Stmt) CodegenError!void 
 
 pub fn collectInlineSitesExpr(self: *Codegen, expr: ast.Expr) CodegenError!void {
     switch (expr) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
         .unary => |u| try self.collectInlineSitesExpr(u.operand.*),
         .kwarg => |k| try self.collectInlineSitesExpr(k.value.*),
         .ternary => |t| {
@@ -1014,7 +1014,7 @@ pub fn simpleLiteralListQtype(elems: []const ast.Expr) ?QbeType {
 /// tarafta kal" disiplini.
 fn scanStackConstructsExpr(self: *Codegen, expr: ast.Expr, all_ok: *bool, any: *bool) CodegenError!void {
     switch (expr) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
         .unary => |u| try scanStackConstructsExpr(self, u.operand.*, all_ok, any),
         .kwarg => |k| try scanStackConstructsExpr(self, k.value.*, all_ok, any),
         .ternary => |t| {
@@ -1231,7 +1231,7 @@ fn stmtsSafeForParam(self: *const Codegen, stmts: []const ast.Stmt, name: []cons
 /// TAMAMEN FARKLI bir kaçış sınıfıdır.
 fn exprHasUnsafeParamUse(self: *const Codegen, expr: ast.Expr, name: []const u8, class_params: []const ClassParam) bool {
     return switch (expr) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
         .unary => |u| exprHasUnsafeParamUse(self, u.operand.*, name, class_params),
         .kwarg => |k| exprHasUnsafeParamUse(self, k.value.*, name, class_params),

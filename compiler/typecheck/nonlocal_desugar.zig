@@ -270,7 +270,7 @@ const Pass = struct {
 
     fn rewriteExpr(self: *Pass, e: *ast.Expr, x: []const u8, cell: []const u8) std.mem.Allocator.Error!void {
         switch (e.*) {
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => {},
             .identifier => |n| if (std.mem.eql(u8, n, x)) {
                 e.* = .{ .index = .{ .obj = try self.box(.{ .identifier = cell }), .index = try self.box(.{ .int_lit = 0 }) } };
             },

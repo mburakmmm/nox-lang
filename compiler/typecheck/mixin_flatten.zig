@@ -156,7 +156,7 @@ const Pass = struct {
     fn walkExpr(self: *Pass, e: *ast.Expr) Error!void {
         try self.onExpr(e);
         switch (e.*) {
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
             .unary => |*u| try self.walkExpr(u.operand),
             .kwarg => |*k| try self.walkExpr(k.value),
             .ternary => |*t| {

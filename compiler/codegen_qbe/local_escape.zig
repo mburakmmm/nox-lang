@@ -381,7 +381,7 @@ fn stmtsSafeForLocal(self: *const Codegen, stmts: []const ast.Stmt, name: []cons
 /// gövdesinde kaçırmıyor" kanıtını GEÇERSİZ kılar).
 fn exprHasUnsafeLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8, class_params: []const inlining.ClassParam) bool {
     return switch (expr) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
         .unary => |u| exprHasUnsafeLocalUse(self, u.operand.*, name, class_params),
         .kwarg => |k| exprHasUnsafeLocalUse(self, k.value.*, name, class_params),
@@ -605,7 +605,7 @@ fn stmtsSafeForGrowableLocal(self: *const Codegen, stmts: []const ast.Stmt, name
 /// kaçış SAYILIR.
 fn exprHasUnsafeGrowableLocalUse(self: *const Codegen, expr: ast.Expr, name: []const u8) bool {
     return switch (expr) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
         .unary => |u| exprHasUnsafeGrowableLocalUse(self, u.operand.*, name),
         .kwarg => |k| exprHasUnsafeGrowableLocalUse(self, k.value.*, name),

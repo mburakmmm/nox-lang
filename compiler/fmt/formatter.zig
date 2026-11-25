@@ -1244,6 +1244,7 @@ const Printer = struct {
             .float_lit => |v| try self.printFloat(v),
             .bool_lit => |v| try self.writer.writeAll(if (v) "True" else "False"),
             .string_lit => |s| try self.printStringLit(s),
+            .bytes_lit => |s| try self.printBytesLit(s),
             .none_lit => try self.writer.writeAll("None"),
             .identifier => |name| try self.writer.writeAll(name),
             .call => |c| {
@@ -1445,6 +1446,23 @@ const Printer = struct {
     /// ham İÇERİĞİ tutar (bkz. `parser.zig`nin `decodeString`i) — burada
     /// TERSİ (yeniden kaçışlama) yapılır. Kanonik stil: HER ZAMAN çift
     /// tırnak (kaynakta tek tırnak kullanılmış olsa BİLE).
+    /// v2.2.77: `b"..."` — yazdırılabilir ASCII olduğu gibi; `\\ \" \n \t \r` kaçışlı; diğer baytlar `\xHH` (yuvarlama: `decodeBytes` ile birebir tersi).
+    fn printBytesLit(self: *Printer, s: []const u8) FormatError!void {
+        try self.writer.writeAll("b\"");
+        for (s) |c| {
+            switch (c) {
+                '"' => try self.writer.writeAll("\\\""),
+                '\\' => try self.writer.writeAll("\\\\"),
+                '\n' => try self.writer.writeAll("\\n"),
+                '\t' => try self.writer.writeAll("\\t"),
+                '\r' => try self.writer.writeAll("\\r"),
+                0x20...0x21, 0x23...0x5B, 0x5D...0x7E => try self.writer.writeByte(c),
+                else => try self.writer.print("\\x{x:0>2}", .{c}),
+            }
+        }
+        try self.writer.writeAll("\"");
+    }
+
     fn printStringLit(self: *Printer, s: []const u8) FormatError!void {
         if (self.in_fstring > 0) {
             try self.writer.writeAll("'");

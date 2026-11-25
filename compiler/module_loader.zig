@@ -609,7 +609,7 @@ fn renameExpr(a: std.mem.Allocator, e: ast.Expr, map: *const RenameMap) std.mem.
                 .resolved_class_name = resolved_class_name,
             } };
         },
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => e,
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => e,
     };
 }
 

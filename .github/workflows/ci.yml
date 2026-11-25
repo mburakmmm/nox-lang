@@ -52,10 +52,23 @@ name: CI
 # run`) ÇALIŞTIRIYOR. İş, Linux/macOS ile aynı `zig build test` korpusunu
 # da çalıştırır.
 
+# CI hızlandırma (2026-11-25, bkz. project/ci-hizlandirma-plani-2026-11.md): (CI.1) Zig/QBE `.github/actions/setup-*`
+# bileşik eylemleriyle önbelleklenir (Zig önbellek ISABETİNDE ağa çıkılmaz; ziglang.org aktarımı bazı koşucularda 19-28 dk
+# sürüyordu); (CI.2) `test` matrisi platform × {Debug, ReleaseFast} = 6 paralel iş (eskiden platform başına SIRALI ~107 dk);
+# (CI.3) test adımları `--summary all` ile adım-başına süre raporlar; (CI.7) eski PR koşuları iptal edilir. HİÇBİR test
+# kaldırılmadı/gevşetilmedi. `main` push koşuları ASLA iptal edilmez: release.yml `ci-gate` bu workflow'un TAM sonucunu bekler.
+# Hızlı geri bildirim katmanı ayrı: .github/workflows/fast-ci.yml (Tier 1).
 on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
+
+# push (main/master) için grup = commit SHA → hiçbir koşu başka bir koşuyu iptal etmez/bekletmez (etiketli commit'in CI'ı release
+# kapısı için gerekli). Yalnızca PR koşulları yeni push'ta eskisini iptal eder.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Faz CI.1 (bkz. plan dosyası "release.yml'i CI durumuna göre kapatma"):
@@ -112,18 +125,19 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - name: Zig kur
-        run: |
-          set -euo pipefail
-          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
-          tar xf /tmp/zig.tar.xz -C /tmp
-          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+      - uses: ./.github/actions/setup-zig
       - name: qbe kur (kaynaktan derle)
         run: |
           cp third_party/qbe/qbe-1.3.tar.xz /tmp/qbe.tar.xz  # c9x.me kesintisi nedeniyle depoda (third_party/qbe/NOX_VENDOR.md)
           tar xf /tmp/qbe.tar.xz -C /tmp
           make -C /tmp/qbe-1.3 -j"$(nproc)"
           sudo cp /tmp/qbe-1.3/qbe /usr/local/bin/qbe
+      # CI.1: sabit sürümlü pip bağımlılıkları (anahtar sürüm dizgesi: sürüm değişince önbellek yenilenir).
+      - name: pip önbelleği
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-docs-Markdown3.11-Pygments2.21.0-PyYAML6.0.3-${{ runner.os }}
       - name: Python bağımlılıkları
         run: python3 -m pip install --quiet "Markdown==3.11" "Pygments==2.21.0" "PyYAML==6.0.3"
       - name: Derleyiciyi kur
@@ -182,18 +196,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # CI.2: her platform × optimize kombinasyonu AYRI paralel iş (Debug ile ReleaseFast artık aynı koşucuda sıralı değil).
+        platform: [macos, linux-x64, linux-arm64]
+        optimize: [Debug, ReleaseFast]
         include:
-          - os: macos-15
+          - platform: macos
+            os: macos-15
             name: macOS (aarch64)
-            zig_arch: aarch64-macos
             allow_failure: false
-          - os: ubuntu-latest
+          - platform: linux-x64
+            os: ubuntu-latest
             name: Linux (x86-64)
-            zig_arch: x86_64-linux
             allow_failure: false
-          - os: ubuntu-24.04-arm
+          - platform: linux-arm64
+            os: ubuntu-24.04-arm
             name: Linux (aarch64)
-            zig_arch: aarch64-linux
             # v1.142.21: `allow_failure` KALDIRILDI. Bu platformda `http_serve_multicore` N=2
             # testlerinde görülen "stack smashing detected" (`nox_thread_join`, thread_bridge.zig)
             # çöküşünün KÖK NEDENİ bulundu: `serveImpl`in YIĞIN-YEREL bağlantı sayacına fiber'lar
@@ -204,7 +221,7 @@ jobs:
             # N=2 testi dahil) tek hata YOK. Yeniden görülürse bu bayrağı GERİ KOYMAK yerine kök
             # neden araştırılmalı (bkz. proje belleği `aarch64 stack-smash`).
             allow_failure: false
-    name: ${{ matrix.name }}
+    name: ${{ matrix.name }} · ${{ matrix.optimize }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.allow_failure }}
     # Faz MN.11 (bkz. plan dosyası "poolWideDeadlockCheck'in kaçırdığı
@@ -227,12 +244,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Zig kur
-        run: |
-          set -euo pipefail
-          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-${{ matrix.zig_arch }}-0.16.0.tar.xz"
-          tar xf /tmp/zig.tar.xz -C /tmp
-          echo "/tmp/zig-${{ matrix.zig_arch }}-0.16.0" >>"$GITHUB_PATH"
+      # CI.1: önbellekli + sağlama toplamı doğrulamalı Zig (bkz. .github/actions/setup-zig/action.yml).
+      - uses: ./.github/actions/setup-zig
 
       # v2.0.160: WASM `--asyncify` testleri (`wasm-opt --asyncify`: fetch/TCP/postgres/mysql/process/serve host
       # yetenekleri) `wasm-opt` (binaryen) PATH'te yoksa SESSİZCE atlanıyordu — CI'de bu test grubu hiç koşmuyordu.
@@ -250,7 +263,7 @@ jobs:
 
       # v2.1.65: WASM yorumlayıcısının farksal test vektörleri Node/V8'e karşı güncel mi (araçlar yoksa atlanır; vektörler depoda olduğundan testler bunlara bağlı değildir).
       - name: WASM farksal vektörleri (Node/V8) güncel mi
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.optimize == 'Debug'  # optimizasyon modundan bağımsız bir güncellik denetimi: her platformda bir kez
         run: |
           if command -v node >/dev/null 2>&1; then
             python3 scripts/wasm_gen_vectors.py --check
@@ -265,11 +278,8 @@ jobs:
         run: python3 -m pip install --user grpcio || python3 -m pip install --user --break-system-packages grpcio || true
 
       # v2.0.175: release arşivine giren QBE ile AYNI yamalı derleme (`scripts/build_qbe.sh`): testler, kullanıcıya giden `qbe` ile koşar ve `--target windows-x64` tam derlemesi doğrulanır.
-      - name: qbe kur (yamalı, kaynaktan derle)
-        run: |
-          set -euo pipefail
-          scripts/build_qbe.sh "$RUNNER_TEMP/qbe-bin/qbe"
-          echo "$RUNNER_TEMP/qbe-bin" >>"$GITHUB_PATH"
+      - name: qbe kur (yamalı, kaynaktan derle, önbellekli)
+        uses: ./.github/actions/setup-qbe
 
       # Faz F.5 (bkz. nox-teknik-spesifikasyon.md §3.179 — dış
       # incelemenin bulduğu boşluk): `tests/golden/kernel_boot_x86_64_
@@ -322,20 +332,22 @@ jobs:
       # HER `run:` adımı AYRI bir shell olduğundan ulimit sonraki adıma
       # TAŞINMAZ, bu YÜZDEN "zig build test (Debug)" adımının KENDİ İçİNDE
       # ayarlanır.
+      # CI.2: core-dump/gdb tanılaması YALNIZCA Debug işinde (ulimit -c unlimited zaten yalnızca Debug test adımında ayarlıydı).
       - name: Çekirdek dökümü (core dump) yapılandırması (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.optimize == 'Debug'
         run: |
           apt_retry() { for i in 1 2 3 4; do if sudo apt-get "$@"; then return 0; fi; echo "apt-get $* başarısız (deneme $i), 15 sn sonra yeniden"; sleep 15; done; return 1; }
           apt_retry install -y -qq gdb
           mkdir -p /tmp/nox_cores /tmp/nox_crash_artifacts
           sudo sysctl -w kernel.core_pattern=/tmp/nox_cores/core.%e.%p
 
-      - name: zig build (Debug)
-        run: zig build
+      # CI.2: `zig build` ile `zig build test` AYRI adım kalır (üstteki soğuk-önbellek yarışı notu); mod matrisle gelir.
+      - name: zig build (${{ matrix.optimize }})
+        run: zig build -Doptimize=${{ matrix.optimize }}
 
       # v2.1.72: `nox.zip` çıktısının Python `zipfile` ile okunabildiği (yönteme göre) doğrulanır; python3 yoksa atlanır.
       - name: nox.zip Python zipfile birlikte-çalışma denetimi
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && matrix.optimize == 'Debug'
         run: |
           if command -v python3 >/dev/null 2>&1; then
             python3 scripts/verify_zip_interop.py
@@ -368,6 +380,7 @@ jobs:
       # zaten süreç İçİn geçerli sistem-genelinde bir ayar, AMA HER sürecin
       # KENDİ core-dump İZNİ (RLIMIT_CORE) AYRI/miras alınan bir şeydir.
       - name: zig build test (Debug)
+        if: matrix.optimize == 'Debug'
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
             ulimit -c unlimited
@@ -386,7 +399,8 @@ jobs:
             WATCHDOG_PID=$!
             trap 'kill $WATCHDOG_PID 2>/dev/null || true' EXIT
           fi
-          zig build test -Drequire-patched-qbe=true
+          # CI.3: `--summary all` adım-başına süreyi (golden/cli/runtime test adımları) raporlar; sharding kararı bu veriyle verilir.
+          zig build test -Drequire-patched-qbe=true --summary all
 
       # `if: always()` — "zig build test (Debug)" BAŞARISIZ olsa BİLE
       # çalışır (asıl amaç TAM OLARAK BU: bir çöküş OLDUĞUNDA teşhis
@@ -411,7 +425,7 @@ jobs:
       # VE glob genişlemeleri HER YERDE bash DİZİLERİ (nullglob'un GÜVENLE
       # çalıştığı TEK yol) İLE yapılır, ASLA `ls`e PIPE EDİLMEZ.
       - name: Çekirdek dökümü analizi (varsa, Linux)
-        if: always() && runner.os == 'Linux'
+        if: always() && runner.os == 'Linux' && matrix.optimize == 'Debug'
         run: |
           set +e
           shopt -s nullglob
@@ -435,7 +449,7 @@ jobs:
           done
 
       - name: Çekirdek dökümü + ikili artefaktları (varsa, Linux)
-        if: always() && runner.os == 'Linux'
+        if: always() && runner.os == 'Linux' && matrix.optimize == 'Debug'
         uses: actions/upload-artifact@v6
         with:
           name: nox-core-dumps-${{ matrix.name }}
@@ -445,11 +459,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: zig build (ReleaseFast)
-        run: zig build -Doptimize=ReleaseFast
-
+      # (ReleaseFast derlemesi artık yukarıdaki matris-modlu `zig build` adımıdır.)
       - name: zig build test (ReleaseFast)
-        run: zig build test -Doptimize=ReleaseFast -Drequire-patched-qbe=true
+        if: matrix.optimize == 'ReleaseFast'
+        run: zig build test -Doptimize=ReleaseFast -Drequire-patched-qbe=true --summary all
 
   # Faz LL.1 (bkz. nox-teknik-spesifikasyon.md §3.71): GERÇEK Windows
   # desteği YOK — `runtime/async_rt/io_reactor.zig` şu an yalnızca macOS
@@ -468,13 +481,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Zig kur
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          Invoke-WebRequest -Uri "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip" -OutFile "$env:RUNNER_TEMP\zig.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\zig.zip" -DestinationPath "$env:RUNNER_TEMP"
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\zig-x86_64-windows-0.16.0"
+      - uses: ./.github/actions/setup-zig
 
       - name: zig build noxc (yalnızca derleyici ön-ucu + stdlib)
         run: zig build noxc
@@ -844,10 +851,10 @@ jobs:
       # ikinci denemede de kırmızı kalır.
       - name: zig build test (Debug)
         run: |
-          zig build test -Dwin-test-timeout=3600
+          zig build test -Dwin-test-timeout=3600 --summary all
           if ($LASTEXITCODE -ne 0) {
             Write-Host "zig build test ilk denemede başarısız; bir kez yeniden deneniyor (Windows dosya-yarışı dalgalanması olabilir)"
-            zig build test -Dwin-test-timeout=3600
+            zig build test -Dwin-test-timeout=3600 --summary all
           }
 
   # v2.0.8: hosted riscv64 dumanı. Tam dil korpusu değil. Sınıf/liste/spawn,
@@ -858,12 +865,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - name: Zig kur
-        run: |
-          set -euo pipefail
-          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
-          tar xf /tmp/zig.tar.xz -C /tmp
-          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
+      - uses: ./.github/actions/setup-zig
       - name: qbe kur (kaynaktan derle)
         run: |
           cp third_party/qbe/qbe-1.3.tar.xz /tmp/qbe.tar.xz  # c9x.me kesintisi nedeniyle depoda (third_party/qbe/NOX_VENDOR.md)
@@ -916,17 +918,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      - name: Zig kur
-        run: |
-          set -euo pipefail
-          curl -sSL -o /tmp/zig.tar.xz "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz"
-          tar xf /tmp/zig.tar.xz -C /tmp
-          echo "/tmp/zig-x86_64-linux-0.16.0" >>"$GITHUB_PATH"
-      - name: qbe kur (yamalı, kaynaktan derle)
-        run: |
-          set -euo pipefail
-          scripts/build_qbe.sh "$RUNNER_TEMP/qbe-bin/qbe"
-          echo "$RUNNER_TEMP/qbe-bin" >>"$GITHUB_PATH"
+      - uses: ./.github/actions/setup-zig
+      - name: qbe kur (yamalı, kaynaktan derle, önbellekli)
+        uses: ./.github/actions/setup-qbe
       - name: noxc ve Windows runtime
         run: zig build
       - name: Programları iki backend ile çapraz derle

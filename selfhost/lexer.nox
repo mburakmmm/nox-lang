@@ -634,7 +634,8 @@ def lex(st: Lx) -> int:
             emit(st, 3, line, col, fstart, i)
             continue
 
-        is_raw_prefix: bool = (c == 114 or c == 82) and i + 1 < n and (at(base, i + 1) == 39 or at(base, i + 1) == 34)
+        # v2.2.77: `b"..."`/`B'...'` bayt dizesi öneki ham dize önekiyle aynı yoldan lexlenir (b = 98, B = 66)
+        is_raw_prefix: bool = (c == 114 or c == 82 or c == 98 or c == 66) and i + 1 < n and (at(base, i + 1) == 39 or at(base, i + 1) == 34)
         if (not is_raw_prefix) and (is_istart(c) or (c >= 128 and uni_len(base, n, i, True) > 0)):
             wstart: int = i
             while i < n:
@@ -656,7 +657,7 @@ def lex(st: Lx) -> int:
             continue
 
         raw_off: int = 0
-        if (c == 114 or c == 82) and i + 1 < n and (at(base, i + 1) == 39 or at(base, i + 1) == 34):
+        if (c == 114 or c == 82 or c == 98 or c == 66) and i + 1 < n and (at(base, i + 1) == 39 or at(base, i + 1) == 34):
             raw_off = 1
         sc: int = at(base, i + raw_off)
         if (sc == 39 or sc == 34) and i + raw_off + 2 < n and at(base, i + raw_off + 1) == sc and at(base, i + raw_off + 2) == sc:

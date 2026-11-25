@@ -1,0 +1,1 @@
+`b"..."` bayt dizesi literali: geçerli biçimler (`ok*`) ve hata yolları (`bad_*`, `unterminated`). `scripts/frontend_diff.py` (lexer/parser/ast/astdump/fmt) bu dosyalar dahil depodaki TÜM `.nox` üzerinde Zig ↔ Nox selfhost çıktılarının aynı olduğunu sınar (v2.2.77; `project/bytes-tipi-gorev-belgesi-2026-11.md`).

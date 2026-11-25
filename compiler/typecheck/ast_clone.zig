@@ -133,7 +133,7 @@ fn clauses(a: std.mem.Allocator, src: []const ast.CompClause) Error![]ast.CompCl
 
 pub fn expr(a: std.mem.Allocator, e: ast.Expr) Error!ast.Expr {
     return switch (e) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => e,
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => e,
         .identifier => |n| .{ .identifier = rn(n) },
         .unary => |u| .{ .unary = .{ .op = u.op, .operand = try box(a, u.operand.*) } },
         .binary => |b| blk: {

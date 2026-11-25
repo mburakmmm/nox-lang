@@ -993,3 +993,90 @@ def __nox_set_from_list[T](xs: list[T]) -> __nox_Set[T]:
     for x in xs:
         s.add(x)
     return s
+
+# ---- v2.2.77: yerleşik `bytes` tipi — bayt tabanlı işlemler (bkz. project/bytes-tipi-gorev-belgesi-2026-11.md) ----
+# `bytes` değerleri `str` ile AYNI bellek düzenindedir; `len`/indeks/dilim/yineleme/dönüşümler checker tarafından bu `__nox_bytes_*` işlevlerine yeniden yazılır.
+# Jenerik `[T]` (T her zaman bytes/str/list) yalnızca KULLANILDIĞINDA örneklenir: kullanmayan programların IR'ı/boyutu değişmez (`__nox_str_*` ile aynı kalıp).
+extern def nox_bt_len(b: bytes) -> int from "zig-out/lib/noxrt.o"
+extern def nox_bt_get(b: bytes, i: int) -> int from "zig-out/lib/noxrt.o"
+extern def nox_bt_sub(b: bytes, lo: int, hi: int) -> bytes from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bt_from_ints(xs: list[int]) -> bytes from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bt_to_ints(b: bytes) -> list[int] from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bt_is_utf8(b: bytes) -> int from "zig-out/lib/noxrt.o"
+extern def nox_bt_to_str(b: bytes) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_str_to_bytes(s: str) -> bytes from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bt_hex(b: bytes) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_bt_repr(b: bytes) -> str from "zig-out/lib/noxrt.o" with_rt
+
+def __nox_bytes_len[T](b: T) -> int:
+    return nox_bt_len(b)
+
+def __nox_bytes_index[T](b: T, i: int) -> int:
+    n: int = nox_bt_len(b)
+    j: int = i
+    if j < 0:
+        j = j + n
+    if j < 0 or j >= n:
+        raise IndexError("bytes index out of range")
+    return nox_bt_get(b, j)
+
+def __nox_bytes_slice[T](b: T, lo: int, hi: int) -> T:
+    n: int = nox_bt_len(b)
+    l: int = lo
+    h: int = hi
+    if l < 0:
+        l = l + n
+    if h < 0:
+        h = h + n
+    return nox_bt_sub(b, l, h)
+
+def __nox_bytes_contains_byte[T](b: T, x: int) -> bool:
+    n: int = nox_bt_len(b)
+    i: int = 0
+    while i < n:
+        if nox_bt_get(b, i) == x:
+            return True
+        i = i + 1
+    return False
+
+def __nox_bytes_ints[T](b: T) -> list[int]:
+    return nox_bt_to_ints(b)
+
+def __nox_bytes_to_list[T](b: T) -> list[u8]:
+    out: list[u8] = []
+    n: int = nox_bt_len(b)
+    i: int = 0
+    while i < n:
+        out.append(u8(nox_bt_get(b, i)))
+        i = i + 1
+    return out
+
+def __nox_bytes_new_ints[T](xs: list[T]) -> bytes:
+    for x in xs:
+        if x < 0 or x > 255:
+            raise ValueError("bytes must be in range(0, 256)")
+    return nox_bt_from_ints(xs)
+
+def __nox_bytes_new[T](xs: list[T]) -> bytes:
+    ints: list[int] = []
+    for x in xs:
+        v: int = int(x)
+        if v < 0 or v > 255:
+            raise ValueError("bytes must be in range(0, 256)")
+        ints.append(v)
+    return nox_bt_from_ints(ints)
+
+def __nox_bytes_decode[T](b: T) -> str:
+    if nox_bt_is_utf8(b) == 0:
+        raise ValueError("bytes are not valid UTF-8")
+    return nox_bt_to_str(b)
+
+def __nox_bytes_hex[T](b: T) -> str:
+    return nox_bt_hex(b)
+
+def __nox_bytes_repr[T](b: T) -> str:
+    return nox_bt_repr(b)
+
+def __nox_str_encode[T](s: T) -> bytes:
+    return nox_str_to_bytes(s)
+

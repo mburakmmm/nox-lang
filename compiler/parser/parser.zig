@@ -2917,9 +2917,17 @@ pub const Parser = struct {
         var acc: ?ast.Expr = null;
         while (self.check(.string_lit) or self.check(.fstring_lit)) {
             const t = self.advance();
-            const piece: ast.Expr = if (t.kind == .string_lit) .{ .string_lit = try self.decodeString(t.lexeme) } else try self.parseFStringLit(t.lexeme);
+            const is_bytes = t.kind == .string_lit and t.lexeme.len >= 3 and (t.lexeme[0] == 'b' or t.lexeme[0] == 'B');
+            const piece: ast.Expr = if (is_bytes) .{ .bytes_lit = try self.decodeBytes(t.lexeme) } else if (t.kind == .string_lit) .{ .string_lit = try self.decodeString(t.lexeme) } else try self.parseFStringLit(t.lexeme);
             if (acc) |a| {
-                if (a == .string_lit and piece == .string_lit) {
+                // v2.2.77: bitişik `b"a" b"b"` birleşir; bayt ile metin dizesi KARIŞTIRILAMAZ (Python ile aynı).
+                if ((a == .bytes_lit) != (piece == .bytes_lit)) {
+                    self.last_diagnostic = .{ .found = .string_lit, .span = span_mod.fromToken(t), .note = "cannot mix bytes and str literals" };
+                    return error.UnexpectedToken;
+                }
+                if (a == .bytes_lit and piece == .bytes_lit) {
+                    acc = .{ .bytes_lit = try std.mem.concat(self.allocator, u8, &.{ a.bytes_lit, piece.bytes_lit }) };
+                } else if (a == .string_lit and piece == .string_lit) {
                     acc = .{ .string_lit = try std.mem.concat(self.allocator, u8, &.{ a.string_lit, piece.string_lit }) };
                 } else {
                     acc = .{ .binary = .{ .op = .add, .left = try self.box(a), .right = try self.box(piece) } };
@@ -2929,6 +2937,55 @@ pub const Parser = struct {
             }
         }
         return acc.?;
+    }
+
+    /// v2.2.77: `b"…"` / `B'…'` (üç tırnaklı dahil) → ham baytlar. Kaçışlar: `\n \t \r \\ \' \" \0` ve `\xHH` (0x00–0xFF, TAM iki onaltılık basamak); tanınmayan kaçış
+    /// ve ASCII dışı (>= 0x80) kaynak baytı derleme hatasıdır (Python: "bytes can only contain ASCII literal characters").
+    fn decodeBytes(self: *Parser, lexeme: []const u8) ParseError![]const u8 {
+        const q = lexeme[1..];
+        const inner = if (q.len >= 6 and q[0] == q[1] and q[1] == q[2]) q[3 .. q.len - 3] else q[1 .. q.len - 1];
+        var out = std.ArrayList(u8).empty;
+        var i: usize = 0;
+        while (i < inner.len) {
+            const c = inner[i];
+            if (c >= 0x80) {
+                self.last_diagnostic = .{ .found = .string_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "bytes can only contain ASCII literal characters (use \\xHH escapes for other byte values)" };
+                return error.UnexpectedToken;
+            }
+            if (c != '\\' or i + 1 >= inner.len) {
+                try out.append(self.allocator, c);
+                i += 1;
+                continue;
+            }
+            const esc = inner[i + 1];
+            if (esc == 'x') {
+                const hi = if (i + 2 < inner.len) std.fmt.charToDigit(inner[i + 2], 16) catch null else null;
+                const lo = if (i + 3 < inner.len) std.fmt.charToDigit(inner[i + 3], 16) catch null else null;
+                if (hi == null or lo == null) {
+                    self.last_diagnostic = .{ .found = .string_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "invalid '\\x' escape: it needs exactly two hexadecimal digits (for example \\x41)" };
+                    return error.UnexpectedToken;
+                }
+                try out.append(self.allocator, hi.? * 16 + lo.?);
+                i += 4;
+                continue;
+            }
+            const decoded: u8 = switch (esc) {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '\\' => '\\',
+                '\'' => '\'',
+                '"' => '"',
+                '0' => 0,
+                else => {
+                    self.last_diagnostic = .{ .found = .string_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "unknown escape in a bytes literal (supported: \\n \\t \\r \\\\ \\' \\\" \\0 \\xHH)" };
+                    return error.UnexpectedToken;
+                },
+            };
+            try out.append(self.allocator, decoded);
+            i += 2;
+        }
+        return out.toOwnedSlice(self.allocator);
     }
 
     fn decodeString(self: *Parser, lexeme: []const u8) ParseError![]const u8 {

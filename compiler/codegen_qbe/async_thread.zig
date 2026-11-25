@@ -250,7 +250,7 @@ pub fn exprUsesAsync(expr: ast.Expr) bool {
             }
             break :blk false;
         },
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => false,
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => false,
     };
 }
 
@@ -417,7 +417,7 @@ pub fn exprUsesMulticorePool(expr: ast.Expr) bool {
             }
             break :blk false;
         },
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => false,
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => false,
     };
 }
 

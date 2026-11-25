@@ -1,0 +1,45 @@
+# Yerleşik `bytes` tipi (v2.2.77): bayt tabanlı len/indeks/dilim/yineleme, literal kaçışları, karşılaştırma, `in`, dönüşümler, sözlük anahtarı.
+# Beklenen çıktı Python 3 ile birebir doğrulanmıştır (Nox'a özgü `.to_list()` Python'da `list(b)` karşılığıdır).
+b: bytes = b"ab\x00\xffc"
+print(len(b))
+print(b[0], b[-1], b[4])
+print(b[1:3], b[:2], b[3:], b[-2:], b[2:99], b[3:1], b[-99:2])
+print(b + b"Z" == b"ab\x00\xffcZ", b != b"ab", b == b"")
+print(b < b"b", b > b"a", b"a" <= b"a", b"" < b"\x00")
+print(97 in b, 255 in b, 1 in b, 97 not in b)
+print(b"\x00\xff" in b, b"zz" in b, b"" in b)
+total: int = 0
+for x in b:
+    total = total + x
+print(total)
+print(b.hex(), b"".hex())
+print(b"hi".decode(), b"caf\xc3\xa9".decode("utf-8"), len(b"caf\xc3\xa9"))
+print("héllo".encode())
+print(len("héllo"), len("héllo".encode()))
+print(repr(b"it's"), repr(b'say "x"'), repr(b"both ' and \""), repr(b"\n\t\r\\"))
+print(bytes([104, 105]), bytes(), bytes(b"q"))
+print(b"""tri
+ple""", b"a" b"b" b'c')
+print(len(b"ab".to_list()), int(b"AB".to_list()[1]))
+d: dict[bytes, int] = {b"k": 1, b"\x00": 2}
+d[b"z"] = 3
+print(d[b"k"], d[b"\x00"], d[b"z"], b"k" in d, len(d))
+d[b"a\x00b"] = 4
+d[b"a\x00c"] = 5
+print(d[b"a\x00b"], d[b"a\x00c"], b"a\x00" in d, len(d))
+print(b"ab\x00x" == b"ab", b"ab\x00x" != b"ab", b"a\x00x" < b"a\x00y")
+xs: list[bytes] = [b"b", b"a"]
+xs.append(b"c")
+print(xs[0], xs[1], xs[2], xs[0] + xs[1])
+try:
+    print(b"ab"[5])
+except IndexError:
+    print("IndexError")
+try:
+    print(b"\xc3\x28".decode())
+except ValueError:
+    print("ValueError")
+try:
+    print(bytes([256]))
+except ValueError:
+    print("ValueError")

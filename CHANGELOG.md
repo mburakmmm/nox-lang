@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.77]
+
+Yerleşik `bytes` tipi (NoxPy ön koşulu). Ayrıntı: `project/bytes-tipi-gorev-belgesi-2026-11.md`, spec §3.511.
+
+- Yeni DEĞİŞMEZ `bytes` tipi (`str` çalışma zamanı düzeniyle aynı; ayrı statik tip, örtük dönüşüm yok), `b"..."` literali (`\xHH` dahil), bayt tabanlı `len`/indeks (`int`)/dilim/yineleme, `+`, karşılaştırma, `in`, sözlük anahtarı, `bytes(list)`, `b.decode()`/`b.hex()`/`b.to_list()`, `s.encode()`, `print`/`repr` (`b'...'`). `core.nox` `__nox_bytes_*` + `runtime/str.zig` `nox_bytes_*` ilkelleri.
+- **Hata düzeltmesi (mevcut `str` hatası):** `==`/`!=`/`<`.. ve sözlük anahtar eşitliği/karması NUL-sonlandırmalıydı (`"ab\x00x" == "ab"` doğru sanılıyordu); artık uzunluk-bilgili (`nox_str_eq`/`nox_str_cmp`, başlıktaki bayt uzunluğu). `s == "lit"` satır içi hızlı yolu da uzunluk denetler.
+- Selfhost: Nox lexer/parser/biçimlendirici/AST şeması `b"..."` karşılığı (frontend_diff 5 bileşen, 1351+12 dosya FARK YOK); Nox tip denetleyicisi `bytes`'ı kapsam dışı sayar. Bilinen sınır: `list[bytes]`/`dict[..., bytes]` içeren kapsayıcıların `print`i elemanları `str` gibi gösterir (`print(xs[0])` doğru).
+
 ## [2.2.76]
 
 NoxPy UR-007: `noxc expand --json [--module <ad>]` — `@export` işlevlerinin tipli, şema-sürümlü (v1) metadata'sı. Ayrıntı: spec §3.510.

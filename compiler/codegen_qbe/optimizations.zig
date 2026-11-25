@@ -99,7 +99,7 @@ pub fn bodyHasNestedFuncDef(body: []const ast.Stmt) bool {
 /// sadece fırsatı KAÇIRIR), bu YÜZDEN burada TAM kapsam ZORUNLUDUR.
 pub fn exprMentionsName(expr: ast.Expr, name: []const u8) bool {
     return switch (expr) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => false,
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => false,
         .identifier => |n| std.mem.eql(u8, n, name),
         .unary => |u| exprMentionsName(u.operand.*, name),
         .kwarg => |k| exprMentionsName(k.value.*, name),
@@ -1054,7 +1054,7 @@ fn findListIndexedByVarExpr(e: ast.Expr, idx_var: []const u8) ?[]const u8 {
             }
             return null;
         },
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => return null,
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => return null,
     }
 }
 

@@ -7,6 +7,7 @@
 //! yeniden-tahsis ihtimali YOKTUR).
 
 const std = @import("std");
+const str_mod = @import("../str.zig");
 
 pub export fn nox_list_sort_int(data: [*]i64, len: i64) callconv(.c) void {
     if (len <= 0) return;
@@ -25,7 +26,7 @@ pub export fn nox_list_sort_float(data: [*]f64, len: i64) callconv(.c) void {
 fn lessThanStr(_: void, a: i64, b: i64) bool {
     const pa: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(a)))));
     const pb: [*:0]const u8 = @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(b)))));
-    return std.mem.order(u8, std.mem.span(pa), std.mem.span(pb)) == .lt;
+    return std.mem.order(u8, str_mod.nox_str_slice(pa), str_mod.nox_str_slice(pb)) == .lt; // v2.2.77: uzunluk-bilgili (gömülü NUL)
 }
 
 pub export fn nox_list_sort_str(data: [*]i64, len: i64) callconv(.c) void {

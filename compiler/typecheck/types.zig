@@ -177,6 +177,9 @@ pub const Type = union(enum) {
     /// `ptr[T]`nin KENDİSİ HÂLÂ ARC-İZLENMEZ (ne `detach`/`adopt`'un ne
     /// de `lowlevel`in güven sınırını GENİŞLETMEZ, sadece BİÇİMLENDİRİR).
     typed_ptr: *const Type,
+    /// v2.2.77: yerleşik DEĞİŞMEZ `bytes` (NoxPy ön koşulu; bkz. `project/bytes-tipi-gorev-belgesi-2026-11.md`). `str` ile AYNI çalışma zamanı bellek düzeni (uzunluk başlığı + bayt verisi,
+    /// ARC yönetimli) ama AYRI statik tip: örtük `str` dönüşümü YOK; `len`/indeks/dilim/yineleme BAYT tabanlıdır. Birleşimin SONUNA eklendi (selfhost tip etiketleri 0..17 değişmez; bytes = 18).
+    bytes,
 };
 
 pub const Dict = struct { key: *const Type, value: *const Type };
@@ -185,7 +188,7 @@ pub const FuncType = struct { params: []const Type, return_type: *const Type };
 pub fn eql(a: Type, b: Type) bool {
     if (@as(std.meta.Tag(Type), a) != @as(std.meta.Tag(Type), b)) return false;
     return switch (a) {
-        .int, .float, .boolean, .str, .none, .ptr => true,
+        .int, .float, .boolean, .str, .none, .ptr, .bytes => true,
         .list => |elem_a| eql(elem_a.*, b.list.*),
         .class => |name_a| std.mem.eql(u8, name_a, b.class),
         .task => |elem_a| eql(elem_a.*, b.task.*),
@@ -233,6 +236,7 @@ pub fn format(t: Type, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         .float => try writer.writeAll("float"),
         .boolean => try writer.writeAll("bool"),
         .str => try writer.writeAll("str"),
+        .bytes => try writer.writeAll("bytes"),
         .none => try writer.writeAll("None"),
         .list => |elem| {
             try writer.writeAll("list[");
@@ -309,6 +313,7 @@ pub fn appendMangled(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(
         .float => try buf.appendSlice(allocator, "float"),
         .boolean => try buf.appendSlice(allocator, "bool"),
         .str => try buf.appendSlice(allocator, "str"),
+        .bytes => try buf.appendSlice(allocator, "bytes"),
         .none => try buf.appendSlice(allocator, "None"),
         .ptr => try buf.appendSlice(allocator, "ptr"),
         .fixed_int => |k| try buf.appendSlice(allocator, k.name()),

@@ -808,6 +808,12 @@ def d_Expr(a: Ast, id: int) -> None:
         d_DictComp(a, a.n[id + 1])
         put(a, ")")
         return
+    if tag == 23:
+        put(a, "(bytes_lit")
+        put(a, " ")
+        put_str(a, a.n[id + 1], a.n[(id + 1) + 1])
+        put(a, ")")
+        return
     put(a, "(?)")
 
 def mk_Expr_int_lit(a: Ast, v0: int) -> int:
@@ -950,6 +956,13 @@ def mk_Expr_dict_comp(a: Ast, v0: int) -> int:
     id: int = len(a.n)
     a.n.append(22)
     a.n.append(v0)
+    return id
+
+def mk_Expr_bytes_lit(a: Ast, v0: int, v1: int) -> int:
+    id: int = len(a.n)
+    a.n.append(23)
+    a.n.append(v0)
+    a.n.append(v1)
     return id
 
 def d_Unary(a: Ast, id: int) -> None:

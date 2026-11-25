@@ -292,7 +292,7 @@ fn walkClauses(cx: *Ctx, cls: []ast.CompClause) Error!void {
 
 fn walkExpr(cx: *Ctx, e: *ast.Expr) Error!void {
     switch (e.*) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
         .unary => |*u| try walkExpr(cx, u.operand),
         .binary => |*b| {
             try walkExpr(cx, b.left);

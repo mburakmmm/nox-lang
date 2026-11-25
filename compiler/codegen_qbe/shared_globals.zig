@@ -241,7 +241,7 @@ const Walker = struct {
     fn expr(self: *Walker, e: ast.Expr) void {
         if (self.bad) return;
         switch (e) {
-            .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit => {},
+            .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit => {},
             .identifier => |n| if (std.mem.eql(u8, n, self.name)) {
                 self.bad = true;
             },

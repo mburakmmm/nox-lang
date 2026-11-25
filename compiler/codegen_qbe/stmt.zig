@@ -953,7 +953,7 @@ pub fn collectIndexStrBasesExpr(self: *Codegen, e: ast.Expr, candidates: *std.St
         .await_expr => |inner| try self.collectIndexStrBasesExpr(inner.*, candidates),
         .spawn_expr => |inner| try self.collectIndexStrBasesExpr(inner.*, candidates),
         .generic_construct => |g| for (g.args) |a| try self.collectIndexStrBasesExpr(a, candidates),
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
     }
 }
 

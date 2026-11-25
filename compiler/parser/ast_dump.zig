@@ -285,6 +285,7 @@ fn dumpExpr(writer: *std.Io.Writer, e: ast.Expr) std.Io.Writer.Error!void {
         .float_lit => |v| try writer.print("(float_lit {d})", .{v}),
         .bool_lit => |v| try writer.print("(bool_lit {any})", .{v}),
         .string_lit => |s| try writer.print("(string_lit \"{s}\")", .{s}),
+        .bytes_lit => |s| try writer.print("(bytes_lit \"{s}\")", .{s}),
         .none_lit => try writer.writeAll("(none_lit)"),
         .identifier => |name| try writer.print("(identifier {s})", .{name}),
         .unary => |u| {

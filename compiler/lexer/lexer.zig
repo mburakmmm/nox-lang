@@ -354,7 +354,8 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
             continue;
         }
 
-        const is_raw_prefix = (c == 'r' or c == 'R') and i + 1 < source.len and (source[i + 1] == '\'' or source[i + 1] == '"');
+        // v2.2.77: `b"..."`/`B'...'` bayt dizesi öneki ham dize önekiyle AYNI yoldan lexlenir (token `.string_lit`, lexeme öneki taşır); `bytes_lit`e çevirme parser'dadır.
+        const is_raw_prefix = (c == 'r' or c == 'R' or c == 'b' or c == 'B') and i + 1 < source.len and (source[i + 1] == '\'' or source[i + 1] == '"');
         if (!is_raw_prefix and (isIdentStart(c) or (c >= 0x80 and uniIdentLen(source, i, true) > 0))) {
             const start = i;
             while (i < source.len) {
@@ -374,7 +375,7 @@ fn tokenizeImpl(allocator: std.mem.Allocator, source: []const u8, trivia_out: ?*
 
         // v1.164.1: üç tırnaklı dizeler (`"""..."""` / `'''...'''`, çok satırlı, docstring'ler) — satır sayacı içerideki `\n`lerle ilerler.
         // Dil yüzeyi 1 (v2.2.21): ham dize öneki `r"..."`/`R'...'` (üç tırnaklı dahil): önek tırnağın hemen önündeyse token önekle başlar; kaçış çözme parser'da atlanır.
-        const raw_off: usize = if ((c == 'r' or c == 'R') and i + 1 < source.len and (source[i + 1] == '\'' or source[i + 1] == '"')) 1 else 0;
+        const raw_off: usize = if ((c == 'r' or c == 'R' or c == 'b' or c == 'B') and i + 1 < source.len and (source[i + 1] == '\'' or source[i + 1] == '"')) 1 else 0;
         const sc = source[i + raw_off];
         if ((sc == '\'' or sc == '"') and i + raw_off + 2 < source.len and source[i + raw_off + 1] == sc and source[i + raw_off + 2] == sc) {
             const quote = sc;

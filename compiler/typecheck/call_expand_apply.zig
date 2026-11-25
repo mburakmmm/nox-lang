@@ -177,7 +177,7 @@ pub fn expr(e: *ast.Expr, map: *const Ctx) void {
         if (map.coerce.get(@intFromPtr(e))) |r| e.* = r;
     }
     switch (e.*) {
-        .int_lit, .float_lit, .bool_lit, .string_lit, .none_lit, .identifier => {},
+        .int_lit, .float_lit, .bool_lit, .string_lit, .bytes_lit, .none_lit, .identifier => {},
         .unary => |*u| {
             // v1.163.0: `-obj` / `~obj` → `obj.__neg__()` / `obj.__invert__()` (anahtar: operand kutusu).
             if (map.exprs.get(@intFromPtr(u.operand))) |r| {
@@ -258,6 +258,12 @@ pub fn expr(e: *ast.Expr, map: *const Ctx) void {
             e.* = .{ .identifier = fd.name };
         },
         .slice => |*sl| {
+            // v2.2.77: `bytes[lo:hi]` → `__nox_bytes_slice(...)` (anahtar: `obj` kutusu).
+            if (map.exprs.get(@intFromPtr(sl.obj))) |r| {
+                e.* = r;
+                expr(e, map);
+                return;
+            }
             expr(sl.obj, map);
             if (sl.lo) |x| expr(x, map);
             if (sl.hi) |x| expr(x, map);

@@ -262,6 +262,9 @@ def ex_ident_lit(a: Ast, s: str) -> int:
 def ex_str(a: Ast, s: int) -> int:
     return mk_Expr_string_lit(a, pkx(s), pky(s))
 
+def ex_bytes(a: Ast, s: int) -> int:
+    return mk_Expr_bytes_lit(a, pkx(s), pky(s))
+
 def ex_str_lit(a: Ast, s: str) -> int:
     v: int = syn(a, s)
     return mk_Expr_string_lit(a, pkx(v), pky(v))
@@ -1199,6 +1202,57 @@ def norm_crlf(p: P, s: int, e: int) -> int:
             i = i + 1
     return pk(0 - off - 1, len(a.sb) - off)
 
+# v2.2.77: `b"…"` / `B'…'` (üç tırnaklı dahil) → ham baytlar (Zig `decodeBytes`): kaçışlar `\n \t \r \\ \' \" \0` ve `\xHH` (0x00-0xFF); ASCII dışı kaynak baytı ve tanınmayan kaçış hata.
+def decode_bytes(p: P, ti: int) -> int:
+    a: Ast = p.a
+    s: int = t_s(p, ti)
+    e: int = t_e(p, ti)
+    qs: int = s + 1
+    lo_: int = qs + 1
+    hi_: int = e - 1
+    if (e - qs) >= 6 and at(a.src, qs) == at(a.src, qs + 1) and at(a.src, qs + 1) == at(a.src, qs + 2):
+        lo_ = qs + 3
+        hi_ = e - 3
+    off: int = len(a.sb)
+    i: int = lo_
+    while i < hi_:
+        c: int = at(a.src, i)
+        if c >= 128:
+            bad_str(p, {{K:string_lit}}, "bytes can only contain ASCII literal characters (use \\xHH escapes for other byte values)")
+        if c != 92 or i + 1 >= hi_:
+            a.sb.append(c)
+            i = i + 1
+            continue
+        esc: int = at(a.src, i + 1)
+        if esc == 120:
+            hv: int = -1
+            lv: int = -1
+            if i + 2 < hi_:
+                hv = hex_digit(at(a.src, i + 2))
+            if i + 3 < hi_:
+                lv = hex_digit(at(a.src, i + 3))
+            if hv < 0 or lv < 0:
+                bad_str(p, {{K:string_lit}}, "invalid '\\x' escape: it needs exactly two hexadecimal digits (for example \\x41)")
+            a.sb.append(hv * 16 + lv)
+            i = i + 4
+            continue
+        dec: int = -1
+        if esc == 110:
+            dec = 10
+        elif esc == 116:
+            dec = 9
+        elif esc == 114:
+            dec = 13
+        elif esc == 92 or esc == 39 or esc == 34:
+            dec = esc
+        elif esc == 48:
+            dec = 0
+        if dec < 0:
+            bad_str(p, {{K:string_lit}}, "unknown escape in a bytes literal (supported: \\n \\t \\r \\\\ \\' \\\" \\0 \\xHH)")
+        a.sb.append(dec)
+        i = i + 2
+    return pk(0 - off - 1, len(a.sb) - off)
+
 def decode_string(p: P, ti: int) -> int:
     a: Ast = p.a
     s: int = t_s(p, ti)
@@ -1231,12 +1285,21 @@ def parse_string_atoms(p: P) -> int:
     while chk(p, {{K:string_lit}}) or chk(p, {{K:fstring_lit}}):
         t: int = adv(p)
         piece: int = 0
-        if kd_at(p, t) == {{K:string_lit}}:
+        is_bytes: bool = kd_at(p, t) == {{K:string_lit}} and (t_e(p, t) - t_s(p, t)) >= 3 and (at(a.src, t_s(p, t)) == 98 or at(a.src, t_s(p, t)) == 66)
+        if is_bytes:
+            piece = ex_bytes(a, decode_bytes(p, t))
+        elif kd_at(p, t) == {{K:string_lit}}:
             piece = ex_str(a, decode_string(p, t))
         else:
             piece = parse_fstring_lit(p, t_s(p, t), t_e(p, t))
         if acc >= 0:
-            if a.n[acc] == {{T:Expr.string_lit}} and a.n[piece] == {{T:Expr.string_lit}}:
+            # v2.2.77: bitişik `b"a" b"b"` birleşir; bayt ile metin dizesi karıştırılamaz
+            if (a.n[acc] == {{T:Expr.bytes_lit}}) != (a.n[piece] == {{T:Expr.bytes_lit}}):
+                bad_str(p, {{K:string_lit}}, "cannot mix bytes and str literals")
+            if a.n[acc] == {{T:Expr.bytes_lit}} and a.n[piece] == {{T:Expr.bytes_lit}}:
+                catb: int = concat_sref(a, pk(a.n[acc + 1], a.n[acc + 2]), pk(a.n[piece + 1], a.n[piece + 2]))
+                acc = ex_bytes(a, catb)
+            elif a.n[acc] == {{T:Expr.string_lit}} and a.n[piece] == {{T:Expr.string_lit}}:
                 cat: int = concat_sref(a, pk(a.n[acc + 1], a.n[acc + 2]), pk(a.n[piece + 1], a.n[piece + 2]))
                 acc = ex_str(a, cat)
             else:
