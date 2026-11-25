@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.82]
+
+Selfhost Aşama 3.11 dilim A: `lowlevel:` deyimi, ptr/lowlevel yerleşikleri, `Channel/ThreadChannel/TaskLocal/ptr[T]` kurucuları ve `wasm_call` Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.516, `project/noxc-nightly-selfhost-plani-2026-11.md`.
+
+- `selfhost/typecheck.nox.in`: `Fx.ll_depth`, `check_ptr_builtin`, `check_generic_construct`, `check_wasm_call`; blok-yerel adların bloktan sonra kapsam dışına alınması. Kapsam dışı: `adopt`, dahili `__nox_*`, kullanıcı jenerikleri.
+- `scripts/ck_gen.py --construct --ptr` üreteçleri. Kanıt: 15 üreteç dizini + 347 golden + 953 depo dosyası Zig ile eşit (depo kapsam dışı 690 → 671).
+
 ## [2.2.81]
 
 Selfhost Aşama 3.9 dilim A: `raise`/`try`/`except`/`finally`/`with`/`del` Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.515, `project/noxc-nightly-selfhost-plani-2026-11.md`.

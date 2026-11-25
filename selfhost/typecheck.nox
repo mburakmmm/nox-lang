@@ -353,9 +353,12 @@ class Fx:
     is_init: bool
     # `awaited_callee`: o an `await` operandı olan çağrının callee düğümü (-1 yok); `ch.send/recv` yalnız bu bağlamda geçerli
     awaited: int
+    # `in_lowlevel_depth`: `lowlevel:` iç içe derinliği
+    ll_depth: int
 
     def __init__(self, scope: int, ret: int, in_async: bool) -> None:
         self.awaited = -1
+        self.ll_depth = 0
         self.scope = scope
         self.ret = ret
         self.loop = 0
@@ -672,7 +675,63 @@ def check_expr_inner(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
         return check_attribute(ck, a, fx, a.n[e + 1])
     if tag == 13:
         return check_await(ck, a, fx, e)
+    if tag == 15:
+        return check_generic_construct(ck, a, fx, a.n[e + 1])
     raise unsup(ck, "check_expr_inner#" + str(tag))
+
+# `checkGenericConstruct`: `Channel[T](kapasite)`, `ThreadChannel[T](kapasite)`, `TaskLocal[T]()`; `ptr[T](adres)` (lowlevel) ve kullanıcı jenerikleri/nitelikli adlar kapsam dışı.
+def check_generic_construct(ck: Ck, a: Ast, fx: Fx, g: int) -> int:
+    gn: int = pk(a.n[g + 0], a.n[g + 0 + 1])
+    targs: int = sl_at(a, g, 2)
+    args: int = sl_at(a, g, 4)
+    nt: int = pky(targs)
+    n: int = pky(args)
+    tt: TT = ck.tt
+    if sref_eq(a, gn, "ptr"):
+        if fx.ll_depth == 0:
+            fail2(ck, "LowlevelRequired", "'ptr' can only be used inside a 'lowlevel:' block")
+        if nt != 1:
+            fail2(ck, "UnknownType", "'ptr' takes exactly one type argument")
+        pelem: int = type_expr_to_type(ck, a, stmt_at(a, targs, 0))
+        if n != 1:
+            fail2(ck, "ArgumentCountMismatch", "the 'ptr' constructor takes exactly 1 argument (addr: int)")
+        if check_expr(ck, a, fx, stmt_at(a, args, 0)) != 0:
+            fail2(ck, "TypeMismatch", "the argument (addr) of the 'ptr' constructor must be an int")
+        return ty_mk(tt, 17, pelem, 0)
+    if sref_eq(a, gn, "ThreadChannel"):
+        if nt != 1:
+            fail2(ck, "UnknownType", "'ThreadChannel' takes exactly one type argument")
+        telem: int = type_expr_to_type(ck, a, stmt_at(a, targs, 0))
+        tg: int = tt.tag[telem]
+        if tg == 9 or tg == 14 or tg == 15:
+            fail2(ck, "TypeMismatch", "the 'ThreadChannel' element type can only be int/float/bool/str/None/ptr (and additionally task/channel/list/class/dict on hosted targets)")
+        if n != 1:
+            fail2(ck, "ArgumentCountMismatch", "the 'ThreadChannel' constructor takes exactly 1 argument (capacity: int)")
+        if check_expr(ck, a, fx, stmt_at(a, args, 0)) != 0:
+            fail2(ck, "TypeMismatch", "the argument (capacity) of the 'ThreadChannel' constructor must be an int")
+        return ty_mk(tt, 10, telem, 0)
+    for dq in range(sref_len(gn)):
+        if sref_byte(a, gn, dq) == 46:
+            raise unsup(ck, "generic_construct#qualified")
+    if sref_eq(a, gn, "TaskLocal"):
+        if nt != 1:
+            fail2(ck, "UnknownType", "'TaskLocal' takes exactly one type argument")
+        lelem: int = type_expr_to_type(ck, a, stmt_at(a, targs, 0))
+        if lelem == 0 or lelem == 1 or lelem == 2:
+            fail2(ck, "TypeMismatch", "the T of 'TaskLocal[T]' must be a class/str/list/dict (a bare int/float/bool is outside the v1 scope — it requires boxing such as Optional[int])")
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "the 'TaskLocal' constructor takes no arguments")
+        return ty_mk(tt, 11, lelem, 0)
+    if not sref_eq(a, gn, "Channel"):
+        fail_attr(ck, a, gn, "UnknownType", "unknown generic constructor: ", "")
+    if nt != 1:
+        fail2(ck, "UnknownType", "'Channel' takes exactly one type argument")
+    celem: int = type_expr_to_type(ck, a, stmt_at(a, targs, 0))
+    if n != 1:
+        fail2(ck, "ArgumentCountMismatch", "the 'Channel' constructor takes exactly 1 argument (capacity: int)")
+    if check_expr(ck, a, fx, stmt_at(a, args, 0)) != 0:
+        fail2(ck, "TypeMismatch", "the argument (capacity) of the 'Channel' constructor must be an int")
+    return ty_mk(tt, 8, celem, 0)
 
 # `.await_expr` (Task operandı; Channel/ThreadHandle işlemleri ve `spawn` kapsam dışı)
 def check_await(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
@@ -1226,6 +1285,171 @@ def builtin_type_arg(ck: Ck, a: Ast, args: int, i: int, msg_a: str, cv: int, msg
         raise mk_fail(ck, "TypeMismatch")
     return pk(a.n[e + 1], a.n[e + 2])
 
+# `wasm_call(yol, işlev, argüman)` (wasm32-wasi hedefi dışında).
+def check_wasm_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
+    if arg_n(a, c) != 3:
+        fail2(ck, "ArgumentCountMismatch", "'wasm_call' takes exactly 3 arguments (path: str, function_name: str, argument: int)")
+    if arg_e(ck, a, fx, c, 0) != 3:
+        fail2(ck, "TypeMismatch", "argument 1 (path) of 'wasm_call' must be a str")
+    if arg_e(ck, a, fx, c, 1) != 3:
+        fail2(ck, "TypeMismatch", "argument 2 (function name) of 'wasm_call' must be a str")
+    if arg_e(ck, a, fx, c, 2) != 0:
+        fail2(ck, "TypeMismatch", "argument 3 (argument) of 'wasm_call' must be an int")
+    return 0
+
+# `lowlevel:` dışında ptr ailesi kullanımı (Zig `requireLowlevel`).
+def ll_require(ck: Ck, fx: Fx, a: Ast, cv: int) -> None:
+    if fx.ll_depth == 0:
+        mp(ck, "'")
+        mp_sref(ck, a, cv)
+        mp(ck, "' can only be used inside a 'lowlevel:' block")
+        raise mk_fail(ck, "LowlevelRequired")
+
+def pf_argc(ck: Ck, a: Ast, cv: int, n: int, want: int, tail: str) -> None:
+    if n != want:
+        mp(ck, "'")
+        mp_sref(ck, a, cv)
+        if want == 0:
+            mp(ck, "' takes no arguments")
+        elif want == 1:
+            mp(ck, "' takes exactly 1 argument")
+            mp(ck, tail)
+        else:
+            mp(ck, "' takes exactly 2 arguments ")
+            mp(ck, tail)
+        raise mk_fail(ck, "ArgumentCountMismatch")
+
+def pf_arg_fail(ck: Ck, a: Ast, cv: int, pre: str, post: str) -> None:
+    mp(ck, pre)
+    mp(ck, "'")
+    mp_sref(ck, a, cv)
+    mp(ck, post)
+    raise mk_fail(ck, "TypeMismatch")
+
+# ptr/lowlevel yerleşikleri (Zig `checkCallInner`, `ptr_from_int` ... `detach`); -1: bu ailenin adı değil.
+def check_ptr_builtin(ck: Ck, a: Ast, fx: Fx, c: int, cv: int) -> int:
+    args: int = sl_at(a, c, 1)
+    n: int = pky(args)
+    tt: TT = ck.tt
+    if sref_eq(a, cv, "wasm_call"):
+        return check_wasm_call(ck, a, fx, c)
+    if sref_eq(a, cv, "ffi_box"):
+        if n != 1:
+            fail2(ck, "ArgumentCountMismatch", "'ffi_box' takes exactly 1 argument (a function value)")
+        if tt.tag[arg_e(ck, a, fx, c, 0)] != 14:
+            fail2(ck, "TypeMismatch", "'ffi_box' takes a function value")
+        return 5
+    if sref_eq(a, cv, "ptr_from_int"):
+        ll_require(ck, fx, a, cv)
+        pf_argc(ck, a, cv, n, 1, "")
+        if arg_e(ck, a, fx, c, 0) != 0:
+            fail2(ck, "TypeMismatch", "'ptr_from_int' takes an int")
+        return 5
+    if sref_eq(a, cv, "ptr_to_int"):
+        ll_require(ck, fx, a, cv)
+        pf_argc(ck, a, cv, n, 1, "")
+        xt: int = arg_e(ck, a, fx, c, 0)
+        if xt != 5 and tt.tag[xt] != 17:
+            fail2(ck, "TypeMismatch", "'ptr_to_int' takes a ptr or ptr[T]")
+        return 0
+    if sref_eq(a, cv, "ptr_of"):
+        ll_require(ck, fx, a, cv)
+        pf_argc(ck, a, cv, n, 1, " (a list variable or field)")
+        a0: int = stmt_at(a, args, 0)
+        if a.n[a0] != 5 and a.n[a0] != 9:
+            fail2(ck, "TypeMismatch", "'ptr_of' can only be applied to a variable or a field — not to the result of an expression (its data pointer would outlive the temporary)")
+        lt: int = check_expr(ck, a, fx, a0)
+        if tt.tag[lt] != 5:
+            fail2(ck, "TypeMismatch", "'ptr_of' takes a list[T]")
+        pe: int = tt.xa[lt]
+        if pe != 0 and pe != 1 and tt.tag[pe] != 16:
+            fail2(ck, "TypeMismatch", "'ptr_of' supports list[int], list[float] and lists of fixed-width integers only")
+        return ty_mk(tt, 17, pe, 0)
+    if sref_eq(a, cv, "ptr_add"):
+        ll_require(ck, fx, a, cv)
+        pf_argc(ck, a, cv, n, 2, "(p: ptr, n: int)")
+        if arg_e(ck, a, fx, c, 0) != 5:
+            pf_arg_fail(ck, a, cv, "argument 1 (p) of ", "' must be a ptr")
+        if arg_e(ck, a, fx, c, 1) != 0:
+            pf_arg_fail(ck, a, cv, "argument 2 (n) of ", "' must be an int")
+        return 5
+    if sref_eq(a, cv, "ptr_read_int") or sref_eq(a, cv, "ptr_read_float") or sref_eq(a, cv, "ptr_read_bool"):
+        ll_require(ck, fx, a, cv)
+        pf_argc(ck, a, cv, n, 1, "")
+        if arg_e(ck, a, fx, c, 0) != 5:
+            mp(ck, "'")
+            mp_sref(ck, a, cv)
+            mp(ck, "' takes a ptr")
+            raise mk_fail(ck, "TypeMismatch")
+        if sref_eq(a, cv, "ptr_read_int"):
+            return 0
+        if sref_eq(a, cv, "ptr_read_float"):
+            return 1
+        return 2
+    if sref_eq(a, cv, "ptr_write_int") or sref_eq(a, cv, "ptr_write_float") or sref_eq(a, cv, "ptr_write_bool"):
+        ll_require(ck, fx, a, cv)
+        wt: int = 0
+        wn: str = "an int"
+        wl: str = "(p: ptr, v: int)"
+        if sref_eq(a, cv, "ptr_write_float"):
+            wt = 1
+            wn = "a float"
+            wl = "(p: ptr, v: float)"
+        elif sref_eq(a, cv, "ptr_write_bool"):
+            wt = 2
+            wn = "a bool"
+            wl = "(p: ptr, v: bool)"
+        pf_argc(ck, a, cv, n, 2, wl)
+        if arg_e(ck, a, fx, c, 0) != 5:
+            pf_arg_fail(ck, a, cv, "argument 1 (p) of ", "' must be a ptr")
+        if arg_e(ck, a, fx, c, 1) != wt:
+            pf_arg_fail(ck, a, cv, "argument 2 (v) of ", "' must be " + wn)
+        return 4
+    if sref_eq(a, cv, "ptr_offset"):
+        ll_require(ck, fx, a, cv)
+        pf_argc(ck, a, cv, n, 2, "(p: ptr[T], n: int)")
+        ot: int = arg_e(ck, a, fx, c, 0)
+        if tt.tag[ot] != 17:
+            pf_arg_fail(ck, a, cv, "argument 1 (p) of ", "' must be a ptr[T]")
+        if arg_e(ck, a, fx, c, 1) != 0:
+            pf_arg_fail(ck, a, cv, "argument 2 (n) of ", "' must be an int")
+        return ot
+    if sref_eq(a, cv, "ptr_read") or sref_eq(a, cv, "ptr_read_volatile"):
+        ll_require(ck, fx, a, cv)
+        pf_argc(ck, a, cv, n, 1, "")
+        rt0: int = arg_e(ck, a, fx, c, 0)
+        if tt.tag[rt0] != 17:
+            mp(ck, "'")
+            mp_sref(ck, a, cv)
+            mp(ck, "' takes a ptr[T]")
+            raise mk_fail(ck, "TypeMismatch")
+        return tt.xa[rt0]
+    if sref_eq(a, cv, "ptr_write") or sref_eq(a, cv, "ptr_write_volatile"):
+        ll_require(ck, fx, a, cv)
+        pf_argc(ck, a, cv, n, 2, "(p: ptr[T], v: T)")
+        wp: int = arg_e(ck, a, fx, c, 0)
+        if tt.tag[wp] != 17:
+            pf_arg_fail(ck, a, cv, "argument 1 (p) of ", "' must be a ptr[T]")
+        if arg_e(ck, a, fx, c, 1) != tt.xa[wp]:
+            pf_arg_fail(ck, a, cv, "argument 2 (v) of ", "' must have the SAME type as the T of p")
+        return 4
+    if sref_eq(a, cv, "memory_fence") or sref_eq(a, cv, "compiler_fence"):
+        ll_require(ck, fx, a, cv)
+        pf_argc(ck, a, cv, n, 0, "")
+        return 4
+    if sref_eq(a, cv, "detach"):
+        ll_require(ck, fx, a, cv)
+        pf_argc(ck, a, cv, n, 1, "")
+        d0: int = stmt_at(a, args, 0)
+        if a.n[d0] != 5:
+            fail2(ck, "TypeMismatch", "'detach' can only be applied to a plain local variable — not to a class field or the result of an expression")
+        dt: int = check_expr(ck, a, fx, d0)
+        dg: int = tt.tag[dt]
+        if dg != 5 and dg != 13 and dg != 6 and dt != 3:
+            fail2(ck, "TypeMismatch", "'detach' can only be applied to a variable of type list/dict/class/str")
+        return 5
+    return -1
+
 # -1: `cv` bu dilimin yerleşiklerinden biri değil (normal çağrı yolu sürer); aksi halde sonuç tipi.
 def check_builtin_call(ck: Ck, a: Ast, fx: Fx, c: int, cv: int) -> int:
     args: int = sl_at(a, c, 1)
@@ -1340,19 +1564,14 @@ def check_builtin_call(ck: Ck, a: Ast, fx: Fx, c: int, cv: int) -> int:
             mp(ck, "'")
             raise mk_fail(ck, "UndefinedAttribute")
         return 10
-    return -1
+    return check_ptr_builtin(ck, a, fx, c, cv)
 
 # Zig'de ayrı yolu olan (prelude yönlendirmesi, ptr/lowlevel ailesi, dahili `__nox_*`) ama bu dilimde taşınmayan ad: kapsam dışı etiketi; "" = yok.
 def call_gap_label(ck: Ck, a: Ast, cv: int, fi: int, ci: int) -> str:
     if sref_len(cv) >= 6 and sref_byte(a, cv, 0) == 95 and sref_byte(a, cv, 1) == 95 and sref_byte(a, cv, 2) == 110 and sref_byte(a, cv, 3) == 111 and sref_byte(a, cv, 4) == 120 and sref_byte(a, cv, 5) == 95:
         return "check_call#internal"
-    if sref_eq(a, cv, "ptr_from_int") or sref_eq(a, cv, "ptr_to_int") or sref_eq(a, cv, "ptr_of") or sref_eq(a, cv, "ffi_box") or sref_eq(a, cv, "ptr_add") or sref_eq(a, cv, "ptr_offset"):
-        return "check_call#lowlevel"
-    if sref_eq(a, cv, "ptr_read") or sref_eq(a, cv, "ptr_write") or sref_eq(a, cv, "ptr_read_int") or sref_eq(a, cv, "ptr_read_float") or sref_eq(a, cv, "ptr_read_bool"):
-        return "check_call#lowlevel"
-    if sref_eq(a, cv, "ptr_write_int") or sref_eq(a, cv, "ptr_write_float") or sref_eq(a, cv, "ptr_write_bool") or sref_eq(a, cv, "ptr_read_volatile") or sref_eq(a, cv, "ptr_write_volatile"):
-        return "check_call#lowlevel"
-    if sref_eq(a, cv, "memory_fence") or sref_eq(a, cv, "compiler_fence") or sref_eq(a, cv, "detach") or sref_eq(a, cv, "adopt") or sref_eq(a, cv, "wasm_call"):
+    # `adopt(p)`: beklenen-tip bağlamı (`checkExprExpected` dalı) taşınmadı
+    if sref_eq(a, cv, "adopt"):
         return "check_call#lowlevel"
     # `tryDesugarPreludeCall`: kullanıcı aynı adlı (prelude-dışı) işlev/sınıf tanımlamadıysa çağrı prelude yardımcılarına yönlendirilir
     prel: bool = False
@@ -1555,12 +1774,38 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
     if tag == 13:
         check_try(ck, a, fx, pay)
         return
+    if tag == 14:
+        # gövdede tanımlanan adlar bloktan sonra kapsam dışına alınır (arena blok çıkışında yıkılır)
+        before: list[int] = scope_live_names(ck, fx.scope)
+        fx.ll_depth = fx.ll_depth + 1
+        try:
+            check_block(ck, a, fx, sl_at(a, pay, 0))
+        finally:
+            fx.ll_depth = fx.ll_depth - 1
+        for li in range(len(ck.vars.k1)):
+            if ck.vars.k1[li] == fx.scope and ck.vars.dead[li] == 0:
+                kn2: int = ck.vars.k2[li]
+                known: bool = False
+                for bi in range(len(before)):
+                    if before[bi] == kn2:
+                        known = True
+                        break
+                if not known:
+                    m2_remove(ck.vars, fx.scope, kn2)
+        return
     if tag == 21:
         if a.n[pay + 5] != 0:
             raise unsup(ck, "check_stmt#async_with")
         check_with(ck, a, fx, pay)
         return
     raise unsup(ck, "stmt_kind#" + str(tag))
+
+def scope_live_names(ck: Ck, scope: int) -> list[int]:
+    out: list[int] = []
+    for i in range(len(ck.vars.k1)):
+        if ck.vars.k1[i] == scope and ck.vars.dead[i] == 0:
+            out.append(ck.vars.k2[i])
+    return out
 
 # `checkTry`: try gövdesi, `except [Sınıf [as ad]]` yan tümceleri (noktalı ad kapsam dışı), `finally`.
 def check_try(ck: Ck, a: Ast, fx: Fx, t: int) -> None:

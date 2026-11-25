@@ -42,8 +42,10 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False):
         self.rnd = rnd
+        self.use_ptr = use_ptr
+        self.use_construct = use_construct
         self.use_try = use_try
         self.use_recv = use_recv
         self.use_builtins = use_builtins
@@ -459,8 +461,64 @@ class Gen:
         for _ in range(r.randint(0, 3)):
             self.lines += r.choice([trystmt, withstmt, lambda i, rk: [body(i)]])("", False)
 
+    def gen_construct(self):
+        """`Channel[T](n)`/`ThreadChannel[T](n)`/`TaskLocal[T]()`/`ptr[T](a)`/bilinmeyen jenerik kurucular + sonuç tipinin kullanımı."""
+        r = self.rnd
+        self.lines += ["class P:", "    a: int", "    def __init__(self, a: int) -> None:", "        self.a = a", "", "n: int = 3", 's: str = "a"', ""]
+        ety = lambda: r.choice(["int", "float", "bool", "str", "P", "list[int]", "dict[str, int]", "u8", "int | None", "Task[int]", "Channel[int]", "ThreadHandle[int]", "ThreadChannel[int]", "TaskLocal[str]", "None", "ptr", "Nope"])
+        cap = lambda: r.choice(["1", "n", "0", "1.5", '"x"', "True", "", "1, 2"])
+        tpl = [
+            lambda: f"c: Channel[int] = Channel[{ety()}]({cap()})", lambda: f"c: Channel[{ety()}] = Channel[{ety()}]({cap()})", lambda: f"c = Channel[int]({cap()})",
+            lambda: f"c: ThreadChannel[int] = ThreadChannel[{ety()}]({cap()})", lambda: f"c: ThreadChannel[{ety()}] = ThreadChannel[{ety()}]({cap()})", lambda: "c: ThreadChannel[int] = ThreadChannel[int, int](1)",
+            lambda: f"t: TaskLocal[{ety()}] = TaskLocal[{ety()}]({r.choice(['', '1'])})", lambda: "t: TaskLocal[str] = TaskLocal[str, int]()", lambda: "t: TaskLocal[str] = TaskLocal[str]()",
+            lambda: f"c: int = {r.choice(['Channel', 'ThreadChannel', 'TaskLocal', 'Foo', 'Box', 'mod.Box', 'list', 'dict', 'ptr', 'Task', 'P'])}[int]({cap()})",
+            lambda: "c: Channel[int] = Channel[]()", lambda: "c: Channel[int] = Channel(1)", lambda: f"c: ptr[int] = ptr[int]({r.choice(['1', 'n', ''])})",
+            lambda: f"c: Channel[str] = Channel[int](1)", lambda: f"c: Channel[int] = Channel[int]({cap()})\nc.send({r.choice(['1', 's'])})",
+        ]
+        for _ in range(r.randint(1, 4)):
+            self.lines += r.choice(tpl)().split("\n")
+
+    def gen_ptr(self):
+        """lowlevel blokları + ptr ailesi: blok içi/dışı kullanım, yanlış argüman sayısı/tipi, blok-yerel adların bloktan sonra kullanımı."""
+        r = self.rnd
+        self.lines += ["class P:", "    a: int", "    def __init__(self, a: int) -> None:", "        self.a = a", "",
+                       "n: int = 3", "x: float = 1.5", "b: bool = True", 's: str = "a"', "xs: list[int] = [1, 2]", "fs: list[float] = [1.5]", "ss: list[str] = []", "us: list[u8] = []", "o: P = P(1)", "d: dict[str, int] = {}",
+                       "q: ptr = ptr_from_int(0) if False else None", ""][:-1]
+        self.lines.pop()  # `q` satırı geçersiz olabilir: kaldırıldı
+        self.lines += ["def cb(x: int) -> int:", "    return x", "def mk() -> list[int]:", "    return [1]", ""]
+        v = lambda: r.choice(["n", "x", "b", "s", "xs", "fs", "ss", "us", "o", "d", "p", "tp", "tf", "1", "2.5", "True", '"s"', "cb", "None", "xs[0]", "mk()", "o.a"])
+        iv = lambda: r.choice(["n", "1", "0", "x", "True", "xs[0]"])
+        pre = ["p: ptr = ptr_from_int(0)", "tp: ptr[int] = ptr[int](0)", "tf: ptr[float] = ptr[float](16)", ""]
+        tpl = [
+            lambda: f"p2: ptr = ptr_from_int({v()})", lambda: "p2: ptr = ptr_from_int()", lambda: f"i: int = ptr_to_int({v()})", lambda: f"i: int = ptr_to_int({v()}, 1)",
+            lambda: f"p2: ptr = ptr_add({v()}, {iv()})", lambda: f"p2: ptr = ptr_add(p)", lambda: f"i: int = ptr_read_int({v()})", lambda: f"f: float = ptr_read_float({v()})", lambda: f"c: bool = ptr_read_bool({v()})",
+            lambda: f"ptr_write_int({v()}, {v()})", lambda: f"ptr_write_float({v()}, {v()})", lambda: f"ptr_write_bool({v()}, {v()})", lambda: "ptr_write_int(p)",
+            lambda: f"tp2: ptr[int] = ptr_of({r.choice(['xs', 'fs', 'ss', 'us', 'mk()', 'o.a', 'n', 'o'])})", lambda: f"tp2: ptr[int] = ptr_offset({v()}, {iv()})", lambda: f"i: int = ptr_read({v()})", lambda: f"f: float = ptr_read({v()})",
+            lambda: f"ptr_write({v()}, {v()})", lambda: f"i: int = ptr_read_volatile({v()})", lambda: f"ptr_write_volatile({v()}, {v()})", lambda: f"{r.choice(['memory_fence', 'compiler_fence'])}({r.choice(['', '1'])})",
+            lambda: f"p2: ptr = detach({r.choice(['xs', 'd', 'o', 's', 'n', 'mk()', 'o.a', 'x'])})", lambda: f"p2: ptr = ffi_box({r.choice(['cb', 'n', 'p'])})", lambda: f"p2: ptr = adopt(p)",
+            lambda: f"tp3: ptr[{r.choice(['int', 'float', 'P', 'str'])}] = ptr[{r.choice(['int', 'float', 'P', 'Nope'])}]({iv()})", lambda: "tp3: ptr[int] = ptr[int]()", lambda: "tp3: ptr[int] = ptr[int, int](1)",
+            lambda: f"w: int = {r.choice(['n', '1'])}", lambda: f"z{r.randint(1,3)}: int = n", lambda: "print(zz)",
+        ]
+        mode = r.choice(["in", "in", "mixed", "out"])
+        body = [r.choice(tpl)() for _ in range(r.randint(1, 5))]
+        if mode == "out":
+            self.lines += pre + body
+        elif mode == "in":
+            self.lines += ["lowlevel:"] + ["    " + l for l in pre + body]
+        else:
+            self.lines += ["lowlevel:"] + ["    " + l for l in pre + body[:len(body) // 2 + 1]]
+            self.lines += body[len(body) // 2 + 1:] + [r.choice(["print(w)", "print(p)", "print(zz)", "print(tp)", "pass"])]
+        if r.random() < 0.3:
+            self.lines += ["def fl() -> None:", "    lowlevel:", "        q: ptr = ptr_from_int(1)", "        ptr_write_int(q, 2)", "    print(q)"]
+
     def program(self):
         r = self.rnd
+        if self.use_ptr:
+            self.gen_ptr()
+            return "\n".join(self.lines) + "\n"
+        if self.use_construct:
+            self.gen_construct()
+            return "\n".join(self.lines) + "\n"
         if self.use_try:
             self.gen_try()
             return "\n".join(self.lines) + "\n"
@@ -508,11 +566,13 @@ def main():
     ap.add_argument("--builtins", dest="use_builtins", action="store_true")
     ap.add_argument("--recv", dest="use_recv", action="store_true")
     ap.add_argument("--try", dest="use_try", action="store_true")
+    ap.add_argument("--construct", dest="use_construct", action="store_true")
+    ap.add_argument("--ptr", dest="use_ptr", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 
