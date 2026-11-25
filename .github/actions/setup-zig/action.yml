@@ -1,0 +1,148 @@
+name: Zig kur (önbellekli, sağlama toplamı doğrulamalı)
+description: >
+  Zig araç zincirini ziglang.org/download/<sürüm>/ adresinden indirir (mlugg/setup-zig KULLANILMAZ; bkz. ci.yml başlık notu),
+  `zig-sha256.txt` ile doğrular ve actions/cache ile saklar. Önbellek isabetinde ağa HİÇ çıkılmaz. Sürüm boş bırakılırsa
+  build.zig.zon'daki `minimum_zig_version` (tek doğruluk kaynağı; scripts/gen_sbom.py de buradan okur) kullanılır.
+  Kullanmadan önce `actions/checkout` çalışmış olmalıdır. Yeni bir sürüm eklemek için zig-sha256.txt'e resmi
+  https://ziglang.org/download/index.json'daki `shasum` değerlerini ekleyin.
+
+inputs:
+  version:
+    description: Zig sürümü (boş = build.zig.zon minimum_zig_version)
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - id: meta
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        ver="$INPUT_VERSION"
+        if [ -z "$ver" ]; then
+          ver="$(grep -o '\.minimum_zig_version = "[^"]*"' build.zig.zon | sed -E 's/.*= "([^"]*)"/\1/')"
+        fi
+        [ -n "$ver" ] || { echo "::error::Zig sürümü belirlenemedi (build.zig.zon minimum_zig_version yok)"; exit 1; }
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          macOS-ARM64)   arch=aarch64-macos;  ext=tar.xz ;;
+          Linux-X64)     arch=x86_64-linux;   ext=tar.xz ;;
+          Linux-ARM64)   arch=aarch64-linux;  ext=tar.xz ;;
+          Windows-X64)   arch=x86_64-windows; ext=zip ;;
+          *) echo "::error::desteklenmeyen koşucu: $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+        esac
+        {
+          echo "version=$ver"
+          echo "arch=$arch"
+          echo "ext=$ext"
+          echo "name=zig-$arch-$ver"
+        } >>"$GITHUB_OUTPUT"
+
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/${{ steps.meta.outputs.name }}
+        key: zig-${{ steps.meta.outputs.name }}
+
+    # İndirme: ilk 3 deneme "takılma dedektörlü" (30 sn boyunca <150 KB/s ise vazgeç, yeniden dene) — bazı koşucularda ziglang.org
+    # aktarımı 19-28 dakikaya uzuyordu; yeniden deneme genellikle hızlı bir bağlantı yakalar. Son deneme sınırsız hızda, 30 dk'ya kadar bekler.
+    - name: Zig indir + doğrula + aç (unix)
+      if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
+      shell: bash
+      env:
+        ZIG_VER: ${{ steps.meta.outputs.version }}
+        ZIG_NAME: ${{ steps.meta.outputs.name }}
+        ZIG_EXT: ${{ steps.meta.outputs.ext }}
+        SUMS: ${{ github.action_path }}/zig-sha256.txt
+      run: |
+        set -euo pipefail
+        file="$ZIG_NAME.$ZIG_EXT"
+        url="https://ziglang.org/download/$ZIG_VER/$file"
+        expected="$(awk -v f="$file" '$2 == f {print $1}' "$SUMS")"
+        [ -n "$expected" ] || { echo "::error::$file için sağlama toplamı yok ($SUMS). Yeni sürüm: resmi index.json'daki shasum eklenmeli."; exit 1; }
+        archive="$RUNNER_TEMP/$file"
+        ok=0
+        for i in 1 2 3 4; do
+          if [ "$i" -lt 4 ]; then
+            curl -fsSL --connect-timeout 20 --speed-limit 150000 --speed-time 30 -o "$archive" "$url" && ok=1 && break
+          else
+            curl -fsSL --connect-timeout 20 --max-time 1800 -o "$archive" "$url" && ok=1 && break
+          fi
+          echo "Zig indirmesi başarısız/yavaş (deneme $i/4), 10 sn sonra yeniden"; rm -f "$archive"; sleep 10
+        done
+        [ "$ok" = 1 ] || { echo "::error::Zig indirilemedi: $url"; exit 1; }
+        if command -v sha256sum >/dev/null 2>&1; then actual="$(sha256sum "$archive" | awk '{print $1}')"; else actual="$(shasum -a 256 "$archive" | awk '{print $1}')"; fi
+        if [ "$actual" != "$expected" ]; then
+          echo "::error::Zig sağlama toplamı uyuşmuyor ($file): beklenen $expected, gelen $actual"
+          exit 1
+        fi
+        tar xf "$archive" -C "$RUNNER_TEMP"
+        rm -f "$archive"
+
+    - name: Zig indir + doğrula + aç (Windows)
+      if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+      shell: pwsh
+      env:
+        ZIG_VER: ${{ steps.meta.outputs.version }}
+        ZIG_NAME: ${{ steps.meta.outputs.name }}
+        ZIG_EXT: ${{ steps.meta.outputs.ext }}
+        SUMS: ${{ github.action_path }}/zig-sha256.txt
+      run: |
+        $ErrorActionPreference = "Stop"
+        $ProgressPreference = "SilentlyContinue"  # Windows PowerShell'de ilerleme çubuğu Invoke-WebRequest'i büyük ölçüde yavaşlatır
+        $file = "$($env:ZIG_NAME).$($env:ZIG_EXT)"
+        $url = "https://ziglang.org/download/$($env:ZIG_VER)/$file"
+        $expected = $null
+        foreach ($line in Get-Content -Path $env:SUMS) {
+          $parts = $line -split '\s+'
+          if ($parts.Length -ge 2 -and $parts[1] -eq $file) { $expected = $parts[0] }
+        }
+        if (-not $expected) { throw "$file icin saglama toplami yok ($($env:SUMS)). Yeni surum: resmi index.json'daki shasum eklenmeli." }
+        $archive = Join-Path $env:RUNNER_TEMP $file
+        $ok = $false
+        for ($i = 1; $i -le 4; $i++) {
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $archive -TimeoutSec 900
+            $ok = $true
+            break
+          } catch {
+            Write-Host "Zig indirmesi basarisiz (deneme $i/4): $_"
+            Remove-Item -Path $archive -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 10
+          }
+        }
+        if (-not $ok) { throw "Zig indirilemedi: $url" }
+        $actual = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) { throw "Zig saglama toplami uyusmuyor ($file): beklenen $expected, gelen $actual" }
+        Expand-Archive -Path $archive -DestinationPath $env:RUNNER_TEMP
+        Remove-Item -Path $archive -Force
+
+    - name: PATH'e ekle + sürümü doğrula (unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        ZIG_VER: ${{ steps.meta.outputs.version }}
+        ZIG_NAME: ${{ steps.meta.outputs.name }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/$ZIG_NAME"
+        got="$("$dir/zig" version)"
+        [ "$got" = "$ZIG_VER" ] || { echo "::error::Zig sürümü uyuşmuyor: beklenen $ZIG_VER, gelen $got"; exit 1; }
+        echo "$dir" >>"$GITHUB_PATH"
+        echo "Zig $got hazır (önbellek isabeti: ${{ steps.cache.outputs.cache-hit }})"
+
+    - name: PATH'e ekle + sürümü doğrula (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        ZIG_VER: ${{ steps.meta.outputs.version }}
+        ZIG_NAME: ${{ steps.meta.outputs.name }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        $dir = Join-Path $env:RUNNER_TEMP $env:ZIG_NAME
+        $got = (& (Join-Path $dir "zig.exe") version).Trim()
+        if ($got -ne $env:ZIG_VER) { throw "Zig surumu uyusmuyor: beklenen $($env:ZIG_VER), gelen $got" }
+        Add-Content -Path $env:GITHUB_PATH -Value $dir
+        Write-Host "Zig $got hazir (onbellek isabeti: ${{ steps.cache.outputs.cache-hit }})"

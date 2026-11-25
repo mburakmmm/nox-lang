@@ -1,0 +1,59 @@
+name: Fast CI
+
+# Tier 1 (bkz. project/ci-hizlandirma-plani-2026-11.md): her push ve PR'da, TEK Linux koşucusunda, dakikalar içinde geri bildirim.
+# Bu workflow `ci.yml`in YERİNE GEÇMEZ: tam kapsam (3 platform × Debug/ReleaseFast, golden korpus, WASM, FFI, Windows...) `ci.yml`de kalır
+# ve release.yml `ci-gate` YALNIZCA `ci.yml`in sonucuna bakar. Fast CI kırmızıysa hata ~dakikalar içinde görünür; yeşilse tam CI'ın
+# yeşil olacağı ANLAMINA GELMEZ.
+#
+# Kapsam: workflow YAML geçerliliği, küresel durum izni listesi, runtime ABI manifesti, derleyici ön-ucu (lexer/parser/checker/
+# biçimlendirici) testleri ve golden IR anlık görüntü farkı (`ir-diff-test`). Yerel ölçüm (temiz worktree, Apple Silicon): noxc 31 sn,
+# frontend-test 18 sn, ir-diff-test 29 sn; GitHub Linux'ta `zig build` ~3 dk ölçüldü (CI #45597580504) → toplam hedef ~6-10 dk.
+#
+# Eski commit'in koşusu yeni push'ta iptal edilir (cancel-in-progress): bu workflow release kapısı DEĞİLDİR, iptal güvenlidir.
+# (`zig fmt --check` bilinçli YOK: depoda biçimlendirilmemiş dosyalar var; temizlenince buraya eklenebilir.)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: fast-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fast:
+    name: Hızlı kontrol (Linux x86-64, Debug)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-zig
+      - uses: ./.github/actions/setup-qbe
+      - name: pip önbelleği
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-fast-PyYAML6.0.3-${{ runner.os }}
+      - name: Python bağımlılıkları
+        run: python3 -m pip install --quiet "PyYAML==6.0.3"
+
+      # Zig GEREKTİRMEYEN mekanik bekçiler (saniyeler).
+      - name: workflow YAML geçerliliği
+        run: python3 scripts/check_workflows.py
+      - name: Global durum denetimi (AGENTS §2.6)
+        run: python3 scripts/check_global_state.py
+      - name: Native runtime ABI manifesti kaynakla senkron mu
+        run: python3 scripts/gen_runtime_abi_manifest.py --check
+
+      # `zig build` ile `zig build <test>` AYRI adımlar (ci.yml'deki soğuk-önbellek yarışı notu).
+      - name: zig build (Debug)
+        run: zig build
+      - name: Ön-uç testleri (lexer/parser/checker)
+        run: zig build frontend-test --summary all
+      - name: Golden IR anlık görüntü farkı
+        run: zig build ir-diff-test --summary all
+      # `runtime-test` BİLİNÇLİ YOK: yerelde (hızlı Mac) 386 sn ölçüldü → Fast CI bütçesini (5-10 dk) aşar; tam CI'da koşar.
