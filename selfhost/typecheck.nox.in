@@ -6,7 +6,7 @@
 {{FROM_AST}}
 from ast_schema import build_sp_idx
 from parser import pk, pkx, pky, parse_ast, parse_body, sref_eq, sref_len, sref_byte, utf8_bytes
-from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, lcg, sym_intern, sym_intern_list, ty_format, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed
+from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, lcg, sym_intern, sym_intern_list, ty_format, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed, ty_mk, ty_list, ty_dict, ty_optional
 
 # ---- (k1, k2) -> değer tablosu: açık adresleme, ekleme sırası korunur, silme = ölü işareti (yeniden `put` canlandırır) ----
 class Map2:
@@ -114,6 +114,7 @@ class Ck:
     fps: list[int]
     fpn: list[int]
     fret: list[int]
+    fpnm: list[int]
     # 3.3: tanılama durumu (`Checker.current_line/current_span/diagnostic/diagnostics`)
     cur_line: int
     cur_span: int
@@ -130,6 +131,8 @@ class Ck:
     out: list[int]
     o_code: str
     o_msg: list[int]
+    why: str
+    cv: int
 
     def __init__(self, tt: TT) -> None:
         self.tt = tt
@@ -147,6 +150,7 @@ class Ck:
         self.fps = []
         self.fpn = []
         self.fret = []
+        self.fpnm = []
         self.cur_line = 0
         self.cur_span = -1
         self.mb = []
@@ -162,6 +166,8 @@ class Ck:
         self.out = []
         self.o_code = ""
         self.o_msg = []
+        self.why = ""
+        self.cv = 0
 
 # ---- Scope (Zig `Scope`) ----
 def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
@@ -329,7 +335,9 @@ class Fx:
         self.loop = 0
         self.in_async = in_async
 
-def unsup() -> CkUnsupported:
+# `why`: kapsam dışı nedeninin kısa etiketi (işlev adı#sıra); `ck-diff check --why` histogram basar.
+def unsup(ck: Ck, why: str) -> CkUnsupported:
+    ck.why = why
     return CkUnsupported("")
 
 # ---- ileti oluşturma (`Checker.fail`) ----
@@ -410,8 +418,28 @@ def span_of(a: Ast, node: int) -> int:
 # ---- tip ifadesi -> TypeId (Zig `typeExprToType`in skaler çekirdeği; kalan dallar 3.4/3.6/3.12'de) ----
 def type_expr_to_type(ck: Ck, a: Ast, te: int) -> int:
     tag: int = a.n[te]
+    tt: TT = ck.tt
+    if tag == {{T:TypeExpr.generic}}:
+        return type_expr_generic(ck, a, a.n[te + 1])
+    if tag == {{T:TypeExpr.func_type}}:
+        fp: int = a.n[te + 1]
+        ps: int = sl_at(a, fp, {{O:FuncTypeExpr.params}})
+        tys: list[int] = []
+        for i in range(pky(ps)):
+            tys.append(type_expr_to_type(ck, a, stmt_at(a, ps, i)))
+        ret: int = type_expr_to_type(ck, a, a.n[fp + {{O:FuncTypeExpr.return_type}}])
+        ty_func_begin(tt)
+        for k in range(len(tys)):
+            ty_func_param(tt, tys[k])
+        return ty_func_end(tt, ret)
+    if tag == {{T:TypeExpr.optional}}:
+        inner: int = type_expr_to_type(ck, a, a.n[te + 1])
+        if inner == 4 or tt.tag[inner] == 15:
+            mp(ck, "'None | None' or a nested Optional is invalid")
+            raise mk_fail(ck, "UnknownType")
+        return ty_optional(tt, inner)
     if tag != {{T:TypeExpr.simple}}:
-        raise unsup()
+        raise unsup(ck, "type_expr_to_type#qualified")
     v: int = pk(a.n[te + 1], a.n[te + 2])
     if sref_eq(a, v, "int"):
         return 0
@@ -447,9 +475,88 @@ def type_expr_to_type(ck: Ck, a: Ast, te: int) -> int:
         return 15
     # sınıf/from-import/protokol tabloları bu dilimde boştur (bu yapılar kapsam dışı): bilinmeyen ad
     if sref_eq(a, v, "__infer"):
-        raise unsup()
+        raise unsup(ck, "type_expr_to_type#infer")
     mp(ck, "unknown type: ")
     mp_sref(ck, a, v)
+    raise mk_fail(ck, "UnknownType")
+
+# `.generic` tip ifadesi: tuple (sınıf sentezi: kapsam dışı), ptr[T], list/Task/Channel/ThreadHandle/ThreadChannel/TaskLocal, dict[K, V].
+def type_expr_generic(ck: Ck, a: Ast, g: int) -> int:
+    tt: TT = ck.tt
+    gn: int = pk(a.n[g + {{O:Generic.name}}], a.n[g + {{O:Generic.name}} + 1])
+    gargs: int = sl_at(a, g, {{O:Generic.args}})
+    n: int = pky(gargs)
+    if sref_eq(a, gn, "tuple"):
+        raise unsup(ck, "type_expr_generic#tuple")
+    if sref_eq(a, gn, "ptr"):
+        if n != 1:
+            mp(ck, "'ptr' takes exactly one type argument")
+            raise mk_fail(ck, "UnknownType")
+        pe: int = type_expr_to_type(ck, a, stmt_at(a, gargs, 0))
+        return ty_mk(tt, 17, pe, 0)
+    tagk: int = -1
+    if sref_eq(a, gn, "list"):
+        tagk = 5
+    elif sref_eq(a, gn, "Task"):
+        tagk = 7
+    elif sref_eq(a, gn, "Channel"):
+        tagk = 8
+    elif sref_eq(a, gn, "ThreadHandle"):
+        tagk = 9
+    elif sref_eq(a, gn, "ThreadChannel"):
+        tagk = 10
+    elif sref_eq(a, gn, "TaskLocal"):
+        tagk = 11
+    if tagk >= 0:
+        if n != 1:
+            mp(ck, "'")
+            mp_sref(ck, a, gn)
+            mp(ck, "' takes exactly one type argument")
+            raise mk_fail(ck, "UnknownType")
+        elem: int = type_expr_to_type(ck, a, stmt_at(a, gargs, 0))
+        et: int = tt.tag[elem]
+        if tagk == 5 and (et == 7 or et == 8 or et == 9 or et == 10 or et == 11):
+            mp(ck, "'list[")
+            if et == 7:
+                mp(ck, "Task")
+            elif et == 8:
+                mp(ck, "Channel")
+            elif et == 9:
+                mp(ck, "ThreadHandle")
+            elif et == 10:
+                mp(ck, "ThreadChannel")
+            else:
+                mp(ck, "TaskLocal")
+            mp(ck, "[...]]' is not supported: tasks and channels cannot be stored in a list. For tasks use nox.tasks.TaskGroup[T] (it keeps each task in a TaskHandle[T] class), or hold the value in a class field; to gather results use a Channel")
+            raise mk_fail(ck, "UnknownType")
+        if tagk == 11 and (elem == 0 or elem == 1 or elem == 2):
+            mp(ck, "the T of 'TaskLocal[T]' must be a class/str/list/dict (a bare int/float/bool is outside the v1 scope)")
+            raise mk_fail(ck, "TypeMismatch")
+        return ty_mk(tt, tagk, elem, 0)
+    if sref_eq(a, gn, "dict"):
+        if n != 2:
+            mp(ck, "'dict' takes exactly two type arguments (K, V)")
+            raise mk_fail(ck, "UnknownType")
+        kt: int = type_expr_to_type(ck, a, stmt_at(a, gargs, 0))
+        vt: int = type_expr_to_type(ck, a, stmt_at(a, gargs, 1))
+        if kt != 0 and kt != 2 and kt != 3 and kt != 1:
+            mp(ck, "the 'dict' key type can only be int/float/bool/str")
+            raise mk_fail(ck, "UnknownType")
+        vg: int = tt.tag[vt]
+        if vt != 0 and vt != 1 and vt != 2 and vt != 3 and vg != 6 and vg != 5 and vg != 13:
+            mp(ck, "the 'dict' value type can only be int/float/bool/str/class/list/dict")
+            raise mk_fail(ck, "UnknownType")
+        return ty_dict(tt, kt, vt)
+    # `__nox_*` (parser'ın Iterator/Generator → `__nox_Gen[T]` haritası, prelude jenerikleri): kapsam dışı
+    if sref_len(gn) >= 5 and sref_byte(a, gn, 0) == 95 and sref_byte(a, gn, 1) == 95 and sref_byte(a, gn, 2) == 110 and sref_byte(a, gn, 3) == 111 and sref_byte(a, gn, 4) == 120:
+        raise unsup(ck, "type_expr_generic#prelude")
+    # nitelikli jenerik (`mod.Box[int]`): modül çözümlemesi (3.12) kapsam dışı
+    for dq in range(sref_len(gn)):
+        if sref_byte(a, gn, dq) == 46:
+            raise unsup(ck, "type_expr_generic#qualified")
+    # kullanıcı jenerik sınıfı: sınıf tabloları bu dilimde boş
+    mp(ck, "unknown generic type: ")
+    mp_sref(ck, a, gn)
     raise mk_fail(ck, "UnknownType")
 
 # ---- sayısal yardımcılar ----
@@ -518,7 +625,99 @@ def check_expr_inner(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
         return check_binary(ck, a, fx, a.n[e + 1])
     if tag == {{T:Expr.call}}:
         return check_call(ck, a, fx, a.n[e + 1])
-    raise unsup()
+    if tag == {{T:Expr.list_lit}}:
+        return check_list_lit(ck, a, fx, e)
+    if tag == {{T:Expr.dict_lit}}:
+        return check_dict_lit(ck, a, fx, e)
+    if tag == {{T:Expr.index}}:
+        return check_index(ck, a, fx, a.n[e + 1])
+    raise unsup(ck, "check_expr_inner#1")
+
+# `[a, b, ...]`: boş bağlamsız literal tipsiz; elemanlar aynı tipte olmalı.
+def check_list_lit(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
+    n: int = a.n[e + 2]
+    if n == 0:
+        mp(ck, "the type of an empty list literal cannot be inferred")
+        raise mk_fail(ck, "UnknownType")
+    st: int = a.n[e + 1]
+    first: int = check_expr(ck, a, fx, a.l[st])
+    for i in range(1, n):
+        t: int = check_expr(ck, a, fx, a.l[st + i])
+        if t != first:
+            mp(ck, "list elements must have the same type")
+            raise mk_fail(ck, "TypeMismatch")
+    return ty_list(ck.tt, first)
+
+def dict_key_ok(ck: Ck, t: int) -> bool:
+    return t == 0 or t == 2 or t == 3 or t == 1
+
+def dict_value_ok(ck: Ck, t: int) -> bool:
+    g: int = ck.tt.tag[t]
+    return t == 0 or t == 1 or t == 2 or t == 3 or g == 6 or g == 5 or g == 13
+
+def check_dict_lit(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
+    n: int = a.n[e + 2]
+    if n == 0:
+        mp(ck, "the type of an empty dict literal cannot be inferred")
+        raise mk_fail(ck, "UnknownType")
+    st: int = a.n[e + 1]
+    p0: int = a.l[st]
+    fk: int = check_expr(ck, a, fx, a.n[p0 + {{O:DictPair.key}}])
+    fv: int = check_expr(ck, a, fx, a.n[p0 + {{O:DictPair.value}}])
+    if not dict_key_ok(ck, fk):
+        mp(ck, "the 'dict' key type can only be int/float/bool/str")
+        raise mk_fail(ck, "TypeMismatch")
+    if not dict_value_ok(ck, fv):
+        mp(ck, "the 'dict' value type can only be int/float/bool/str/class/list/dict")
+        raise mk_fail(ck, "TypeMismatch")
+    for i in range(1, n):
+        pp: int = a.l[st + i]
+        kt: int = check_expr(ck, a, fx, a.n[pp + {{O:DictPair.key}}])
+        vt: int = check_expr(ck, a, fx, a.n[pp + {{O:DictPair.value}}])
+        if kt != fk:
+            mp(ck, "dict keys must have the same type")
+            raise mk_fail(ck, "TypeMismatch")
+        if vt != fv:
+            mp(ck, "dict values must have the same type")
+            raise mk_fail(ck, "TypeMismatch")
+    return ty_dict(ck.tt, fk, fv)
+
+# `requireNotOptional`
+def require_not_optional(ck: Ck, t: int, what: str) -> None:
+    if ck.tt.tag[t] == 15:
+        mp(ck, "an Optional (T | None) value cannot be used for '")
+        mp(ck, what)
+        mp(ck, "' — narrow it first with 'if ... != None:'")
+        raise mk_fail(ck, "OptionalNotNarrowed")
+
+# `obj[i]`: dict[K]→V, str[int]→str, list[int]→T (sınıf `__getitem__`/tuple indeksi kapsam dışı).
+def check_index(ck: Ck, a: Ast, fx: Fx, ip: int) -> int:
+    obj_t: int = check_expr(ck, a, fx, a.n[ip + {{O:Index.obj}}])
+    require_not_optional(ck, obj_t, "[]")
+    tt: TT = ck.tt
+    if tt.tag[obj_t] == 6:
+        raise unsup(ck, "check_index#class")
+    ie: int = a.n[ip + {{O:Index.index}}]
+    if tt.tag[obj_t] == 13:
+        idx_t: int = check_expr(ck, a, fx, ie)
+        if idx_t != tt.xa[obj_t]:
+            mp(ck, "the dict index does not match the key type")
+            raise mk_fail(ck, "TypeMismatch")
+        return tt.xb[obj_t]
+    if obj_t == 3:
+        it: int = check_expr(ck, a, fx, ie)
+        if it != 0:
+            mp(ck, "a str index must be an int")
+            raise mk_fail(ck, "TypeMismatch")
+        return 3
+    lt: int = check_expr(ck, a, fx, ie)
+    if lt != 0:
+        mp(ck, "a list index must be an int")
+        raise mk_fail(ck, "TypeMismatch")
+    if tt.tag[obj_t] == 5:
+        return tt.xa[obj_t]
+    mp(ck, "indexing only works on 'list'/'dict'/'str'")
+    raise mk_fail(ck, "TypeMismatch")
 
 def check_identifier(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
     v: int = pk(a.n[e + 1], a.n[e + 2])
@@ -546,7 +745,7 @@ def check_unary(ck: Ck, a: Ast, fx: Fx, u: int) -> int:
     t: int = check_expr(ck, a, fx, a.n[u + {{O:Unary.operand}}])
     tt: TT = ck.tt
     if tt.tag[t] == 6:
-        raise unsup()
+        raise unsup(ck, "check_unary#1")
     if op == {{E:UnaryOp.neg}}:
         if not is_numeric_t(ck, t):
             mp(ck, "unary '-' can only be applied to numeric types")
@@ -574,20 +773,33 @@ def check_binary(ck: Ck, a: Ast, fx: Fx, b: int) -> int:
     right: int = a.n[b + {{O:Binary.right}}]
     op: int = a.n[b + {{O:Binary.op}}]
     l: int = check_expr(ck, a, fx, left)
-    r: int = check_expr(ck, a, fx, right)
     tt: TT = ck.tt
+    r: int = 0
+    if op == {{E:BinaryOp.add}} and tt.tag[l] == 5 and a.n[right] == {{T:Expr.list_lit}}:
+        r = check_expr_expected(ck, a, fx, right, l)
+    else:
+        r = check_expr(ck, a, fx, right)
     # tryOperatorOverload / Optional / liste-sözlük işlemleri bu dilimde kapsam dışı
     if a.n[left] == {{T:Expr.none_lit}} or a.n[right] == {{T:Expr.none_lit}}:
-        raise unsup()
-    if tt.tag[l] == 6 or tt.tag[r] == 6 or tt.tag[l] == 15 or tt.tag[r] == 15 or tt.tag[l] == 5 or tt.tag[r] == 5 or tt.tag[l] == 13 or tt.tag[r] == 13:
-        raise unsup()
+        raise unsup(ck, "check_binary#1")
+    if tt.tag[l] == 6 or tt.tag[r] == 6 or tt.tag[l] == 15 or tt.tag[r] == 15:
+        raise unsup(ck, "check_binary#2")
     if op == {{E:BinaryOp.add}}:
         if l == 3 and r == 3:
             return 3
+        if tt.tag[l] == 5 and tt.tag[r] == 5:
+            if l != r:
+                mp(ck, "'+' requires the element types of the two lists to be the same")
+                raise mk_fail(ck, "TypeMismatch")
+            return l
         return numeric_promote(ck, l, r)
     if op == {{E:BinaryOp.sub}}:
         return numeric_promote(ck, l, r)
     if op == {{E:BinaryOp.mul}}:
+        if tt.tag[l] == 5 and r == 0:
+            return l
+        if l == 0 and tt.tag[r] == 5:
+            return r
         if (l == 3 and r == 0) or (l == 0 and r == 3):
             return 3
         return numeric_promote(ck, l, r)
@@ -627,6 +839,22 @@ def check_binary(ck: Ck, a: Ast, fx: Fx, b: int) -> int:
             raise mk_fail(ck, "TypeMismatch")
         return 2
     if op == {{E:BinaryOp.in_}} or op == {{E:BinaryOp.not_in}}:
+        if tt.tag[r] == 5:
+            et: int = tt.xa[r]
+            eg: int = tt.tag[et]
+            if not (et == 0 or et == 1 or et == 2 or et == 3 or eg == 16 or eg == 6 or eg == 5):
+                mp(ck, "the list element type is not supported for 'in' (it must be int/float/bool/str/class/list)")
+                raise mk_fail(ck, "TypeMismatch")
+            require_same_fixed(ck, l, et)
+            if not ((is_numeric_t(ck, l) and is_numeric_t(ck, et)) or l == et):
+                mp(ck, "the left operand of 'in' does not match the list element type")
+                raise mk_fail(ck, "TypeMismatch")
+            return 2
+        if tt.tag[r] == 13:
+            if l != tt.xa[r]:
+                mp(ck, "the left operand of 'in' does not match the dict key type")
+                raise mk_fail(ck, "TypeMismatch")
+            return 2
         if tt.tag[r] == 3:
             if l != 3:
                 mp(ck, "only a str can be searched for inside a str with 'in'")
@@ -659,11 +887,122 @@ def check_binary(ck: Ck, a: Ast, fx: Fx, b: int) -> int:
     return 0
 
 # `checkExprExpected`in skaler dilimi: sabit-genişlikli beklenen tipte tamsayı literali aralık denetimi.
-def check_expr_expected(ck: Ck, a: Ast, fx: Fx, e: int, expected: int) -> int:
+# `constIntValue`: literal / değişmez modül sabiti (yerelde gölgelenmemişse) / bunlardan `- ~ + - * | & ^ << >>` ile kurulu ifade. Değer `ck.cv`de; dönüş: bulundu mu.
+def const_int_value(ck: Ck, a: Ast, fx: Fx, e: int, depth: int) -> bool:
+    if depth > 32:
+        return False
+    tag: int = a.n[e]
+    if tag == {{T:Expr.int_lit}}:
+        ck.cv = a.n[e + 1]
+        return True
+    if tag == {{T:Expr.identifier}}:
+        sym: int = sym_of(ck, a, pk(a.n[e + 1], a.n[e + 2]))
+        if sc_lookup(ck, fx.scope, sym) >= 0:
+            if ck.top_scope < 0 or fx.scope != ck.top_scope:
+                return False
+        ei: int = m2_get(ck.iconsts, 0, sym)
+        if ei < 0:
+            return False
+        ck.cv = ck.iconsts.vv[ei]
+        return True
+    if tag == {{T:Expr.unary}}:
+        u: int = a.n[e + 1]
+        if not const_int_value(ck, a, fx, a.n[u + {{O:Unary.operand}}], depth + 1):
+            return False
+        v: int = ck.cv
+        op: int = a.n[u + {{O:Unary.op}}]
+        if op == {{E:UnaryOp.neg}}:
+            ck.cv = 0 - v
+            return True
+        if op == {{E:UnaryOp.invert}}:
+            ck.cv = ~v
+            return True
+        return False
+    if tag == {{T:Expr.binary}}:
+        b: int = a.n[e + 1]
+        if not const_int_value(ck, a, fx, a.n[b + {{O:Binary.left}}], depth + 1):
+            return False
+        l: int = ck.cv
+        if not const_int_value(ck, a, fx, a.n[b + {{O:Binary.right}}], depth + 1):
+            return False
+        r: int = ck.cv
+        bop: int = a.n[b + {{O:Binary.op}}]
+        if bop == {{E:BinaryOp.add}}:
+            ck.cv = l + r
+        elif bop == {{E:BinaryOp.sub}}:
+            ck.cv = l - r
+        elif bop == {{E:BinaryOp.mul}}:
+            ck.cv = l * r
+        elif bop == {{E:BinaryOp.bit_or}}:
+            ck.cv = l | r
+        elif bop == {{E:BinaryOp.bit_and}}:
+            ck.cv = l & r
+        elif bop == {{E:BinaryOp.bit_xor}}:
+            ck.cv = l ^ r
+        elif bop == {{E:BinaryOp.shl}}:
+            if r < 0 or r >= 63:
+                return False
+            ck.cv = l << r
+        elif bop == {{E:BinaryOp.shr}}:
+            if r < 0 or r >= 63:
+                return False
+            ck.cv = l >> r
+        else:
+            return False
+        return True
+    return False
+
+def check_expr_expected(ck: Ck, a: Ast, fx: Fx, e: int, expected_in: int) -> int:
     tag: int = a.n[e]
     tt: TT = ck.tt
-    if tag == {{T:Expr.list_comp}} or tag == {{T:Expr.dict_comp}} or tag == {{T:Expr.lambda}} or tag == {{T:Expr.tuple_lit}} or tag == {{T:Expr.ternary}} or tag == {{T:Expr.list_lit}} or tag == {{T:Expr.dict_lit}}:
-        raise unsup()
+    expected: int = expected_in
+    if tag == {{T:Expr.list_comp}} or tag == {{T:Expr.dict_comp}} or tag == {{T:Expr.lambda}} or tag == {{T:Expr.tuple_lit}} or tag == {{T:Expr.ternary}}:
+        raise unsup(ck, "check_expr_expected#1")
+    # `y: list[str] | None = []`: Optional'ın taşıdığı list/dict beklenen tip olur
+    if expected >= 0 and tt.tag[expected] == 15 and (tag == {{T:Expr.list_lit}} or tag == {{T:Expr.dict_lit}}):
+        inner: int = tt.xa[expected]
+        if tt.tag[inner] == 5 or tt.tag[inner] == 13:
+            expected = inner
+    if tag == {{T:Expr.list_lit}} and expected >= 0 and tt.tag[expected] == 5:
+        n: int = a.n[e + 2]
+        el: int = tt.xa[expected]
+        if n == 0:
+            return expected
+        st: int = a.n[e + 1]
+        if tt.tag[el] == 14:
+            for i in range(n):
+                t: int = check_expr_expected(ck, a, fx, a.l[st + i], el)
+                if not ty_assignable(tt, el, t):
+                    mp(ck, "the list element does not match the expected function type")
+                    raise mk_fail(ck, "TypeMismatch")
+            return expected
+        if tt.tag[el] == 6:
+            raise unsup(ck, "check_expr_expected#list_of_class")
+        if tt.tag[el] == 5 or tt.tag[el] == 13:
+            for j in range(n):
+                t2: int = check_expr_expected(ck, a, fx, a.l[st + j], el)
+                if t2 != el:
+                    mp(ck, "list elements must have the same type")
+                    raise mk_fail(ck, "TypeMismatch")
+            return expected
+    if tag == {{T:Expr.dict_lit}} and expected >= 0 and tt.tag[expected] == 13:
+        dn: int = a.n[e + 2]
+        if dn == 0:
+            return expected
+        dv: int = tt.xb[expected]
+        if tt.tag[dv] == 5 or tt.tag[dv] == 13:
+            dst: int = a.n[e + 1]
+            for k in range(dn):
+                pr: int = a.l[dst + k]
+                kt: int = check_expr(ck, a, fx, a.n[pr + {{O:DictPair.key}}])
+                if kt != tt.xa[expected]:
+                    mp(ck, "dict keys must have the same type")
+                    raise mk_fail(ck, "TypeMismatch")
+                vt: int = check_expr_expected(ck, a, fx, a.n[pr + {{O:DictPair.value}}], dv)
+                if vt != dv:
+                    mp(ck, "dict values must have the same type")
+                    raise mk_fail(ck, "TypeMismatch")
+            return expected
     if expected >= 0 and tt.tag[expected] == 16:
         kind: int = tt.xa[expected]
         if tag == {{T:Expr.int_lit}}:
@@ -676,9 +1015,39 @@ def check_expr_expected(ck: Ck, a: Ast, fx: Fx, e: int, expected: int) -> int:
                 mp(ck, "'")
                 raise mk_fail(ck, "TypeMismatch")
             return expected
-        # sabit tamsayı ifadeleri (constIntValue) ve negatif literal kapsam dışı
-        if tag == {{T:Expr.identifier}} or tag == {{T:Expr.binary}} or tag == {{T:Expr.unary}}:
-            raise unsup()
+        # sabit tamsayı ifadeleri (constIntValue): aralığa sığıyorsa örtük kabul
+        isneglit: bool = False
+        if tag == {{T:Expr.unary}}:
+            up: int = a.n[e + 1]
+            isneglit = a.n[up + {{O:Unary.op}}] == {{E:UnaryOp.neg}} and a.n[a.n[up + {{O:Unary.operand}}]] == {{T:Expr.int_lit}}
+        if tag == {{T:Expr.identifier}} or tag == {{T:Expr.binary}} or (tag == {{T:Expr.unary}} and not isneglit):
+            if const_int_value(ck, a, fx, e, 0):
+                cvv: int = ck.cv
+                if not fx_fits(kind, cvv):
+                    mp(ck, "the constant value ")
+                    mp_int(ck, cvv)
+                    mp(ck, " does not fit in the range of '")
+                    mp_type(ck, expected)
+                    mp(ck, "'")
+                    raise mk_fail(ck, "TypeMismatch")
+                check_expr(ck, a, fx, e)
+                return expected
+        # `x: i8 = -5`: parser bunu unary neg(int_lit 5) olarak üretir
+        if isneglit:
+            if not fx_signed(kind):
+                mp(ck, "a negative value cannot be assigned to the unsigned type '")
+                mp_type(ck, expected)
+                mp(ck, "'")
+                raise mk_fail(ck, "TypeMismatch")
+            nv: int = 0 - a.n[a.n[a.n[e + 1] + {{O:Unary.operand}}] + 1]
+            if not fx_fits(kind, nv):
+                mp(ck, "the value ")
+                mp_int(ck, nv)
+                mp(ck, " does not fit in the range of '")
+                mp_type(ck, expected)
+                mp(ck, "'")
+                raise mk_fail(ck, "TypeMismatch")
+            return expected
     return check_expr(ck, a, fx, e)
 
 # ---- çağrılar: yerleşikler (print/len) + kullanıcı işlevi (identifier callee) ----
@@ -707,10 +1076,10 @@ def check_print(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
                 raise mk_fail(ck, "TypeMismatch")
             pt: int = check_expr(ck, a, fx, arg)
             if ck.tt.tag[pt] == 6:
-                raise unsup()
+                raise unsup(ck, "check_print#1")
     return 4
 
-# `len(s)`: yalnız str (list/dict/sınıf/tuple kapsam dışı).
+# `len(x)`: str/list/dict (sınıf `__len__`/tuple kapsam dışı).
 def check_len(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
     args: int = sl_at(a, c, {{O:Call.args}})
     if pky(args) != 1:
@@ -718,9 +1087,9 @@ def check_len(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
         raise mk_fail(ck, "ArgumentCountMismatch")
     t: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
     g: int = ck.tt.tag[t]
-    if g == 6 or g == 5 or g == 13:
-        raise unsup()
-    if t != 3:
+    if g == 6:
+        raise unsup(ck, "check_len#class")
+    if t != 3 and g != 5 and g != 13:
         mp(ck, "'len' only works on str/list/dict/tuple (define `__len__` for classes)")
         raise mk_fail(ck, "TypeMismatch")
     return 0
@@ -728,7 +1097,7 @@ def check_len(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
 def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
     callee: int = a.n[c + {{O:Call.callee}}]
     if a.n[callee] != {{T:Expr.identifier}}:
-        raise unsup()
+        raise unsup(ck, "check_call#1")
     cv: int = pk(a.n[callee + 1], a.n[callee + 2])
     if sref_eq(a, cv, "print"):
         return check_print(ck, a, fx, c)
@@ -737,19 +1106,24 @@ def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
     sym: int = sym_of(ck, a, cv)
     fi: int = m2_get(ck.fmap, 0, sym)
     if fi < 0:
-        raise unsup()
+        raise unsup(ck, "check_call#2")
     # yerel bir ad işlevi gölgeliyorsa (iç içe/closure değeri) kapsam dışı
     if sc_lookup(ck, fx.scope, sym) >= 0:
-        raise unsup()
+        raise unsup(ck, "check_call#3")
     args: int = sl_at(a, c, {{O:Call.args}})
     n: int = pky(args)
     for i in range(n):
         if a.n[stmt_at(a, args, i)] == {{T:Expr.kwarg}}:
-            raise unsup()
+            raise unsup(ck, "check_call#4")
     np: int = ck.fpn[fi]
     if n < np:
-        # varsayılan/değişken genişletme yolu (expandCallArgs): kapsam dışı
-        raise unsup()
+        # expandCallArgs: varsayılanı olmayan ilk eksik parametre (bu dilimde işlevlerin varsayılanı/variadik'i yok)
+        mp(ck, "in the call to '")
+        mp_sym(ck, sym)
+        mp(ck, "', argument '")
+        mp_sym(ck, ck.fpnm[ck.fps[fi] + n])
+        mp(ck, "' is missing")
+        raise mk_fail(ck, "ArgumentCountMismatch")
     if np != n:
         mp(ck, "'")
         mp_sym(ck, sym)
@@ -803,9 +1177,9 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
     if tag == {{T:StmtKind.var_decl}}:
         nm: int = pk(a.n[pay + {{O:VarDecl.name}}], a.n[pay + {{O:VarDecl.name}} + 1])
         if sref_len(nm) >= 10 and sref_byte(a, nm, 0) == 95 and sref_byte(a, nm, 1) == 95 and sref_byte(a, nm, 2) == 110:
-            raise unsup()
+            raise unsup(ck, "check_stmt#1")
         if a.n[pay + {{O:VarDecl.infer_assign}}] != 0:
-            raise unsup()
+            raise unsup(ck, "check_stmt#2")
         declared: int = type_expr_to_type(ck, a, a.n[pay + {{O:VarDecl.type_expr}}])
         value_t: int = check_expr_expected(ck, a, fx, a.n[pay + {{O:VarDecl.value}}], declared)
         if not ty_assignable(ck.tt, declared, value_t):
@@ -820,7 +1194,7 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
         return
     if tag == {{T:StmtKind.if_stmt}}:
         if a.n[pay + {{O:IfStmt.match_origin}}] >= 0:
-            raise unsup()
+            raise unsup(ck, "check_stmt#3")
         ct: int = check_expr(ck, a, fx, a.n[pay + {{O:IfStmt.cond}}])
         if ct != 2:
             mp(ck, "the 'if' condition must be a bool")
@@ -861,6 +1235,19 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
             mp(ck, "the function must return a value")
             raise mk_fail(ck, "TypeMismatch")
         return
+    if tag == {{T:StmtKind.for_stmt}}:
+        if a.n[pay + {{O:ForStmt.is_async}}] != 0:
+            raise unsup(ck, "check_stmt#async_for")
+        it: int = a.n[pay + {{O:ForStmt.iterable}}]
+        elem_t: int = check_for_iterable(ck, a, fx, it)
+        vn: int = pk(a.n[pay + {{O:ForStmt.var_name}}], a.n[pay + {{O:ForStmt.var_name}} + 1])
+        declare_var_checked(ck, fx, sym_of(ck, a, vn), elem_t)
+        fx.loop = fx.loop + 1
+        try:
+            check_block(ck, a, fx, sl_at(a, pay, {{O:ForStmt.body}}))
+        finally:
+            fx.loop = fx.loop - 1
+        return
     if tag == {{T:StmtKind.pass_stmt}}:
         return
     if tag == {{T:StmtKind.break_stmt}}:
@@ -873,13 +1260,53 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
             mp(ck, "'continue' can only be used inside a 'while'/'for' loop")
             raise mk_fail(ck, "TypeMismatch")
         return
-    raise unsup()
+    raise unsup(ck, "check_stmt#4")
+
+# `checkForIterable`: range(...) / list / str / dict (sınıf yineleyicisi, enumerate/zip kaynaşımı kapsam dışı). Dönüş: eleman tipi.
+def check_for_iterable(ck: Ck, a: Ast, fx: Fx, it: int) -> int:
+    if a.n[it] == {{T:Expr.call}}:
+        c: int = a.n[it + 1]
+        callee: int = a.n[c + {{O:Call.callee}}]
+        if a.n[callee] == {{T:Expr.identifier}}:
+            cv: int = pk(a.n[callee + 1], a.n[callee + 2])
+            if sref_eq(a, cv, "enumerate") or sref_eq(a, cv, "zip"):
+                raise unsup(ck, "check_for_iterable#enumerate_zip")
+            if sref_eq(a, cv, "range"):
+                args: int = sl_at(a, c, {{O:Call.args}})
+                n: int = pky(args)
+                if n < 1 or n > 3:
+                    mp(ck, "'range' takes 1, 2 or 3 arguments (stop | start, stop | start, stop, step)")
+                    raise mk_fail(ck, "ArgumentCountMismatch")
+                for i in range(n):
+                    at_: int = check_expr(ck, a, fx, stmt_at(a, args, i))
+                    if at_ != 0:
+                        mp(ck, "'range' expects an int argument")
+                        raise mk_fail(ck, "TypeMismatch")
+                if n == 3:
+                    sa: int = stmt_at(a, args, 2)
+                    if a.n[sa] == {{T:Expr.int_lit}} and a.n[sa + 1] == 0:
+                        mp(ck, "the 'range' step cannot be zero")
+                        raise mk_fail(ck, "TypeMismatch")
+                return 0
+    t: int = check_expr(ck, a, fx, it)
+    tt: TT = ck.tt
+    g: int = tt.tag[t]
+    if g == 6:
+        raise unsup(ck, "check_for_iterable#class")
+    if g == 5:
+        return tt.xa[t]
+    if t == 3:
+        return 3
+    if g == 13:
+        return tt.xa[t]
+    mp(ck, "'for' cannot iterate over this expression (it must be a list/str/dict/range or a class with `__iter__`)")
+    raise mk_fail(ck, "NotIterable")
 
 # `checkAssign`in identifier hedefi; `_ = ifade` at-gitsin atamasını da içerir.
 def check_assign(ck: Ck, a: Ast, fx: Fx, asg: int) -> None:
     tg: int = a.n[asg + {{O:Assign.target}}]
     if a.n[tg] != {{T:Expr.identifier}}:
-        raise unsup()
+        raise unsup(ck, "check_assign#1")
     nv: int = pk(a.n[tg + 1], a.n[tg + 2])
     sym: int = sym_of(ck, a, nv)
     if sref_eq(a, nv, "_") and a.n[asg + {{O:Assign.ann}}] < 0 and sc_lookup(ck, fx.scope, sym) < 0 and m2_get(ck.globs, 0, sym) < 0:
@@ -933,11 +1360,11 @@ def register_func(ck: Ck, a: Ast, fd: int) -> None:
     for i in range(pky(ps)):
         p: int = stmt_at(a, ps, i)
         if a.n[p + {{O:Param.default}}] >= 0 or a.n[p + {{O:Param.variadic}}] != 0 or a.n[p + {{O:Param.var_kw}}] != 0 or a.n[p + {{O:Param.kw_only}}] != 0 or a.n[p + {{O:Param.pos_only}}] != 0:
-            raise unsup()
+            raise unsup(ck, "register_func#1")
     if pky(sl_at(a, fd, {{O:FuncDef.type_params}})) > 0 or pky(sl_at(a, fd, {{O:FuncDef.decorators}})) > 0 or pky(sl_at(a, fd, {{O:FuncDef.nonlocals}})) > 0:
-        raise unsup()
+        raise unsup(ck, "register_func#2")
     if a.n[fd + {{O:FuncDef.is_async}}] != 0:
-        raise unsup()
+        raise unsup(ck, "register_func#3")
     if sref_eq(a, nm, "main"):
         mp(ck, "'main' is a reserved name: Nox has no 'def main()' convention, top-level statements are already the program's entry point — define this function under another name")
         raise mk_fail(ck, "DuplicateDefinition")
@@ -947,8 +1374,11 @@ def register_func(ck: Ck, a: Ast, fd: int) -> None:
         mp_sym(ck, sym)
         raise mk_fail(ck, "DuplicateDefinition")
     tys: list[int] = []
+    pnames: list[int] = []
     for k in range(pky(ps)):
-        tys.append(type_expr_to_type(ck, a, a.n[stmt_at(a, ps, k) + {{O:Param.type_expr}}]))
+        pk_node: int = stmt_at(a, ps, k)
+        tys.append(type_expr_to_type(ck, a, a.n[pk_node + {{O:Param.type_expr}}]))
+        pnames.append(sym_of(ck, a, pk(a.n[pk_node + {{O:Param.name}}], a.n[pk_node + {{O:Param.name}} + 1])))
     ret: int = type_expr_to_type(ck, a, a.n[fd + {{O:FuncDef.return_type}}])
     idx: int = len(ck.fps)
     ck.fps.append(len(ck.fpar))
@@ -956,6 +1386,7 @@ def register_func(ck: Ck, a: Ast, fd: int) -> None:
     ck.fret.append(ret)
     for q in range(len(tys)):
         ck.fpar.append(tys[q])
+        ck.fpnm.append(pnames[q])
     m2_put(ck.fmap, 0, sym, idx)
 
 # `checkFunctionBody`
@@ -1077,7 +1508,7 @@ def stmts_assign_name_ints(a: Ast, s: int, xs: list[int]) -> bool:
                 return True
         else:
             if tag == {{T:StmtKind.try_stmt}} or tag == {{T:StmtKind.with_stmt}} or tag == {{T:StmtKind.lowlevel_stmt}} or tag == {{T:StmtKind.class_def}}:
-                raise unsup()
+                raise CkUnsupported("")
     return False
 
 # `Checker.checkModule` (skaler dilim). Dönüş: 0 = kabul, 1 = tanılama/hata (ayrıntı `nox_ck_diag_*`/`o_*`), 2 = kapsam dışı.
@@ -1090,6 +1521,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
     for i in range(pky(body)):
         kn: int = a.n[a.n[stmt_at(a, body, i) + {{O:Stmt.kind}}]]
         if kn == {{T:StmtKind.class_def}} or kn == {{T:StmtKind.protocol_def}} or kn == {{T:StmtKind.extern_def}} or kn == {{T:StmtKind.import_stmt}} or kn == {{T:StmtKind.from_import_stmt}} or kn == {{T:StmtKind.type_alias}}:
+            ck.why = "module_toplevel_kind"
             return 2
     try:
         # registerSignatures
@@ -1271,6 +1703,9 @@ def nox_ck_text(which: int, i: int) -> int:
     elif which == 1:
         for k2 in range(len(ck.o_msg)):
             ck.out.append(ck.o_msg[k2])
+    elif which == 4:
+        for k5 in range(len(ck.why)):
+            ck.out.append(ord(ck.why[k5]))
     elif which == 2:
         for k3 in range(len(ck.dcode[i])):
             ck.out.append(ord(ck.dcode[i][k3]))

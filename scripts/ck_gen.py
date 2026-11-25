@@ -13,6 +13,8 @@ import random
 
 TYPES = ["int", "float", "bool", "str", "u8", "i32", "None"]
 VALUE_TYPES = ["int", "float", "bool", "str", "u8", "i32"]
+COMPOSITE = ["list[int]", "list[str]", "dict[str, int]", "int | None", "float | None", "list[list[int]]"]
+DECL_TYPES = VALUE_TYPES + COMPOSITE
 
 
 def lit(rnd, t):
@@ -26,6 +28,16 @@ def lit(rnd, t):
         return rnd.choice(['"a"', '"hello"', '""', '"x y"'])
     if t in ("u8", "i32"):
         return str(rnd.choice([0, 1, 5, 100, 200, 300, -1, 70000]))
+    if t == "list[int]":
+        return rnd.choice(["[]", "[1, 2, 3]", "[7]", '[1, "a"]'])
+    if t == "list[str]":
+        return rnd.choice(["[]", '["a", "b"]', '["x"]', "[1]"])
+    if t == "dict[str, int]":
+        return rnd.choice(["{}", '{"a": 1}', '{"a": 1, "b": 2}', '{1: 1}'])
+    if t == "list[list[int]]":
+        return rnd.choice(["[]", "[[1], [2, 3]]", "[[]]", "[[1], 2]"])
+    if t in ("int | None", "float | None"):
+        return rnd.choice(["None", "5", "1.5", lit(rnd, t.split(" ")[0])])
     return "None"
 
 
@@ -49,6 +61,12 @@ class Gen:
             return "None"
         cands = [v for v, vt in scope.items() if vt == t]
         k = r.random()
+        if t in COMPOSITE:
+            if cands and k < 0.6:
+                return r.choice(cands)
+            if t.startswith("list[") and depth < 3 and k < 0.8 and t in ("list[int]", "list[str]"):
+                return f"({self.expr(scope, t, depth + 1)} + {self.expr(scope, t, depth + 1)})"
+            return lit(r, t)
         if depth < 3 and k < 0.35:
             if t == "int":
                 op = r.choice(["+", "-", "*", "//", "%", "&", "|", "<<"])
@@ -57,7 +75,11 @@ class Gen:
                 op = r.choice(["+", "-", "*", "/"])
                 return f"({self.expr(scope, 'float', depth + 1)} {op} {self.expr(scope, r.choice(['float', 'int']), depth + 1)})"
             if t == "bool":
-                form = r.choice(["cmp", "and", "not", "in"])
+                form = r.choice(["cmp", "and", "not", "in", "inlist", "indict"])
+                if form == "inlist":
+                    return f"({self.expr(scope, 'int', depth + 1)} in {self.expr(scope, 'list[int]', depth + 1)})"
+                if form == "indict":
+                    return f"({self.expr(scope, 'str', depth + 1)} in {self.expr(scope, 'dict[str, int]', depth + 1)})"
                 if form == "cmp":
                     ct = r.choice(["int", "float", "str", "u8"])
                     op = r.choice(["==", "!=", "<", "<=", ">", ">="])
@@ -73,7 +95,9 @@ class Gen:
                 return f"({self.expr(scope, t, depth + 1)} {r.choice(['+', '-', '*'])} {self.expr(scope, t, depth + 1)})"
         if depth < 3 and 0.35 <= k < 0.5:
             if t == "int":
-                return f"len({self.expr(scope, 'str', depth + 1)})"
+                return r.choice([f"len({self.expr(scope, 'str', depth + 1)})", f"len({self.expr(scope, 'list[int]', depth + 1)})", f"len({self.expr(scope, 'dict[str, int]', depth + 1)})", f"{self.expr(scope, 'list[int]', depth + 1)}[{self.expr(scope, 'int', depth + 1)}]", f'{self.expr(scope, "dict[str, int]", depth + 1)}["a"]'])
+            if t == "str":
+                return f"{self.expr(scope, 'list[str]', depth + 1)}[{self.expr(scope, 'int', depth + 1)}]"
             if t == "float":
                 return f"-{self.expr(scope, 'float', depth + 1)}" if r.random() < 0.5 else lit(r, t)
         if 0.5 <= k < 0.65 and self.funcs:
@@ -95,7 +119,7 @@ class Gen:
         for _ in range(n):
             k = r.random()
             if k < 0.30:
-                t = r.choice(VALUE_TYPES)
+                t = r.choice(DECL_TYPES)
                 name = self.fresh()
                 self.lines.append(f"{pad}{name}: {t} = {self.expr(scope, t)}")
                 scope[name] = t
@@ -121,8 +145,29 @@ class Gen:
                     self.lines.append(f"{pad}else:")
                     self.block(dict(scope), ret, indent + 1, depth + 1, in_loop)
             elif k < 0.80 and depth < 2:
-                self.lines.append(f"{pad}while {self.expr(scope, 'bool', wrong=0.1)}:")
-                self.block(dict(scope), ret, indent + 1, depth + 1, True)
+                if r.random() < 0.5:
+                    self.lines.append(f"{pad}while {self.expr(scope, 'bool', wrong=0.1)}:")
+                    self.block(dict(scope), ret, indent + 1, depth + 1, True)
+                else:
+                    form = r.choice(["range", "range2", "list", "str", "dict", "bad"])
+                    v = self.fresh("it")
+                    inner = dict(scope)
+                    if form == "range":
+                        hdr, vt = f"range({self.expr(scope, 'int')})", "int"
+                    elif form == "range2":
+                        hdr, vt = f"range({self.expr(scope, 'int')}, {self.expr(scope, 'int')}, {r.choice(['1', '2', '0'])})", "int"
+                    elif form == "list":
+                        et = r.choice(["list[int]", "list[str]"])
+                        hdr, vt = self.expr(scope, et), et[5:-1]
+                    elif form == "str":
+                        hdr, vt = self.expr(scope, "str"), "str"
+                    elif form == "dict":
+                        hdr, vt = self.expr(scope, "dict[str, int]"), "str"
+                    else:
+                        hdr, vt = self.expr(scope, r.choice(["int", "float", "bool"])), "int"
+                    self.lines.append(f"{pad}for {v} in {hdr}:")
+                    inner[v] = vt
+                    self.block(inner, ret, indent + 1, depth + 1, True)
             elif k < 0.86:
                 self.lines.append(f"{pad}{r.choice(['break', 'continue', 'pass'])}" if (in_loop or r.random() < 0.2) else f"{pad}pass")
             elif k < 0.93 and ret is not None:

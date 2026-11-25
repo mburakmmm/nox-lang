@@ -46,12 +46,19 @@ if shutil.which("rtk"):
 ph = hooks_of(os.path.join(ROOT, ".claude/settings.json"))
 ok(".claude/settings.json okunur", ph is not None)
 for ev in ("SessionStart", "SubagentStart", "PostToolUse"):
-    cs = cmds(ph, ev)
+    cs = [x for x in cmds(ph, ev) if "graphify hook-guard" not in x[1]]  # graphify'ın kendi strict hook'ları ayrıca denetlenir
     ok(f"proje {ev} hook'u tanımlı", len(cs) == 1, f"{len(cs)} adet")
     for _, c in cs:
         rel = c.split("scripts/hooks/")[-1].split('"')[0] if "scripts/hooks/" in c else ""
         ok(f"  {ev} betiği mevcut ({rel})", os.path.exists(os.path.join(ROOT, "scripts/hooks", rel)))
-ok("proje düzeyinde PreToolUse/Bash hook'u YOK (rtk ile çakışma yok)", not [1 for m, c in cmds(ph, "PreToolUse") if "Bash" in m or m == ""])
+foreign = [c for m, c in cmds(ph, "PreToolUse") if ("Bash" in m or m == "") and "graphify hook-guard" not in c]
+ok("proje PreToolUse/Bash'te graphify hook-guard DIŞINDA hook YOK (rtk ile çakışma yok)", not foreign, "; ".join(foreign)[:120])
+gg = [c for ev in ("PreToolUse", "SessionStart") for m, c in cmds(ph, ev) if "graphify hook-guard" in c]
+ok("graphify strict hook-guard kurulu (PreToolUse search/read + SessionStart compact)", len(gg) >= 3, f"{len(gg)} adet", required=False)
+if shutil.which("graphify") and gg:
+    for sub in ("search", "read"):
+        r = run(["graphify", "hook-guard", sub, "--strict"], json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash" if sub == "search" else "Read", "tool_input": {"command": "grep -rn foo src", "file_path": "/tmp/x"}, "cwd": ROOT}))
+        ok(f"graphify hook-guard {sub} yeniden yazım (updatedInput) YAPMAZ, engellemez", "updatedInput" not in r.stdout and '"deny"' not in r.stdout and r.returncode in (0, 1), f"çıkış {r.returncode}")
 tracked = run(["git", "ls-files", "--error-unmatch", ".claude/settings.json"]).returncode == 0
 ok(".claude/settings.json git'te izleniyor (worktree/yeni klon güvenli)", tracked)
 

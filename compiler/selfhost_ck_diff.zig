@@ -315,9 +315,11 @@ pub fn benchZig(a: std.mem.Allocator, names: []const []const u8, seed: u64, ns: 
 
 pub const CheckResult = struct { files: usize, skipped_parse: usize, unsupported: usize, accepted: usize, rejected: usize, diags: usize };
 
+/// `why` != null ise kapsam dışı nedenleri (etiket → dosya sayısı) buna toplanır.
+
 /// `ck-diff check`: her dosyayı iki ayrıştırıcıyla okur; Nox denetleyicisi KAPSAM İÇİ dediği (durum 0/1) programlarda GERÇEK `checker.check` ile sonuç (kabul/ret), hata kodu adı, ileti ve
 /// TÜM tanılamalar (kod, satır, ileti, span) eşit olmalıdır. Kapsam dışı (durum 2) dosyalar sayılır, karşılaştırılmaz.
-pub fn runCheck(gpa: std.mem.Allocator, io: std.Io, nrt: glue.Runtime, paths: []const []const u8, verbose: bool) !CheckResult {
+pub fn runCheck(gpa: std.mem.Allocator, io: std.Io, nrt: glue.Runtime, paths: []const []const u8, verbose: bool, why: ?*std.StringHashMapUnmanaged(usize)) !CheckResult {
     const api = nrt.check();
     var res: CheckResult = .{ .files = 0, .skipped_parse = 0, .unsupported = 0, .accepted = 0, .rejected = 0, .diags = 0 };
     for (paths) |path| {
@@ -354,6 +356,12 @@ pub fn runCheck(gpa: std.mem.Allocator, io: std.Io, nrt: glue.Runtime, paths: []
         }
         if (status == 2) {
             res.unsupported += 1;
+            if (why) |w| {
+                const tag = try gpa.dupe(u8, try api.text(a, 4, 0)); // gpa = çağıranın arena'sı (yaşam süresi komut boyunca)
+                const e = try w.getOrPut(gpa, tag);
+                if (!e.found_existing) e.value_ptr.* = 0;
+                e.value_ptr.* += 1;
+            }
             continue;
         }
         const outcome = checker.check(a, module);

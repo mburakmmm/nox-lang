@@ -8,6 +8,16 @@
             "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/hooks/session_rules.sh\""
           }
         ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard compact",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -27,6 +37,28 @@
           {
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/hooks/session_rules.sh\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard search --strict",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard read --strict",
+            "timeout": 10
           }
         ]
       }

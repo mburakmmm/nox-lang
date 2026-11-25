@@ -886,8 +886,24 @@ fn cmdCkDiff(io: std.Io, gpa: std.mem.Allocator, rest: []const []const u8) !void
         }
         return;
     } else if (std.mem.eql(u8, rest[0], "check")) {
-        const res = cd.runCheck(gpa, io, nrt.*, rest[1..], false) catch std.process.exit(1);
+        const want_why = rest.len > 1 and std.mem.eql(u8, rest[1], "--why");
+        var why_arena = std.heap.ArenaAllocator.init(gpa);
+        defer why_arena.deinit();
+        var why: std.StringHashMapUnmanaged(usize) = .{};
+        const res = cd.runCheck(why_arena.allocator(), io, nrt.*, rest[if (want_why) 2 else 1 ..], false, if (want_why) &why else null) catch std.process.exit(1);
         try sw.interface.print("ck-diff: OK check files={d} unsupported={d} accepted={d} rejected={d} diagnostics={d} skipped_parse={d}\n", .{ res.files, res.unsupported, res.accepted, res.rejected, res.diags, res.skipped_parse });
+        if (want_why) {
+            const Item = struct { k: []const u8, n: usize };
+            var items: std.ArrayListUnmanaged(Item) = .empty;
+            var it = why.iterator();
+            while (it.next()) |e| try items.append(why_arena.allocator(), .{ .k = e.key_ptr.*, .n = e.value_ptr.* });
+            std.mem.sort(Item, items.items, {}, struct {
+                fn lt(_: void, x: Item, y: Item) bool {
+                    return x.n > y.n;
+                }
+            }.lt);
+            for (items.items[0..@min(items.items.len, 25)]) |e| try sw.interface.print("  {d:>6}  {s}\n", .{ e.n, e.k });
+        }
     } else if (std.mem.eql(u8, rest[0], "assign")) {
         const res = cd.runAssign(gpa, io, nrt.*, rest[1..]) catch std.process.exit(1);
         try sw.interface.print("ck-diff: OK assign files={d} skipped={d} names={d} assigned={d}\n", .{ res.files, res.skipped, res.names, res.assigned });

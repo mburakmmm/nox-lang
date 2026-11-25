@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.70]
+
+Aşama 3.3 dilim B-1 (kapsam-kapılı Nox tip denetimi genişledi): tip ifadeleri, liste/sözlük, `for`, `constIntValue`. Ayrıntı: plan §6 3.3, spec §3.504.
+
+- `selfhost/typecheck.nox.in`: `type_expr_to_type` tam çekirdek (jenerik/optional/func/ptr[T]), `check_list_lit/dict_lit/index`, binary liste/sözlük, `check_expr_expected` liste/sözlük yolu, `for` (`check_for_iterable`), `const_int_value`, `unsup(ck, etiket)` + `ck-diff check --why` histogramı; `scripts/ck_gen.py` liste/sözlük/Optional/for/index üretir.
+- `.claude/settings.json`a graphify'ın kendi strict `hook-guard` hook'ları (PreToolUse Bash|Grep, Read|Glob; SessionStart compact) eklendi (graphify install); `verify_enforcement.py` bunları izinli sayar ve `updatedInput` YAPMADIKLARINI (rtk ile çakışmadıklarını) denetler; CLAUDE.md §4 güncellendi.
+
 ## [2.2.69]
 
 **HPy/CPython uyumluluk katmanı tamamen kaldırıldı** (kullanıcı kararı; `VERSIONING.md` "HPy istisnası"). Ayrıntı: spec §3.503.
