@@ -11,6 +11,18 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.73]
+
+Aşama 3.8 dilim A: `async def` + `await` (kapsam-kapılı Nox tip denetimi). Ayrıntı: plan §6 3.8, spec §3.507.
+
+- `selfhost/typecheck.nox.in`: `async def` kaydı (hosted profil param güvenliği), async işleve doğrudan çağrı hatası, `await` (Task operandı, async dışı/Task olmayan operand hataları); `scripts/ck_gen.py --async` async programlar üretir; CI kapısına async üreteç adımı eklendi. `spawn`, Channel/ThreadHandle, async metot kapsam dışı.
+
+## [2.2.72]
+
+`ck-diff checkm` birleşik-modül farksal köprüsü (Zig yükleyici → düz-dizi AST → Nox denetleyici ↔ Zig `check()`; import işleme 3.12'ye dek kapsam dışı). Ayrıntı: spec §3.506.
+
+- `--why` histogram etiketleri (`stmt_kind#<tag>`, `toplevel#<tür>`), `compareStatus` ortak; CLAUDE.md `graphify update .` yasağı + `verify_enforcement.py` denetimi.
+
 ## [2.2.71]
 
 Aşama 3.4 dilim A: kalıtımsız basit sınıflar (kapsam-kapılı Nox tip denetimi). Ayrıntı: plan §6 3.4, spec §3.505.

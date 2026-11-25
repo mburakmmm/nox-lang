@@ -110,6 +110,7 @@ class Ck:
     e_prev: int
     # 3.3: işlev tablosu (ad -> indeks), parametre tipi havuzu, dönüş tipi
     fmap: Map2
+    afn: Map2
     fpar: list[int]
     fps: list[int]
     fpn: list[int]
@@ -155,6 +156,7 @@ class Ck:
         self.top_scope = -1
         self.e_prev = -1
         self.fmap = Map2()
+        self.afn = Map2()
         self.fpar = []
         self.fps = []
         self.fpn = []
@@ -656,7 +658,24 @@ def check_expr_inner(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
         return check_index(ck, a, fx, a.n[e + 1])
     if tag == {{T:Expr.attribute}}:
         return check_attribute(ck, a, fx, a.n[e + 1])
-    raise unsup(ck, "check_expr_inner#1")
+    if tag == {{T:Expr.await_expr}}:
+        return check_await(ck, a, fx, e)
+    raise unsup(ck, "check_expr_inner#" + str(tag))
+
+# `.await_expr` (Task operandı; Channel/ThreadHandle işlemleri ve `spawn` kapsam dışı)
+def check_await(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
+    if not fx.in_async:
+        mp(ck, "'await' can only be used inside an 'async def' body")
+        raise mk_fail(ck, "TypeMismatch")
+    t: int = check_expr(ck, a, fx, a.n[e + 1])
+    if ck.tt.tag[t] == 7:
+        return ck.tt.xa[t]
+    # Task değil: yalnızca `x.send/recv/join(...)` çağrısı olabilir (Channel/ThreadHandle: kapsam dışı); başka şekil → hata
+    opd: int = a.n[e + 1]
+    if a.n[opd] == {{T:Expr.call}} and a.n[a.n[a.n[opd + 1] + {{O:Call.callee}}]] == {{T:Expr.attribute}}:
+        raise unsup(ck, "await#nontask_attr_call")
+    mp(ck, "'await' can only be used on a Task value, a Channel.send/recv, a ThreadChannel.send/recv or a ThreadHandle.join() call")
+    raise mk_fail(ck, "TypeMismatch")
 
 # `[a, b, ...]`: boş bağlamsız literal tipsiz; elemanlar aynı tipte olmalı.
 def check_list_lit(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
@@ -1146,6 +1165,11 @@ def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
     # yerel bir ad işlevi/sınıfı gölgeliyorsa (iç içe/closure değeri) kapsam dışı
     if sc_lookup(ck, fx.scope, sym) >= 0:
         raise unsup(ck, "check_call#3")
+    if fi >= 0 and m2_get(ck.afn, 0, sym) >= 0:
+        mp(ck, "'")
+        mp_sym(ck, sym)
+        mp(ck, "' is an 'async def' function and can only be started with 'spawn'")
+        raise mk_fail(ck, "TypeMismatch")
     if fi >= 0:
         sid: int = ck.fmap.vv[fi]
         check_args_sig(ck, a, fx, c, sid, sym)
@@ -1875,8 +1899,6 @@ def register_func(ck: Ck, a: Ast, fd: int) -> None:
             raise unsup(ck, "register_func#1")
     if pky(sl_at(a, fd, {{O:FuncDef.type_params}})) > 0 or pky(sl_at(a, fd, {{O:FuncDef.decorators}})) > 0 or pky(sl_at(a, fd, {{O:FuncDef.nonlocals}})) > 0:
         raise unsup(ck, "register_func#2")
-    if a.n[fd + {{O:FuncDef.is_async}}] != 0:
-        raise unsup(ck, "register_func#3")
     if sref_eq(a, nm, "main"):
         mp(ck, "'main' is a reserved name: Nox has no 'def main()' convention, top-level statements are already the program's entry point — define this function under another name")
         raise mk_fail(ck, "DuplicateDefinition")
@@ -1892,6 +1914,18 @@ def register_func(ck: Ck, a: Ast, fd: int) -> None:
         tys.append(type_expr_to_type(ck, a, a.n[pk_node + {{O:Param.type_expr}}]))
         pnames.append(sym_of(ck, a, pk(a.n[pk_node + {{O:Param.name}}], a.n[pk_node + {{O:Param.name}} + 1])))
     ret: int = type_expr_to_type(ck, a, a.n[fd + {{O:FuncDef.return_type}}])
+    if a.n[fd + {{O:FuncDef.is_async}}] != 0:
+        # `isSpawnParamSafeType` (hosted profil, varsayılan): thread_handle(9)/func(14)/optional(15) kapanış paketlemesinden geçemez
+        for k2 in range(len(tys)):
+            tg: int = ck.tt.tag[tys[k2]]
+            if tg == 9 or tg == 14 or tg == 15:
+                mp(ck, "'async def ")
+                mp_sym(ck, sym)
+                mp(ck, "': parameter '")
+                mp_sym(ck, pnames[k2])
+                mp(ck, "' has an unsupported type (only int/float/bool/str/None/Task[T]/Channel[T]/ThreadChannel[T] parameters can be packed, and additionally list/class/dict on hosted targets)")
+                raise mk_fail(ck, "TypeMismatch")
+        m2_put(ck.afn, 0, sym, 1)
     m2_put(ck.fmap, 0, sym, new_sig(ck, tys, pnames, ret))
 
 # `checkFunctionBody`
@@ -1916,7 +1950,7 @@ def check_function_body(ck: Ck, a: Ast, fd: int) -> None:
         pt: int = type_expr_to_type(ck, a, a.n[p + {{O:Param.type_expr}}])
         sc_declare(ck, scope, sym_of(ck, a, pk(a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1])), pt)
     ret: int = type_expr_to_type(ck, a, a.n[fd + {{O:FuncDef.return_type}}])
-    fx: Fx = Fx(scope, ret, False)
+    fx: Fx = Fx(scope, ret, a.n[fd + {{O:FuncDef.is_async}}] != 0)
     body: int = sl_at(a, fd, {{O:FuncDef.body}})
     check_block(ck, a, fx, body)
     if ret != 4 and not always_returns(a, body):

@@ -813,7 +813,7 @@ pub fn build(b: *std.Build) void {
     // Birleşik (import çözülmüş) modül köprüsü: Zig yükleyicisi → düz-dizi AST → Nox denetleyicisi ↔ Zig check(). Import işleme (3.12) gelene dek hepsi kapsam dışı (`toplevel#10`) çıkar; köprünün çökmediğini/eşit durum verdiğini doğrular.
     const ck_diff_checkm_cmd = b.addSystemCommand(&.{ "sh", "-c", "zig-out/bin/noxc-nightly ck-diff checkm $(git ls-files 'tests/golden/typecheck_cases/*.nox')" });
     ck_diff_checkm_cmd.step.dependOn(&install_nightly.step);
-    const ck_diff_gen_cmd = b.addSystemCommand(&.{ "sh", "-c", "d=$(mktemp -d) && python3 scripts/ck_gen.py --out $d --count 1500 --seed 11 && zig-out/bin/noxc-nightly ck-diff check $d/*.nox; rc=$?; rm -rf $d; exit $rc" });
+    const ck_diff_gen_cmd = b.addSystemCommand(&.{ "sh", "-c", "d=$(mktemp -d) && python3 scripts/ck_gen.py --out $d --count 1500 --seed 11 && zig-out/bin/noxc-nightly ck-diff check $d/*.nox && python3 scripts/ck_gen.py --out $d/a --count 1000 --seed 12 --async && zig-out/bin/noxc-nightly ck-diff check $d/a/*.nox; rc=$?; rm -rf $d; exit $rc" });
     ck_diff_gen_cmd.step.dependOn(&install_nightly.step);
     // R1-P1.10/P1.12: fixture oracle (pozitif gerçekten ayrışır, negatif hata türü+konum sabit) ve biçimlendirici özellik denetimi (idempotence + semantik koruma + CRLF; bilinen ihlaller tabanda).
     const fixture_oracle_cmd = b.addSystemCommand(&.{ "python3", "scripts/fixture_oracle.py" });

@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd):
+    def __init__(self, rnd, use_async=False):
         self.rnd = rnd
+        self.use_async = use_async
         self.funcs = []  # (name, [param types], ret)
         self.lines = []
         self.counter = 0
@@ -260,10 +261,47 @@ class Gen:
         # yalnız __init__ kurulduysa alanlar kayıtlı sayılır (kasıtlı hatalar tutarsız olabilir; Zig karar verir)
         self.classes[cname] = {"fields": ftypes, "methods": methods, "init": init}
 
+    def gen_async(self):
+        """`async def` (Task[T] parametreleri await edilir; güvenli olmayan parametre tipi), async işleve doğrudan çağrı, await kapsamı/operandı hataları."""
+        r = self.rnd
+        asyncs = []
+        for _ in range(r.randint(1, 2)):
+            name = self.fresh("a")
+            pts = [r.choice(VALUE_TYPES + ["Task[int]", "Task[str]", "Task[float]", "list[int]", "int | None"]) for _ in range(r.randint(0, 3))]
+            ret = r.choice(VALUE_TYPES + ["None"])
+            self.lines.append(f"async def {name}({', '.join(f'p{i}: {t}' for i, t in enumerate(pts))}) -> {ret}:")
+            scope = {f"p{i}": t for i, t in enumerate(pts) if t in VALUE_TYPES}
+            n0 = len(self.lines)
+            for i, t in enumerate(pts):
+                if t.startswith("Task[") and r.random() < 0.8:
+                    inner = t[5:-1]
+                    wt = inner if r.random() < 0.9 else r.choice(VALUE_TYPES)
+                    self.lines.append(f"    w{i}: {wt} = await p{i}")
+                    scope[f"w{i}"] = wt
+            self.block(scope, ret, 1, 0, False)
+            if ret != "None" and r.random() < 0.8:
+                self.lines.append(f"    return {self.expr(scope, ret)}")
+            if len(self.lines) == n0:
+                self.lines.append("    pass")
+            self.lines.append("")
+            asyncs.append((name, pts, ret))
+        if r.random() < 0.3:  # sync işlevde await
+            self.lines.append(f"def {self.fresh('s')}() -> None:")
+            self.lines.append(f"    x: int = await {lit(r, 'int')}")
+            self.lines.append("")
+        name, pts, ret = r.choice(asyncs)
+        if r.random() < 0.35 and all(t in VALUE_TYPES for t in pts):  # async işleve doğrudan çağrı
+            args = ", ".join(self.expr({}, t, depth=1) for t in pts)
+            self.lines.append(f"{self.fresh('d')}: {ret if ret != 'None' else 'int'} = {name}({args})")
+        if r.random() < 0.3:  # Task olmayan operand
+            self.lines.append(f"{self.fresh('b')}: int = await {r.choice([lit(r, 'int'), lit(r, 'str')])}")
+
     def program(self):
         r = self.rnd
         for _ in range(r.choice([0, 0, 1, 1, 2])):
             self.gen_class()
+        if self.use_async:
+            self.gen_async()
         for _ in range(r.randint(0, 3)):
             name = self.fresh("f")
             ptypes = [r.choice(VALUE_TYPES) for _ in range(r.randint(0, 3))]
@@ -290,11 +328,12 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--count", type=int, default=500)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--async", dest="use_async", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd).program()
+        src = Gen(rnd, args.use_async).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 
