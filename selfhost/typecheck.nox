@@ -1771,6 +1771,9 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
             mp(ck, "'del' only works on list[i] or dict[key]")
             raise mk_fail(ck, "TypeMismatch")
         return
+    if tag == 10:
+        mp(ck, "'extern def' is only allowed at module level")
+        raise mk_fail(ck, "TypeMismatch")
     if tag == 13:
         check_try(ck, a, fx, pay)
         return
@@ -2196,7 +2199,8 @@ def check_args_sig(ck: Ck, a: Ast, fx: Fx, c: int, sid: int, nm: int) -> None:
             raise unsup(ck, "check_args_sig#kwarg")
     np: int = ck.fpn[sid]
     st: int = ck.fps[sid]
-    if n < np:
+    # extern imzalarında parametre adı yoktur (-1): Zig `expandCallArgs` yalnızca `def` bildirimi olan işlevlerde "argument 'x' is missing" üretir
+    if n < np and ck.fpnm[st + n] >= 0:
         mp(ck, "in the call to '")
         mp_sym(ck, nm)
         mp(ck, "', argument '")
@@ -2898,6 +2902,96 @@ def always_returns(a: Ast, s: int) -> bool:
         return always_returns(a, sl_at(a, pay, 0))
     return False
 
+def sref_eq_ref(a: Ast, u: int, v: int) -> bool:
+    if sref_len(u) != sref_len(v):
+        return False
+    for i in range(sref_len(u)):
+        if sref_byte(a, u, i) != sref_byte(a, v, i):
+            return False
+    return True
+
+# ---- `extern def` (Zig `registerExternFunc`; dekoratörlü biçimler kapsam dışı) ----
+# `isFfiSafeType`
+def ffi_safe_type(ck: Ck, t: int) -> bool:
+    tt: TT = ck.tt
+    g: int = tt.tag[t]
+    if t <= 5 or g == 16 or g == 17:
+        return True
+    if g == 13:
+        return tt.xa[t] == 3 and tt.xb[t] == 3
+    if g == 14:
+        base: int = tt.xa[t]
+        for i in range(tt.xc[t]):
+            pg: int = tt.fp[base + i]
+            if not (pg == 0 or pg == 1 or pg == 2 or pg == 5 or tt.tag[pg] == 16):
+                return False
+        rg: int = tt.xb[t]
+        return rg == 0 or rg == 1 or rg == 2 or rg == 5 or rg == 4 or tt.tag[rg] == 16
+    return False
+
+def register_extern(ck: Ck, a: Ast, ed: int) -> None:
+    nm: int = pk(a.n[ed + 0], a.n[ed + 0 + 1])
+    ps: int = sl_at(a, ed, 2)
+    for i in range(pky(ps)):
+        p: int = stmt_at(a, ps, i)
+        if a.n[p + 8] >= 0:
+            mp(ck, "'extern def ")
+            mp_sref(ck, a, nm)
+            mp(ck, "': parameter '")
+            mp_sref(ck, a, pk(a.n[p + 0], a.n[p + 0 + 1]))
+            mp(ck, "' cannot have a default value")
+            raise mk_fail(ck, "TypeMismatch")
+    sym: int = sym_of(ck, a, nm)
+    if m2_get(ck.fmap, 0, sym) >= 0:
+        mp(ck, "function already defined: ")
+        mp_sref(ck, a, nm)
+        raise mk_fail(ck, "DuplicateDefinition")
+    needs_rt: bool = a.n[ed + 7] != 0
+    tys: list[int] = []
+    pnames: list[int] = []
+    for q in range(pky(ps)):
+        pq: int = stmt_at(a, ps, q)
+        pt: int = type_expr_to_type(ck, a, a.n[pq + 6])
+        pg: int = ck.tt.tag[pt]
+        lst_ok: bool = pg == 5 and (ck.tt.xa[pt] == 3 or ck.tt.xa[pt] == 0)
+        rt_fixed: bool = needs_rt and pg == 5 and ck.tt.tag[ck.tt.xa[pt]] == 16
+        if not ffi_safe_type(ck, pt) and not lst_ok and not rt_fixed and not (needs_rt and pg == 6):
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': parameter '")
+            mp_sref(ck, a, pk(a.n[pq + 0], a.n[pq + 0 + 1]))
+            mp(ck, "' has an unsupported type (only int/float/bool/str/None/list[str]/list[int] can cross the C ABI boundary in v0.1)")
+            raise mk_fail(ck, "TypeMismatch")
+        tys.append(pt)
+        pnames.append(-1)
+    ret: int = type_expr_to_type(ck, a, a.n[ed + 4])
+    rg2: int = ck.tt.tag[ret]
+    rlst: bool = rg2 == 5 and (ck.tt.xa[ret] == 3 or ck.tt.xa[ret] == 0)
+    if not ffi_safe_type(ck, ret) and not rlst and rg2 != 6:
+        mp(ck, "extern function '")
+        mp_sref(ck, a, nm)
+        mp(ck, "': the return type is unsupported (only int/float/bool/str/None/list[str]/list[int]/class can cross the C ABI boundary in v0.1)")
+        raise mk_fail(ck, "TypeMismatch")
+    # `@ffi.*`/`@capability.requires` dekoratörleri kapsam dışı
+    if pky(sl_at(a, ed, 10)) > 0:
+        raise unsup(ck, "extern#decorators")
+    rts: int = sl_at(a, ed, 8)
+    for r in range(pky(rts)):
+        rn: int = pk(a.l[pkx(rts) + r * 2], a.l[pkx(rts) + r * 2 + 1])
+        found: bool = False
+        for f in range(pky(ps)):
+            fp: int = stmt_at(a, ps, f)
+            if sref_eq_ref(a, pk(a.n[fp + 0], a.n[fp + 0 + 1]), rn):
+                found = True
+        if not found:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': 'retains/@ffi.escape(\"")
+            mp_sref(ck, a, rn)
+            mp(ck, "\")' names an unknown parameter")
+            raise mk_fail(ck, "UnknownRetainedParam")
+    m2_put(ck.fmap, 0, sym, new_sig(ck, tys, pnames, ret))
+
 # `registerFunc` (skaler dilim): varsayılan/variadik/dekoratörlü/jenerik/async işlevler kapsam dışı.
 def register_func(ck: Ck, a: Ast, fd: int) -> None:
     nm: int = pk(a.n[fd + 0], a.n[fd + 0 + 1])
@@ -3086,7 +3180,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
     # kapsam dışı üst-düzey deyim türleri (import/sınıf/protokol/extern/takma ad ...): bu geçişler henüz taşınmadı
     for i in range(pky(body)):
         kn: int = a.n[a.n[stmt_at(a, body, i) + 0]]
-        if kn == 9 or kn == 10 or kn == 15 or kn == 16 or kn == 2:
+        if kn == 9 or kn == 15 or kn == 16 or kn == 2:
             ck.why = "toplevel#" + str(kn)
             return 2
     try:
@@ -3100,6 +3194,8 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
             kn2: int = a.n[st + 0]
             if a.n[kn2] == 7:
                 register_func(ck, a, a.n[kn2 + 1])
+            elif a.n[kn2] == 10:
+                register_extern(ck, a, a.n[kn2 + 1])
             elif a.n[kn2] == 8:
                 register_class_sigs(ck, a, class_idx(ck, sym_of(ck, a, pk(a.n[a.n[kn2 + 1] + 0], a.n[a.n[kn2 + 1] + 0 + 1]))))
         collect_module_globals(ck, a, body)
@@ -3119,6 +3215,8 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
         try:
             if a.n[kn3] == 7:
                 check_function_body(ck, a, a.n[kn3 + 1])
+            elif a.n[kn3] == 10:
+                pass
             elif a.n[kn3] == 8:
                 check_class(ck, a, class_idx(ck, sym_of(ck, a, pk(a.n[a.n[kn3 + 1] + 0], a.n[a.n[kn3 + 1] + 0 + 1]))))
             else:

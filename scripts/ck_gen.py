@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False):
         self.rnd = rnd
+        self.use_extern = use_extern
         self.use_ptr = use_ptr
         self.use_construct = use_construct
         self.use_try = use_try
@@ -511,8 +512,31 @@ class Gen:
         if r.random() < 0.3:
             self.lines += ["def fl() -> None:", "    lowlevel:", "        q: ptr = ptr_from_int(1)", "        ptr_write_int(q, 2)", "    print(q)"]
 
+    def gen_extern(self):
+        """`extern def`: parametre/dönüş FFI güvenliği, `with_rt`, `retains(...)`, yinelenen/varsayılan değerli tanımlar, çağrı denetimi."""
+        r = self.rnd
+        self.lines += ["class P:", "    a: int", "    def __init__(self, a: int) -> None:", "        self.a = a", ""]
+        ty = lambda: r.choice(["int", "float", "bool", "str", "None", "ptr", "u8", "i64", "ptr[int]", "list[str]", "list[int]", "list[float]", "list[u8]", "dict[str, str]", "dict[str, int]", "int | None", "P", "(int, int, ptr) -> int", "(str) -> int", "Task[int]", "Nope"])
+        rt = lambda: r.choice(["int", "float", "bool", "str", "None", "ptr", "u8", "list[str]", "list[int]", "P", "dict[str, str]", "int | None", "(int) -> int", "bytes"])
+        names = ["f1", "f2", "f3"]
+        for k in range(r.randint(1, 3)):
+            nm = r.choice(names + ["f1", "memset"])
+            ps = [f"{r.choice(['a', 'b', 'c'])}{i}: {ty()}" + (" = 1" if r.random() < 0.05 else "") for i in range(r.randint(0, 3))]
+            tail = r.choice(["", "", " with_rt", " retains(a0)", " retains(zz)", " with_rt retains(a0, b1)"])
+            self.lines.append(f"extern def {nm}({', '.join(ps)}) -> {rt()} from \"lib\"{tail}")
+        self.lines.append("def f1(x: int) -> int:")
+        self.lines.append("    return x")
+        calls = ["n: int = f1(1)", "n: int = f2(1, 2)", "f3()", "n: int = memset(1)", "n: int = f1()", "x: str = f2()"]
+        for _ in range(r.randint(0, 3)):
+            self.lines.append(r.choice(calls))
+        if r.random() < 0.2:
+            self.lines += ["def g() -> None:", "    extern def h() -> int from \"lib\"", "    pass"]
+
     def program(self):
         r = self.rnd
+        if self.use_extern:
+            self.gen_extern()
+            return "\n".join(self.lines) + "\n"
         if self.use_ptr:
             self.gen_ptr()
             return "\n".join(self.lines) + "\n"
@@ -568,11 +592,12 @@ def main():
     ap.add_argument("--try", dest="use_try", action="store_true")
     ap.add_argument("--construct", dest="use_construct", action="store_true")
     ap.add_argument("--ptr", dest="use_ptr", action="store_true")
+    ap.add_argument("--extern", dest="use_extern", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 
