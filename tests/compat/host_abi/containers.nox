@@ -1,0 +1,66 @@
+# UR-008: konteyner/Optional/tuple imzalı `@export` işlevleri (`--host-abi`, `NoxHostValue`).
+@export
+def opt_int(x: int | None) -> int | None:
+    return x
+
+@export
+def opt_str(x: str | None) -> str:
+    if x is None:
+        return "none"
+    return "got " + x
+
+@export
+def sum_list(xs: list[int]) -> int:
+    t: int = 0
+    for x in xs:
+        t = t + x
+    return t
+
+@export
+def echo_list(xs: list[int]) -> list[int]:
+    return xs
+
+@export
+def scale(xs: list[float], k: float) -> list[float]:
+    out: list[float] = []
+    for x in xs:
+        out.append(x * k)
+    return out
+
+@export
+def map_dict(d: dict[str, int]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for k in d.keys():
+        out[k] = d[k] * 2
+    return out
+
+@export
+def swap_pair(p: tuple[int, str]) -> tuple[str, int]:
+    return (p[1], p[0])
+
+@export
+def nested(xs: list[tuple[int, str]]) -> dict[str, list[str | None]]:
+    out: dict[str, list[str | None]] = {}
+    for p in xs:
+        row: list[str | None] = []
+        row.append(p[1])
+        row.append(None)
+        out[p[1]] = row
+    return out
+
+@export
+def blobs(b: list[bytes], flags: list[bool]) -> list[bytes]:
+    out: list[bytes] = []
+    for x in b:
+        out.append(x)
+    if len(flags) > 0 and flags[0]:
+        out.append(b"\x00z")
+    return out
+
+@export
+def boom_list(xs: list[int]) -> list[int]:
+    raise ValueError("boom")
+
+@export
+def no_return(xs: list[int]) -> None:
+    pass

@@ -16,6 +16,7 @@
  * TİP EŞLEMESİ (parametre → C):  int → int64_t | float → double | bool → uint8_t (0/1) | str → const uint8_t *data, size_t len (UTF-8; geçersizse NOX_HOST_ERR_UTF8)
  *                                 | bytes → const uint8_t *data, size_t len (ham bayt; gömülü 0 korunur)
  *                                 | sınıf örneği → NoxHostHandle (uint64_t; bağlama ait, nesil-denetimli opak tutamaç)
+ *                                 | T | None, list[T], dict[K, V], tuple[...] → NoxHostValue (uint64_t, v2; bkz. "değer ağaçları" bölümü)
  *                         (dönüş → `out` işaretçisi): int → int64_t* | float → double* | bool → uint8_t* | str → NoxHostBuffer* (UTF-8, host serbest bırakır)
  *                                 | bytes → NoxHostBuffer* | sınıf örneği → NoxHostHandle* (host `nox_host_handle_release` ile bırakır) | None → `out` parametresi YOKTUR.
  * İŞLEV İMZASI:  NoxHostStatus nox_host_export_<modül>_<ad>(NoxHostContext *ctx, <parametreler...>, [<dönüş> *out,] NoxHostError **err);
@@ -32,7 +33,8 @@
 extern "C" {
 #endif
 
-#define NOX_HOST_ABI_VERSION 1u
+/* v2 (UR-008) v1'e GERİYE UYUMLU eklemedir: `NoxHostContextConfig.abi_version` olarak 1 ya da 2 verilebilir; değer-ağacı API'si (aşağıda) yalnızca eklenmiştir. */
+#define NOX_HOST_ABI_VERSION 2u
 
 typedef int32_t NoxHostStatus;
 #define NOX_HOST_OK 0
@@ -80,6 +82,45 @@ void nox_host_buffer_release(NoxHostBuffer *buf);
 NoxHostStatus nox_host_handle_release(NoxHostContext *ctx, NoxHostHandle h);
 NoxHostStatus nox_host_handle_retain(NoxHostContext *ctx, NoxHostHandle h, NoxHostHandle *out); /* aynı nesneye ikinci handle */
 int32_t nox_host_handle_is_valid(NoxHostContext *ctx, NoxHostHandle h);
+
+/* ---- v2: değer ağaçları (`T | None`, `list[T]`, `dict[K, V]`, `tuple[...]` parametre/dönüşleri) ----
+ * `@export def f(xs: list[int], o: int | None) -> dict[str, int]` için C imzası: `nox_host_export_<modül>_f(ctx, NoxHostValue xs, NoxHostValue o, NoxHostValue *out, NoxHostError **err)`.
+ * Bir NoxHostValue, host tarafında kurulan/okunan OPAK, nesil-denetimli bir ağaçtır (Nox nesnesi değildir; iç düzen görünmez). Türler: none, int, float, bool, str, bytes, list, dict, tuple.
+ * `T | None`: değer `none` ise None, değilse T değeridir. Parametre handle'ları çağrı boyunca ÖDÜNÇTÜR (host bırakır); dönüş handle'ı host'undur ve `nox_host_value_release` ile bırakılır.
+ * SAHİPLİK: host'un elindeki her handle bırakılmalıdır. `append`/`dict_set` alt değeri başvuru sayar (host kendi handle'ını yine bırakır); `item`/`dict_entry` YENİ handle verir. Bir değeri kendi
+ * altına eklemek (döngü) NOX_HOST_ERR_INVAL'dır. Yanlış tür/aralık NOX_HOST_ERR_INVAL, bırakılmış/sahte handle NOX_HOST_ERR_INVALID_HANDLE'dır. Nox tarafında beklenmeyen bir değer türü
+ * (ör. list yerine str) bir ValueError olarak (NOX_HOST_ERR_EXCEPTION) döner. Sınıf örnekleri konteyner İÇİNDE desteklenmez (üst-düzey parametre olarak NoxHostHandle geçer). */
+typedef uint64_t NoxHostValue;
+#define NOX_HOST_VALUE_NONE 0
+#define NOX_HOST_VALUE_INT 1
+#define NOX_HOST_VALUE_FLOAT 2
+#define NOX_HOST_VALUE_BOOL 3
+#define NOX_HOST_VALUE_STR 4
+#define NOX_HOST_VALUE_BYTES 5
+#define NOX_HOST_VALUE_LIST 6
+#define NOX_HOST_VALUE_DICT 7
+#define NOX_HOST_VALUE_TUPLE 8
+
+NoxHostStatus nox_host_value_none(NoxHostContext *ctx, NoxHostValue *out);
+NoxHostStatus nox_host_value_int(NoxHostContext *ctx, int64_t v, NoxHostValue *out);
+NoxHostStatus nox_host_value_float(NoxHostContext *ctx, double v, NoxHostValue *out);
+NoxHostStatus nox_host_value_bool(NoxHostContext *ctx, uint8_t v, NoxHostValue *out);
+/* is_bytes = 0: UTF-8 `str` (geçersizse NOX_HOST_ERR_UTF8); is_bytes != 0: ham `bytes` (gömülü 0 korunur). Veri KOPYALANIR. */
+NoxHostStatus nox_host_value_str(NoxHostContext *ctx, const uint8_t *data, size_t len, int32_t is_bytes, NoxHostValue *out);
+/* kind: NOX_HOST_VALUE_LIST / _DICT / _TUPLE. */
+NoxHostStatus nox_host_value_container(NoxHostContext *ctx, int32_t kind, NoxHostValue *out);
+NoxHostStatus nox_host_value_append(NoxHostContext *ctx, NoxHostValue container, NoxHostValue item);                  /* list/tuple */
+NoxHostStatus nox_host_value_dict_set(NoxHostContext *ctx, NoxHostValue dict, NoxHostValue key, NoxHostValue value);  /* anahtar skaler; aynı anahtar değeri değiştirir */
+
+NoxHostStatus nox_host_value_kind(NoxHostContext *ctx, NoxHostValue v, int32_t *out);
+NoxHostStatus nox_host_value_get_int(NoxHostContext *ctx, NoxHostValue v, int64_t *out);   /* int ya da bool */
+NoxHostStatus nox_host_value_get_float(NoxHostContext *ctx, NoxHostValue v, double *out);
+NoxHostStatus nox_host_value_get_span(NoxHostContext *ctx, NoxHostValue v, NoxHostSpan *out); /* str/bytes; değer bırakılana kadar geçerli */
+NoxHostStatus nox_host_value_len(NoxHostContext *ctx, NoxHostValue v, size_t *out);           /* list/tuple elemanı, dict çifti sayısı */
+NoxHostStatus nox_host_value_item(NoxHostContext *ctx, NoxHostValue v, size_t index, NoxHostValue *out);
+NoxHostStatus nox_host_value_dict_entry(NoxHostContext *ctx, NoxHostValue v, size_t index, NoxHostValue *key_out, NoxHostValue *value_out); /* eklenme sırası */
+NoxHostStatus nox_host_value_release(NoxHostContext *ctx, NoxHostValue v);
+int32_t nox_host_value_is_valid(NoxHostContext *ctx, NoxHostValue v);
 
 /* Hata incelemesi. Span'ler nox_host_error_release'e kadar geçerlidir; class_name/message UTF-8'dir. */
 void nox_host_error_release(NoxHostError *err);

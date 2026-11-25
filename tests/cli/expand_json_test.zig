@@ -107,6 +107,8 @@ test "expand --json uses canonical surface spelling for tuple/containers and emi
     const swap = ex[0].object;
     try std.testing.expectEqualStrings("tuple[int, str]", swap.get("params").?.array.items[0].object.get("type").?.string);
     try std.testing.expectEqualStrings("tuple[str, int]", swap.get("return_type").?.string);
+    try std.testing.expectEqualStrings("value", swap.get("params").?.array.items[0].object.get("marshal").?.string);
+    try std.testing.expectEqualStrings("value", swap.get("return_marshal").?.string);
     const nest = ex[1].object;
     const np = nest.get("params").?.array.items;
     try std.testing.expectEqualStrings("list[tuple[int, str]]", np[0].object.get("type").?.string);

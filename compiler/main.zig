@@ -35,6 +35,7 @@ const ast_dump_full = @import("parser/ast_dump_full.zig");
 const ast_schema = @import("parser/ast_schema.zig");
 const checker = @import("typecheck/checker.zig");
 const tc_types = @import("typecheck/types.zig");
+const host_adapt = @import("host_adapt.zig");
 const ownership = @import("ownership/analysis.zig");
 const codegen = @import("codegen_qbe/codegen.zig");
 const local_escape = @import("codegen_qbe/local_escape.zig");
@@ -899,7 +900,7 @@ fn cmdCkDiff(io: std.Io, gpa: std.mem.Allocator, a: std.mem.Allocator, rest: []c
         const res = (if (want_deep)
             cd.runWhyDeep(why_arena.allocator(), io, nrt.*, rest[2..], &why)
         else
-            cd.runCheck(why_arena.allocator(), io, nrt.*, rest[if (want_why) 2 else 1 ..], false, if (want_why) &why else null)) catch std.process.exit(1);
+            cd.runCheck(why_arena.allocator(), io, nrt.*, rest[if (want_why) 2 else 1..], false, if (want_why) &why else null)) catch std.process.exit(1);
         try sw.interface.print("ck-diff: OK check files={d} unsupported={d} accepted={d} rejected={d} diagnostics={d} skipped_parse={d}\n", .{ res.files, res.unsupported, res.accepted, res.rejected, res.diags, res.skipped_parse });
         if (want_why) {
             const Item = struct { k: []const u8, n: usize };
@@ -920,7 +921,7 @@ fn cmdCkDiff(io: std.Io, gpa: std.mem.Allocator, a: std.mem.Allocator, rest: []c
         defer why_arena.deinit();
         var why: std.StringHashMapUnmanaged(usize) = .{};
         var res: cd.CheckResult = .{ .files = 0, .skipped_parse = 0, .unsupported = 0, .accepted = 0, .rejected = 0, .diags = 0 };
-        for (rest[if (want_why) 2 else 1 ..]) |path| {
+        for (rest[if (want_why) 2 else 1..]) |path| {
             var arena = std.heap.ArenaAllocator.init(gpa);
             defer arena.deinit();
             const aa = arena.allocator();
@@ -3802,6 +3803,20 @@ fn collectHostExports(a: std.mem.Allocator, user_module: ast.Module, st: *checke
             printErr("--host-abi: '@export def {s}' cannot be async or generic\n", .{fd.name});
             return error.BuildFailed;
         }
+        // UR-008: konteyner/Optional imzalı işlevler için sentezlenen adaptör çağrılır (parametreler `NoxHostValue` = int, dönüş `int`), sembol adı kullanıcı işlevinindir.
+        if (st.functions.get(try host_adapt.adapterName(a, fd.name))) |asig| {
+            const akinds = try a.alloc(codegen.HostKind, asig.params.len);
+            for (asig.params, 0..) |pt, i| akinds[i] = hostKindOf(pt, false) orelse {
+                printErr("--host-abi: '@export def {s}': parameter {d} has type '{s}' which cannot cross the host ABI\n", .{ fd.name, i + 1, tc_types.toAlloc(a, pt) catch "?" });
+                return error.BuildFailed;
+            };
+            const ark = hostKindOf(asig.return_type, true) orelse {
+                printErr("--host-abi: '@export def {s}': return type '{s}' cannot cross the host ABI\n", .{ fd.name, tc_types.toAlloc(a, asig.return_type) catch "?" });
+                return error.BuildFailed;
+            };
+            try list.append(a, .{ .name = try host_adapt.adapterName(a, fd.name), .params = akinds, .ret = ark, .export_name = fd.name });
+            continue;
+        }
         const kinds = try a.alloc(codegen.HostKind, sig.params.len);
         for (sig.params, 0..) |pt, i| {
             kinds[i] = hostKindOf(pt, false) orelse {
@@ -3877,6 +3892,19 @@ fn writeDefaultJson(w: *std.Io.Writer, d: ?ast.Expr) !void {
         },
         else => try w.writeAll("null"),
     }
+}
+
+/// UR-008 (NoxPy, v2.2.86): parametre/dönüşün C sınırındaki taşıma biçimi — `scalar` (int/float/bool), `span` (str/bytes: veri+uzunluk), `handle` (sınıf: `NoxHostHandle`),
+/// `value` (konteyner/Optional/tuple: `NoxHostValue`), `none` (yalnız dönüş).
+fn marshalOf(checker_state: *checker.Checker, t: tc_types.Type) []const u8 {
+    return switch (t) {
+        .int, .float, .boolean, .fixed_int => "scalar",
+        .str, .bytes => "span",
+        .none => "none",
+        .list, .dict, .optional => "value",
+        .class => |name| if (checker_state.tuple_elem_types.contains(name)) "value" else "handle",
+        else => "unsupported",
+    };
 }
 
 /// UR-008 (NoxPy, v2.2.85): `expand --json` tip dizgeleri KANONİK yüzey yazımıyla verilir: sentezlenmiş `tuple__int_str` sınıfı `tuple[int, str]` olarak yazılır
@@ -3967,11 +3995,12 @@ fn writeExportMetadataJson(a: std.mem.Allocator, w: *std.Io.Writer, user_module:
             if (i < sig.params.len) try formatCanonicalType(checker_state, sig.params[i], &tbuf.writer);
             try writeJsonString(w, tbuf.written());
             const kind: []const u8 = if (p.variadic) "var_positional" else if (p.var_kw) "var_keyword" else if (p.kw_only) "keyword_only" else if (p.pos_only) "positional_only" else "positional_or_keyword";
+            try w.print(", \"marshal\": \"{s}\"", .{if (i < sig.params.len) marshalOf(checker_state, sig.params[i]) else "unsupported"});
             try w.print(", \"kind\": \"{s}\", \"has_default\": {s}, \"default\": ", .{ kind, if (p.default != null) "true" else "false" });
             try writeDefaultJson(w, p.default);
             try w.writeAll("}");
         }
-        try w.writeAll("], \"return_type\": ");
+        try w.print("], \"return_marshal\": \"{s}\", \"return_type\": ", .{marshalOf(checker_state, sig.return_type)});
         var rbuf: std.Io.Writer.Allocating = .init(a);
         try formatCanonicalType(checker_state, sig.return_type, &rbuf.writer);
         try writeJsonString(w, rbuf.written());
@@ -4679,7 +4708,21 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     };
     defer gpa.free(source);
 
-    const user_module = try parseUserSource(a, source, path_arg);
+    var user_module = try parseUserSource(a, source, path_arg);
+    // UR-008: `--host-abi` + konteyner/Optional imzalı `@export` işlevleri için Nox adaptörleri kaynağın SONUNA eklenip yeniden ayrıştırılır (satır numaraları değişmez; bkz. host_adapt.zig).
+    if (g_host_abi) {
+        switch (try host_adapt.synthesize(a, user_module)) {
+            .none => {},
+            .err => |msg| {
+                printErr("{s}", .{msg});
+                return error.BuildFailed;
+            },
+            .text => |extra| {
+                const combined = try std.mem.concat(a, u8, &.{ source, "\n", extra });
+                user_module = try parseUserSource(a, combined, path_arg);
+            },
+        }
+    }
 
     // Faz O §P.6: proje kökü (`nox.json`) BULUNAMAZSA `resolveImports`in
     // ESKİ, DEĞİŞMEMİŞ davranışına (yalnızca `nox.*` stdlib) DÜŞER;

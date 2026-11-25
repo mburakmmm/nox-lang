@@ -303,6 +303,9 @@ pub const RuntimeState = struct {
     /// (`nox_alloc`/dict/arena/vb.nin KULLANDIĞI, ~120x hız kazanımı
     /// SAĞLAYAN değer — bkz. modül üstü not).
     injected_allocator: std.mem.Allocator = if (is_freestanding) freestanding_unreachable_allocator else if (use_debug_allocator) std.heap.page_allocator else if (builtin.cpu.arch.isWasm()) std.heap.page_allocator else std.heap.smp_allocator,
+    /// UR-008: bu çalışma zamanını sahiplenen `NoxHostContext` (`runtime/host.zig`; null = host bağlamı yok). `--host-abi` adaptörlerinin `nox_hv_*` ilkelleri `with_rt` ile gelen `rt`den bağlamı buradan bulur
+    /// (iş parçacığı-yerel/global durum yok; her bağlamın KENDİ `RuntimeState`i vardır).
+    host_ctx: ?*anyopaque = null,
     /// Faz MN.10 (bkz. profillenmiş kanıt — Aether'in HTTP+JSON `wrk`
     /// ölçümü, "8 worker 1 worker'dan YAVAŞ" ters ölçekleme): TEK
     /// paylaşılan diziden (Faz MN.3b'nin ORİJİNAL şekli, `pool_free_

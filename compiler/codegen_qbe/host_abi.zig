@@ -112,7 +112,7 @@ pub fn genHostModuleEntry(self: *Codegen, mod: []const u8) CodegenError!void {
 
 pub fn genHostExport(self: *Codegen, mod: []const u8, ex: HostExport) CodegenError!void {
     resetFn(self);
-    const sym = try std.fmt.allocPrint(self.allocator, "$nox_host_export_{s}_{s}", .{ mod, ex.name });
+    const sym = try std.fmt.allocPrint(self.allocator, "$nox_host_export_{s}_{s}", .{ mod, ex.export_name orelse ex.name });
     try self.qbeFuncHeaderStart(.w, sym);
     try self.qbeFuncParam(.l, "%ctx", true);
     for (ex.params, 0..) |k, i| {

@@ -11,6 +11,18 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.86]
+
+NoxPy UR-008 dilim 2: `--host-abi` ile `T | None`, `list[T]`, `dict[K, V]`, `tuple[...]` parametre/dönüş marshaling'i; `nox_host.h` ABI v2 (v1'e geriye uyumlu). Ayrıntı: spec §3.520, `docs/apis/host-abi.md`.
+
+- `include/nox_host.h` v2: opak, nesil-denetimli `NoxHostValue` değer ağaçları (`nox_host_value_*`: kurucular, `append`/`dict_set`, okuyucular, `release`); `NOX_HOST_ABI_VERSION 2` ama `abi_version = 1` veren v1 ana makineleri çalışmaya devam eder.
+- `runtime/host.zig`: bağlam başına değer tablosu (yinelemesiz bırakma, döngü reddi, eklenme sıralı dict), Nox adaptörlerinin kullandığı `nox_hv_*` iç ilkelleri.
+- `compiler/host_adapt.zig`: konteyner/Optional imzalı `@export` işlevleri için derleme öncesi Nox adaptörleri sentezler (Nox'un kendi codegen'i list/dict/Optional/tuple'ı kurar, düzen sızmaz; QBE/LLVM aynı kaynağı derler); C sembolü `nox_host_export_<modül>_<ad>` aynı kalır.
+- `expand --json`: `marshal`/`return_marshal` alanları (`scalar`/`span`/`handle`/`value`/`none`).
+- Sınırlar (belgelenmiş, açık ileti): konteyner içinde sınıf örneği ve `int|float|bool | None` eleman desteklenmez (Nox derleyicisi `list[int | None]` derleyemiyor).
+- Test: `tests/compat/host_abi/containers.nox` + `containers_host.c` (C ana makinesi; skaler/str/bytes, iç içe, istisna, hatalı girdi, nesil/döngü kuralları), reddedilen imza testleri, `host.zig` birim testi.
+- Düzeltme (v2.2.82'den kalan CI kırmızısı): `tests/golden/codegen_cases/mn_shared_str.nox` bileşik güncelleme yarışında `len(msg) >= 40` alt sınırı geçersizdi (son yazan bayat okumayla yazabilir); kesin sınır `>= 1` yapıldı.
+
 ## [2.2.85]
 
 NoxPy UR-008 dilim 1: `noxc expand --json` kanonik tip yazımı ve sabit varsayılan değerler. Ayrıntı: spec §3.519, `docs/apis/host-abi.md`.

@@ -53,13 +53,78 @@ test "host-abi: C ana makinesi nox_host.h ile Nox kütüphanesini çağırır" {
     try std.testing.expect(std.mem.indexOf(u8, r.stdout, "ALL OK") != null);
 }
 
+test "host-abi: konteyner/Optional/tuple imzaları NoxHostValue ile geçer (UR-008)" {
+    if (builtin.os.tag == .windows) return;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    if (!fileExists(io, "zig-out/lib/noxrt.o")) return;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &buf);
+    const dir = buf[0..len];
+    const obj = try std.fmt.allocPrint(gpa, "{s}/ct.o", .{dir});
+    defer gpa.free(obj);
+    const exe = try std.fmt.allocPrint(gpa, "{s}/ct_host", .{dir});
+    defer gpa.free(exe);
+
+    const built = try run(gpa, io, &.{ "zig-out/bin/noxc", "build", "--backend", "llvm", "--emit-obj", "--host-abi", "--module-name", "ct", "-o", obj, "tests/compat/host_abi/containers.nox" });
+    defer gpa.free(built.stdout);
+    defer gpa.free(built.stderr);
+    if (exitCode(built) != 0) std.debug.print("noxc: {s}\n", .{built.stderr});
+    try std.testing.expectEqual(@as(u8, 0), exitCode(built));
+
+    const cc = run(gpa, io, &.{ "clang", "-I", "include", "tests/compat/host_abi/containers_host.c", obj, "zig-out/lib/noxrt.o", "-lm", "-pthread", "-o", exe }) catch return; // clang yoksa atla
+    defer gpa.free(cc.stdout);
+    defer gpa.free(cc.stderr);
+    if (exitCode(cc) != 0) {
+        std.debug.print("clang: {s}\n", .{cc.stderr});
+        return error.LinkFailed;
+    }
+    const r = try run(gpa, io, &.{exe});
+    defer gpa.free(r.stdout);
+    defer gpa.free(r.stderr);
+    if (exitCode(r) != 0) std.debug.print("host çıktısı:\n{s}{s}\n", .{ r.stdout, r.stderr });
+    try std.testing.expectEqual(@as(u8, 0), exitCode(r));
+    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "ALL OK") != null);
+}
+
+test "host-abi: konteyner içinde desteklenmeyen eleman tipleri açık iletiyle reddedilir (UR-008)" {
+    if (builtin.os.tag == .windows) return;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &buf);
+    const cases = [_]struct { name: []const u8, src: []const u8 }{
+        .{ .name = "c1", .src = "class P:\n    a: int\n    def __init__(self, a: int) -> None:\n        self.a = a\n\n@export\ndef f(xs: list[P]) -> int:\n    return 1\n" },
+        .{ .name = "c2", .src = "@export\ndef f(xs: list[int | None]) -> int:\n    return 1\n" },
+        .{ .name = "c3", .src = "@export\ndef f(x: int) -> list[Task[int]]:\n    return []\n" },
+    };
+    for (cases) |cs| {
+        const file = try std.fmt.allocPrint(gpa, "{s}.nox", .{cs.name});
+        defer gpa.free(file);
+        try tmp.dir.writeFile(io, .{ .sub_path = file, .data = cs.src });
+        const src = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ buf[0..len], file });
+        defer gpa.free(src);
+        const out = try std.fmt.allocPrint(gpa, "{s}/{s}.o", .{ buf[0..len], cs.name });
+        defer gpa.free(out);
+        const r = try run(gpa, io, &.{ "zig-out/bin/noxc", "build", "--backend", "llvm", "--emit-obj", "--host-abi", "-o", out, src });
+        defer gpa.free(r.stdout);
+        defer gpa.free(r.stderr);
+        try std.testing.expect(exitCode(r) != 0);
+        try std.testing.expect(std.mem.indexOf(u8, r.stderr, "--host-abi") != null);
+    }
+}
+
 test "host-abi: desteklenmeyen imza ve eksik kütüphane bayrağı açık iletiyle reddedilir" {
     if (builtin.os.tag == .windows) return;
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{ .sub_path = "bad.nox", .data = "@export\ndef f(xs: list[int]) -> int:\n    return 1\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "bad.nox", .data = "@export\ndef f(xs: Task[int]) -> int:\n    return 1\n" });
     var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const len = try tmp.dir.realPath(io, &buf);
     const src = try std.fmt.allocPrint(gpa, "{s}/bad.nox", .{buf[0..len]});

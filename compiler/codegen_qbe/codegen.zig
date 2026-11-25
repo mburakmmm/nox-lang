@@ -305,7 +305,8 @@ pub const QbeArg = qbe_emit.QbeArg;
 
 /// UR-002 (NoxPy, v2.2.78): `--host-abi` için dışa aktarılan işlevlerin C ABI tipi sınıfı (checker'ın çözdüğü tiplerden; `str` ve `bytes` aynı `HeapKind.str`tir ama `str` UTF-8 doğrulanır).
 pub const HostKind = enum { int, float, bool, str, bytes, handle, none };
-pub const HostExport = struct { name: []const u8, params: []const HostKind, ret: HostKind };
+/// `name`: çağrılan Nox işlevi; `export_name`: dışa açık C sembolünün parçası (UR-008: konteyner imzalarında `name` sentezlenen adaptördür, `export_name` kullanıcı işlevinin adıdır).
+pub const HostExport = struct { name: []const u8, params: []const HostKind, ret: HostKind, export_name: ?[]const u8 = null };
 pub const HostAbiOpts = struct { module_name: []const u8, exports: []const HostExport };
 pub const QbeCallDst = qbe_emit.QbeCallDst;
 pub const QbeAllocSize = qbe_emit.QbeAllocSize;
