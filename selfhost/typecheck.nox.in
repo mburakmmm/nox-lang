@@ -349,8 +349,11 @@ class Fx:
     in_async: bool
     self_cls: int
     is_init: bool
+    # `awaited_callee`: o an `await` operandı olan çağrının callee düğümü (-1 yok); `ch.send/recv` yalnız bu bağlamda geçerli
+    awaited: int
 
     def __init__(self, scope: int, ret: int, in_async: bool) -> None:
+        self.awaited = -1
         self.scope = scope
         self.ret = ret
         self.loop = 0
@@ -674,13 +677,30 @@ def check_await(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
     if not fx.in_async:
         mp(ck, "'await' can only be used inside an 'async def' body")
         raise mk_fail(ck, "TypeMismatch")
-    t: int = check_expr(ck, a, fx, a.n[e + 1])
+    opd: int = a.n[e + 1]
+    saved: int = fx.awaited
+    fx.awaited = -1
+    if a.n[opd] == {{T:Expr.call}}:
+        fx.awaited = a.n[a.n[opd + 1] + {{O:Call.callee}}]
+    t: int = -1
+    try:
+        t = check_expr(ck, a, fx, opd)
+    finally:
+        fx.awaited = saved
     if ck.tt.tag[t] == 7:
         return ck.tt.xa[t]
-    # Task değil: yalnızca `x.send/recv/join(...)` çağrısı olabilir (Channel/ThreadHandle: kapsam dışı); başka şekil → hata
-    opd: int = a.n[e + 1]
-    if a.n[opd] == {{T:Expr.call}} and a.n[a.n[a.n[opd + 1] + {{O:Call.callee}}]] == {{T:Expr.attribute}}:
-        raise unsup(ck, "await#nontask_attr_call")
+    # Task değil: yalnızca `ch.send/recv(...)` (Channel/ThreadChannel) ya da `h.join()` (ThreadHandle) çağrısı olabilir
+    if a.n[opd] == {{T:Expr.call}}:
+        cal: int = a.n[a.n[opd + 1] + {{O:Call.callee}}]
+        if a.n[cal] == {{T:Expr.attribute}}:
+            cat: int = a.n[cal + 1]
+            rt: int = check_expr(ck, a, fx, a.n[cat + {{O:Attribute.obj}}])
+            can: int = pk(a.n[cat + {{O:Attribute.attr}}], a.n[cat + {{O:Attribute.attr}} + 1])
+            rg: int = ck.tt.tag[rt]
+            if (sref_eq(a, can, "send") or sref_eq(a, can, "recv")) and (rg == 8 or rg == 10):
+                return t
+            if sref_eq(a, can, "join") and rg == 9:
+                return t
     mp(ck, "'await' can only be used on a Task value, a Channel.send/recv, a ThreadChannel.send/recv or a ThreadHandle.join() call")
     raise mk_fail(ck, "TypeMismatch")
 
@@ -2076,7 +2096,194 @@ def check_dict_method(ck: Ck, a: Ast, fx: Fx, c: int, attr: int, obj_t: int) -> 
     fail_attr(ck, a, attr, "UndefinedMethod", "dict has no method '", "' (contains/len/keys/values/get/pop/setdefault/clear/copy/update)")
     return 4
 
-# `obj.metod(...)` (sınıf örneği + list/dict yerleşikleri; str/task/channel/... metodları 3.10'un devamı)
+# ---- Task/Channel/TaskLocal/ThreadHandle/ThreadChannel/str yerleşik metotları (Zig `checkCallInner` `.attribute` dalı; 3.10 dilim C) ----
+def arg_n(a: Ast, c: int) -> int:
+    return pky(sl_at(a, c, {{O:Call.args}}))
+
+def arg_e(ck: Ck, a: Ast, fx: Fx, c: int, i: int) -> int:
+    return check_expr(ck, a, fx, stmt_at(a, sl_at(a, c, {{O:Call.args}}), i))
+
+def check_task_method(ck: Ck, a: Ast, fx: Fx, c: int, attr: int) -> int:
+    n: int = arg_n(a, c)
+    if sref_eq(a, attr, "cancel"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'cancel' takes no arguments")
+        return 4
+    if sref_eq(a, attr, "is_done"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'is_done' takes no arguments")
+        return 2
+    if sref_eq(a, attr, "wait"):
+        if n != 1:
+            fail2(ck, "ArgumentCountMismatch", "'wait' takes exactly 1 argument (timeout in milliseconds)")
+        if arg_e(ck, a, fx, c, 0) != 0:
+            fail2(ck, "TypeMismatch", "the timeout of 'wait' must be an int (milliseconds)")
+        return 2
+    if sref_eq(a, attr, "wait_any"):
+        if n != 2:
+            fail2(ck, "ArgumentCountMismatch", "'wait_any' takes 2 arguments (another Task, timeout in milliseconds)")
+        if ck.tt.tag[arg_e(ck, a, fx, c, 0)] != 7:
+            fail2(ck, "TypeMismatch", "the first argument of 'wait_any' must be a Task")
+        if arg_e(ck, a, fx, c, 1) != 0:
+            fail2(ck, "TypeMismatch", "the timeout of 'wait_any' must be an int (milliseconds)")
+        return 0
+    fail_attr(ck, a, attr, "UndefinedMethod", "Task has no method '", "' (only cancel, is_done, wait and wait_any)")
+    return 4
+
+def check_channel_method(ck: Ck, a: Ast, fx: Fx, c: int, attr: int, obj_t: int) -> int:
+    n: int = arg_n(a, c)
+    elem: int = ck.tt.xa[obj_t]
+    if sref_eq(a, attr, "send"):
+        if n != 1:
+            fail2(ck, "ArgumentCountMismatch", "'send' takes exactly 1 argument")
+        if not ty_assignable(ck.tt, elem, arg_e(ck, a, fx, c, 0)):
+            fail2(ck, "TypeMismatch", "the argument of 'send' does not match the channel's element type")
+        return 4
+    if sref_eq(a, attr, "recv"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'recv' takes no arguments")
+        return elem
+    if sref_eq(a, attr, "wait"):
+        if n != 1:
+            fail2(ck, "ArgumentCountMismatch", "'wait' takes exactly 1 argument (timeout in milliseconds)")
+        if arg_e(ck, a, fx, c, 0) != 0:
+            fail2(ck, "TypeMismatch", "the timeout of 'wait' must be an int (milliseconds)")
+        return 2
+    if sref_eq(a, attr, "wait_any"):
+        if n < 2 or n > 4:
+            fail2(ck, "ArgumentCountMismatch", "'wait_any' takes 1 to 3 other channels and a timeout in milliseconds")
+        for i in range(n - 1):
+            if ck.tt.tag[arg_e(ck, a, fx, c, i)] != 8:
+                fail2(ck, "TypeMismatch", "the channel arguments of 'wait_any' must be Channels")
+        if arg_e(ck, a, fx, c, n - 1) != 0:
+            fail2(ck, "TypeMismatch", "the timeout of 'wait_any' must be an int (milliseconds)")
+        return 0
+    fail_attr(ck, a, attr, "UndefinedMethod", "Channel has no method '", "' (only send/recv/wait/wait_any)")
+    return 4
+
+def check_task_local_method(ck: Ck, a: Ast, fx: Fx, c: int, attr: int, obj_t: int) -> int:
+    n: int = arg_n(a, c)
+    elem: int = ck.tt.xa[obj_t]
+    if sref_eq(a, attr, "get"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'get' takes no arguments")
+        return ty_optional(ck.tt, elem)
+    if sref_eq(a, attr, "set"):
+        if n != 1:
+            fail2(ck, "ArgumentCountMismatch", "'set' takes exactly 1 argument")
+        if not ty_assignable(ck.tt, elem, arg_e(ck, a, fx, c, 0)):
+            fail2(ck, "TypeMismatch", "the argument of 'set' does not match the TaskLocal's element type")
+        return 4
+    if sref_eq(a, attr, "clear"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'clear' takes no arguments")
+        return 4
+    fail_attr(ck, a, attr, "UndefinedMethod", "TaskLocal has no method '", "' (only get/set/clear)")
+    return 4
+
+def check_thread_handle_method(ck: Ck, a: Ast, c: int, attr: int, obj_t: int) -> int:
+    n: int = arg_n(a, c)
+    if sref_eq(a, attr, "join"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'join' takes no arguments")
+        return ck.tt.xa[obj_t]
+    if sref_eq(a, attr, "cancel"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'cancel' takes no arguments")
+        return 4
+    fail_attr(ck, a, attr, "UndefinedMethod", "ThreadHandle has no method '", "' (only join and cancel)")
+    return 4
+
+def check_thread_channel_method(ck: Ck, a: Ast, fx: Fx, c: int, attr: int, obj_t: int) -> int:
+    n: int = arg_n(a, c)
+    elem: int = ck.tt.xa[obj_t]
+    if sref_eq(a, attr, "send"):
+        if n != 1:
+            fail2(ck, "ArgumentCountMismatch", "'send' takes exactly 1 argument")
+        if not ty_assignable(ck.tt, elem, arg_e(ck, a, fx, c, 0)):
+            fail2(ck, "TypeMismatch", "the argument of 'send' does not match the channel's element type")
+        return 4
+    if sref_eq(a, attr, "recv"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'recv' takes no arguments")
+        return elem
+    fail_attr(ck, a, attr, "UndefinedMethod", "ThreadChannel has no method '", "' (only send/recv)")
+    return 4
+
+# `str` metodları (Zig `checkStrMethod`): çekirdek imza tablosu; `__nox_str_<m>` prelude işlevi tanımlıysa yönlendirme (kapsam dışı).
+def check_str_method(ck: Ck, a: Ast, fx: Fx, c: int, attr: int) -> int:
+    tt: TT = ck.tt
+    n: int = arg_n(a, c)
+    pxs: list[int] = []
+    pfx: str = "__nox_str_"
+    for i in range(len(pfx)):
+        pxs.append(ord(pfx[i]))
+    for j in range(sref_len(attr)):
+        pxs.append(sref_byte(a, attr, j))
+    if m2_get(ck.fmap, 0, sym_intern_list(tt, pxs, 0, len(pxs))) >= 0:
+        raise unsup(ck, "str#prelude")
+    np: int = -1
+    p0: int = 3
+    p1: int = 3
+    ret: int = 3
+    opt: bool = False
+    if sref_eq(a, attr, "upper") or sref_eq(a, attr, "lower") or sref_eq(a, attr, "casefold") or sref_eq(a, attr, "strip") or sref_eq(a, attr, "lstrip") or sref_eq(a, attr, "rstrip"):
+        np = 0
+    elif sref_eq(a, attr, "isdigit") or sref_eq(a, attr, "isalpha") or sref_eq(a, attr, "isalnum") or sref_eq(a, attr, "isspace") or sref_eq(a, attr, "isupper") or sref_eq(a, attr, "islower") or sref_eq(a, attr, "isdecimal") or sref_eq(a, attr, "isnumeric"):
+        np = 0
+        ret = 2
+    elif sref_eq(a, attr, "startswith") or sref_eq(a, attr, "endswith"):
+        np = 1
+        ret = 2
+    elif sref_eq(a, attr, "find") or sref_eq(a, attr, "count") or sref_eq(a, attr, "index"):
+        np = 1
+        ret = 0
+    elif sref_eq(a, attr, "replace"):
+        np = 2
+    elif sref_eq(a, attr, "zfill"):
+        np = 1
+        p0 = 0
+    elif sref_eq(a, attr, "ljust") or sref_eq(a, attr, "rjust") or sref_eq(a, attr, "center"):
+        np = 2
+        p0 = 0
+        opt = True
+    elif sref_eq(a, attr, "split"):
+        np = 1
+        ret = ty_list(tt, 3)
+        opt = True
+    elif sref_eq(a, attr, "join"):
+        np = 1
+        p0 = ty_list(tt, 3)
+    if np < 0:
+        fail_attr(ck, a, attr, "UndefinedMethod", "str has no method '", "' (upper/lower/strip/lstrip/rstrip/split/join/replace/startswith/endswith/find/index/count/isdigit/isalpha/isalnum/isspace/isupper/islower/ljust/rjust/center/zfill)")
+    minn: int = np
+    if opt:
+        minn = np - 1
+    if n < minn or n > np:
+        mp(ck, "str.")
+        mp_sref(ck, a, attr)
+        mp(ck, " expects ")
+        mp_int(ck, np)
+        mp(ck, " arguments, ")
+        mp_int(ck, n)
+        mp(ck, " were given")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    args: int = sl_at(a, c, {{O:Call.args}})
+    for k in range(n):
+        pt: int = p0
+        if k == 1:
+            pt = p1
+        at: int = check_expr_expected(ck, a, fx, stmt_at(a, args, k), pt)
+        if not ty_assignable(tt, pt, at):
+            mp(ck, "str.")
+            mp_sref(ck, a, attr)
+            mp(ck, " argument ")
+            mp_int(ck, k + 1)
+            mp(ck, " has a mismatched type")
+            raise mk_fail(ck, "TypeMismatch")
+    return ret
+
+# `obj.metod(...)` (sınıf örneği + list/dict/str/Task/Channel/TaskLocal/ThreadHandle/ThreadChannel yerleşikleri)
 def check_method_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
     at: int = a.n[callee + 1]
     obj: int = a.n[at + {{O:Attribute.obj}}]
@@ -2096,8 +2303,25 @@ def check_method_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
         return check_list_method(ck, a, fx, c, obj, attr, obj_t)
     if g == 13:
         return check_dict_method(ck, a, fx, c, attr, obj_t)
-    if g == 3 or g == 7 or g == 8 or g == 9 or g == 10 or g == 11:
-        raise unsup(ck, "check_method_call#builtin_receiver")
+    if g == 7:
+        return check_task_method(ck, a, fx, c, attr)
+    if (g == 8 or g == 10) and (sref_eq(a, attr, "send") or sref_eq(a, attr, "recv")) and callee != fx.awaited:
+        mp(ck, "'")
+        mp_sref(ck, a, attr)
+        mp(ck, "' suspends the task: write 'await ch.")
+        mp_sref(ck, a, attr)
+        mp(ck, "(...)'")
+        raise mk_fail(ck, "TypeMismatch")
+    if g == 8:
+        return check_channel_method(ck, a, fx, c, attr, obj_t)
+    if g == 11:
+        return check_task_local_method(ck, a, fx, c, attr, obj_t)
+    if g == 9:
+        return check_thread_handle_method(ck, a, c, attr, obj_t)
+    if g == 10:
+        return check_thread_channel_method(ck, a, fx, c, attr, obj_t)
+    if g == 3:
+        return check_str_method(ck, a, fx, c, attr)
     if g != 6:
         mp(ck, "a method call is only valid on class instances")
         raise mk_fail(ck, "TypeMismatch")

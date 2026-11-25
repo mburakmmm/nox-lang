@@ -55,9 +55,19 @@ test "nox_list_sort_float artan sirada siralar" {
 }
 
 test "nox_list_sort_str dizeleri sozluksel sirada siralar" {
-    const words = [_][:0]const u8{ "banana", "apple", "cherry" };
+    // v2.2.77'den beri karşılaştırma uzunluk-bilgilidir: elemanlar başlıklı GERÇEK Nox `str` değerleri olmalıdır (ham Zig sabitleri başlık taşımaz).
+    const asap = @import("../alloc/asap.zig");
+    const rt = asap.nox_runtime_init() orelse return error.InitFailed;
+    defer asap.nox_runtime_deinit(rt);
+    const words = [_][]const u8{ "banana", "apple", "cherry" };
     var data: [3]i64 = undefined;
-    for (words, 0..) |w, i| data[i] = @bitCast(@as(isize, @intCast(@intFromPtr(w.ptr))));
+    var made: usize = 0;
+    defer for (data[0..made]) |d| str_mod.nox_str_release(rt, @ptrFromInt(@as(usize, @bitCast(d))));
+    for (words, 0..) |w, i| {
+        const s = str_mod.nox_str_from_bytes(rt, w) orelse return error.OutOfMemory;
+        data[i] = @bitCast(@as(isize, @intCast(@intFromPtr(s))));
+        made += 1;
+    }
     nox_list_sort_str(&data, data.len);
 
     const p0: [*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(data[0])));

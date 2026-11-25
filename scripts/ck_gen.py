@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False):
         self.rnd = rnd
+        self.use_recv = use_recv
         self.use_builtins = use_builtins
         self.use_async = use_async
         self.use_methods = use_methods
@@ -353,8 +354,54 @@ class Gen:
         for _ in range(r.randint(1, 5)):
             self.lines.append(r.choice(tpl)())
 
+    def gen_recv(self):
+        """str + Task/Channel/TaskLocal/ThreadHandle/ThreadChannel metotları (3.10 dilim C): doğru/yanlış argüman sayısı-tipi, await bağlamı, tanımsız metot."""
+        r = self.rnd
+        sv = lambda: r.choice(['"a"', 's', 'u', '"xy"', '1', 'n', 'True', '1.5'])
+        iv = lambda: r.choice(['0', '3', 'n', '1.5', '"a"', 'True', 'len(s)'])
+        strm = [f"{m}()" for m in ["upper", "lower", "casefold", "strip", "lstrip", "rstrip", "isdigit", "isalpha", "isalnum", "isspace", "isupper", "islower", "isdecimal", "isnumeric"]]
+        strm += ["title()", "capitalize()", "swapcase()", "nope()"]
+        t_lines = [
+            lambda: f"x: str = s.{r.choice(strm)}", lambda: f"x: bool = s.{r.choice(strm)}", lambda: f"x: int = s.{r.choice(strm)}",
+            lambda: f"x: bool = s.{r.choice(['startswith', 'endswith'])}({sv()})", lambda: f"x: int = s.{r.choice(['find', 'count', 'index'])}({sv()})", lambda: f"s.{r.choice(['find', 'startswith', 'upper'])}({sv()}, {sv()})",
+            lambda: f"x: str = s.replace({sv()}, {sv()})", lambda: f"x: str = s.replace({sv()})", lambda: f"x: str = s.zfill({iv()})", lambda: "x: str = s.zfill()",
+            lambda: f"x: str = s.{r.choice(['ljust', 'rjust', 'center'])}({iv()})", lambda: f"x: str = s.{r.choice(['ljust', 'rjust', 'center'])}({iv()}, {sv()})", lambda: f"x: str = s.ljust({iv()}, {sv()}, 1)",
+            lambda: f"x: list[str] = s.split()", lambda: f"x: list[str] = s.split({sv()})", lambda: f"x: list[str] = s.split({sv()}, {sv()})", lambda: "x: list[int] = s.split(\",\")",
+            lambda: f"x: str = {r.choice(['\",\"', 's'])}.join({r.choice(['ws', 'xs', '[]', '[\"a\"]', '1'])})", lambda: "x: str = s.join()", lambda: f"x: str = n.{r.choice(['upper', 'join'])}()",
+            lambda: "x: str = s.strip(\" \")", lambda: "x: str = s.title()", lambda: f"s.{r.choice(['upper', 'foo', 'append'])}()",
+        ]
+        c_lines = [
+            lambda: f"t.{r.choice(['cancel', 'is_done'])}({r.choice(['', '1'])})", lambda: f"x: bool = t.is_done()", lambda: f"x: bool = t.wait({iv()})", lambda: "x: bool = t.wait()",
+            lambda: f"x: int = t.wait_any({r.choice(['t', 'ch', 'n'])}, {iv()})", lambda: "x: int = t.wait_any(t)", lambda: f"t.{r.choice(['join', 'result', 'nope'])}()",
+            lambda: f"await ch.send({sv()})", lambda: f"ch.send({sv()})", lambda: "x: int = await ch.recv()", lambda: "x: int = ch.recv()", lambda: "x: str = await ch.recv()", lambda: "await ch.send()", lambda: "await ch.recv(1)",
+            lambda: f"x: bool = ch.wait({iv()})", lambda: "x: bool = ch.wait()", lambda: f"x: int = ch.wait_any({r.choice(['ch', 'tc', 'n'])}, {iv()})", lambda: f"x: int = ch.wait_any(ch, {r.choice(['ch', 'ch2'])}, {iv()})", lambda: "x: int = ch.wait_any(5)",
+            lambda: "ch.nope()", lambda: f"await tc.send({sv()})", lambda: "tc.send(1)", lambda: "x: int = await tc.recv()", lambda: "x: int = tc.recv()", lambda: "tc.wait(1)", lambda: f"await th.join()", lambda: "x: int = th.join()",
+            lambda: "x: int = await th.join()", lambda: "th.cancel()", lambda: "th.cancel(1)", lambda: "th.nope()", lambda: "await th.cancel()",
+            lambda: "x: str | None = tl.get()", lambda: "x: str = tl.get()", lambda: "tl.get(1)", lambda: f"tl.set({sv()})", lambda: "tl.set()", lambda: "tl.clear()", lambda: "tl.clear(1)", lambda: "tl.nope()",
+            lambda: "x: str = await ch2.recv()", lambda: "x: str = ch2.recv()", lambda: "await ch2.send(\"a\")", lambda: "x: str = th2.join()", lambda: "x: int = th2.join()", lambda: "x: int = th.cancel()",
+            lambda: "x: int = t.cancel()", lambda: "x: int = ch.send(1)", lambda: "x: int = tl.set(\"a\")", lambda: "x: int = tl.clear()", lambda: "x: str = await tc.recv()", lambda: "x: int = await th2.join()",
+            lambda: "x: int = await t", lambda: "x: int = await n", lambda: f"x: int = await {r.choice(['s.upper()', 'ch.wait(1)', 'th.cancel()', 'xs.pop()'])}",
+        ]
+        base = "ch: Channel[int], ch2: Channel[str], tc: ThreadChannel[int], t: Task[int], s: str, n: int, xs: list[int], ws: list[str], u: str"
+        for k in range(r.randint(1, 2)):
+            is_async = r.random() < 0.6
+            # async parametre kısıtı: ThreadHandle/TaskLocal yalnız eşzamanlı işlevlerde
+            sig = base if is_async else base + ", th: ThreadHandle[int], th2: ThreadHandle[str], tl: TaskLocal[str]"
+            self.lines.append(f"{'async ' if is_async else ''}def w{k}({sig}) -> None:")
+            for _ in range(r.randint(1, 4)):
+                src = r.choice(t_lines + c_lines)()
+                for _try in range(10):
+                    if not is_async or ("th." not in src and "th2." not in src and "tl." not in src):
+                        break
+                    src = r.choice(t_lines + c_lines)()
+                self.lines.append("    " + src)
+            self.lines.append("")
+
     def program(self):
         r = self.rnd
+        if self.use_recv:
+            self.gen_recv()
+            return "\n".join(self.lines) + "\n"
         if self.use_builtins:
             self.gen_builtins()
             return "\n".join(self.lines) + "\n"
@@ -394,11 +441,12 @@ def main():
     ap.add_argument("--async", dest="use_async", action="store_true")
     ap.add_argument("--methods", dest="use_methods", action="store_true")
     ap.add_argument("--builtins", dest="use_builtins", action="store_true")
+    ap.add_argument("--recv", dest="use_recv", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 
