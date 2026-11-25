@@ -4213,6 +4213,86 @@ fn linkMobile(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []
 }
 
 /// `--target wasm32-wasi`: LLVM IR'ı `zig cc -target wasm32-wasi` ile wasi-libc + `noxrt-wasm32-wasi.o`ya bağlar, `.wasm` üretir.
+/// UR-001 (NoxPy, v2.2.75): masaüstü kütüphane çıktısı (LLVM). `.ll` → `-fPIC` nesne (`main`siz: `library_mode`); `--emit-static-lib` nesne + `noxrt.o`yu arşivler,
+/// `--emit-shared-lib` `.so`/`.dylib`/`.dll` bağlar (ELF'te `--no-undefined`). `info == null` ana makine hedefidir. Dışa aktarım yüzeyi (`nox_host.h`) UR-002'nin işidir.
+fn linkDesktopLib(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []const u8, ir: []const u8, info: ?qbe_target.HostedTargetInfo, emit: EmitKind, output_override: ?[]const u8, resource_dirs: project.ResourceDirs, module: ast.Module, extern_root: ?[]const u8) ![]const u8 {
+    const base = stripOneExt(output_override orelse stem);
+    const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{base});
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ll_path, .data = ir });
+    const target_win = if (info) |ht| ht.is_windows else builtin.os.tag == .windows;
+    const target_mac = if (info) |ht| std.mem.endsWith(u8, ht.zig_triple, "macos") else builtin.os.tag == .macos;
+    const driver: CcDriver = if (info != null) .zig_cc else ccDriver(gpa, io);
+    const obj_path = if (emit == .obj and output_override != null) output_override.? else try std.fmt.allocPrint(a, "{s}.o", .{base});
+
+    var cc: std.ArrayListUnmanaged([]const u8) = .empty;
+    switch (driver) {
+        .zig_cc => {
+            try cc.appendSlice(a, &.{ "zig", "cc", "-O2", "-Wno-override-module" });
+            if (info) |ht| try cc.appendSlice(a, &.{ "-target", ht.zig_triple }) else if (builtin.os.tag == .windows) try cc.appendSlice(a, &.{ "-target", "x86_64-windows-gnu" });
+        },
+        .clang, .none => {
+            try cc.appendSlice(a, &.{ "clang", "-O2", "-Wno-override-module" });
+            if (builtin.os.tag == .windows) try cc.appendSlice(a, &.{ "-target", "x86_64-w64-windows-gnu" });
+        },
+    }
+    if (!target_win) try cc.append(a, "-fPIC");
+    var obj_argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    try obj_argv.appendSlice(a, cc.items);
+    try obj_argv.appendSlice(a, &.{ "-c", "-o", obj_path, ll_path });
+    runTool(gpa, io, obj_argv.items) catch |err| {
+        if (err == error.FileNotFound) {
+            printErr("clang/zig not found: the LLVM backend needs 'clang' or 'zig' on PATH (for example: brew install llvm)\n", .{});
+            return error.BuildFailed;
+        }
+        return err;
+    };
+    if (emit == .obj) return obj_path;
+
+    const rt_path: []const u8 = if (info) |ht| try std.fmt.allocPrint(a, "{s}/lib/{s}.o", .{ resource_dirs.install_root, ht.runtime_object_name }) else resource_dirs.noxrt_path;
+    const swap_path: ?[]const u8 = if (!target_win) null else if (info) |ht| try std.fmt.allocPrint(a, "{s}/lib/swap_asm-{s}.o", .{ resource_dirs.install_root, ht.runtime_object_name }) else resource_dirs.swap_asm_path;
+    if (emit == .static_lib) {
+        const archive = output_override orelse try std.fmt.allocPrint(a, "{s}.a", .{base});
+        std.Io.Dir.cwd().deleteFile(io, archive) catch {}; // `ar rcs` var olan arşive ekler: temiz başla
+        var ar: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (builtin.os.tag == .macos and target_mac) {
+            try ar.appendSlice(a, &.{ "libtool", "-static", "-o", archive });
+        } else if (driver == .zig_cc) {
+            try ar.appendSlice(a, &.{ "zig", "ar", "rcs", archive });
+        } else {
+            try ar.appendSlice(a, &.{ "ar", "rcs", archive });
+        }
+        try ar.appendSlice(a, &.{ obj_path, rt_path });
+        if (swap_path) |sp| try ar.append(a, sp);
+        try runTool(gpa, io, ar.items);
+        return archive;
+    }
+    const ext: []const u8 = if (target_win) "dll" else if (target_mac) "dylib" else "so";
+    const shared = output_override orelse try std.fmt.allocPrint(a, "{s}.{s}", .{ base, ext });
+    var ld: std.ArrayListUnmanaged([]const u8) = .empty;
+    try ld.appendSlice(a, cc.items);
+    try ld.append(a, "-shared");
+    if (!target_win and !target_mac) try ld.append(a, "-Wl,--no-undefined");
+    try ld.appendSlice(a, &.{ "-o", shared, obj_path, rt_path });
+    if (swap_path) |sp| try ld.append(a, sp);
+    try ld.append(a, "-lm");
+    if (target_win) try ld.appendSlice(a, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });
+    try appendExternLinkArgs(io, a, &ld, module, extern_root, try clibsArchivePath(a, resource_dirs, info));
+    const r = std.process.run(gpa, io, .{ .argv = ld.items }) catch |err| {
+        if (err == error.FileNotFound) {
+            printErr("clang/zig not found: the LLVM backend needs 'clang' or 'zig' on PATH (for example: brew install llvm)\n", .{});
+            return error.BuildFailed;
+        }
+        return err;
+    };
+    defer gpa.free(r.stdout);
+    defer gpa.free(r.stderr);
+    if (r.term != .exited or r.term.exited != 0) {
+        printErr("{s} failed:\n{s}\n", .{ if (driver == .zig_cc) "zig cc" else "clang", r.stderr });
+        return error.BuildFailed;
+    }
+    return shared;
+}
+
 fn linkWasm(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []const u8, ir: []const u8, info: qbe_target.HostedTargetInfo, output_override: ?[]const u8, resource_dirs: project.ResourceDirs, module: ast.Module, extern_root: ?[]const u8) ![]const u8 {
     const base = stripOneExt(output_override orelse stem);
     const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{base});
@@ -4314,9 +4394,18 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
         printErr("--selfhost-obj needs the native LLVM backend (clang on PATH) and no --target\n", .{});
         return error.BuildFailed;
     }
-    if (emit != .exe and emit != .host_obj and (hosted_info == null or !hosted_info.?.isMobile())) {
-        printErr("--emit-obj, --emit-static-lib and --emit-shared-lib require a mobile --target\n", .{});
-        return error.BuildFailed;
+    if (emit != .exe and emit != .host_obj) {
+        // UR-001 (NoxPy, v2.2.75): masaüstü hosted hedeflerde (ve ana makinede) de kütüphane çıktısı — yalnız LLVM yolunda (PIC nesne + PIC `noxrt.o`).
+        const mobile = hosted_info != null and hosted_info.?.isMobile();
+        const desktop = profile == .hosted and (hosted_info == null or hosted_info.?.isDesktop());
+        if (!mobile and !desktop) {
+            printErr("--emit-obj, --emit-static-lib and --emit-shared-lib require a hosted desktop or mobile --target\n", .{});
+            return error.BuildFailed;
+        }
+        if (desktop and !release) {
+            printErr("--emit-obj, --emit-static-lib and --emit-shared-lib on desktop targets need the LLVM backend (clang or zig on PATH); do not pass --backend qbe\n", .{});
+            return error.BuildFailed;
+        }
     }
     // Faz R.3+F.1 tamamlama (bkz. plan dosyası): `--release` (LLVM) yolu
     // GERÇEK OS iş parçacıklarına dayanan paylaşılan bir `WorkerPool`
@@ -4461,6 +4550,7 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
             }
             if (ht.wasm) return linkWasm(gpa, io, a, stem, ir, ht, output_override, resource_dirs, module, extern_root);
         }
+        if (emit != .exe) return linkDesktopLib(gpa, io, a, stem, ir, if (hosted_info) |ht| (if (ht.isDesktop()) ht else null) else null, emit, output_override, resource_dirs, module, extern_root);
         const ll_path = try std.fmt.allocPrint(a, "{s}.ll", .{stem});
         // ThreadSanitizer: clang yalnız `sanitize_thread` özniteliği taşıyan işlevleri araçlar; `.ll` girdisinde öznitelik her işlev başlığına eklenir.
         const ir_out: []const u8 = if (g_tsan) try std.mem.replaceOwned(u8, a, ir, ") nounwind {", ") nounwind sanitize_thread {") else ir;

@@ -204,6 +204,7 @@ fn addClibsArchive(b: *std.Build, arch: std.Target.Cpu.Arch, os_tag: std.Target.
     for (srcs.items, 0..) |src, idx| {
         const cc = b.addSystemCommand(&.{ b.graph.zig_exe, "cc", "-target", triple });
         cc.addArgs(src.flags);
+        if (os_tag != .windows) cc.addArg("-fPIC"); // UR-001 (NoxPy): paylaşılan kütüphane bağlanabilsin
         cc.addArg("-c");
         cc.addFileArg(b.path(b.fmt("{s}/{s}", .{ src.dir, src.file })));
         cc.addArg("-o");
@@ -255,6 +256,7 @@ fn addHostedRuntimeChain(
         .root_source_file = b.path("runtime/lib.zig"),
         .target = os_target,
         .optimize = optimize,
+        .pic = if (os_tag == .windows) null else true, // UR-001 (NoxPy): `noxc build --emit-shared-lib` ELF'te yalnız PIC nesneleri bağlayabilir
         .strip = if (optimize == .Debug or os_tag == .windows) null else true, // 2.2 aşama 9 (bkz. native `noxrt_mod`; Windows'ta strip .pdata'yı da atar ve ölçümde boyutu küçültmedi)
         .link_libc = true,
         .imports = &.{
@@ -909,6 +911,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path(if (is_freestanding) "runtime/lib_freestanding.zig" else "runtime/lib.zig"),
         .target = target,
         .optimize = optimize,
+        .pic = if (is_freestanding or target.result.os.tag == .windows) null else true, // UR-001 (NoxPy): kütüphane çıktısı için PIC çalışma zamanı
         // Faz R.1: `runtime/`nin HER YERİNDE (async_rt, stdlib_shims, alloc)
         // `std.c.*` (soket/dosya sistemi ilkelleri, kqueue/epoll) KULLANILIYOR
         // — macOS'ta bu HER ZAMAN ÖRTÜK olarak çalışıyordu (Darwin ikilileri
@@ -1637,6 +1640,7 @@ pub fn build(b: *std.Build) void {
         "tests/cli/deny_capability_test.zig",
         "tests/cli/backend_default_test.zig",
         "tests/cli/mobile_target_test.zig",
+        "tests/cli/desktop_lib_emit_test.zig",
         "tests/cli/embed_abi_corpus_test.zig",
         "tests/cli/sandbox_run_test.zig",
         "tests/cli/sign_test.zig",

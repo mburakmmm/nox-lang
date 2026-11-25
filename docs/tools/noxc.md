@@ -45,7 +45,7 @@ normally).
 | `--asyncify` | with `--target wasm32-wasi` or `wasm32-freestanding`: real fibers through Binaryen Asyncify (needs `wasm-opt`) instead of the nested-run simulation ([WebAssembly](wasm.md)) |
 | `--threads` | with `--target wasm32-wasi`: real parallel M:N through shared memory and atomics (includes the Asyncify fibers; needs `wasm-opt` and `node`) ([WebAssembly](wasm.md)) |
 | `--emit-asm` | stop after producing assembly (`.s`). Not valid for a mobile target |
-| `--emit-obj`, `--emit-static-lib`, `--emit-shared-lib` | mobile library output. iOS is a static archive. Android's packaged form is `--emit-shared-lib`. One flag only |
+| `--emit-obj`, `--emit-static-lib`, `--emit-shared-lib` | library output instead of an executable (no `main`). Mobile: iOS is a static archive, Android's packaged form is `--emit-shared-lib`. Desktop hosts and `--target linux-x64`/`linux-arm64`/`macos-*`/`windows-x64` (LLVM backend only): a PIC object, an archive with the PIC `noxrt.o`, or a `.so`/`.dylib`/`.dll`. One flag only |
 | `-g` | emit DWARF line tables for debugging — QBE backend only, selected automatically ([Debugging](debugging.md)) |
 | `--dump`, `-v` | verbose output: dump the AST and compiler decisions |
 

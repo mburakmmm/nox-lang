@@ -24,7 +24,7 @@ Without `zig`, a desktop `--target` falls back to QBE and a C compiler for that 
 - **Embedded C libraries are per target.** Programs that import `nox.lz4`, `nox.yyjson` and the like also need `noxclibs-<target>.a` next to the runtime ([Embedded C libraries](embedded-c-libraries.md)). Release archives from 2.1.176 include it.
 - **Run it where it belongs.** A Windows `.exe` built on Linux is checked on a real Windows machine in the project's CI on every change; you can verify yours the same way.
 - **WebAssembly is a target too:** `--target wasm32-wasi` or `wasm32-freestanding` ([WebAssembly](../tools/wasm.md)).
-- **Mobile targets produce libraries**, not executables (`--emit-obj`, `--emit-static-lib`, `--emit-shared-lib`), and are experimental ([Platforms](../reference/platforms.md)).
+- **Mobile targets produce libraries**, not executables (`--emit-obj`, `--emit-static-lib`, `--emit-shared-lib`), and are experimental ([Platforms](../reference/platforms.md)). The same flags also work on desktop targets with the LLVM backend (position-independent code, so the result can be linked into a shared library).
 
 ## Freestanding
 
