@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False):
         self.rnd = rnd
+        self.use_try = use_try
         self.use_recv = use_recv
         self.use_builtins = use_builtins
         self.use_async = use_async
@@ -397,8 +398,72 @@ class Gen:
                 self.lines.append("    " + src)
             self.lines.append("")
 
+    def gen_try(self):
+        """raise/try/except/finally/with/del (3.9 dilim): bilinmeyen sınıf, çıplak except, `as` çakışması, with sözleşmesi ihlalleri, del hedefleri, her-yolda-döner analizi."""
+        r = self.rnd
+        self.lines += [
+            "class E1:", "    code: int", "    def __init__(self, code: int) -> None:", "        self.code = code", "",
+            "class E2:", "    msg: str", "    def __init__(self, msg: str) -> None:", "        self.msg = msg", "",
+            "class CM:", "    n: int", "    def __init__(self, n: int) -> None:", "        self.n = n", "    def __enter__(self) -> int:", "        return self.n", "    def __exit__(self) -> None:", "        pass", "",
+            "class CM2:", "    def __enter__(self, x: int) -> int:", "        return x", "    def __exit__(self) -> None:", "        pass", "",
+            "class CM3:", "    def __enter__(self) -> str:", "        return \"a\"", "    def __exit__(self) -> int:", "        return 1", "",
+            "class CM4:", "    def __enter__(self) -> int:", "        return 1", "",
+            "class CM5:", "    def __exit__(self) -> None:", "        pass", "",
+            "class CM6:", "    def __enter__(self) -> int:", "        return 1", "    def __exit__(self, x: int) -> None:", "        pass", "",
+            "xs: list[int] = [1, 2]", "d: dict[str, int] = {\"a\": 1}", "n: int = 3", "s: str = \"q\"", "o: int | None = None", ""]
+        ex = lambda: r.choice(["E1(1)", "E2(\"m\")", "E1(\"x\")", "1", "\"s\"", "None", "n", "xs", "E1", "CM(1)", "undefined_q"])
+        cls = lambda: r.choice(["E1", "E2", "CM", "Nope", "int", "str", "ValueError"])
+        body = lambda ind: r.choice([f"{ind}n = n + 1", f"{ind}raise {ex()}", f"{ind}pass", f"{ind}x: int = len(xs)", f"{ind}print(s)", f"{ind}del {r.choice(['d[\"a\"]', 'xs[0]', 'd[1]', 'xs[\"a\"]', 'n', 's[0]', 'o', 'undefined_d[0]', 'd'])}"])
+        def trystmt(ind, ret_kind):
+            out = [f"{ind}try:"]
+            for _ in range(r.randint(1, 2)):
+                out.append(body(ind + "    "))
+            if ret_kind and r.random() < 0.5:
+                out.append(f"{ind}    return {r.choice(['1', 's', 'n'])}")
+            nex = r.choice([0, 1, 1, 2])
+            for k in range(nex):
+                form = r.choice(["cls"] * 6 + ["cls_as"] * 6 + ["bare", "bare", "dotted"] if r.random() < 0.05 else ["cls", "cls_as", "bare"])
+                if form == "bare":
+                    out.append(f"{ind}except:")
+                elif form == "dotted":
+                    out.append(f"{ind}except mod.{cls()}:")
+                elif form == "cls":
+                    out.append(f"{ind}except {cls()}:")
+                else:
+                    out.append(f"{ind}except {cls()} as {r.choice(['e', 'n', 'xs', 'err'])}:")
+                for _ in range(r.randint(1, 2)):
+                    out.append(body(ind + "    "))
+                if ret_kind and r.random() < 0.5:
+                    out.append(f"{ind}    return {r.choice(['1', 's'])}")
+            if nex == 0 or r.random() < 0.4:
+                out.append(f"{ind}finally:")
+                out.append(body(ind + "    "))
+                if ret_kind and r.random() < 0.4:
+                    out.append(f"{ind}    return 1")
+            return out
+        def withstmt(ind, ret_kind):
+            head = f"{ind}{r.choice([''] * 14 + ['async '])}with {r.choice(['CM(1)', 'CM2()', 'CM3()', 'CM4()', 'CM5()', 'CM6()', 'n', 'E1(1)', 'xs', 'undefined_w'])}"
+            if r.random() < 0.6:
+                head += f" as {r.choice(['b', 'n', 'bb'])}"
+            out = [head + ":", body(ind + "    ")]
+            if ret_kind and r.random() < 0.5:
+                out.append(f"{ind}    return 1")
+            return out
+        for k in range(r.randint(1, 3)):
+            self.lines.append(f"def f{k}(p: int) -> int:")
+            for _ in range(r.randint(1, 2)):
+                self.lines += r.choice([trystmt, trystmt, withstmt])("    ", True)
+            if r.random() < 0.3:
+                self.lines.append("    return 0")
+            self.lines.append("")
+        for _ in range(r.randint(0, 3)):
+            self.lines += r.choice([trystmt, withstmt, lambda i, rk: [body(i)]])("", False)
+
     def program(self):
         r = self.rnd
+        if self.use_try:
+            self.gen_try()
+            return "\n".join(self.lines) + "\n"
         if self.use_recv:
             self.gen_recv()
             return "\n".join(self.lines) + "\n"
@@ -442,11 +507,12 @@ def main():
     ap.add_argument("--methods", dest="use_methods", action="store_true")
     ap.add_argument("--builtins", dest="use_builtins", action="store_true")
     ap.add_argument("--recv", dest="use_recv", action="store_true")
+    ap.add_argument("--try", dest="use_try", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

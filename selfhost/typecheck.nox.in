@@ -1524,7 +1524,115 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
             mp(ck, "'continue' can only be used inside a 'while'/'for' loop")
             raise mk_fail(ck, "TypeMismatch")
         return
+    if tag == {{T:StmtKind.raise_stmt}}:
+        rzt: int = check_expr(ck, a, fx, pay)
+        if ck.tt.tag[rzt] != 6:
+            mp(ck, "'raise' can only take a class instance")
+            raise mk_fail(ck, "TypeMismatch")
+        return
+    if tag == {{T:StmtKind.del_stmt}}:
+        if a.n[pay] != {{T:Expr.index}}:
+            mp(ck, "'del' only takes an index target (del d[key])")
+            raise mk_fail(ck, "TypeMismatch")
+        dip: int = a.n[pay + 1]
+        dobj: int = check_expr(ck, a, fx, a.n[dip + {{O:Index.obj}}])
+        didx: int = check_expr(ck, a, fx, a.n[dip + {{O:Index.index}}])
+        dg: int = ck.tt.tag[dobj]
+        if dg == 13:
+            if didx != ck.tt.xa[dobj]:
+                mp(ck, "the 'del' key does not match the dict's key type")
+                raise mk_fail(ck, "TypeMismatch")
+        elif dg == 5:
+            if didx != 0:
+                mp(ck, "the 'del' list index must be an 'int'")
+                raise mk_fail(ck, "TypeMismatch")
+        else:
+            mp(ck, "'del' only works on list[i] or dict[key]")
+            raise mk_fail(ck, "TypeMismatch")
+        return
+    if tag == {{T:StmtKind.try_stmt}}:
+        check_try(ck, a, fx, pay)
+        return
+    if tag == {{T:StmtKind.with_stmt}}:
+        if a.n[pay + {{O:WithStmt.is_async}}] != 0:
+            raise unsup(ck, "check_stmt#async_with")
+        check_with(ck, a, fx, pay)
+        return
     raise unsup(ck, "stmt_kind#" + str(tag))
+
+# `checkTry`: try gövdesi, `except [Sınıf [as ad]]` yan tümceleri (noktalı ad kapsam dışı), `finally`.
+def check_try(ck: Ck, a: Ast, fx: Fx, t: int) -> None:
+    exs: int = sl_at(a, t, {{O:TryStmt.except_clauses}})
+    for q in range(pky(exs)):
+        qc: int = a.n[stmt_at(a, exs, q) + {{O:ExceptClause.class_name}}]
+        if qc != {{NONE}}:
+            cn0: int = pk(a.n[stmt_at(a, exs, q) + {{O:ExceptClause.class_name}}], a.n[stmt_at(a, exs, q) + {{O:ExceptClause.class_name}} + 1])
+            for dq in range(sref_len(cn0)):
+                if sref_byte(a, cn0, dq) == 46:
+                    raise unsup(ck, "try#dotted")
+    check_block(ck, a, fx, sl_at(a, t, {{O:TryStmt.try_body}}))
+    for k in range(pky(exs)):
+        ec: int = stmt_at(a, exs, k)
+        if a.n[ec + {{O:ExceptClause.class_name}}] == {{NONE}}:
+            check_block(ck, a, fx, sl_at(a, ec, {{O:ExceptClause.body}}))
+            continue
+        cn: int = pk(a.n[ec + {{O:ExceptClause.class_name}}], a.n[ec + {{O:ExceptClause.class_name}} + 1])
+        csym: int = sym_of(ck, a, cn)
+        if class_idx(ck, csym) < 0:
+            mp(ck, "unknown class: ")
+            mp_sref(ck, a, cn)
+            raise mk_fail(ck, "UndefinedClass")
+        if a.n[ec + {{O:ExceptClause.bind_name}}] != {{NONE}}:
+            bn: int = pk(a.n[ec + {{O:ExceptClause.bind_name}}], a.n[ec + {{O:ExceptClause.bind_name}} + 1])
+            declare_var_checked(ck, fx, sym_of(ck, a, bn), ty_class(ck.tt, csym))
+        check_block(ck, a, fx, sl_at(a, ec, {{O:ExceptClause.body}}))
+    if a.n[t + {{O:TryStmt.finally_body}}] != {{NONE}}:
+        check_block(ck, a, fx, sl_at(a, t, {{O:TryStmt.finally_body}}))
+
+# `checkWith`: `with E as ad:` — `E` bir sınıf örneği; argümansız `__enter__`/`__exit__` (`__exit__ -> None`).
+def check_with(ck: Ck, a: Ast, fx: Fx, w: int) -> None:
+    ct: int = check_expr(ck, a, fx, a.n[w + {{O:WithStmt.ctx_expr}}])
+    if ck.tt.tag[ct] != 6:
+        mp(ck, "'with' only works on a class instance")
+        raise mk_fail(ck, "TypeMismatch")
+    ci: int = class_idx_of_type(ck, ct)
+    if ci < 0:
+        mp(ck, "unknown class: ")
+        mp_sym(ck, ck.tt.xa[ct])
+        raise mk_fail(ck, "UndefinedClass")
+    ee: int = m2_get(ck.cls_meths, ci, sym_lit(ck, "__enter__"))
+    if ee < 0:
+        mp(ck, "class '")
+        mp_sym(ck, ck.cls_sym[ci])
+        mp(ck, "' has no '__enter__' method (required for 'with')")
+        raise mk_fail(ck, "UndefinedMethod")
+    esid: int = ck.cls_meths.vv[ee]
+    if ck.fpn[esid] != 0:
+        mp(ck, "'")
+        mp_sym(ck, ck.cls_sym[ci])
+        mp(ck, ".__enter__' MUST NOT take any arguments")
+        raise mk_fail(ck, "TypeMismatch")
+    xe: int = m2_get(ck.cls_meths, ci, sym_lit(ck, "__exit__"))
+    if xe < 0:
+        mp(ck, "class '")
+        mp_sym(ck, ck.cls_sym[ci])
+        mp(ck, "' has no '__exit__' method (required for 'with')")
+        raise mk_fail(ck, "UndefinedMethod")
+    xsid: int = ck.cls_meths.vv[xe]
+    if ck.fpn[xsid] != 0:
+        mp(ck, "'")
+        mp_sym(ck, ck.cls_sym[ci])
+        mp(ck, ".__exit__' MUST NOT take any arguments")
+        raise mk_fail(ck, "TypeMismatch")
+    if ck.fret[xsid] != 4:
+        mp(ck, "'")
+        mp_sym(ck, ck.cls_sym[ci])
+        mp(ck, ".__exit__' MUST return None")
+        raise mk_fail(ck, "TypeMismatch")
+    if a.n[w + {{O:WithStmt.binding}}] != {{NONE}}:
+        bnd: int = pk(a.n[w + {{O:WithStmt.binding}}], a.n[w + {{O:WithStmt.binding}} + 1])
+        declare_var_checked(ck, fx, sym_of(ck, a, bnd), ck.fret[esid])
+    check_block(ck, a, fx, sl_at(a, w, {{O:WithStmt.body}}))
 
 # `checkForIterable`: range(...) / list / str / dict (sınıf yineleyicisi, enumerate/zip kaynaşımı kapsam dışı). Dönüş: eleman tipi.
 def check_for_iterable(ck: Ck, a: Ast, fx: Fx, it: int) -> int:
@@ -2526,6 +2634,21 @@ def always_returns(a: Ast, s: int) -> bool:
             if not always_returns(a, sl_at(a, stmt_at(a, ecs, j), {{O:ElifClause.body}})):
                 return False
         return always_returns(a, sl_at(a, pay, {{O:IfStmt.else_body}}))
+    if kn == {{T:StmtKind.try_stmt}}:
+        if a.n[pay + {{O:TryStmt.finally_body}}] != {{NONE}}:
+            if always_returns(a, sl_at(a, pay, {{O:TryStmt.finally_body}})):
+                return True
+        if not always_returns(a, sl_at(a, pay, {{O:TryStmt.try_body}})):
+            return False
+        exs: int = sl_at(a, pay, {{O:TryStmt.except_clauses}})
+        for k in range(pky(exs)):
+            if not always_returns(a, sl_at(a, stmt_at(a, exs, k), {{O:ExceptClause.body}})):
+                return False
+        return pky(exs) > 0 or a.n[pay + {{O:TryStmt.finally_body}}] != {{NONE}}
+    if kn == {{T:StmtKind.with_stmt}}:
+        return always_returns(a, sl_at(a, pay, {{O:WithStmt.body}}))
+    if kn == {{T:StmtKind.lowlevel_stmt}}:
+        return always_returns(a, sl_at(a, pay, {{O:LowLevelStmt.body}}))
     return False
 
 # `registerFunc` (skaler dilim): varsayılan/variadik/dekoratörlü/jenerik/async işlevler kapsam dışı.
@@ -2689,9 +2812,22 @@ def stmts_assign_name_ints(a: Ast, s: int, xs: list[int]) -> bool:
             for q in range(pky(cms)):
                 if stmts_assign_name_ints(a, sl_at(a, a.l[pkx(cms) + q], {{O:FuncDef.body}}), xs):
                     return True
-        else:
-            if tag == {{T:StmtKind.try_stmt}} or tag == {{T:StmtKind.with_stmt}} or tag == {{T:StmtKind.lowlevel_stmt}}:
-                raise CkUnsupported("")
+        elif tag == {{T:StmtKind.try_stmt}}:
+            if stmts_assign_name_ints(a, sl_at(a, pay, {{O:TryStmt.try_body}}), xs):
+                return True
+            exs: int = sl_at(a, pay, {{O:TryStmt.except_clauses}})
+            for k in range(pky(exs)):
+                if stmts_assign_name_ints(a, sl_at(a, a.l[pkx(exs) + k], {{O:ExceptClause.body}}), xs):
+                    return True
+            if a.n[pay + {{O:TryStmt.finally_body}}] != {{NONE}}:
+                if stmts_assign_name_ints(a, sl_at(a, pay, {{O:TryStmt.finally_body}}), xs):
+                    return True
+        elif tag == {{T:StmtKind.with_stmt}}:
+            if stmts_assign_name_ints(a, sl_at(a, pay, {{O:WithStmt.body}}), xs):
+                return True
+        elif tag == {{T:StmtKind.lowlevel_stmt}}:
+            if stmts_assign_name_ints(a, sl_at(a, pay, {{O:LowLevelStmt.body}}), xs):
+                return True
     return False
 
 # `Checker.checkModule` (skaler dilim). Dönüş: 0 = kabul, 1 = tanılama/hata (ayrıntı `nox_ck_diag_*`/`o_*`), 2 = kapsam dışı.

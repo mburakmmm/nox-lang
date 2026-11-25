@@ -1526,7 +1526,115 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
             mp(ck, "'continue' can only be used inside a 'while'/'for' loop")
             raise mk_fail(ck, "TypeMismatch")
         return
+    if tag == 12:
+        rzt: int = check_expr(ck, a, fx, pay)
+        if ck.tt.tag[rzt] != 6:
+            mp(ck, "'raise' can only take a class instance")
+            raise mk_fail(ck, "TypeMismatch")
+        return
+    if tag == 20:
+        if a.n[pay] != 10:
+            mp(ck, "'del' only takes an index target (del d[key])")
+            raise mk_fail(ck, "TypeMismatch")
+        dip: int = a.n[pay + 1]
+        dobj: int = check_expr(ck, a, fx, a.n[dip + 0])
+        didx: int = check_expr(ck, a, fx, a.n[dip + 1])
+        dg: int = ck.tt.tag[dobj]
+        if dg == 13:
+            if didx != ck.tt.xa[dobj]:
+                mp(ck, "the 'del' key does not match the dict's key type")
+                raise mk_fail(ck, "TypeMismatch")
+        elif dg == 5:
+            if didx != 0:
+                mp(ck, "the 'del' list index must be an 'int'")
+                raise mk_fail(ck, "TypeMismatch")
+        else:
+            mp(ck, "'del' only works on list[i] or dict[key]")
+            raise mk_fail(ck, "TypeMismatch")
+        return
+    if tag == 13:
+        check_try(ck, a, fx, pay)
+        return
+    if tag == 21:
+        if a.n[pay + 5] != 0:
+            raise unsup(ck, "check_stmt#async_with")
+        check_with(ck, a, fx, pay)
+        return
     raise unsup(ck, "stmt_kind#" + str(tag))
+
+# `checkTry`: try gövdesi, `except [Sınıf [as ad]]` yan tümceleri (noktalı ad kapsam dışı), `finally`.
+def check_try(ck: Ck, a: Ast, fx: Fx, t: int) -> None:
+    exs: int = sl_at(a, t, 2)
+    for q in range(pky(exs)):
+        qc: int = a.n[stmt_at(a, exs, q) + 0]
+        if qc != -4611686018427387904:
+            cn0: int = pk(a.n[stmt_at(a, exs, q) + 0], a.n[stmt_at(a, exs, q) + 0 + 1])
+            for dq in range(sref_len(cn0)):
+                if sref_byte(a, cn0, dq) == 46:
+                    raise unsup(ck, "try#dotted")
+    check_block(ck, a, fx, sl_at(a, t, 0))
+    for k in range(pky(exs)):
+        ec: int = stmt_at(a, exs, k)
+        if a.n[ec + 0] == -4611686018427387904:
+            check_block(ck, a, fx, sl_at(a, ec, 4))
+            continue
+        cn: int = pk(a.n[ec + 0], a.n[ec + 0 + 1])
+        csym: int = sym_of(ck, a, cn)
+        if class_idx(ck, csym) < 0:
+            mp(ck, "unknown class: ")
+            mp_sref(ck, a, cn)
+            raise mk_fail(ck, "UndefinedClass")
+        if a.n[ec + 2] != -4611686018427387904:
+            bn: int = pk(a.n[ec + 2], a.n[ec + 2 + 1])
+            declare_var_checked(ck, fx, sym_of(ck, a, bn), ty_class(ck.tt, csym))
+        check_block(ck, a, fx, sl_at(a, ec, 4))
+    if a.n[t + 4] != -4611686018427387904:
+        check_block(ck, a, fx, sl_at(a, t, 4))
+
+# `checkWith`: `with E as ad:` — `E` bir sınıf örneği; argümansız `__enter__`/`__exit__` (`__exit__ -> None`).
+def check_with(ck: Ck, a: Ast, fx: Fx, w: int) -> None:
+    ct: int = check_expr(ck, a, fx, a.n[w + 0])
+    if ck.tt.tag[ct] != 6:
+        mp(ck, "'with' only works on a class instance")
+        raise mk_fail(ck, "TypeMismatch")
+    ci: int = class_idx_of_type(ck, ct)
+    if ci < 0:
+        mp(ck, "unknown class: ")
+        mp_sym(ck, ck.tt.xa[ct])
+        raise mk_fail(ck, "UndefinedClass")
+    ee: int = m2_get(ck.cls_meths, ci, sym_lit(ck, "__enter__"))
+    if ee < 0:
+        mp(ck, "class '")
+        mp_sym(ck, ck.cls_sym[ci])
+        mp(ck, "' has no '__enter__' method (required for 'with')")
+        raise mk_fail(ck, "UndefinedMethod")
+    esid: int = ck.cls_meths.vv[ee]
+    if ck.fpn[esid] != 0:
+        mp(ck, "'")
+        mp_sym(ck, ck.cls_sym[ci])
+        mp(ck, ".__enter__' MUST NOT take any arguments")
+        raise mk_fail(ck, "TypeMismatch")
+    xe: int = m2_get(ck.cls_meths, ci, sym_lit(ck, "__exit__"))
+    if xe < 0:
+        mp(ck, "class '")
+        mp_sym(ck, ck.cls_sym[ci])
+        mp(ck, "' has no '__exit__' method (required for 'with')")
+        raise mk_fail(ck, "UndefinedMethod")
+    xsid: int = ck.cls_meths.vv[xe]
+    if ck.fpn[xsid] != 0:
+        mp(ck, "'")
+        mp_sym(ck, ck.cls_sym[ci])
+        mp(ck, ".__exit__' MUST NOT take any arguments")
+        raise mk_fail(ck, "TypeMismatch")
+    if ck.fret[xsid] != 4:
+        mp(ck, "'")
+        mp_sym(ck, ck.cls_sym[ci])
+        mp(ck, ".__exit__' MUST return None")
+        raise mk_fail(ck, "TypeMismatch")
+    if a.n[w + 1] != -4611686018427387904:
+        bnd: int = pk(a.n[w + 1], a.n[w + 1 + 1])
+        declare_var_checked(ck, fx, sym_of(ck, a, bnd), ck.fret[esid])
+    check_block(ck, a, fx, sl_at(a, w, 3))
 
 # `checkForIterable`: range(...) / list / str / dict (sınıf yineleyicisi, enumerate/zip kaynaşımı kapsam dışı). Dönüş: eleman tipi.
 def check_for_iterable(ck: Ck, a: Ast, fx: Fx, it: int) -> int:
@@ -2528,6 +2636,21 @@ def always_returns(a: Ast, s: int) -> bool:
             if not always_returns(a, sl_at(a, stmt_at(a, ecs, j), 1)):
                 return False
         return always_returns(a, sl_at(a, pay, 5))
+    if kn == 13:
+        if a.n[pay + 4] != -4611686018427387904:
+            if always_returns(a, sl_at(a, pay, 4)):
+                return True
+        if not always_returns(a, sl_at(a, pay, 0)):
+            return False
+        exs: int = sl_at(a, pay, 2)
+        for k in range(pky(exs)):
+            if not always_returns(a, sl_at(a, stmt_at(a, exs, k), 4)):
+                return False
+        return pky(exs) > 0 or a.n[pay + 4] != -4611686018427387904
+    if kn == 21:
+        return always_returns(a, sl_at(a, pay, 3))
+    if kn == 14:
+        return always_returns(a, sl_at(a, pay, 0))
     return False
 
 # `registerFunc` (skaler dilim): varsayılan/variadik/dekoratörlü/jenerik/async işlevler kapsam dışı.
@@ -2691,9 +2814,22 @@ def stmts_assign_name_ints(a: Ast, s: int, xs: list[int]) -> bool:
             for q in range(pky(cms)):
                 if stmts_assign_name_ints(a, sl_at(a, a.l[pkx(cms) + q], 8), xs):
                     return True
-        else:
-            if tag == 13 or tag == 21 or tag == 14:
-                raise CkUnsupported("")
+        elif tag == 13:
+            if stmts_assign_name_ints(a, sl_at(a, pay, 0), xs):
+                return True
+            exs: int = sl_at(a, pay, 2)
+            for k in range(pky(exs)):
+                if stmts_assign_name_ints(a, sl_at(a, a.l[pkx(exs) + k], 4), xs):
+                    return True
+            if a.n[pay + 4] != -4611686018427387904:
+                if stmts_assign_name_ints(a, sl_at(a, pay, 4), xs):
+                    return True
+        elif tag == 21:
+            if stmts_assign_name_ints(a, sl_at(a, pay, 3), xs):
+                return True
+        elif tag == 14:
+            if stmts_assign_name_ints(a, sl_at(a, pay, 0), xs):
+                return True
     return False
 
 # `Checker.checkModule` (skaler dilim). Dönüş: 0 = kabul, 1 = tanılama/hata (ayrıntı `nox_ck_diag_*`/`o_*`), 2 = kapsam dışı.
