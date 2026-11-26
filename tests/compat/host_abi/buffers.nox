@@ -1,0 +1,65 @@
+# UR-012: sabitlenebilir arabellekler (zero-copy) ve bulk TYPED_ARRAY değerleri.
+from nox.host import F64Buffer, I64Buffer, I32Buffer, U8Buffer
+
+@export
+def make_f64(n: int) -> F64Buffer:
+    b: F64Buffer = F64Buffer(n)
+    for i in range(n):
+        b.set(i, float(i))
+    return b
+
+@export
+def make_i64(n: int) -> I64Buffer:
+    return I64Buffer(n)
+
+@export
+def make_i32(n: int) -> I32Buffer:
+    return I32Buffer(n)
+
+@export
+def make_u8(n: int) -> U8Buffer:
+    return U8Buffer(n)
+
+@export
+def sum_f64(b: F64Buffer) -> float:
+    t: float = 0.0
+    for x in b.as_list():
+        t = t + x
+    return t
+
+@export
+def sum_u8(b: U8Buffer) -> int:
+    t: int = 0
+    for x in b.as_list():
+        t = t + int(x)
+    return t
+
+@export
+def resize_f64(b: F64Buffer, n: int) -> None:
+    b.resize(n)
+
+@export
+def is_pinned_f64(b: F64Buffer) -> bool:
+    return b.is_pinned()
+
+@export
+def sum_floats(xs: list[float]) -> float:
+    t: float = 0.0
+    for x in xs:
+        t = t + x
+    return t
+
+@export
+def sum_ints(xs: list[int]) -> int:
+    t: int = 0
+    for x in xs:
+        t = t + x
+    return t
+
+@export
+def count_true(xs: list[bool]) -> int:
+    t: int = 0
+    for x in xs:
+        if x:
+            t = t + 1
+    return t

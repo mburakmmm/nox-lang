@@ -46,6 +46,7 @@ typedef int32_t NoxHostStatus;
 #define NOX_HOST_ERR_UTF8 5 /* `str` parametresi geçerli UTF-8 değil */
 #define NOX_HOST_ERR_STATE 6
 #define NOX_HOST_ERR_INVALID_HANDLE 7 /* bırakılmış, sahte ya da başka bağlamın handle'ı */
+#define NOX_HOST_ERR_BUSY 10 /* v3 (UR-012): arabellekte çakışan sabitleme var (yazma/okuma) */
 #define NOX_HOST_ERR_CANCELLED 9 /* v3 (UR-011): asenkron görev iptal edildi (nihai durum; ayrıntı yok) */
 #define NOX_HOST_ERR_HOST_EXCEPTION 8 /* v3 (UR-010): bir host geri çağrısı istisna fırlattı; nox_host_error_host_token ile özgün jeton alınır */
 
@@ -103,6 +104,7 @@ typedef uint64_t NoxHostValue;
 #define NOX_HOST_VALUE_LIST 6
 #define NOX_HOST_VALUE_DICT 7
 #define NOX_HOST_VALUE_TUPLE 8
+#define NOX_HOST_VALUE_TYPED_ARRAY 10 /* v3 (UR-012): bitişik tek-dtype'lı sayısal dizi (bkz. nox_host_value_typed_array) */
 #define NOX_HOST_VALUE_EXTERNAL_REF 11 /* v3 (UR-010): host nesne belirteci (bkz. NoxHostExternalRef) */
 #define NOX_HOST_VALUE_HANDLE 9 /* v3 (UR-009): bir sınıf örneğini tutan değer (`Class | None`, `list[Class]`; bkz. aşağıdaki nox_host_value_handle) */
 
@@ -139,7 +141,8 @@ NoxHostStatus nox_host_handle_type_name(NoxHostContext *ctx, NoxHostHandle h, No
 
 /* ---- v3 (UR-010): host nesneleri ve yeniden-girişli geri çağrılar ----
  * `NoxHostExternalRef`, host'un yönettiği opak bir nesneyi (ör. Python çağrılabilir) betimleyen belirteçtir (0 geçersiz); Nox onu hiçbir zaman çözmez. Nox `nox.host.HostObject` ile tutar ve çağırır.
- * Geri çağrılar (invoke/retain/release) bağlam kilidi AÇIKKEN çağrılır: `invoke` içinden aynı bağlamda `nox_host_value_*` / `nox_host_export_*` çağrıları KİLİTLENMEZ.
+ * Geri çağrılar (invoke/retain/release) bağlam kilidi TUTULURKEN çağrılır; kilit YENİDEN-GİRİŞLİdir: geri çağrıyı yapan iş parçacığı içinden aynı bağlamda `nox_host_value_*` / `nox_host_export_*` çağırabilir
+ * (ör. Python'un GIL'i tutan iş parçacığı); BAŞKA iş parçacıkları geri çağrı bitene dek BEKLER (askıdaki Nox çerçevelerine yabancı iş parçacığı giremez). Geri çağrı içinden `nox_host_context_destroy` en dıştaki çağrı bitince yapılır.
  * `invoke`: `args` ödünç bir TUPLE değeridir; sonucu `*out_result`a host kurar (Nox sahip olur ve bırakır; 0 = None). Hata için NOX_HOST_ERR_HOST_EXCEPTION döndürüp `*out_err_token`a host'un
  * istisna belirtecini (Nox'a +1 başvuru geçer; HostError yok edilince `release` alır) ve isteğe bağlı UTF-8 ileti `*out_err_msg`a (ÖDÜNÇ: `invoke` dönünce kopyalanır; nox_host_buffer_release GEREKMEZ) yazılır.
  * Başka her hata durumu RuntimeError olur. `retain`/`release` null olabilir. `struct_size` >= sizeof(NoxHostCallbackOps) olmalıdır (aksi NOX_HOST_ERR_VERSION). ops == NULL geri çağrıları kaldırır. */
@@ -163,7 +166,7 @@ NoxHostStatus nox_host_value_get_external_ref(NoxHostContext *ctx, NoxHostValue 
  * Her `@export async def foo(...)` için `--host-abi` şunu üretir (parametre eşlemesi senkron ihracatla aynıdır; sonuç ayrı alınır):
  *   NoxHostStatus nox_host_async_start_<modül>_foo(NoxHostContext *ctx, <parametreler...>, NoxHostTaskCallback on_done, void *user_data, NoxHostTask *out_task, NoxHostError **err);
  * Başarıda `*out_task` doludur (0 geçersiz) ve `on_done` görev başına ENAZ VE ENÇOK bir kez çağrılır (`nox_host_task_release` ile ilgilenmekten vazgeçmediğiniz sürece): işçi iş parçacığından, bağlam kilidi
- * AÇIKKEN (içinden `nox_host_task_take_result`, `nox_host_value_*`, `nox_host_export_*` çağrılabilir). `final_status`: OK, ERR_EXCEPTION, ERR_HOST_EXCEPTION, ERR_CANCELLED ya da ERR_STATE (çıkmaz: Nox
+ * AÇIKKEN (içinden `nox_host_task_take_result`, `nox_host_value_*`, `nox_host_export_*` çağrılabilir; görev kodu çalışmıyorken: iki görev kodu arası). `final_status`: OK, ERR_EXCEPTION, ERR_HOST_EXCEPTION, ERR_CANCELLED ya da ERR_STATE (çıkmaz: Nox
  * RuntimeError("deadlock in async task"); süreç ölmez, ancak o bağlamda yeni görev başlatılamaz). Başlatma hatası yalnızca durum kodudur (`*err` NULL'lanır; NOX_HOST_ERR_UTF8/INVALID_HANDLE/INVAL/STATE/NOMEM).
  * Parametre değerleri başlatma sırasında kopyalanır/çoğaltılır (host `NoxHostValue`/`NoxHostHandle`larını hemen bırakabilir); `NoxHostExternalRef` belirteçlerini ise görev bitene kadar canlı tutmak host'un işidir.
  * Sonuç her zaman bir `NoxHostValue`dur (sınıf dönüşü NOX_HOST_VALUE_HANDLE; None → `*out_val == 0`). `nox_host_task_take_result` bağlam kilidini BEKLEMEZ, sonucu bir kez devreder (tekrar: NOX_HOST_ERR_STATE) ve nihai durumu
@@ -175,6 +178,35 @@ typedef void (*NoxHostTaskCallback)(void *user_data, NoxHostContext *ctx, NoxHos
 NoxHostStatus nox_host_task_cancel(NoxHostContext *ctx, NoxHostTask task);
 NoxHostStatus nox_host_task_take_result(NoxHostContext *ctx, NoxHostTask task, NoxHostValue *out_val, NoxHostError **out_err);
 NoxHostStatus nox_host_task_release(NoxHostContext *ctx, NoxHostTask task);
+
+/* ---- v3 (UR-012): bulk sayısal diziler ve SIFIR KOPYA sabitlenmiş arabellekler (PEP 3118 / NumPy / Arrow) ----
+ * TYPED_ARRAY değeri `count` elemanı TEK bellek kopyasıyla taşır (N kutulama çağrısı yerine). Nox'ta `list[int]`/`list[float]`/`list[bool]` parametreleri `list` değeri YA DA uygun dtype'lı TYPED_ARRAY kabul eder
+ * (int: tamsayı/BOOL dtype'ları, float: tüm sayısal dtype'lar, bool: yalnız BOOL; uyumsuz dtype Nox'ta ValueError). `get`: veri değer bırakılana kadar geçerli BORÇ görünümdür.
+ * Sabitleme: Nox'un `nox.host.F64Buffer`/`I64Buffer`/`I32Buffer`/`U8Buffer` örneklerinin (bir `NoxHostHandle` olarak tutulan) verisine zero-copy görünüm verir. Çok sayıda OKUMA sabitlemesi serbesttir; en çok bir ÖZEL YAZMA
+ * sabitlemesi (aksi `NOX_HOST_ERR_BUSY`). Sabitleme nesneyi canlı tutar; sabitliyken Nox'ta `resize` RuntimeError verir (veri adresi sabit kalır). Veri `nox_host_buffer_unpin`e kadar geçerlidir. Sınıf desteklenmiyorsa NOX_HOST_ERR_INVAL. */
+typedef enum NoxHostDType {
+    NOX_HOST_DTYPE_U8 = 1, NOX_HOST_DTYPE_I8 = 2, NOX_HOST_DTYPE_U16 = 3, NOX_HOST_DTYPE_I16 = 4, NOX_HOST_DTYPE_U32 = 5, NOX_HOST_DTYPE_I32 = 6,
+    NOX_HOST_DTYPE_U64 = 7, NOX_HOST_DTYPE_I64 = 8, NOX_HOST_DTYPE_F32 = 9, NOX_HOST_DTYPE_F64 = 10, NOX_HOST_DTYPE_BOOL = 11
+} NoxHostDType;
+#define NOX_HOST_BUF_READONLY 0u
+#define NOX_HOST_BUF_WRITABLE 1u
+#define NOX_HOST_BUF_CONTIGUOUS_C 2u
+typedef struct NoxHostBufferView {
+    uint32_t struct_size;
+    int32_t dtype;
+    void *data;
+    size_t byte_len;
+    size_t itemsize;
+    int32_t ndim;      /* 1..8 */
+    uint32_t flags;    /* NOX_HOST_BUF_* */
+    int64_t shape[8];
+    int64_t strides[8]; /* bayt */
+    uint64_t pin_id;
+} NoxHostBufferView;
+NoxHostStatus nox_host_handle_pin_buffer(NoxHostContext *ctx, NoxHostHandle h, uint32_t req_flags, NoxHostBufferView *out_view, NoxHostError **err);
+NoxHostStatus nox_host_buffer_unpin(NoxHostContext *ctx, uint64_t pin_id);
+NoxHostStatus nox_host_value_typed_array(NoxHostContext *ctx, int32_t dtype, const void *data, size_t count, NoxHostValue *out);
+NoxHostStatus nox_host_value_get_typed_array(NoxHostContext *ctx, NoxHostValue v, int32_t *out_dtype, const void **out_data, size_t *out_count);
 
 /* Hata incelemesi. Span'ler nox_host_error_release'e kadar geçerlidir; class_name/message UTF-8'dir. */
 void nox_host_error_release(NoxHostError *err);

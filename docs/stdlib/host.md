@@ -20,7 +20,7 @@ A `HostObject` wraps an opaque host-managed object (for example a Python callabl
 | `HostResult` | `kind()`, `is_none()`, `as_int()`, `as_bool()`, `as_float()`, `as_str()`, `len()`, `item(i)`, `as_object()`; a wrong kind raises `ValueError` |
 | `HostError` | raised when the host callback raised; `message` is the host's text. Uncaught, the export returns `NOX_HOST_ERR_HOST_EXCEPTION` and `nox_host_error_host_token` gives the host's exception token |
 
-The context lock is **released** while the host callback runs, so the callback may call back into Nox (`nox_host_export_*`) on the same context without deadlocking. Values built by the callback
+The context lock is **held but re-entrant** while the host callback runs: the callback may call back into Nox (`nox_host_export_*`) from the same thread; other threads wait until it returns. Values built by the callback
 (`nox_host_value_*`) are owned by Nox once returned in `*out_result`.
 
 ```nox
@@ -34,3 +34,9 @@ def apply_twice(cb: HostObject, x: int) -> int:
     b.add_int(cb.call(a).as_int())
     return cb.call(b).as_int()
 ```
+
+
+## Pinnable buffers
+
+`F64Buffer(n)`, `I64Buffer(n)`, `I32Buffer(n)` and `U8Buffer(n)` are fixed-size numeric buffers whose storage a host can pin without copying (`nox_host_handle_pin_buffer`, see [Host ABI](../apis/host-abi.md)). Methods: `len()`, `get(i)`, `set(i, v)`,
+`fill(v)`, `resize(n)` (raises `RuntimeError` while pinned), `is_pinned()` and `as_list()` (the backing list; do not grow it while pinned).

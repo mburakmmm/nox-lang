@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.92]
+
+NoxPy UR-012 + addendum düzeltmeleri (Host ABI v3 taslağı): sıfır kopya sabitlenmiş arabellekler ve bulk sayısal diziler; geri çağrı yeniden girişinin kilit modeli düzeltildi (addendum); tutamaç sınıf doğrulaması. Sürüm patch: yalnızca EKLEME (kilit modeli v3-taslağı içi düzeltmedir). Ayrıntı: spec §3.526, `docs/apis/host-abi.md`.
+
+- UR-012: `NOX_HOST_VALUE_TYPED_ARRAY` (`nox_host_value_typed_array`/`get_typed_array`, `NoxHostDType`), `nox_host_handle_pin_buffer`/`nox_host_buffer_unpin`, `NoxHostBufferView` (176 bayt), `NOX_HOST_ERR_BUSY`; Nox tarafı `nox.host.F64Buffer/I64Buffer/I32Buffer/U8Buffer` (sabitliyken `resize` RuntimeError). `list[int|float|bool]` parametreleri TYPED_ARRAY de kabul eder.
+- Addendum (UR-010): bağlam kilidi YENİDEN-GİRİŞLİ (`RLock`: sahip iş parçacığı geri çağrı içinden yeniden girer, yabancı iş parçacıkları kilit boşalana kadar bekler); geri çağrı sırasında kilit artık BIRAKILMAZ. `nox_host_context_destroy` geri çağrı içinden çağrılırsa ertelenir, başka iş parçacığı içerdeyse bekler. Görev işçisinin reaktör beklemesi ve `on_done` sırasındaki kilit bırakma korunur (Nox çerçevesi askıda değildir).
+- Addendum (UR-009): sınıf tutamacı parametreleri artık nesil + bağlam + SINIF (sınıf ya da torunu) olarak doğrulanır (`NOX_HOST_ERR_INVALID_HANDLE`); çok tutamaçlı yöntemler (`a.__eq__(b)`) her tutamacı ayrı doğrular.
+- Test: `tests/compat/host_abi/buffers.nox` + `buffers_host.c`, `callbacks_host.c` (yabancı iş parçacığı bekler, geri çağrı içinden yok etme ertelenir), `classes_host.c` (yanlış sınıf/başka bağlam/alt sınıf).
+
 ## [2.2.91]
 
 NoxPy UR-011 (Host ABI v3 taslağı): `@export async def` görev API'si — `nox_host_async_start_<modül>_<ad>`, `NoxHostTask`, `NoxHostTaskCallback`, `nox_host_task_cancel/take_result/release`, `NOX_HOST_ERR_CANCELLED`; `expand --json` `is_async`. Sürüm patch: yalnızca EKLEME. Ayrıntı: spec §3.525, `docs/apis/host-abi.md`.

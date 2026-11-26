@@ -19,6 +19,7 @@ NoxHostStatus nox_host_export_cl_Counter___len__(NoxHostContext *, NoxHostHandle
 NoxHostStatus nox_host_export_cl_Counter___eq__(NoxHostContext *, NoxHostHandle, NoxHostHandle, uint8_t *, NoxHostError **);
 NoxHostStatus nox_host_export_cl_make_plain(NoxHostContext *, int64_t, NoxHostHandle *, NoxHostError **);
 NoxHostStatus nox_host_export_cl_plains(NoxHostContext *, int64_t, NoxHostValue *, NoxHostError **);
+NoxHostStatus nox_host_export_cl_make_sub(NoxHostContext *, int64_t, NoxHostHandle *, NoxHostError **);
 NoxHostStatus nox_host_export_cl_first_or_none(NoxHostContext *, NoxHostValue, NoxHostValue *, NoxHostError **);
 
 static int g_fail;
@@ -140,6 +141,27 @@ int main(void) {
       CHECK(nox_host_error_class_name(e, &sp) == NOX_HOST_OK && span_eq(sp, "ValueError"));
       nox_host_error_release(e); e = NULL;
       CHECK(nox_host_value_release(c, l) == NOX_HOST_OK && nox_host_handle_release(c, p) == NOX_HOST_OK); }
+
+    /* addendum: çok tutamaçlı yöntem (a.__eq__(b)) — her tutamaç ayrı doğrulanır (nesil + sınıf + bağlam) */
+    { uint8_t eq = 9; NoxHostHandle p = 0, sub = 0, gone = mk(c, 1, "g"); int64_t r = 0;
+      CHECK(nox_host_handle_release(c, gone) == NOX_HOST_OK);
+      CHECK(nox_host_export_cl_Counter___eq__(c, a, gone, &eq, &e) == NOX_HOST_ERR_INVALID_HANDLE && e == NULL); /* ikinci tutamaç bırakılmış */
+      CHECK(nox_host_export_cl_Counter___eq__(c, gone, a, &eq, &e) == NOX_HOST_ERR_INVALID_HANDLE);
+      CHECK(nox_host_export_cl_make_plain(c, 1, &p, &e) == NOX_HOST_OK);
+      CHECK(nox_host_export_cl_Counter___eq__(c, a, p, &eq, &e) == NOX_HOST_ERR_INVALID_HANDLE); /* yanlış sınıf */
+      CHECK(nox_host_export_cl_Counter_inc(c, p, 1, &r, &e) == NOX_HOST_ERR_INVALID_HANDLE);
+      /* alt sınıf örneği kabul edilir */
+      CHECK(nox_host_export_cl_make_sub(c, 5, &sub, &e) == NOX_HOST_OK && type_is(c, sub, "SubCounter"));
+      CHECK(nox_host_export_cl_Counter_inc(c, sub, 1, &r, &e) == NOX_HOST_OK && r == 6);
+      CHECK(nox_host_export_cl_Counter___eq__(c, a, sub, &eq, &e) == NOX_HOST_OK && eq == 0);
+      /* başka bağlamın tutamacı reddedilir */
+      NoxHostContext *c2 = NULL; NoxHostHandle other = 0;
+      CHECK(nox_host_context_create(&cfg, &c2) == NOX_HOST_OK && nox_host_module_init_cl(c2, &e) == NOX_HOST_OK);
+      CHECK(nox_host_export_cl_Counter___new__(c2, 1, (const uint8_t *)"x", 1, &other, &e) == NOX_HOST_OK);
+      CHECK(nox_host_export_cl_Counter___eq__(c, a, other, &eq, &e) == NOX_HOST_ERR_INVALID_HANDLE);
+      CHECK(nox_host_export_cl_Counter___eq__(c2, other, a, &eq, &e) == NOX_HOST_ERR_INVALID_HANDLE);
+      nox_host_module_fini_cl(c2); nox_host_context_destroy(c2);
+      CHECK(nox_host_handle_release(c, p) == NOX_HOST_OK && nox_host_handle_release(c, sub) == NOX_HOST_OK); }
 
     /* hata yolları */
     { NoxHostValue iv = 0; NoxHostHandle h = 0; NoxHostSpan sp = {0};

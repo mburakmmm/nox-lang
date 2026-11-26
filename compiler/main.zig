@@ -3818,7 +3818,7 @@ fn collectHostExports(a: std.mem.Allocator, user_module: ast.Module, st: *checke
                     return error.BuildFailed;
                 };
             }
-            try list.append(a, .{ .name = start_name, .params = akinds, .ret = .none, .export_name = host_adapt.exportNameOf(fd.name), .is_async = true });
+            try list.append(a, .{ .name = start_name, .params = akinds, .ret = .none, .export_name = host_adapt.exportNameOf(fd.name), .is_async = true, .param_classes = try hostParamClasses(a, st, asig.params) });
             continue;
         }
         // UR-008: konteyner/Optional imzalı işlevler için sentezlenen adaptör çağrılır (parametreler `NoxHostValue` = int, dönüş `int`), sembol adı kullanıcı işlevinindir.
@@ -3846,7 +3846,7 @@ fn collectHostExports(a: std.mem.Allocator, user_module: ast.Module, st: *checke
             printErr("--host-abi: '@export def {s}': return type '{s}' cannot cross the host ABI (supported: int, float, bool, str, bytes, class instances as handles, None)\n", .{ fd.name, tc_types.toAlloc(a, sig.return_type) catch "?" });
             return error.BuildFailed;
         };
-        try list.append(a, .{ .name = fd.name, .params = kinds, .ret = rk, .export_name = if (std.mem.eql(u8, host_adapt.exportNameOf(fd.name), fd.name)) null else host_adapt.exportNameOf(fd.name) });
+        try list.append(a, .{ .name = fd.name, .params = kinds, .ret = rk, .export_name = if (std.mem.eql(u8, host_adapt.exportNameOf(fd.name), fd.name)) null else host_adapt.exportNameOf(fd.name), .param_classes = try hostParamClasses(a, st, sig.params) });
     }
     // UR-009: konteyner adaptörlerinin kullandığı sınıfların `nox_hv_obj_<Sınıf>` kısayolları (extern bildirimlerinden okunur).
     var classes: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -3857,6 +3857,35 @@ fn collectHostExports(a: std.mem.Allocator, user_module: ast.Module, st: *checke
         if (std.mem.startsWith(u8, n, obj_prefix) and !std.mem.eql(u8, n, "nox_hv_obj_take")) try classes.append(a, n[obj_prefix.len..]);
     }
     return .{ .module_name = module_name, .exports = try list.toOwnedSlice(a), .classes = try classes.toOwnedSlice(a) };
+}
+
+/// `.class` parametreleri için kabul edilen ad kümesi (`"Counter|SubA|SubB"`: sınıf + tüm torunları); diğer parametreler için boş.
+fn hostParamClasses(a: std.mem.Allocator, st: *checker.Checker, params: []const tc_types.Type) ![]const []const u8 {
+    const out = try a.alloc([]const u8, params.len);
+    for (params, 0..) |pt, i| {
+        out[i] = "";
+        if (pt != .class) continue;
+        if (st.tuple_elem_types.contains(pt.class)) continue;
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
+        try buf.appendSlice(a, pt.class);
+        var it = st.classes.iterator();
+        while (it.next()) |e| {
+            if (std.mem.eql(u8, e.key_ptr.*, pt.class)) continue;
+            var cur: ?[]const u8 = e.value_ptr.*.base;
+            var guard: usize = 0;
+            while (cur) |b| : (guard += 1) {
+                if (guard > 64) break;
+                if (std.mem.eql(u8, b, pt.class)) {
+                    try buf.append(a, '|');
+                    try buf.appendSlice(a, e.key_ptr.*);
+                    break;
+                }
+                cur = if (st.classes.get(b)) |ci| ci.base else null;
+            }
+        }
+        out[i] = buf.items;
+    }
+    return out;
 }
 
 fn hostKindOf(t: tc_types.Type, is_ret: bool) ?codegen.HostKind {

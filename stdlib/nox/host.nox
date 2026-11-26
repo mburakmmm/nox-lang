@@ -173,3 +173,181 @@ class HostObject:
 
     def call0(self: HostObject) -> HostResult:
         return self.call(HostArgs())
+
+# ---- UR-012: sabitlenebilir (pin) sayısal arabellekler ----
+# `--host-abi` ana makinesi bir `NoxHostHandle` olarak tuttuğu bu sınıfların verisine `nox_host_handle_pin_buffer` ile SIFIR KOPYA erişir (PEP 3118/NumPy/Arrow).
+# Alan sırası/adları SABİTTİR (çalışma zamanı `dtype`/`pins`/`writer`/`data` alanlarını bu sırayla okur/yazar; C testi düzeni doğrular). `pins` okuma sabitlemeleri, `writer` özel yazma sabitlemesidir (0/1):
+# sabitliyken boyut değiştiren `resize` RuntimeError fırlatır. Veri listesine `as_list()` ile ulaşan kod listeyi BÜYÜTMEMELİdir (sabitlenmişken büyütmek göstericiyi geçersiz kılar; bu belgelenmiş bir sözleşmedir).
+# Sınıflar: F64Buffer (dtype 10, list[float]), I64Buffer (8, list[int]), I32Buffer (6, list[i32]), U8Buffer (1, list[u8]).
+
+class F64Buffer:
+    dtype: int
+    pins: int
+    writer: int
+    data: list[float]
+
+    def __init__(self: F64Buffer, n: int) -> None:
+        if n < 0:
+            raise ValueError("negative buffer length")
+        self.dtype = 10
+        self.pins = 0
+        self.writer = 0
+        self.data = [0.0] * n
+
+    def len(self: F64Buffer) -> int:
+        return len(self.data)
+
+    def get(self: F64Buffer, i: int) -> float:
+        return self.data[i]
+
+    def set(self: F64Buffer, i: int, v: float) -> None:
+        self.data[i] = v
+
+    def fill(self: F64Buffer, v: float) -> None:
+        for i in range(len(self.data)):
+            self.data[i] = v
+
+    def is_pinned(self: F64Buffer) -> bool:
+        return self.pins > 0 or self.writer != 0
+
+    def resize(self: F64Buffer, n: int) -> None:
+        if self.pins > 0 or self.writer != 0:
+            raise RuntimeError("buffer is pinned by the host and cannot be resized")
+        if n < 0:
+            raise ValueError("negative buffer length")
+        while len(self.data) > n:
+            self.data.pop()
+        while len(self.data) < n:
+            self.data.append(0.0)
+
+    def as_list(self: F64Buffer) -> list[float]:
+        return self.data
+
+class I64Buffer:
+    dtype: int
+    pins: int
+    writer: int
+    data: list[int]
+
+    def __init__(self: I64Buffer, n: int) -> None:
+        if n < 0:
+            raise ValueError("negative buffer length")
+        self.dtype = 8
+        self.pins = 0
+        self.writer = 0
+        self.data = [0] * n
+
+    def len(self: I64Buffer) -> int:
+        return len(self.data)
+
+    def get(self: I64Buffer, i: int) -> int:
+        return self.data[i]
+
+    def set(self: I64Buffer, i: int, v: int) -> None:
+        self.data[i] = v
+
+    def fill(self: I64Buffer, v: int) -> None:
+        for i in range(len(self.data)):
+            self.data[i] = v
+
+    def is_pinned(self: I64Buffer) -> bool:
+        return self.pins > 0 or self.writer != 0
+
+    def resize(self: I64Buffer, n: int) -> None:
+        if self.pins > 0 or self.writer != 0:
+            raise RuntimeError("buffer is pinned by the host and cannot be resized")
+        if n < 0:
+            raise ValueError("negative buffer length")
+        while len(self.data) > n:
+            self.data.pop()
+        while len(self.data) < n:
+            self.data.append(0)
+
+    def as_list(self: I64Buffer) -> list[int]:
+        return self.data
+
+class I32Buffer:
+    dtype: int
+    pins: int
+    writer: int
+    data: list[i32]
+
+    def __init__(self: I32Buffer, n: int) -> None:
+        if n < 0:
+            raise ValueError("negative buffer length")
+        self.dtype = 6
+        self.pins = 0
+        self.writer = 0
+        self.data = [i32(0)] * n
+
+    def len(self: I32Buffer) -> int:
+        return len(self.data)
+
+    def get(self: I32Buffer, i: int) -> int:
+        return int(self.data[i])
+
+    def set(self: I32Buffer, i: int, v: int) -> None:
+        self.data[i] = i32(v)
+
+    def fill(self: I32Buffer, v: int) -> None:
+        for i in range(len(self.data)):
+            self.data[i] = i32(v)
+
+    def is_pinned(self: I32Buffer) -> bool:
+        return self.pins > 0 or self.writer != 0
+
+    def resize(self: I32Buffer, n: int) -> None:
+        if self.pins > 0 or self.writer != 0:
+            raise RuntimeError("buffer is pinned by the host and cannot be resized")
+        if n < 0:
+            raise ValueError("negative buffer length")
+        while len(self.data) > n:
+            self.data.pop()
+        while len(self.data) < n:
+            self.data.append(i32(0))
+
+    def as_list(self: I32Buffer) -> list[i32]:
+        return self.data
+
+class U8Buffer:
+    dtype: int
+    pins: int
+    writer: int
+    data: list[u8]
+
+    def __init__(self: U8Buffer, n: int) -> None:
+        if n < 0:
+            raise ValueError("negative buffer length")
+        self.dtype = 1
+        self.pins = 0
+        self.writer = 0
+        self.data = [u8(0)] * n
+
+    def len(self: U8Buffer) -> int:
+        return len(self.data)
+
+    def get(self: U8Buffer, i: int) -> int:
+        return int(self.data[i])
+
+    def set(self: U8Buffer, i: int, v: int) -> None:
+        self.data[i] = u8(v)
+
+    def fill(self: U8Buffer, v: int) -> None:
+        for i in range(len(self.data)):
+            self.data[i] = u8(v)
+
+    def is_pinned(self: U8Buffer) -> bool:
+        return self.pins > 0 or self.writer != 0
+
+    def resize(self: U8Buffer, n: int) -> None:
+        if self.pins > 0 or self.writer != 0:
+            raise RuntimeError("buffer is pinned by the host and cannot be resized")
+        if n < 0:
+            raise ValueError("negative buffer length")
+        while len(self.data) > n:
+            self.data.pop()
+        while len(self.data) < n:
+            self.data.append(u8(0))
+
+    def as_list(self: U8Buffer) -> list[u8]:
+        return self.data

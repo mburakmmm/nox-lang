@@ -308,7 +308,8 @@ pub const QbeArg = qbe_emit.QbeArg;
 pub const HostKind = enum { int, float, bool, str, bytes, handle, value, none };
 /// `name`: çağrılan Nox işlevi; `export_name`: dışa açık C sembolünün parçası (UR-008: konteyner imzalarında `name` sentezlenen adaptördür, `export_name` kullanıcı işlevinin adıdır).
 /// `is_async`: UR-011 — `name` Nox'ta `Task[int]` dönen SENKRON başlatma işlevidir (`nox_host_astart_<ad>`); C tarafında `nox_host_async_start_<modül>_<ad>` üretilir.
-pub const HostExport = struct { name: []const u8, params: []const HostKind, ret: HostKind, export_name: ?[]const u8 = null, is_async: bool = false };
+/// `param_classes[i]`: `.handle` parametresi için kabul edilen sınıf adları (`"Counter|SubA"`: sınıf + torunları); boşsa tür denetimi yapılmaz. Yanlış sınıfın tutamacı `NOX_HOST_ERR_INVALID_HANDLE` olur.
+pub const HostExport = struct { name: []const u8, params: []const HostKind, ret: HostKind, export_name: ?[]const u8 = null, is_async: bool = false, param_classes: []const []const u8 = &.{} };
 /// `classes`: UR-009 — konteyner adaptörlerinde kullanılan sınıf adları; her biri için `nox_hv_obj_<Sınıf>`/`nox_hv_new_obj_<Sınıf>` (handle ↔ sınıf nesnesi) çalışma zamanı kısayolları üretilir.
 pub const HostAbiOpts = struct { module_name: []const u8, exports: []const HostExport, classes: []const []const u8 = &.{} };
 pub const QbeCallDst = qbe_emit.QbeCallDst;

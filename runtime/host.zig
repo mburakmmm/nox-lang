@@ -37,6 +37,8 @@ pub const ERR_INVALID_HANDLE: i32 = 7;
 pub const ERR_HOST_EXCEPTION: i32 = 8;
 /// UR-011: asenkron görev iptal edildi (`CancelledError`).
 pub const ERR_CANCELLED: i32 = 9;
+/// UR-012: sabitlenmiş arabellekte çakışan sabitleme (yazma/okuma) — `nox_host_handle_pin_buffer` reddedildi.
+pub const ERR_BUSY: i32 = 10;
 
 const CTX_MAGIC: u32 = 0x4e58_4843; // "NXHC"
 const ERR_MAGIC: u32 = 0x4e58_4845; // "NXHE"
@@ -53,12 +55,63 @@ pub const CallbackOps = extern struct {
 /// `nox_host_context_create` yapılandırması. `size`/`abi_version` zorunlu; `allocator` v1'de NULL OLMALIDIR (host ayırıcısı sonraki sürüm).
 pub const Config = extern struct { size: u32, abi_version: u32, allocator: ?*const anyopaque };
 
+/// UR-010 (addendum): bağlam kilidi YENİDEN-GİRİŞLİdir. Kilit sahibi iş parçacığı (`owner`) bir host geri çağrısı içindeyken aynı bağlama yeniden girebilir (`depth` artar); BAŞKA iş parçacıkları kilit
+/// boşalana (`depth == 0`) dek bekler — geri çağrı sırasında askıdaki Nox çerçevelerine/ARC durumuna yabancı iş parçacığı giremez. `nox_host_context_destroy` çalışırken `depth > 0` ise yok etme ERTELENİR (son `unlock`ta yapılır).
+const RLock = struct {
+    spin: SpinLock = .{},
+    owner: std.atomic.Value(usize) = .init(0),
+    depth: u32 = 0,
+    destroy_pending: bool = false,
+
+    fn me() usize {
+        return @intCast(thread_spawn.currentId());
+    }
+
+    fn lock(self: *RLock) void {
+        const t = me();
+        if (self.owner.load(.acquire) == t) {
+            self.depth += 1;
+            return;
+        }
+        self.spin.lock();
+        self.owner.store(t, .release);
+        self.depth = 1;
+    }
+
+    fn unlock(self: *RLock) void {
+        self.depth -= 1;
+        if (self.depth != 0) return;
+        const pending = self.destroy_pending;
+        self.owner.store(0, .release);
+        self.spin.unlock();
+        if (pending) {
+            const ctx: *Context = @alignCast(@fieldParentPtr("lock", self));
+            destroyNow(ctx);
+        }
+    }
+
+    /// Bu iş parçacığının tuttuğu TÜM derinliği bırakır (zamanlayıcı reaktörde beklerken / `on_done` sırasında); derinlik `relock` ile geri verilir.
+    fn unlockAll(self: *RLock) u32 {
+        const d = self.depth;
+        self.depth = 0;
+        self.owner.store(0, .release);
+        self.spin.unlock();
+        return d;
+    }
+
+    fn relock(self: *RLock, d: u32) void {
+        self.spin.lock();
+        self.owner.store(me(), .release);
+        self.depth = d;
+    }
+};
+
 /// `lock`: bağlam BAŞINA kilit — `nox_host_enter`/`nox_host_leave` ile her çağrı seri çalışır; böylece bağlam HERHANGİ bir OS iş parçacığından (sırayla) kullanılabilir (UR-004).
 /// Paralellik için her iş parçacığı KENDİ bağlamını oluşturur (bağlamlar tamamen bağımsızdır).
 const Context = struct {
     magic: u32,
     rt: ?*anyopaque,
-    lock: SpinLock = .{},
+    lock: RLock = .{},
     /// UR-006: bu bağlamın `NoxHostHandle` tablosu. Yuva = tutulan Nox nesnesi (ARC +1) + nesil sayacı; serbest yuvalar `free_slots`ta.
     slots: std.ArrayListUnmanaged(Slot) = .empty,
     free_slots: std.ArrayListUnmanaged(u32) = .empty,
@@ -81,6 +134,12 @@ const Context = struct {
     worker_running: bool = false,
     worker: ?thread_spawn.Thread = null,
     shutdown: std.atomic.Value(bool) = .init(false),
+    /// Görev işçisinin iş parçacığı kimliği (0 = işçi yok).
+    worker_id: std.atomic.Value(usize) = .init(0),
+    hook_depth: u32 = 0,
+    /// UR-012: sabitlenmiş arabellekler (`pin_id` = bağlam etiketi | nesil | indeks+1).
+    pins: std.ArrayListUnmanaged(PinRec) = .empty,
+    free_pins: std.ArrayListUnmanaged(u32) = .empty,
     /// İşçinin zamanlayıcısı (uyandırma için; yalnızca `worker_running` iken ve `tmu` altında geçerli).
     sched: ?*anyopaque = null,
     /// Çıkmaz (deadlock) sonrası zamanlayıcı bozulmuş sayılır: yeni görev başlatılamaz.
@@ -89,6 +148,8 @@ const Context = struct {
 
 pub const ThunkFn = *const fn (rt: ?*anyopaque, argv: ?[*]u64) callconv(.c) ?*anyopaque;
 pub const TaskCallback = *const fn (user_data: ?*anyopaque, ctx: ?*anyopaque, task: u64, final_status: i32) callconv(.c) void;
+
+const PinRec = struct { gen: u16 = 1, obj: ?*anyopaque = null, writable: bool = false };
 
 const TaskState = enum(u8) { free, queued, running, done };
 
@@ -143,12 +204,33 @@ pub export fn nox_host_context_create(config: ?*const Config, out: ?*?*anyopaque
     return OK;
 }
 
+/// Bağlamı yok eder. Bağlam başka bir iş parçacığında kullanılıyorsa (derinlik > 0) o iş bitene dek BEKLER; çağıran bir host geri çağrısının içindeyse (kilit bu iş parçacığında tutuluyor) yok etme, en dıştaki çağrı
+/// bitince YAPILIR (ertelenir). Görev işçisinin KENDİ iş parçacığından (görev/`on_done` geri çağrısı içinden) yok etme desteklenmez: yalnızca iptal istenir (host bunu başka iş parçacığından tamamlamalıdır).
 pub export fn nox_host_context_destroy(ctx_ptr: ?*anyopaque) void {
     const ctx = ctxFrom(ctx_ptr) orelse return;
+    ctx.shutdown.store(true, .release); // çalışan görevleri bir an önce iptale zorlar
+    ctx.tmu.lock();
+    wakeWorkerLocked(ctx);
+    ctx.tmu.unlock();
+    const my = RLock.me();
+    if (ctx.worker_id.load(.acquire) == my) return;
+    if (ctx.lock.owner.load(.acquire) == my) { // geri çağrı içindeyiz: erteler
+        ctx.lock.destroy_pending = true;
+        return;
+    }
+    ctx.lock.lock(); // başka bir iş parçacığı içerdeyse bekler
+    _ = ctx.lock.unlockAll();
+    destroyNow(ctx);
+}
+
+fn destroyNow(ctx: *Context) void {
     shutdownAsync(ctx); // UR-011: çalışan görevleri iptal et, işçiyi bekle (kilit tutulmaz)
     const rt = ctx.rt;
     ctx.closing = true;
     // Açık kalan handle'ların nesneleri çalışma zamanı kapanmadan ÖNCE bırakılır (sızıntı/sarkan başvuru yok).
+    for (ctx.pins.items) |pr| if (pr.obj != null) releaseObject(rt, pr.obj);
+    ctx.pins.deinit(std.heap.page_allocator);
+    ctx.free_pins.deinit(std.heap.page_allocator);
     for (ctx.slots.items) |slot| releaseObject(rt, slot.obj);
     ctx.slots.deinit(std.heap.page_allocator);
     ctx.free_slots.deinit(std.heap.page_allocator);
@@ -419,7 +501,8 @@ pub const VK_DICT: u8 = 7;
 pub const VK_TUPLE: u8 = 8;
 /// UR-009: Nox sınıf örneğine (ARC +1) tutulan değer düğümü — `Class | None` ve `list[Class]` gibi kapsayıcı içi sınıf örnekleri için (`NOX_HOST_VALUE_HANDLE`).
 pub const VK_HANDLE: u8 = 9;
-/// 10 = TYPED_ARRAY (UR-012 için ayrılmış).
+/// UR-012: bitişik, tek dtype'lı sayısal dizi değeri (`i` = dtype, `data` = ham bayt kopyası).
+pub const VK_TYPED_ARRAY: u8 = 10;
 /// UR-010: host'un yönettiği opak nesne belirteci (`NoxHostExternalRef`); düğüm bırakıldığında host `release` geri çağrısı alır.
 pub const VK_EXTERNAL_REF: u8 = 11;
 
@@ -617,6 +700,7 @@ fn coreCount(n: *const Node) ?usize {
     return switch (n.kind) {
         VK_LIST, VK_TUPLE => n.items.items.len,
         VK_DICT => n.items.items.len / 2,
+        VK_TYPED_ARRAY => n.data.len / dtypeSize(@intCast(n.i)),
         else => null,
     };
 }
@@ -783,33 +867,19 @@ pub export fn nox_host_value_is_valid(ctx_ptr: ?*anyopaque, v: u64) i32 {
 }
 
 // ---- UR-010 (ABI v3): host nesne belirteçleri (`NoxHostExternalRef`) ve yeniden-girişli geri çağrılar ----
-// Kural: host geri çağrıları (`invoke`/`retain`/`release`) bağlam kilidi AÇIKKEN çağrılır; böylece geri çağrı içinden host → Nox çağrıları (aynı bağlam) kilitlenmeden çalışır. Çağrıdan sonra
-// kilit yeniden alınır ve ARC sahipliği bu iş parçacığına devredilir. Kilidin elde olduğu varsayılır (Nox kodu `nox_host_enter` içinde çalışır); bağlam yok edilirken kilit tutulmaz (`closing`).
-
-fn cbUnlock(ctx: *Context) void {
-    if (!ctx.closing) ctx.lock.unlock();
-}
-
-fn cbRelock(ctx: *Context) void {
-    if (ctx.closing) return;
-    ctx.lock.lock();
-    if (ctx.rt) |rt| asap.handOverArcOwner(@ptrCast(@alignCast(rt)));
-}
+// Kural (addendum): host geri çağrıları (`invoke`/`retain`/`release`) bağlam kilidi TUTULURKEN çağrılır. Kilit YENİDEN-GİRİŞLİdir (`RLock`): geri çağrıyı yapan iş parçacığı aynı bağlamda host → Nox çağrıları yapabilir;
+// başka iş parçacıkları kilit boşalana dek bekler (askıdaki Nox çerçevelerine/ARC durumuna yabancı iş parçacığı girmez).
 
 fn externalRetain(ctx: *Context, ref: u64) void {
     const ops = ctx.cb orelse return;
     const f = ops.retain orelse return;
-    cbUnlock(ctx);
-    f(ops.user_data, ref);
-    cbRelock(ctx);
+    f(ops.user_data, ref); // kilit TUTULUR: geri çağrı aynı iş parçacığından yeniden girebilir, yabancılar bekler
 }
 
 fn externalRelease(ctx: *Context, ref: u64) void {
     const ops = ctx.cb orelse return;
     const f = ops.release orelse return;
-    cbUnlock(ctx);
     f(ops.user_data, ref);
-    cbRelock(ctx);
 }
 
 /// Geri çağrı tablosunu kurar (`ops == NULL` temizler). `struct_size` en az `sizeof(NoxHostCallbackOps)` olmalı ve `invoke` dolu olmalıdır. Tablo kopyalanır.
@@ -913,9 +983,7 @@ pub export fn nox_host_call_external(rt: ?*anyopaque, target: i64, args: i64) i6
     var result: u64 = 0;
     var token: u64 = 0;
     var msg: Buffer = .{ .data = null, .len = 0 };
-    cbUnlock(ctx);
     const st = f(ops.user_data, ctx, @bitCast(target), @bitCast(args), &result, &token, &msg);
-    cbRelock(ctx);
     if (st == OK) {
         if (result == 0) {
             var none: u64 = 0;
@@ -1109,6 +1177,15 @@ pub export fn nox_host_obj_release(rt: ?*anyopaque, obj: ?*anyopaque) void {
     releaseObject(rt, obj);
 }
 
+/// Sınıf denetimi: `obj`nin sınıf adı `spec` (`"A|B|C"`) içindeki adlardan biri mi? 1/0 (`--host-abi` sarmalayıcıları; tutamaç parametrelerinin türü doğrulanır).
+pub export fn nox_host_obj_is_type(rt: ?*anyopaque, obj: ?*anyopaque, spec: ?[*:0]const u8) i32 {
+    const name = classNameOf(rt, obj) orelse return 1; // sınıf adı çözülemiyorsa (dağıtım tablosu yok) denetim atlanır
+    const sp = std.mem.span(spec orelse return 1);
+    var it = std.mem.splitScalar(u8, sp, '|');
+    while (it.next()) |c| if (std.mem.eql(u8, c, name)) return 1;
+    return 0;
+}
+
 pub export fn nox_host_clear_err(err: ?*?*anyopaque) void {
     if (err) |e| e.* = null;
 }
@@ -1172,6 +1249,7 @@ fn wakeWorkerLocked(ctx: *Context) void {
 
 fn workerMain(ctx: *Context) void {
     if (comptime !threaded) return;
+    ctx.worker_id.store(RLock.me(), .release);
     ctx.lock.lock();
     if (ctx.rt) |rt| asap.handOverArcOwner(@ptrCast(@alignCast(rt)));
     bridge.nox_async_init(ctx.rt);
@@ -1212,6 +1290,7 @@ fn workerMain(ctx: *Context) void {
     }
     sch.host_hook = null;
     bridge.nox_async_deinit(ctx.rt);
+    ctx.worker_id.store(0, .release);
     ctx.lock.unlock();
 }
 
@@ -1223,9 +1302,9 @@ fn hostHook(p: ?*anyopaque, what: u8) callconv(.c) void {
             drainQueue(ctx);
             finalizeDone(ctx);
         },
-        1 => ctx.lock.unlock(),
+        1 => ctx.hook_depth = ctx.lock.unlockAll(),
         else => {
-            ctx.lock.lock();
+            ctx.lock.relock(ctx.hook_depth);
             if (ctx.rt) |rt| asap.handOverArcOwner(@ptrCast(@alignCast(rt)));
         },
     }
@@ -1316,9 +1395,9 @@ fn finishRec(ctx: *Context, idx: u32, status: i32, value: u64, err: ?*HostError)
         call = false;
     } else ctx.tmu.unlock();
     if (call) {
-        ctx.lock.unlock();
+        const d = ctx.lock.unlockAll();
         cb.?(ud, ctx, taskHandle(ctx, idx, gen), status);
-        ctx.lock.lock();
+        ctx.lock.relock(d);
         if (ctx.rt) |rt| asap.handOverArcOwner(@ptrCast(@alignCast(rt)));
     }
 }
@@ -1471,6 +1550,225 @@ fn shutdownAsync(ctx: *Context) void {
     ctx.free_tasks.deinit(std.heap.page_allocator);
     ctx.queue.deinit(std.heap.page_allocator);
     ctx.live.deinit(std.heap.page_allocator);
+}
+
+// ---- UR-012 (ABI v3): bitişik sayısal diziler (`NOX_HOST_VALUE_TYPED_ARRAY`) ve sıfır kopya sabitlenmiş arabellekler ----
+
+pub const DT_U8: i32 = 1;
+pub const DT_F64: i32 = 10;
+pub const DT_BOOL: i32 = 11;
+
+fn dtypeSize(dt: i32) usize {
+    return switch (dt) {
+        1, 2, 11 => 1,
+        3, 4 => 2,
+        5, 6, 9 => 4,
+        else => 8, // 7, 8, 10
+    };
+}
+
+fn dtypeValid(dt: i32) bool {
+    return dt >= 1 and dt <= 11;
+}
+
+/// `count` elemanlı `dtype` dizisini (TEK bellek kopyası) taşıyan değer. Host verisi kopyalanır.
+pub export fn nox_host_value_typed_array(ctx_ptr: ?*anyopaque, dtype: i32, data: ?*const anyopaque, count: usize, out: ?*u64) i32 {
+    const o = out orelse return ERR_INVAL;
+    o.* = 0;
+    if (!dtypeValid(dtype)) return ERR_INVAL;
+    if (count != 0 and data == null) return ERR_INVAL;
+    const sz = dtypeSize(dtype);
+    const bytes = std.math.mul(usize, count, sz) catch return ERR_INVAL;
+    const ctx = lockedCtx(ctx_ptr) orelse return ERR_INVAL;
+    defer ctx.lock.unlock();
+    const src: []const u8 = if (bytes == 0) "" else @as([*]const u8, @ptrCast(data.?))[0..bytes];
+    return coreScalarKind(ctx, VK_TYPED_ARRAY, dtype, src, o);
+}
+
+fn coreScalarKind(ctx: *Context, kind: u8, i: i64, data: []const u8, out: *u64) i32 {
+    out.* = 0;
+    const n = nodeNew(kind) orelse return ERR_NOMEM;
+    n.i = i;
+    if (data.len != 0) {
+        n.data = std.heap.page_allocator.dupe(u8, data) catch {
+            nodeRelease(n);
+            return ERR_NOMEM;
+        };
+    }
+    const h = valueNew(ctx, n);
+    if (h == 0) return ERR_NOMEM;
+    out.* = h;
+    return OK;
+}
+
+/// Dizinin dtype'ı, verisi (BORÇLU: değer bırakılana kadar geçerli) ve eleman sayısı.
+pub export fn nox_host_value_get_typed_array(ctx_ptr: ?*anyopaque, v: u64, out_dtype: ?*i32, out_data: ?*?*const anyopaque, out_count: ?*usize) i32 {
+    const ctx = lockedCtx(ctx_ptr) orelse return ERR_INVAL;
+    defer ctx.lock.unlock();
+    const n = nodeOf(ctx, v) orelse return ERR_INVALID_HANDLE;
+    if (n.kind != VK_TYPED_ARRAY) return ERR_INVAL;
+    if (out_dtype) |p| p.* = @intCast(n.i);
+    if (out_data) |p| p.* = if (n.data.len == 0) null else n.data.ptr;
+    if (out_count) |p| p.* = n.data.len / dtypeSize(@intCast(n.i));
+    return OK;
+}
+
+/// Adaptör ilkelleri: dizinin `idx`inci elemanı (tamsayı/bool dtype'ları → int; F32/F64 → float). Aralık/tür dışı 0.
+pub export fn nox_hv_ta_int(rt: ?*anyopaque, h: i64, idx: i64) i64 {
+    const ctx = curCtx(rt) orelse return 0;
+    const n = nodeOf(ctx, @bitCast(h)) orelse return 0;
+    if (n.kind != VK_TYPED_ARRAY or idx < 0) return 0;
+    const dt: i32 = @intCast(n.i);
+    const sz = dtypeSize(dt);
+    const off = @as(usize, @intCast(idx)) * sz;
+    if (off + sz > n.data.len) return 0;
+    const p = n.data.ptr + off;
+    return switch (dt) {
+        1, 11 => p[0],
+        2 => @as(i8, @bitCast(p[0])),
+        3 => std.mem.readInt(u16, p[0..2], .little),
+        4 => std.mem.readInt(i16, p[0..2], .little),
+        5 => std.mem.readInt(u32, p[0..4], .little),
+        6 => std.mem.readInt(i32, p[0..4], .little),
+        7 => @bitCast(std.mem.readInt(u64, p[0..8], .little)),
+        8 => std.mem.readInt(i64, p[0..8], .little),
+        else => 0,
+    };
+}
+
+pub export fn nox_hv_ta_float(rt: ?*anyopaque, h: i64, idx: i64) f64 {
+    const ctx = curCtx(rt) orelse return 0;
+    const n = nodeOf(ctx, @bitCast(h)) orelse return 0;
+    if (n.kind != VK_TYPED_ARRAY or idx < 0) return 0;
+    const dt: i32 = @intCast(n.i);
+    const sz = dtypeSize(dt);
+    const off = @as(usize, @intCast(idx)) * sz;
+    if (off + sz > n.data.len) return 0;
+    const p = n.data.ptr + off;
+    return switch (dt) {
+        9 => @floatCast(@as(f32, @bitCast(std.mem.readInt(u32, p[0..4], .little)))),
+        10 => @bitCast(std.mem.readInt(u64, p[0..8], .little)),
+        else => @floatFromInt(nox_hv_ta_int(rt, h, idx)),
+    };
+}
+
+/// Dizi, `want` (0 = int, 1 = float, 2 = bool) kullanımına uygun mu? 1/0 (int: tamsayı+bool dtype'ları, float: tüm sayısal dtype'lar, bool: yalnız BOOL).
+pub export fn nox_hv_ta_ok(rt: ?*anyopaque, h: i64, want: i64) i64 {
+    const ctx = curCtx(rt) orelse return 0;
+    const n = nodeOf(ctx, @bitCast(h)) orelse return 0;
+    if (n.kind != VK_TYPED_ARRAY) return 0;
+    const dt: i32 = @intCast(n.i);
+    const is_float = dt == 9 or dt == 10;
+    return switch (want) {
+        0 => if (!is_float) 1 else 0,
+        1 => 1,
+        else => if (dt == DT_BOOL) 1 else 0,
+    };
+}
+
+pub const BufferView = extern struct {
+    struct_size: u32,
+    dtype: i32,
+    data: ?*anyopaque,
+    byte_len: usize,
+    itemsize: usize,
+    ndim: i32,
+    flags: u32,
+    shape: [8]i64,
+    strides: [8]i64,
+    pin_id: u64,
+};
+
+const BUF_WRITABLE: u32 = 1;
+const BUF_CONTIGUOUS_C: u32 = 2;
+
+const BufClass = struct { name: []const u8, dtype: i32 };
+const buf_classes = [_]BufClass{
+    .{ .name = "nox_host_F64Buffer", .dtype = 10 },
+    .{ .name = "nox_host_I64Buffer", .dtype = 8 },
+    .{ .name = "nox_host_I32Buffer", .dtype = 6 },
+    .{ .name = "nox_host_U8Buffer", .dtype = 1 },
+};
+
+fn pinTag(ctx: *Context) u64 {
+    return ctxTag(ctx) ^ 0x7777;
+}
+
+/// `nox.host.F64Buffer` / `I64Buffer` / `I32Buffer` / `U8Buffer` örneğini sabitler: ham veriye SIFIR KOPYA görünüm (`out_view`). Birden çok okuma sabitlemesi olabilir; en çok bir ÖZEL yazma sabitlemesi
+/// (okuma varken ya da tersi `NOX_HOST_ERR_BUSY`). Sabitleme nesneyi canlı tutar (ARC) ve `nox_host_buffer_unpin`e kadar Nox tarafında `resize` RuntimeError verir. Tamponun veri adresi sabitken değişmez.
+pub export fn nox_host_handle_pin_buffer(ctx_ptr: ?*anyopaque, h: u64, req_flags: u32, out_view: ?*BufferView, out_err: ?*?*anyopaque) i32 {
+    if (out_err) |e| e.* = null;
+    const o = out_view orelse return ERR_INVAL;
+    const ctx = lockedCtx(ctx_ptr) orelse return ERR_INVAL;
+    defer ctx.lock.unlock();
+    const slot = slotOf(ctx, h) orelse return ERR_INVALID_HANDLE;
+    const obj = slot.obj orelse return ERR_INVALID_HANDLE;
+    const name = classNameOf(ctx.rt, obj) orelse return ERR_STATE;
+    var dtype: i32 = 0;
+    for (buf_classes) |bc| if (std.mem.eql(u8, bc.name, name)) {
+        dtype = bc.dtype;
+    };
+    if (dtype == 0) return ERR_INVAL; // sabitlenebilir bir arabellek sınıfı değil
+    const base: [*]u8 = @ptrCast(obj);
+    const f: [*]align(1) i64 = @ptrCast(base + abi_layout.TAG_SIZE);
+    if (f[0] != dtype) return ERR_STATE; // alan düzeni beklenenden farklı
+    const writable = (req_flags & BUF_WRITABLE) != 0;
+    if (writable) {
+        if (f[1] > 0 or f[2] != 0) return ERR_BUSY;
+    } else if (f[2] != 0) return ERR_BUSY;
+    const list_addr: usize = @intCast(@as(u64, @bitCast(f[3])));
+    if (list_addr == 0) return ERR_STATE;
+    const lp: [*]const u8 = @ptrFromInt(list_addr);
+    const len: usize = @intCast(@as(*align(1) const i64, @ptrCast(lp + abi_layout.LIST_LEN_OFF)).*);
+    const data_addr: usize = @intCast(@as(*align(1) const u64, @ptrCast(lp + abi_layout.LIST_DATA_OFF)).*);
+    var idx: u32 = undefined;
+    if (ctx.free_pins.pop()) |i| {
+        idx = i;
+    } else {
+        ctx.pins.append(std.heap.page_allocator, .{}) catch return ERR_NOMEM;
+        idx = @intCast(ctx.pins.items.len - 1);
+    }
+    const rec = &ctx.pins.items[idx];
+    arc.nox_rc_retain(obj);
+    rec.obj = obj;
+    rec.writable = writable;
+    if (writable) f[2] = 1 else f[1] += 1;
+    const itemsize = dtypeSize(dtype);
+    o.* = .{
+        .struct_size = @sizeOf(BufferView),
+        .dtype = dtype,
+        .data = @ptrFromInt(data_addr),
+        .byte_len = len * itemsize,
+        .itemsize = itemsize,
+        .ndim = 1,
+        .flags = BUF_CONTIGUOUS_C | (if (writable) BUF_WRITABLE else 0),
+        .shape = [_]i64{0} ** 8,
+        .strides = [_]i64{0} ** 8,
+        .pin_id = (pinTag(ctx) << 48) | (@as(u64, rec.gen) << 32) | (@as(u64, idx) + 1),
+    };
+    o.shape[0] = @intCast(len);
+    o.strides[0] = @intCast(itemsize);
+    return OK;
+}
+
+pub export fn nox_host_buffer_unpin(ctx_ptr: ?*anyopaque, pin_id: u64) i32 {
+    const ctx = lockedCtx(ctx_ptr) orelse return ERR_INVAL;
+    defer ctx.lock.unlock();
+    if (pin_id == 0 or (pin_id >> 48) != pinTag(ctx)) return ERR_INVALID_HANDLE;
+    const idx1: u32 = @truncate(pin_id);
+    if (idx1 == 0 or idx1 > ctx.pins.items.len) return ERR_INVALID_HANDLE;
+    const rec = &ctx.pins.items[idx1 - 1];
+    if (rec.obj == null or rec.gen != @as(u16, @truncate(pin_id >> 32))) return ERR_INVALID_HANDLE;
+    const obj = rec.obj;
+    const base: [*]u8 = @ptrCast(obj.?);
+    const f: [*]align(1) i64 = @ptrCast(base + abi_layout.TAG_SIZE);
+    if (rec.writable) f[2] = 0 else if (f[1] > 0) f[1] -= 1;
+    rec.obj = null;
+    rec.gen +%= 1;
+    if (rec.gen == 0) rec.gen = 1;
+    ctx.free_pins.append(std.heap.page_allocator, idx1 - 1) catch {};
+    releaseObject(ctx.rt, obj);
+    return OK;
 }
 
 // ---- UR-009 (ABI v3): sınıf örneği tutamaçları + kapsayıcı içi sınıf değerleri ----

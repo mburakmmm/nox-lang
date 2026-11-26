@@ -65,6 +65,21 @@ fn emitPendingCheck(self: *Codegen, rt: []const u8, exc_label: []const u8, ok_la
     try self.qbeJnz(pend, exc_label, ok_label);
 }
 
+/// `.handle` parametresi için sınıf denetimi (`param_classes[i]` doluysa): `obj` beklenen sınıfın (ya da torununun) örneği değilse `ERR_INVALID_HANDLE` ile döner.
+fn emitHandleTypeCheck(self: *Codegen, ex: HostExport, i: usize, obj: []const u8, rt: []const u8) CodegenError!void {
+    if (i >= ex.param_classes.len or ex.param_classes[i].len == 0) return;
+    const spec = try self.internFmtString(ex.param_classes[i]);
+    const ok = try self.newTemp();
+    try self.qbeCall(.{ .name = ok, .ty = .w }, "$nox_host_obj_is_type", &.{ .{ .ty = .l, .text = rt }, .{ .ty = .l, .text = obj }, .{ .ty = .l, .text = spec } });
+    const bad_l = try self.newLabel("host_type_bad");
+    const next_l = try self.newLabel("host_type_ok");
+    try self.qbeJnz(ok, next_l, bad_l);
+    try self.qbeLabel(bad_l);
+    try emitLeave(self);
+    try self.qbeRet(ERR_INVALID_HANDLE_RET);
+    try self.qbeLabel(next_l);
+}
+
 pub fn genHostModuleEntry(self: *Codegen, mod: []const u8) CodegenError!void {
     resetFn(self);
     // nox_host_module_init_<mod>(ctx, err)
@@ -172,6 +187,7 @@ pub fn genHostExport(self: *Codegen, mod: []const u8, ex: HostExport) CodegenErr
         try emitLeave(self);
         try self.qbeRet(ERR_INVALID_HANDLE_RET);
         try self.qbeLabel(next_l);
+        try emitHandleTypeCheck(self, ex, i, obj, rt);
         try handle_objs.append(self.allocator, obj);
     }
 
@@ -381,6 +397,7 @@ fn genHostAsyncExport(self: *Codegen, mod: []const u8, ex: HostExport) CodegenEr
             try emitLeave(self);
             try self.qbeRet(ERR_INVALID_HANDLE_RET);
             try self.qbeLabel(next_l);
+            try emitHandleTypeCheck(self, ex, i, obj, rt);
             handle_objs.items[i] = obj;
         } else if (k == .value) {
             const ok = try self.newTemp();

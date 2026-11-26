@@ -2,6 +2,8 @@
 #include "nox_host.h"
 #include <stdio.h>
 #include <string.h>
+#include <pthread.h>
+#include <time.h>
 
 NoxHostStatus nox_host_module_init_cb(NoxHostContext *ctx, NoxHostError **err);
 void nox_host_module_fini_cb(NoxHostContext *ctx);
@@ -19,9 +21,20 @@ static int g_fail;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); g_fail++; } } while (0)
 
 /* host nesne tablosu: ref -> (tür, sayaçlar) */
-enum { DOUBLER = 1, DESCRIBER = 2, RAISER = 3, REENTER = 4, NONER = 5, PARENT = 6, CHILD = 7, ERRTOK = 100 };
+enum { BLOCKER = 8, DESTROYER = 9, DOUBLER = 1, DESCRIBER = 2, RAISER = 3, REENTER = 4, NONER = 5, PARENT = 6, CHILD = 7, ERRTOK = 100 };
 static int g_retain[256], g_release[256];
 static int g_invoked;
+static volatile int g_foreign_done;
+static int64_t g_foreign_result;
+static NoxHostContext *g_blocker_ctx;
+
+static void *foreign_thread(void *arg) {
+    (void)arg; NoxHostError *e = NULL; int64_t r = 0;
+    /* callback sürerken başka iş parçacığından aynı bağlama giriş: callback bitene dek BEKLEMELİ */
+    if (nox_host_export_cb_add(g_blocker_ctx, 1, 2, &r, &e) == NOX_HOST_OK) g_foreign_result = r;
+    g_foreign_done = 1;
+    return NULL;
+}
 
 static void on_retain(void *ud, NoxHostExternalRef r) { (void)ud; g_retain[r]++; }
 static void on_release(void *ud, NoxHostExternalRef r) { (void)ud; g_release[r]++; }
@@ -51,6 +64,17 @@ static NoxHostStatus on_invoke(void *ud, NoxHostContext *ctx, NoxHostExternalRef
         if (nox_host_export_cb_add(ctx, 40, 2, &r, &e) != NOX_HOST_OK) return NOX_HOST_ERR_STATE;
         return nox_host_value_int(ctx, r, out); }
     case NONER: return NOX_HOST_OK; /* *out == 0 → None */
+    case BLOCKER: { pthread_t th; struct timespec ts = {0, 120 * 1000000L};
+        g_blocker_ctx = ctx; g_foreign_done = 0;
+        pthread_create(&th, NULL, foreign_thread, NULL);
+        nanosleep(&ts, NULL);
+        int early = g_foreign_done; /* yabancı iş parçacığı bu sürede GİREMEMİŞ olmalı */
+        int64_t r = 0; NoxHostError *e = NULL; /* ama bu (sahip) iş parçacığı yeniden girebilir */
+        if (nox_host_export_cb_add(ctx, 10, 20, &r, &e) != NOX_HOST_OK || r != 30) return NOX_HOST_ERR_STATE;
+        pthread_detach(th);
+        return nox_host_value_int(ctx, early ? -1 : 7, out); }
+    case DESTROYER: nox_host_context_destroy(ctx); /* geri çağrı içinden: ertelenir */
+        return nox_host_value_int(ctx, 1, out);
     case PARENT: return nox_host_value_external_ref(ctx, CHILD, out);
     default: return NOX_HOST_ERR_INVAL;
     }
@@ -132,6 +156,18 @@ int main(void) {
 
     /* sonuç olarak dönen host nesnesi */
     { NoxHostExternalRef ch = 0; CHECK(nox_host_export_cb_child(c, PARENT, &ch, &e) == NOX_HOST_OK && ch == CHILD); g_release[CHILD]++; }
+
+    /* addendum: geri çağrı sürerken yabancı iş parçacığı BEKLER, sahip iş parçacığı yeniden girer */
+    { int64_t r = 0; CHECK(nox_host_export_cb_call_uncaught(c, BLOCKER, &r, &e) == NOX_HOST_OK && r == 7);
+      struct timespec ts = {0, 100 * 1000000L}; int spins = 0;
+      while (!g_foreign_done && spins++ < 100) nanosleep(&ts, NULL);
+      CHECK(g_foreign_done == 1 && g_foreign_result == 3); }
+
+    /* geri çağrı içinden bağlamı yok etme: en dıştaki çağrı bitince yapılır (çökme/UAF yok) */
+    { NoxHostContext *c2 = NULL; int64_t r = 0;
+      CHECK(nox_host_context_create(&cfg, &c2) == NOX_HOST_OK && nox_host_module_init_cb(c2, &e) == NOX_HOST_OK);
+      CHECK(nox_host_context_set_callbacks(c2, &ops) == NOX_HOST_OK);
+      CHECK(nox_host_export_cb_call_uncaught(c2, DESTROYER, &r, &e) == NOX_HOST_OK && r == 1); }
 
     /* geçersiz kullanım */
     { NoxHostValue v = 0; CHECK(nox_host_value_external_ref(c, 0, &v) == NOX_HOST_ERR_INVAL);

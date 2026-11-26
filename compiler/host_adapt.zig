@@ -188,7 +188,17 @@ const Synth = struct {
             .generic => |g| {
                 if (std.mem.eql(u8, g.name, "list")) {
                     const get = try self.getName(0, g.args[0]);
-                    try self.p(&d, "def {s}(h: int) -> {s}:\n    nox_host_expect(h, 6, \"list\")\n    out: {s} = []\n    cnt: int = nox_hv_len(h)\n    for i in range(cnt):\n        out.append({s}(h, i))\n    return out\n\n", .{ name, ty, ty, get });
+                    // UR-012: `list[int|float|bool]` parametresi `NOX_HOST_VALUE_TYPED_ARRAY` da kabul eder (tek bellek kopyasıyla kurulan bulk dizi; Nox'ta süreç-içi döngüyle okunur).
+                    const ta: ?struct { want: u8, getter: []const u8 } = if (g.args[0] == .simple) blk: {
+                        const en = g.args[0].simple;
+                        if (std.mem.eql(u8, en, "int")) break :blk .{ .want = 0, .getter = "nox_hv_ta_int(h, i)" };
+                        if (std.mem.eql(u8, en, "float")) break :blk .{ .want = 1, .getter = "nox_hv_ta_float(h, i)" };
+                        if (std.mem.eql(u8, en, "bool")) break :blk .{ .want = 2, .getter = "nox_hv_ta_int(h, i) != 0" };
+                        break :blk null;
+                    } else null;
+                    if (ta) |t| {
+                        try self.p(&d, "def {s}(h: int) -> {s}:\n    out: {s} = []\n    cnt: int = nox_hv_len(h)\n    if nox_hv_kind(h) == 10:\n        if nox_hv_ta_ok(h, {d}) == 0:\n            raise ValueError(\"typed array dtype does not match the parameter\")\n        for i in range(cnt):\n            out.append({s})\n        return out\n    nox_host_expect(h, 6, \"list\")\n    for i in range(cnt):\n        out.append({s}(h, i))\n    return out\n\n", .{ name, ty, ty, t.want, t.getter, get });
+                    } else try self.p(&d, "def {s}(h: int) -> {s}:\n    nox_host_expect(h, 6, \"list\")\n    out: {s} = []\n    cnt: int = nox_hv_len(h)\n    for i in range(cnt):\n        out.append({s}(h, i))\n    return out\n\n", .{ name, ty, ty, get });
                 } else if (std.mem.eql(u8, g.name, "dict")) {
                     const kget = try self.getName(1, g.args[0]);
                     const vget = try self.getName(2, g.args[1]);
@@ -302,6 +312,9 @@ const prelude =
     \\extern def nox_hv_append(c: int, item: int) -> int from "zig-out/lib/noxrt.o" with_rt
     \\extern def nox_hv_dict_set(d: int, k: int, v: int) -> int from "zig-out/lib/noxrt.o" with_rt
     \\extern def nox_hv_class_is(h: int, name: str) -> int from "zig-out/lib/noxrt.o" with_rt
+    \\extern def nox_hv_ta_int(h: int, i: int) -> int from "zig-out/lib/noxrt.o" with_rt
+    \\extern def nox_hv_ta_float(h: int, i: int) -> float from "zig-out/lib/noxrt.o" with_rt
+    \\extern def nox_hv_ta_ok(h: int, want: int) -> int from "zig-out/lib/noxrt.o" with_rt
     \\extern def nox_hv_ref(h: int) -> int from "zig-out/lib/noxrt.o" with_rt
     \\extern def nox_hv_new_ref(ref: int) -> int from "zig-out/lib/noxrt.o" with_rt
     \\

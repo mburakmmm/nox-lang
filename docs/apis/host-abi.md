@@ -96,10 +96,10 @@ Methods starting with `_` (other than the dunders above), generic/enum/`@datacla
 `c_symbol`, `params` without `self`, `return_type`, `return_marshal`, `thread_policy`, `is_async`) and `"kind": "exception"` (with `base`). Since the checker strips `@property`/`@staticmethod`
 from class bodies, the metadata is taken from the source tree *before* checking.
 
-Handles are type-unchecked on the way in (a handle of another class is undefined behaviour), so a host verifies a handle with `nox_host_handle_type_name(ctx, h, &span)` (the Nox class name, e.g. `"Counter"`).
-Class instances inside containers travel as `NOX_HOST_VALUE_HANDLE` values: `nox_host_value_handle(ctx, h, &v)` wraps a handle's object (the host keeps and releases its own handle) and
+Every handle parameter is validated on the way in — generation, owning context and **class** (the declared class or one of its subclasses): a stale, foreign-context or wrong-class handle returns `NOX_HOST_ERR_INVALID_HANDLE` before any Nox code runs. Methods may take several handles of the same context (`a.dot(b)`); each is checked independently. A host can also ask a handle's class with `nox_host_handle_type_name(ctx, h, &span)` (the Nox class name, e.g. `"Counter"`).
+Class instances inside containers travel as `NOX_HOST_VALUE_HANDLE` values (the exact class is required there): `nox_host_value_handle(ctx, h, &v)` wraps a handle's object (the host keeps and releases its own handle) and
 `nox_host_value_get_handle(ctx, v, &h)` gives a **new** handle (release it with `nox_host_handle_release`). `Class | None` uses `nox_host_value_none` for `None`. Inside containers only the *exact* class
-is accepted (a subclass instance or another class raises `ValueError`); top-level `NoxHostHandle` parameters have no such restriction.
+is accepted (a subclass instance or another class raises `ValueError`); top-level `NoxHostHandle` parameters accept subclasses.
 
 ## Host objects and callbacks (ABI v3, UR-010)
 
@@ -117,7 +117,8 @@ typedef struct NoxHostCallbackOps {
 } NoxHostCallbackOps;
 ```
 
-- **Reentrancy.** `invoke`, `retain` and `release` run with the context lock **released**; the callback may call `nox_host_value_*` or any `nox_host_export_*` on the same context. After it returns the lock is re-taken.
+- **Reentrancy.** `invoke`, `retain` and `release` run **while the context lock is held**, and the lock is *re-entrant*: the thread that is inside the callback may call `nox_host_value_*` or any `nox_host_export_*` on the same context. Any *other* thread that
+  enters the context waits until the outermost call has returned (a foreign thread must never run while Nox frames are suspended inside a callback). `nox_host_context_destroy` called from inside a callback is deferred until the outermost call returns.
 - **Arguments/result.** `args_tuple` is a borrowed `NOX_HOST_VALUE_TUPLE`. The callback builds `*out_result` with `nox_host_value_*` (leave it `0` for `None`); Nox owns and releases it.
 - **Exceptions.** Return `NOX_HOST_ERR_HOST_EXCEPTION` and set `*out_err_token` (a host reference; one `+1` passes to Nox) and optionally `*out_err_msg` (UTF-8, *borrowed*: copied before `invoke`
   returns, no `nox_host_buffer_release`). Nox raises `nox.host.HostError`. If it is not caught, the export returns `NOX_HOST_ERR_HOST_EXCEPTION` and `nox_host_error_host_token(err)` yields the token so the host
@@ -153,6 +154,26 @@ NoxHostStatus nox_host_task_release(NoxHostContext *ctx, NoxHostTask task);
   context then rejects new tasks with `NOX_HOST_ERR_STATE` (its scheduler is abandoned; a Debug build reports the abandoned fibers as leaks). Create a new context to continue.
 - **Destroying a context** cancels running tasks and waits for the worker; tasks reach their next `await` first.
 - Module top-level code still runs synchronously inside `nox_host_module_init_*` (no `spawn`/`await` there). WASM/freestanding targets do not support tasks.
+
+## Pinned buffers and typed arrays (ABI v3, UR-012)
+
+Bulk numeric data avoids per-element boxing in two ways.
+
+**`NOX_HOST_VALUE_TYPED_ARRAY`** — `nox_host_value_typed_array(ctx, dtype, data, count, &v)` copies `count` elements in one `memcpy`; `nox_host_value_get_typed_array` reads the dtype/data/count back (borrowed). A Nox parameter typed `list[int]`,
+`list[float]` or `list[bool]` accepts either a `list` value or a typed array (`int`: integer/`BOOL` dtypes, `float`: any numeric dtype, `bool`: `BOOL` only; a mismatching dtype raises `ValueError` inside Nox). `NoxHostDType` is `U8=1 I8 U16 I16 U32 I32 U64 I64 F32 F64=10 BOOL=11`.
+
+**Pinned zero-copy views** — the Nox classes `nox.host.F64Buffer`, `I64Buffer`, `I32Buffer` and `U8Buffer` (fixed-size, zero-initialised, exported as ordinary class handles) expose their storage:
+
+```c
+NoxHostBufferView v;
+nox_host_handle_pin_buffer(ctx, h, NOX_HOST_BUF_WRITABLE /* or READONLY (0) */, &v, &err); // v.data, v.byte_len, v.itemsize, v.shape[0], v.strides[0], v.dtype, v.pin_id
+/* ... use v.data directly (PEP 3118 / NumPy / Arrow) ... */
+nox_host_buffer_unpin(ctx, v.pin_id);
+```
+
+Any number of read-only pins may coexist; at most one exclusive writable pin (otherwise `NOX_HOST_ERR_BUSY`). A pin keeps the object alive (ARC) even if the host releases its handle, the data address does not move while pinned, and Nox's
+`resize` on a pinned buffer raises a recoverable `RuntimeError` (it never relocates memory under the host). Other classes give `NOX_HOST_ERR_INVAL`. `NoxHostBufferView` is 176 bytes (`shape` at 40, `strides` at 104, `pin_id` at 168).
+Contract for Nox code: do not grow the list returned by `as_list()` while the buffer may be pinned.
 
 ## Lifecycle
 
