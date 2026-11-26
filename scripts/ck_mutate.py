@@ -20,6 +20,8 @@ print = functools.partial(builtins.print, flush=True)  # noqa: A001 (arka planda
 SRC = "selfhost/typecheck.nox.in"
 BACKUP = "selfhost/.ck_mutate_backup"  # betik/makine ölürse bir sonraki çalıştırma kaynağı buradan geri yükler (silinmeli: commit'e girmez)
 BIN = "./zig-out/bin/noxc-nightly"
+# Mutantlar paylaşılan `.zig-cache` yerine İZOLE bir önbellek dizininde derlenir: budama başka süreçlerin dosyalarını silemez.
+CACHE = os.path.join(os.environ.get("TMPDIR", "/tmp"), "ck_mutate_cache")
 
 
 def sh(cmd, **kw):
@@ -27,12 +29,12 @@ def sh(cmd, **kw):
 
 
 def build():
-    r = sh("python3 scripts/gen_selfhost_parser.py && zig build nightly")
+    r = sh(f"python3 scripts/gen_selfhost_parser.py && zig build nightly --cache-dir '{CACHE}'")
     return r.returncode == 0, (r.stdout + r.stderr)[-600:]
 
 
 def prune_zig_cache(base_o):
-    o_dir = ".zig-cache/o"
+    o_dir = os.path.join(CACHE, "o")
     if not os.path.isdir(o_dir):
         return
     for name in os.listdir(o_dir):
@@ -89,7 +91,17 @@ def main():
     if not base_ok:
         print("taban çizgisi Zig ile eşit değil, mutasyon testi anlamsız:", base_sig[:200])
         sys.exit(2)
-    base_o = set(os.listdir(".zig-cache/o")) if os.path.isdir(".zig-cache/o") else set()
+    base_o = set()
+    ok0, tail0 = build()  # izole önbelleği özgün kaynakla ısıt: taban eserler budanmaz
+    if not ok0:
+        print("özgün kaynak izole önbellekte derlenemedi:", tail0)
+        open(SRC, "w", encoding="utf-8").write(orig)
+        if os.path.exists(BACKUP):
+            os.remove(BACKUP)
+        sys.exit(3)
+    o_dir0 = os.path.join(CACHE, "o")
+    base_o = set(os.listdir(o_dir0)) if os.path.isdir(o_dir0) else set()
+    rebuild_ok = True
     try:
         for m in mutants:
             n = orig.count(m["eski"])
@@ -117,11 +129,15 @@ def main():
         if os.path.exists(BACKUP):
             os.remove(BACKUP)
         ok, tail = build()
-        prune_zig_cache(base_o)
+        rebuild_ok = ok
+        shutil.rmtree(CACHE, ignore_errors=True)
         print("kaynak geri yüklendi; nightly yeniden derlendi:", "tamam" if ok else "HATA " + tail)
     print(f"özet: yakalanan={len(caught)} yaşayan={len(survived)}")
     for s in survived:
         print("  YAŞAYAN:", s)
+    if not rebuild_ok:
+        print("HATA: özgün nightly yeniden derlenemedi (ikili bayat/mutant olabilir)")
+        sys.exit(3)
     sys.exit(1 if survived else 0)
 
 

@@ -11,6 +11,19 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.101] - 2026-11-26
+
+### Değiştirilenler / Eklenenler
+- **Selfhost typechecker (`selfhost/typecheck.nox.in`, `selfhost/typecheck.nox` — 6.760 satır) imza özellikleri ve `bytes` literali:**
+  - `Ck.fdecl` (işlev/metot AST bildirimi eşlemesi, `extern def` için `-1`) ve `Ck.in_spawn_op` eklendi; `validate_param_defaults` ile varsayılan parametre ifadeleri doğrulandı.
+  - `*args`, `**kwargs`, konum-only (`/`), anahtar-sözcük-only (`*`) parametreler, anahtar-sözcük argümanlı çağrılar (`f(b=2, a=1)`), `*xs` / `**d` çağrı açılımları (`expand_call_args`, `expr_has_effects`, `any_variadic`) ve `spawn` çağrılarında `in_spawn_op` kapsamı uygulandı; `instantiate_generic_func` genişletildi.
+  - `register_func#1`, `class#method_param_features` ve `__nox_kw_unpack` kapsam kapıları kaldırıldı; `Expr.bytes_lit`, `bytes + bytes` ve `__nox_bytes_repr` eklendi.
+- **`scripts/ck_mutate.py` izolasyonu ve çıkış kodu düzeltmesi:**
+  - Mutant derlemeleri izole `$TMPDIR/ck_mutate_cache` (`--cache-dir`) dizininde çalıştırılıyor, önbellek döngü öncesi ısıtılıyor, `.zig-cache/o` izole dizin içinde budanıyor ve `finally` bloğunda temizleniyor; orijinal `noxc-nightly` yeniden derlenemezse betik çıkış kodu `3` ile sonlanıyor.
+- **Doğrulama ve korpus:**
+  - `scripts/ck_gen.py --sig` (3.000 dosya: `files=2785 unsupported=0 accepted=1274 rejected=1511 diagnostics=1748 skipped_parse=215`), `tests/fixtures/ck_edge/sig/*.nox` (20 dosya: `unsupported=0 accepted=1 rejected=19 diagnostics=13 skipped_parse=0`), `scripts/ck_mutants_sig.py` (**23/23 yakalandı, 0 yaşayan**).
+  - `scripts/ck_regress.sh` 18 kip + depo (`files=1647 unsupported=353 accepted=483 rejected=811 diagnostics=1901 skipped_parse=56`) ve `ck-diff checkm` (`files=347 unsupported=341 accepted=0 rejected=6`, `303 register_func#1` → `0`, `303 type#bytes`) yeşil geçti.
+
 ## [2.2.100]
 
 Selfhost tip denetleyicisi **Aşama 3.6 tamamlandı (dilim D — prelude jenerik tipleri/çağrıları & `protocol_def`)** (spec §3.533):

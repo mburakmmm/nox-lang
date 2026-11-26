@@ -179,6 +179,9 @@ class Ck:
     proto_msig: list[int]
     proto_bases: Map2
     lam_cnt: int
+    # imza özellikleri: varsayılan/variadik/kw_only/pos_only (`FuncSig.decl`, `in_spawn_operand`)
+    fdecl: list[int]
+    in_spawn_op: bool
 
     def __init__(self, tt: TT) -> None:
         self.tt = tt
@@ -253,6 +256,8 @@ class Ck:
         self.proto_msig = []
         self.proto_bases = Map2()
         self.lam_cnt = 0
+        self.fdecl = []
+        self.in_spawn_op = False
 
 # ---- Scope (Zig `Scope`) ----
 def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
@@ -750,6 +755,8 @@ def check_expr_inner(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
         return 2
     if tag == {{T:Expr.string_lit}}:
         return 3
+    if tag == {{T:Expr.bytes_lit}}:
+        return ty_mk(ck.tt, 18, 0, 0)
     if tag == {{T:Expr.none_lit}}:
         return 4
     if tag == {{T:Expr.identifier}}:
@@ -810,7 +817,11 @@ def check_spawn(ck: Ck, a: Ast, fx: Fx, opd: int) -> int:
         mp(ck, "' is not async")
         raise mk_fail(ck, "TypeMismatch")
     sid: int = ck.fmap.vv[m2_get(ck.fmap, 0, sym)]
-    check_args_sig(ck, a, fx, c, sid, sym)
+    ck.in_spawn_op = True
+    try:
+        check_args_sig(ck, a, fx, c, sid, sym)
+    finally:
+        ck.in_spawn_op = False
     # list/dict/class argümanları paylaşılır: Zig'in spawn-paylaşım/mutasyon analizleri (SpawnSharedMutation ...) henüz taşınmadı
     for pi in range(ck.fpn[sid]):
         pg: int = ck.tt.tag[ck.fpar[ck.fps[sid] + pi]]
@@ -1268,6 +1279,8 @@ def check_binary(ck: Ck, a: Ast, fx: Fx, b: int) -> int:
     if op == {{E:BinaryOp.add}}:
         if l == 3 and r == 3:
             return 3
+        if tt.tag[l] == 18 and tt.tag[r] == 18:
+            return l
         if tt.tag[l] == 5 and tt.tag[r] == 5:
             if l != r:
                 mp(ck, "'+' requires the element types of the two lists to be the same")
@@ -1569,6 +1582,8 @@ def check_print(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
                 mp(ck, "positional arguments of 'print' must come before keyword arguments")
                 raise mk_fail(ck, "TypeMismatch")
             pt: int = check_expr(ck, a, fx, arg)
+            if ck.tt.tag[pt] == 18:
+                check_expr(ck, a, fx, mk_ident_call(a, "__nox_bytes_repr", [arg]))
             if has_dunder(ck, pt, "__str__"):
                 raise unsup(ck, "check_print#dunder")
     return 4
@@ -1929,7 +1944,7 @@ def sref_starts_with(a: Ast, sr: int, pfx: str) -> bool:
 
 # Zig'de ayrı yolu olan (ptr/lowlevel ailesi, dahili `__nox_*` kapıları) ama bu dilimde taşınmayan ad: kapsam dışı etiketi; "" = yok.
 def call_gap_label(ck: Ck, a: Ast, cv: int, fi: int, gfi: int, ci: int) -> str:
-    if sref_eq(a, cv, "__nox_bind_method") or sref_eq(a, cv, "__nox_match_check") or sref_eq(a, cv, "__nox_payload") or sref_eq(a, cv, "__nox_match_unreachable") or sref_eq(a, cv, "__nox_kw_unpack") or sref_eq(a, cv, "__nox_cell_of") or sref_eq(a, cv, "__nox_get") or sref_eq(a, cv, "__nox_for_iter") or sref_starts_with(a, cv, "__nox_reflect_"):
+    if sref_eq(a, cv, "__nox_bind_method") or sref_eq(a, cv, "__nox_match_check") or sref_eq(a, cv, "__nox_payload") or sref_eq(a, cv, "__nox_match_unreachable") or sref_eq(a, cv, "__nox_cell_of") or sref_eq(a, cv, "__nox_get") or sref_eq(a, cv, "__nox_for_iter") or sref_starts_with(a, cv, "__nox_reflect_"):
         return "check_call#internal"
     # `adopt(p)`: beklenen-tip bağlamı (`checkExprExpected` dalı) taşınmadı
     if sref_eq(a, cv, "adopt"):
@@ -2758,6 +2773,7 @@ def new_sig(ck: Ck, tys: list[int], names: list[int], ret: int) -> int:
     ck.fps.append(len(ck.fpar))
     ck.fpn.append(len(tys))
     ck.fret.append(ret)
+    ck.fdecl.append(-1)
     for q in range(len(tys)):
         ck.fpar.append(tys[q])
         ck.fpnm.append(names[q])
@@ -3346,10 +3362,6 @@ def instantiate_generic_class(ck: Ck, a: Ast, gcd: int, bound: list[int]) -> int
         if pky(sl_at(a, gm, {{O:FuncDef.decorators}})) > 0 or a.n[gm + {{O:FuncDef.is_async}}] != 0 or a.n[gm + {{O:FuncDef.allow_await}}] != 0:
             raise unsup(ck, "class#method_features")
         gm_ps: int = sl_at(a, gm, {{O:FuncDef.params}})
-        for gpi in range(pky(gm_ps)):
-            gp: int = stmt_at(a, gm_ps, gpi)
-            if a.n[gp + {{O:Param.default}}] >= 0 or a.n[gp + {{O:Param.variadic}}] != 0 or a.n[gp + {{O:Param.var_kw}}] != 0 or a.n[gp + {{O:Param.kw_only}}] != 0 or a.n[gp + {{O:Param.pos_only}}] != 0:
-                raise unsup(ck, "class#method_param_features")
         if pky(sl_at(a, gm, {{O:FuncDef.type_params}})) != 1:
             mp(ck, "generic method '")
             mp_sym(ck, gsym)
@@ -3520,19 +3532,15 @@ def lookup_generic_func(ck: Ck, a: Ast, gn: int) -> int:
 
 def instantiate_generic_func(ck: Ck, a: Ast, fx: Fx, gfd: int, fn_sym: int, args: int, explicit: list[int], has_exp: bool) -> int:
     na: int = pky(args)
-    for ki in range(na):
-        if a.n[stmt_at(a, args, ki)] == {{T:Expr.kwarg}}:
-            raise unsup(ck, "check_args_sig#kwarg")
     ps: int = sl_at(a, gfd, {{O:FuncDef.params}})
     np: int = pky(ps)
-    if na < np:
-        p0: int = stmt_at(a, ps, na)
-        mp(ck, "in the call to '")
-        mp_sym(ck, fn_sym)
-        mp(ck, "', argument '")
-        mp_sref(ck, a, pk(a.n[p0 + {{O:Param.name}}], a.n[p0 + {{O:Param.name}} + 1]))
-        mp(ck, "' is missing")
-        raise mk_fail(ck, "ArgumentCountMismatch")
+    has_kw: bool = False
+    for ki in range(na):
+        if a.n[stmt_at(a, args, ki)] == {{T:Expr.kwarg}}:
+            has_kw = True
+    if has_kw or na < np or any_variadic(a, ps):
+        args = expand_call_args(ck, a, ps, args, fn_sym)
+        na = pky(args)
     if na != np:
         mp(ck, "'")
         mp_sym(ck, fn_sym)
@@ -3697,10 +3705,6 @@ def extract_generic_methods(ck: Ck, a: Ast, body: int) -> None:
             if pky(sl_at(a, m2, {{O:FuncDef.decorators}})) > 0 or a.n[m2 + {{O:FuncDef.is_async}}] != 0 or a.n[m2 + {{O:FuncDef.allow_await}}] != 0:
                 raise unsup(ck, "class#method_features")
             mps: int = sl_at(a, m2, {{O:FuncDef.params}})
-            for pi in range(pky(mps)):
-                gp: int = stmt_at(a, mps, pi)
-                if a.n[gp + {{O:Param.default}}] >= 0 or a.n[gp + {{O:Param.variadic}}] != 0 or a.n[gp + {{O:Param.var_kw}}] != 0 or a.n[gp + {{O:Param.kw_only}}] != 0 or a.n[gp + {{O:Param.pos_only}}] != 0:
-                    raise unsup(ck, "class#method_param_features")
             if pky(tps) != 1:
                 mp(ck, "generic method '")
                 mp_sym(ck, csym)
@@ -3854,6 +3858,7 @@ def try_resolve_generic_method_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int)
             snms.append(sym_of(ck, a, pk(a.n[sp_n + {{O:Param.name}}], a.n[sp_n + {{O:Param.name}} + 1])))
         sret: int = type_expr_to_type(ck, a, cret)
         sid = new_sig(ck, stys, snms, sret)
+        ck.fdecl[sid] = pk(pkx(psl) + 1, pky(psl) - 1)
         for sci in range(len(ck.cls_sym)):
             if is_subclass(ck.tt, ck.cls_sym[sci], def_sym):
                 m2_put(ck.cls_meths, sci, mangled_m, sid)
@@ -4161,11 +4166,10 @@ def register_class_sigs(ck: Ck, a: Ast, idx: int) -> None:
         pnames: list[int] = []
         for q in range(1, pky(ps)):
             pn: int = stmt_at(a, ps, q)
-            if a.n[pn + {{O:Param.default}}] >= 0 or a.n[pn + {{O:Param.variadic}}] != 0 or a.n[pn + {{O:Param.var_kw}}] != 0 or a.n[pn + {{O:Param.kw_only}}] != 0 or a.n[pn + {{O:Param.pos_only}}] != 0:
-                raise unsup(ck, "class#method_param_features")
             tys.append(type_expr_to_type(ck, a, a.n[pn + {{O:Param.type_expr}}]))
             pnames.append(sym_of(ck, a, pk(a.n[pn + {{O:Param.name}}], a.n[pn + {{O:Param.name}} + 1])))
         ret: int = type_expr_to_type(ck, a, a.n[m2 + {{O:FuncDef.return_type}}])
+        validate_param_defaults(ck, a, mname, ps, 1, False)
         if sref_eq(a, mname, "__del__"):
             if len(tys) != 0 or ret != 4:
                 mp(ck, "'")
@@ -4173,6 +4177,7 @@ def register_class_sigs(ck: Ck, a: Ast, idx: int) -> None:
                 mp(ck, ".__del__' must be `def __del__(self) -> None:` (no other parameters, no return value, not async)")
                 raise mk_fail(ck, "TypeMismatch")
         sid: int = new_sig(ck, tys, pnames, ret)
+        ck.fdecl[sid] = pk(pkx(ps) + 1, pky(ps) - 1)
         if sref_eq(a, mname, "__init__"):
             ck.cls_init[idx] = sid
         else:
@@ -4317,25 +4322,346 @@ def dotted_root_is(ck: Ck, a: Ast, e: int, name: str) -> bool:
         return False
     return sref_eq(a, pk(a.n[cur + 1], a.n[cur + 2]), name)
 
+def validate_param_defaults(ck: Ck, a: Ast, fn_sr: int, ps: int, start_i: int, skip_types: bool) -> None:
+    seen_default: bool = False
+    for i in range(start_i, pky(ps)):
+        p: int = stmt_at(a, ps, i)
+        d: int = a.n[p + {{O:Param.default}}]
+        pn: int = pk(a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1])
+        if d < 0:
+            if seen_default and a.n[p + {{O:Param.variadic}}] == 0 and a.n[p + {{O:Param.var_kw}}] == 0 and a.n[p + {{O:Param.kw_only}}] == 0:
+                mp(ck, "'")
+                mp_sref(ck, a, fn_sr)
+                mp(ck, "': a parameter without a default value ('")
+                mp_sref(ck, a, pn)
+                mp(ck, "') cannot follow a parameter with a default value")
+                raise mk_fail(ck, "TypeMismatch")
+            continue
+        seen_default = True
+        dt: int = a.n[d]
+        lit_t: int = -1
+        if dt == {{T:Expr.int_lit}}:
+            lit_t = 0
+        elif dt == {{T:Expr.float_lit}}:
+            lit_t = 1
+        elif dt == {{T:Expr.bool_lit}}:
+            lit_t = 2
+        elif dt == {{T:Expr.string_lit}}:
+            lit_t = 3
+        elif dt == {{T:Expr.bytes_lit}}:
+            lit_t = ty_mk(ck.tt, 18, 0, 0)
+        elif dt == {{T:Expr.none_lit}}:
+            lit_t = 4
+        elif dt == {{T:Expr.unary}}:
+            up: int = a.n[d + 1]
+            uop: int = a.n[up + {{O:Unary.op}}]
+            uod: int = a.n[up + {{O:Unary.operand}}]
+            if uop == {{E:UnaryOp.neg}} and a.n[uod] == {{T:Expr.int_lit}}:
+                lit_t = 0
+            elif uop == {{E:UnaryOp.neg}} and a.n[uod] == {{T:Expr.float_lit}}:
+                lit_t = 1
+            else:
+                mp(ck, "function '")
+                mp_sref(ck, a, fn_sr)
+                mp(ck, "', parameter '")
+                mp_sref(ck, a, pn)
+                mp(ck, "': the default value can only be a constant literal")
+                raise mk_fail(ck, "TypeMismatch")
+        else:
+            mp(ck, "function '")
+            mp_sref(ck, a, fn_sr)
+            mp(ck, "', parameter '")
+            mp_sref(ck, a, pn)
+            mp(ck, "': the default value can only be a constant literal (int/float/bool/str/None, a negative number)")
+            raise mk_fail(ck, "TypeMismatch")
+        if skip_types:
+            continue
+        pt: int = type_expr_to_type(ck, a, a.n[p + {{O:Param.type_expr}}])
+        ok: bool = False
+        if lit_t == 4:
+            ok = ck.tt.tag[pt] == 15
+        else:
+            ok = ty_assignable(ck.tt, pt, lit_t)
+        if not ok:
+            mp(ck, "function '")
+            mp_sref(ck, a, fn_sr)
+            mp(ck, "', parameter '")
+            mp_sref(ck, a, pn)
+            mp(ck, "': the type of the default value does not match the parameter type")
+            raise mk_fail(ck, "TypeMismatch")
+
+def any_variadic(a: Ast, decl: int) -> bool:
+    for i in range(pky(decl)):
+        p: int = stmt_at(a, decl, i)
+        if a.n[p + {{O:Param.variadic}}] != 0 or a.n[p + {{O:Param.var_kw}}] != 0 or a.n[p + {{O:Param.kw_only}}] != 0:
+            return True
+    return False
+
+def expr_has_effects(a: Ast, e: int) -> bool:
+    tag: int = a.n[e]
+    if tag == {{T:Expr.int_lit}} or tag == {{T:Expr.float_lit}} or tag == {{T:Expr.bool_lit}} or tag == {{T:Expr.string_lit}} or tag == {{T:Expr.none_lit}} or tag == {{T:Expr.identifier}} or tag == {{T:Expr.lambda}}:
+        return False
+    if tag == {{T:Expr.unary}}:
+        return expr_has_effects(a, a.n[a.n[e + 1] + {{O:Unary.operand}}])
+    if tag == {{T:Expr.binary}}:
+        b: int = a.n[e + 1]
+        return expr_has_effects(a, a.n[b + {{O:Binary.left}}]) or expr_has_effects(a, a.n[b + {{O:Binary.right}}])
+    if tag == {{T:Expr.attribute}}:
+        return expr_has_effects(a, a.n[a.n[e + 1] + {{O:Attribute.obj}}])
+    if tag == {{T:Expr.index}}:
+        ix: int = a.n[e + 1]
+        return expr_has_effects(a, a.n[ix + {{O:Index.obj}}]) or expr_has_effects(a, a.n[ix + {{O:Index.index}}])
+    if tag == {{T:Expr.ternary}}:
+        t: int = a.n[e + 1]
+        return expr_has_effects(a, a.n[t + {{O:Ternary.cond}}]) or expr_has_effects(a, a.n[t + {{O:Ternary.then_expr}}]) or expr_has_effects(a, a.n[t + {{O:Ternary.else_expr}}])
+    if tag == {{T:Expr.list_lit}} or tag == {{T:Expr.tuple_lit}}:
+        st: int = a.n[e + 1]
+        for i in range(a.n[e + 2]):
+            if expr_has_effects(a, a.l[st + i]):
+                return True
+        return False
+    if tag == {{T:Expr.dict_lit}}:
+        st2: int = a.n[e + 1]
+        for j in range(a.n[e + 2]):
+            dp: int = a.l[st2 + j]
+            if expr_has_effects(a, a.n[dp + {{O:DictPair.key}}]) or expr_has_effects(a, a.n[dp + {{O:DictPair.value}}]):
+                return True
+        return False
+    if tag == {{T:Expr.slice}}:
+        sl: int = a.n[e + 1]
+        if expr_has_effects(a, a.n[sl + {{O:Slice.obj}}]):
+            return True
+        if a.n[sl + {{O:Slice.lo}}] >= 0 and expr_has_effects(a, a.n[sl + {{O:Slice.lo}}]):
+            return True
+        if a.n[sl + {{O:Slice.hi}}] >= 0 and expr_has_effects(a, a.n[sl + {{O:Slice.hi}}]):
+            return True
+        if a.n[sl + {{O:Slice.step}}] >= 0 and expr_has_effects(a, a.n[sl + {{O:Slice.step}}]):
+            return True
+        return False
+    return True
+
+def expand_call_args(ck: Ck, a: Ast, decl: int, args: int, nm_sym: int) -> int:
+    n: int = pky(decl)
+    na: int = pky(args)
+    slots: list[int] = []
+    for si in range(n):
+        slots.append(-1)
+    variadic_idx: int = -1
+    kw_idx: int = -1
+    pos_cap: int = n
+    for j in range(n):
+        p: int = stmt_at(a, decl, j)
+        if a.n[p + {{O:Param.variadic}}] != 0:
+            variadic_idx = j
+            if j < pos_cap:
+                pos_cap = j
+        if a.n[p + {{O:Param.var_kw}}] != 0:
+            kw_idx = j
+            if j < pos_cap:
+                pos_cap = j
+        if a.n[p + {{O:Param.kw_only}}] != 0 and j < pos_cap:
+            pos_cap = j
+    extras: list[int] = []
+    kw_pairs: list[int] = []
+    star_value: int = -1
+    dstars: list[int] = []
+    for i in range(na):
+        ae: int = stmt_at(a, args, i)
+        if a.n[ae] == {{T:Expr.kwarg}}:
+            kw: int = a.n[ae + 1]
+            kn: int = pk(a.n[kw + {{O:Kwarg.name}}], a.n[kw + {{O:Kwarg.name}} + 1])
+            kv: int = a.n[kw + {{O:Kwarg.value}}]
+            if sref_eq(a, kn, "**"):
+                if kw_idx < 0:
+                    mp(ck, "'")
+                    mp_sym(ck, nm_sym)
+                    mp(ck, "': '**' unpacking in a call needs a '**kwargs' parameter")
+                    raise mk_fail(ck, "ArgumentCountMismatch")
+                dstars.append(kv)
+                continue
+            if sref_eq(a, kn, "*"):
+                if variadic_idx < 0 or i != variadic_idx or star_value >= 0:
+                    mp(ck, "'")
+                    mp_sym(ck, nm_sym)
+                    mp(ck, "': '*' unpacking in a call needs a '*args' parameter exactly at that position")
+                    raise mk_fail(ck, "ArgumentCountMismatch")
+                star_value = mk_dunder_call(a, kv, "copy", [])
+                continue
+            found: int = -1
+            for j2 in range(n):
+                p2: int = stmt_at(a, decl, j2)
+                if a.n[p2 + {{O:Param.var_kw}}] != 0 or a.n[p2 + {{O:Param.pos_only}}] != 0:
+                    continue
+                if sref_eq_ref(a, pk(a.n[p2 + {{O:Param.name}}], a.n[p2 + {{O:Param.name}} + 1]), kn):
+                    found = j2
+                    break
+            if found < 0 and kw_idx < 0:
+                for j3 in range(n):
+                    p3: int = stmt_at(a, decl, j3)
+                    if a.n[p3 + {{O:Param.pos_only}}] != 0 and sref_eq_ref(a, pk(a.n[p3 + {{O:Param.name}}], a.n[p3 + {{O:Param.name}} + 1]), kn):
+                        mp(ck, "'")
+                        mp_sym(ck, nm_sym)
+                        mp(ck, "': parameter '")
+                        mp_sref(ck, a, kn)
+                        mp(ck, "' is positional-only and cannot be given by keyword")
+                        raise mk_fail(ck, "ArgumentCountMismatch")
+            if found < 0 and kw_idx >= 0:
+                kw_pairs.append(mk_DictPair(a, mk_Expr_string_lit(a, pkx(kn), pky(kn)), kv))
+                continue
+            if found < 0:
+                mp(ck, "function '")
+                mp_sym(ck, nm_sym)
+                mp(ck, "' has no parameter named '")
+                mp_sref(ck, a, kn)
+                mp(ck, "'")
+                raise mk_fail(ck, "ArgumentCountMismatch")
+            if variadic_idx >= 0 and found == variadic_idx:
+                mp(ck, "'")
+                mp_sym(ck, nm_sym)
+                mp(ck, "': the '*")
+                mp_sref(ck, a, kn)
+                mp(ck, "' parameter takes positional arguments only")
+                raise mk_fail(ck, "ArgumentCountMismatch")
+            if slots[found] >= 0:
+                mp(ck, "in the call to '")
+                mp_sym(ck, nm_sym)
+                mp(ck, "', parameter '")
+                mp_sref(ck, a, kn)
+                mp(ck, "' was given more than once")
+                raise mk_fail(ck, "ArgumentCountMismatch")
+            slots[found] = kv
+        elif i >= pos_cap:
+            if variadic_idx < 0:
+                mp(ck, "'")
+                mp_sym(ck, nm_sym)
+                mp(ck, "' takes at most ")
+                mp_int(ck, pos_cap)
+                mp(ck, " positional arguments, ")
+                mp_int(ck, na)
+                mp(ck, " were given")
+                raise mk_fail(ck, "ArgumentCountMismatch")
+            if star_value >= 0:
+                mp(ck, "'")
+                mp_sym(ck, nm_sym)
+                mp(ck, "': positional arguments after a '*' unpacking are not supported")
+                raise mk_fail(ck, "ArgumentCountMismatch")
+            extras.append(ae)
+        else:
+            if i >= n:
+                mp(ck, "'")
+                mp_sym(ck, nm_sym)
+                mp(ck, "' takes at most ")
+                mp_int(ck, n)
+                mp(ck, " arguments, ")
+                mp_int(ck, na)
+                mp(ck, " were given")
+                raise mk_fail(ck, "ArgumentCountMismatch")
+            slots[i] = ae
+    if variadic_idx >= 0:
+        if star_value >= 0:
+            slots[variadic_idx] = star_value
+        else:
+            esl: int = list_put_slice(a, extras)
+            slots[variadic_idx] = mk_Expr_list_lit(a, pkx(esl), pky(esl))
+    if kw_idx >= 0:
+        if len(dstars) == 0:
+            ksl: int = list_put_slice(a, kw_pairs)
+            slots[kw_idx] = mk_Expr_dict_lit(a, pkx(ksl), pky(ksl))
+        else:
+            reserved: list[int] = []
+            for j4 in range(n):
+                p4: int = stmt_at(a, decl, j4)
+                if a.n[p4 + {{O:Param.variadic}}] != 0 or a.n[p4 + {{O:Param.var_kw}}] != 0:
+                    continue
+                if a.n[p4 + {{O:Param.pos_only}}] == 0:
+                    reserved.append(mk_Expr_string_lit(a, a.n[p4 + {{O:Param.name}}], a.n[p4 + {{O:Param.name}} + 1]))
+            rsl: int = list_put_slice(a, reserved)
+            acc: int = -1
+            if len(kw_pairs) > 0:
+                ksl2: int = list_put_slice(a, kw_pairs)
+                acc = mk_Expr_dict_lit(a, pkx(ksl2), pky(ksl2))
+            for di in range(len(dstars)):
+                res_lit: int = mk_Expr_list_lit(a, pkx(rsl), pky(rsl))
+                unp: int = mk_ident_call(a, "__nox_kw_unpack", [dstars[di], res_lit])
+                if acc >= 0:
+                    acc = mk_ident_call(a, "__nox_kw_merge", [acc, unp])
+                else:
+                    acc = unp
+            slots[kw_idx] = acc
+    ambiguous: bool = False
+    last_eff: int = -1
+    for i2 in range(na):
+        ae2: int = stmt_at(a, args, i2)
+        slot_idx: int = i2
+        if variadic_idx >= 0 and variadic_idx < slot_idx:
+            slot_idx = variadic_idx
+        val: int = ae2
+        if a.n[ae2] == {{T:Expr.kwarg}}:
+            kw2: int = a.n[ae2 + 1]
+            kn2: int = pk(a.n[kw2 + {{O:Kwarg.name}}], a.n[kw2 + {{O:Kwarg.name}} + 1])
+            if sref_eq(a, kn2, "*") or sref_eq(a, kn2, "**"):
+                continue
+            for j5 in range(n):
+                p5: int = stmt_at(a, decl, j5)
+                if sref_eq_ref(a, pk(a.n[p5 + {{O:Param.name}}], a.n[p5 + {{O:Param.name}} + 1]), kn2):
+                    slot_idx = j5
+            val = a.n[kw2 + {{O:Kwarg.value}}]
+        if not expr_has_effects(a, val):
+            continue
+        if last_eff >= 0 and slot_idx < last_eff:
+            ambiguous = True
+        last_eff = slot_idx
+    if ambiguous and (variadic_idx >= 0 or kw_idx >= 0):
+        mp(ck, "'")
+        mp_sym(ck, nm_sym)
+        mp(ck, "': keyword arguments with side effects cannot be reordered in a call that also uses '*args'; write them in parameter order")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    if ambiguous and ck.in_spawn_op:
+        mp(ck, "'")
+        mp_sym(ck, nm_sym)
+        mp(ck, "': keyword arguments with side effects in a 'spawn' call must be written in parameter order")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    out: list[int] = []
+    for j6 in range(n):
+        if slots[j6] >= 0:
+            out.append(slots[j6])
+        else:
+            p6: int = stmt_at(a, decl, j6)
+            d6: int = a.n[p6 + {{O:Param.default}}]
+            if d6 < 0:
+                mp(ck, "in the call to '")
+                mp_sym(ck, nm_sym)
+                mp(ck, "', argument '")
+                mp_sref(ck, a, pk(a.n[p6 + {{O:Param.name}}], a.n[p6 + {{O:Param.name}} + 1]))
+                mp(ck, "' is missing")
+                raise mk_fail(ck, "ArgumentCountMismatch")
+            out.append(d6)
+    return list_put_slice(a, out)
+
 # argüman denetimi (checkArgs/checkArgsDecl çekirdeği): imza kimliği `sid`, ileti adı `nm` (SymbolId)
 def check_args_sig(ck: Ck, a: Ast, fx: Fx, c: int, sid: int, nm: int) -> None:
     check_args_slice(ck, a, fx, sl_at(a, c, {{O:Call.args}}), sid, nm, True)
 
 def check_args_slice(ck: Ck, a: Ast, fx: Fx, args: int, sid: int, nm: int, use_span: bool) -> None:
     n: int = pky(args)
+    has_kw: bool = False
     for i in range(n):
         if a.n[stmt_at(a, args, i)] == {{T:Expr.kwarg}}:
-            raise unsup(ck, "check_args_sig#kwarg")
+            has_kw = True
+    decl: int = ck.fdecl[sid]
     np: int = ck.fpn[sid]
     st: int = ck.fps[sid]
-    # extern imzalarında parametre adı yoktur (-1): Zig `expandCallArgs` yalnızca `def` bildirimi olan işlevlerde "argument 'x' is missing" üretir
-    if n < np and ck.fpnm[st + n] >= 0:
-        mp(ck, "in the call to '")
-        mp_sym(ck, nm)
-        mp(ck, "', argument '")
-        mp_sym(ck, ck.fpnm[st + n])
-        mp(ck, "' is missing")
-        raise mk_fail(ck, "ArgumentCountMismatch")
+    check_args_e: int = args
+    span_ok: bool = use_span
+    if has_kw or (decl >= 0 and (n < np or any_variadic(a, decl))):
+        if decl < 0:
+            mp(ck, "'")
+            mp_sym(ck, nm)
+            mp(ck, "' does not support keyword arguments/default values")
+            raise mk_fail(ck, "TypeMismatch")
+        check_args_e = expand_call_args(ck, a, decl, args, nm)
+        n = pky(check_args_e)
+        span_ok = False
     if np != n:
         mp(ck, "'")
         mp_sym(ck, nm)
@@ -4346,11 +4672,11 @@ def check_args_slice(ck: Ck, a: Ast, fx: Fx, args: int, sid: int, nm: int, use_s
         mp(ck, " were given")
         raise mk_fail(ck, "ArgumentCountMismatch")
     for i2 in range(np):
-        ae: int = stmt_at(a, args, i2)
+        ae: int = stmt_at(a, check_args_e, i2)
         pt: int = ck.fpar[st + i2]
         at_: int = check_expr_expected(ck, a, fx, ae, pt)
         if not assignable_or_coerce(ck, a, pt, at_):
-            if use_span:
+            if span_ok:
                 sp: int = span_of(a, ae)
                 if sp >= 0:
                     ck.cur_span = sp
@@ -5233,14 +5559,11 @@ def stmts_have_yield(a: Ast, body: int) -> bool:
 def register_func(ck: Ck, a: Ast, fd: int) -> None:
     nm: int = pk(a.n[fd + {{O:FuncDef.name}}], a.n[fd + {{O:FuncDef.name}} + 1])
     ps: int = sl_at(a, fd, {{O:FuncDef.params}})
-    for i in range(pky(ps)):
-        p: int = stmt_at(a, ps, i)
-        if a.n[p + {{O:Param.default}}] >= 0 or a.n[p + {{O:Param.variadic}}] != 0 or a.n[p + {{O:Param.var_kw}}] != 0 or a.n[p + {{O:Param.kw_only}}] != 0 or a.n[p + {{O:Param.pos_only}}] != 0:
-            raise unsup(ck, "register_func#1")
     if pky(sl_at(a, fd, {{O:FuncDef.decorators}})) > 0 or pky(sl_at(a, fd, {{O:FuncDef.nonlocals}})) > 0:
         raise unsup(ck, "register_func#2")
     if stmts_have_yield(a, sl_at(a, fd, {{O:FuncDef.body}})):
         raise unsup(ck, "register_func#generator")
+    validate_param_defaults(ck, a, nm, ps, 0, pky(sl_at(a, fd, {{O:FuncDef.type_params}})) > 0)
     if sref_eq(a, nm, "main"):
         mp(ck, "'main' is a reserved name: Nox has no 'def main()' convention, top-level statements are already the program's entry point — define this function under another name")
         raise mk_fail(ck, "DuplicateDefinition")
@@ -5289,7 +5612,9 @@ def register_func(ck: Ck, a: Ast, fd: int) -> None:
                 mp(ck, "' has an unsupported type (only int/float/bool/str/None/Task[T]/Channel[T]/ThreadChannel[T] parameters can be packed, and additionally list/class/dict on hosted targets)")
                 raise mk_fail(ck, "TypeMismatch")
         m2_put(ck.afn, 0, sym, 1)
-    m2_put(ck.fmap, 0, sym, new_sig(ck, tys, pnames, ret))
+    sid_f: int = new_sig(ck, tys, pnames, ret)
+    ck.fdecl[sid_f] = ps
+    m2_put(ck.fmap, 0, sym, sid_f)
 
 # `checkFunctionBody`
 def check_function_body(ck: Ck, a: Ast, fd: int) -> None:

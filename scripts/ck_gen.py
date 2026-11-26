@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False):
         self.rnd = rnd
+        self.use_sig = use_sig
         self.use_prelude_proto = use_prelude_proto
         self.use_generic_fn = use_generic_fn
         self.use_generic_cls = use_generic_cls
@@ -1417,8 +1418,80 @@ class Gen:
         if in_fn and r.random() < 0.5:
             self.lines.append("main_pp()")
 
+    def gen_sig(self):
+        r = self.rnd
+        clean = r.random() < 0.45
+        self.lines += [
+            "def f_def(a: int, b: int = 2, c: str = \"ok\", d: int | None = None, e: float = -1.5, f: bool = True) -> int:",
+            "    return a + b",
+            "",
+            "def f_var(a: int, *rest: int, k: int = 5, **kw: int) -> int:",
+            "    return a + len(rest) + k",
+            "",
+            "def f_pos(a: int, /, b: int, *, c: int = 3) -> int:",
+            "    return a + b + c",
+            "",
+            "def f_gen[T](x: T, n: int = 1) -> T:",
+            "    return x",
+            "",
+            "def eff(x: int) -> int:",
+            "    return x + 1",
+            "",
+            "class Svc:",
+            "    base: int",
+            "    def __init__(self, base: int = 10) -> None:",
+            "        self.base = base",
+            "    def add(self, x: int = 1, y: int = 2) -> int:",
+            "        return self.base + x + y",
+            "",
+            "def __nox_kw_unpack[V](d: dict[str, V], reserved: list[str]) -> dict[str, V]:",
+            "    return d",
+            "def __nox_kw_merge[V](a: dict[str, V], b: dict[str, V]) -> dict[str, V]:",
+            "    return a",
+            "",
+        ]
+        good = [
+            "r0: int = f_def(1)",
+            "r1: int = f_def(1, c=\"hi\", b=3)",
+            "r2: int = f_var(1, 2, 3, x=4, k=6)",
+            "r3: int = f_var(1, *[2, 3], **{\"z\": 9})",
+            "r4: int = f_pos(1, b=2)",
+            "r5: int = f_pos(1, 2, c=4)",
+            "r6: int = f_gen(10)",
+            "r7: int = f_gen(n=2, x=10)",
+            "s0: Svc = Svc()",
+            "r8: int = s0.add(y=5)",
+            "r9: int = f_def(1, b=eff(2))",
+        ]
+        bad = [
+            "e0: int = f_def()",
+            "e1: int = f_def(1, a=2)",
+            "e2: int = f_def(1, nope=2)",
+            "e3: int = f_pos(a=1, b=2)",
+            "e4: int = f_pos(1, 2, 3)",
+            "e5: int = f_var(1, rest=[2])",
+            "e6: int = f_var(1, k=eff(1), *[2])",
+            "e7: int = f_def(1, **{\"a\": 2})",
+            "e8: int = f_def(1, *[2])",
+            "e9: int = f_gen(1, n=\"bad\")",
+        ]
+        in_fn = r.random() < 0.7
+        ind = "    " if in_fn else ""
+        if in_fn:
+            self.lines.append("def main_sig() -> None:")
+        k = r.randint(2, 4)
+        picks = r.sample(good, k=min(k, len(good))) if clean else [r.choice(good) if r.random() < 0.55 else r.choice(bad) for _ in range(k)]
+        for pick in picks:
+            for ln in pick.split("\n"):
+                self.lines.append(ind + ln)
+        if in_fn and r.random() < 0.5:
+            self.lines.append("main_sig()")
+
     def program(self):
         r = self.rnd
+        if self.use_sig:
+            self.gen_sig()
+            return "\n".join(self.lines) + "\n"
         if self.use_prelude_proto:
             self.gen_prelude_proto()
             return "\n".join(self.lines) + "\n"
@@ -1510,11 +1583,12 @@ def main():
     ap.add_argument("--generic-cls", dest="use_generic_cls", action="store_true")
     ap.add_argument("--generic-fn", dest="use_generic_fn", action="store_true")
     ap.add_argument("--prelude-proto", dest="use_prelude_proto", action="store_true")
+    ap.add_argument("--sig", dest="use_sig", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

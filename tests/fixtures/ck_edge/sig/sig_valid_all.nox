@@ -1,0 +1,39 @@
+def f_all(a: int, b: int = 2, c: float = -1.5, d: str = "x", e: bool = True, f: int | None = None, h: int = -1) -> int:
+    return a + b
+
+def f_var(a: int, *rest: int, k: int = 5, **kw: int) -> int:
+    return a + len(rest) + k
+
+def f_pos(a: int, /, b: int, *, c: int = 3) -> int:
+    return a + b + c
+
+def f_gen[T](x: T, n: int = 1) -> T:
+    return x
+
+def __nox_kw_unpack[V](d: dict[str, V], reserved: list[str]) -> dict[str, V]:
+    return d
+
+def __nox_kw_merge[V](a: dict[str, V], b: dict[str, V]) -> dict[str, V]:
+    return a
+
+class Svc:
+    v: int
+    def __init__(self, v: int = 10) -> None:
+        self.v = v
+    def add(self, x: int = 1, y: int = 2) -> int:
+        return self.v + x + y
+
+async def af(a: int = 1, b: int = 2) -> int:
+    return a + b
+
+r1: int = f_all(1)
+r2: int = f_all(1, f=3, c=-2.0)
+r3: int = f_var(1, 2, 3, x=4, k=6)
+r4: int = f_var(1, *[2, 3], m=1, **{"z": 9})
+r5: int = f_pos(1, b=2)
+r6: int = f_gen(42)
+r7: int = f_gen(n=2, x=42)
+s0: Svc = Svc()
+r8: int = s0.add(y=9)
+t0: Task[int] = spawn af(b=5)
+t1: Task[int] = spawn af(b=2, a=1)

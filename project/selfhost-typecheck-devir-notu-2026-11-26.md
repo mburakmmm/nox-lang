@@ -45,7 +45,14 @@ Döngü (her dilim):
 - `qrun` bildirimi hep "exit 0" der; gerçek sonuç `cikis=` satırı.
 - Zig'in test-fast'i `error: '...' failed` satırları basar; `failed command:` satırları tek başına hata değildir (stderr basan testler).
 
-## 4. DURUM (2026-11-26, v2.2.100 sonrası)
+## 4. DURUM (2026-11-26, v2.2.101 sonrası)
+
+- **Son sürüm:** `v2.2.101` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **6.760 satır**) imza özellikleri (`default`, `*args`, `**kwargs`, `kw_only`, `pos_only`, anahtar-sözcük argümanları, `*xs`/`**d` açılımı, `spawn` kapsamı) + `Expr.bytes_lit` / `__nox_bytes_repr` + `scripts/ck_mutate.py` izole `$TMPDIR/ck_mutate_cache` ve çıkış kodu `3` düzeltmesi.
+- **Doğrulama:** `ck_gen.py --sig` (`files=2785 unsupported=0 accepted=1274 rejected=1511`), `ck_edge/sig` (`20` dosya, `unsupported=0`), `ck_mutants_sig.py` (`23/23 yakalandı, 0 yaşayan`), `ck_regress.sh` `18` kip + depo yeşil.
+- **Depo `ck-diff check` (`v2.2.101`):** `files=1647 unsupported=353 accepted=483 rejected=811 diagnostics=1901 skipped_parse=56` (`register_func#1`=0, `check_args_sig#kwarg`=0, `class#method_param_features`=0; kalan üst engeller: `51 spawn#shared_arg`, `48 check_call#intrinsic`, `33 class#consts`, `30 check_binary#1`, `22 register_func#generator`, `20 nonlocal`, `19 extern#decorators`, `15 class#decorators`, `14 register_func#2`, `11 class#bases`, `10 check_stmt#1`, `10 check_binary#2`).
+- **`ck-diff checkm` (`tests/golden/typecheck_cases/*.nox`, `v2.2.101`):** `files=347 unsupported=341 accepted=0 rejected=6 diagnostics=0 skipped=0` (`303 type#bytes`, `17 class#consts`, `8 class#decorators`, `5 toplevel#2`, `5 class#bases`, `3 nonlocal`; `303 register_func#1` → `0`).
+
+### Önceki (v2.2.100 sonrası)
 
 Yayınlananlar (hepsi Zig ile eşit, mutasyon testli): 3.12 dilim A (`extern def`, v2.2.83), **dilim B** import/from-import/takma ad/nitelikli çağrı ve tip (v2.2.87, spec §3.521), **3.4b-A** tekli sınıf kalıtımı (v2.2.88, §3.522), **3.7-A** kapanış/iç içe `def`/`lambda`/`defer` (v2.2.94, §3.528), **3.6-A** `tuple`/`ternary`/`list_comp`/`dict_comp`/`slice` (v2.2.96, §3.529), **3.6-B** AST klonlama/ikame + jenerik sınıflar (`Box[T]`, `mod.Box[T](...)`, `Sub(Base[int])`, v2.2.97, §3.530), **v2.2.98** Nightly CI + frontend/harness sağlamlaştırmaları (§8 ve spec §3.531), **3.6-C** jenerik işlevler ve jenerik metodlar (`def f[T]`, `unify_type_expr`, lambda çıkarımı, `def m[T](self, ...)`, `self.m[T](...)`, v2.2.99, §3.532), **3.6-D** prelude jenerik tipleri/çağrıları & `protocol_def` (monomorfik + heterojen kutulama, v2.2.100, §3.533 — **Aşama 3.6 tamamlandı**). (`origin/main` Host ABI UR-009..015 ile v2.2.93/v2.2.95'e ilerledi; DOKUNMA.)
 

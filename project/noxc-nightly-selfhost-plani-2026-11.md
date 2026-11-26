@@ -158,6 +158,7 @@ Alt aşamalar (her biri ayrı kapanır, bir önceki bitmeden sonrakine geçilmez
 - [ ] 3.8 Jeneratörler/async (`generator_desugar`, `hoistNestedAsync`, `spawn` kuralları).
 - [ ] 3.9 Enum/`match`/`derive`/dekoratör işlemleri.
 - [ ] 3.10 Standart kütüphane çağrı kuralları: yerleşikler, str/list/dict/set metodları, `nox.*` yerleşik sihirli işlevler.
+  - **v2.2.101 (spec §3.534):** imza özellikleri (varsayılan parametreler, `*args`, `**kwargs`, `kw_only`/`pos_only`, `*`/`**` açılım, `spawn` kapsamı) + `Expr.bytes_lit`/`__nox_bytes_repr` + `ck_mutate.py` izole önbellek/çıkış kodu 3 (`23/23` mutant, `18` kip `ck_regress` + depo `files=1647 unsupported=353 accepted=483 rejected=811`).
 - [ ] 3.11 `index_call_fixup`, `bound_method_fixup`, `guard_normalize`, `class_attr_promote` geçişleri.
 - [~] 3.7 Kapanış/iç içe def/lambda/defer: **v2.2.94 dilim A** (spec §3.528); açık: `nonlocal` hücre dönüşümü, iç içe `async def` kaldırma (`hoistNestedAsync`), dekoratörlü iç `def`, `check_expr_inner#18` (dilim ifadeleri ayrı).
 - [~] 3.4b Tekli sınıf kalıtımı: **v2.2.88 dilim A** (spec §3.522): `class D(B)`, `super()`, override, döngü, devralma; açık: açık taban çağrısı yeniden yazımı, çoklu taban/mixin (`class#bases`), sınıf sabitleri (`class#consts`, `class_attr_promote`), dekoratör/jenerik sınıf, ≥2 atanmamış alan (Zig HashMap sırası).
