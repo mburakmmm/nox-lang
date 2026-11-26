@@ -1,0 +1,19 @@
+class Box[T]:
+    v: T
+    def __init__(self, v: T) -> None:
+        self.v = v
+    def take(self, x: T) -> T:
+        return x
+
+def inc(x: int) -> int:
+    return x + 1
+
+o: Box[int | None] = Box[int | None](None)
+f: Box[(int) -> int] = Box[(int) -> int](inc)
+d: Box[dict[str, int]] = Box[dict[str, int]]({"a": 1})
+l: Box[list[int]] = Box[list[int]]([2])
+r1: int | None = o.take(3)
+fnv: (int) -> int = f.take(inc)
+r2: int = fnv(1)
+r3: dict[str, int] = d.take({"b": 4})
+r4: list[int] = l.take([5])

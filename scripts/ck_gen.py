@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False):
         self.rnd = rnd
+        self.use_generic_cls = use_generic_cls
         self.use_tuple = use_tuple
         self.use_closure = use_closure
         self.use_inherit = use_inherit
@@ -955,8 +956,215 @@ class Gen:
         if in_fn and r.random() < 0.5:
             self.lines.append("main_t()")
 
+    def gen_generic_cls(self):
+        """3.6 dilim B: jenerik sınıflar (`class Box[T]:`, `Pair[K, V]`, öz-referans `Node[T]`, `Sub(Box[int])`, `mod.Box[int]`, `from` reexport, `sizeof(T)`/`alignof(T)`, `subst_stmt`/`subst_expr` kapsamı ve hata durumları)."""
+        r = self.rnd
+        clean = r.random() < 0.45
+        imp_kind = r.choice(["none", "imp", "alias", "from"])
+        if imp_kind == "imp":
+            self.lines += ["import lib", ""]
+        elif imp_kind == "alias":
+            self.lines += ["import lib as lb", ""]
+        elif imp_kind == "from":
+            self.lines += ["from lib import Box as LibBox", ""]
+
+        if imp_kind != "none":
+            self.lines += [
+                "class lib_Box[T]:",
+                "    v: T",
+                "    def __init__(self, v: T) -> None:",
+                "        self.v = v",
+                "    def get(self) -> T:",
+                "        return self.v",
+                "",
+            ]
+
+        has_pair = r.random() < 0.55
+        has_node = r.random() < 0.45
+        has_sub = r.random() < 0.55
+        has_rich = r.random() < 0.15
+
+        if has_rich:
+            self.lines += [
+                "class MyErr:",
+                "    pass",
+                "",
+                "def noop_cleanup(n: int) -> None:",
+                "    pass",
+                "",
+                "class Ctx:",
+                "    def __enter__(self) -> int:",
+                "        return 1",
+                "    def __exit__(self) -> None:",
+                "        pass",
+                "",
+            ]
+
+        self.lines += [
+            "class Box[T]:",
+            "    val: T",
+            "    def __init__(self, v: T) -> None:",
+            "        self.val = v",
+            "    def get(self) -> T:",
+            "        return self.val",
+            "    def rebox(self, x: T) -> Box[T]:",
+            "        return Box[T](x)",
+            "    def sz(self) -> usize:",
+            "        return sizeof(T) + alignof(T)",
+            "",
+        ]
+        if has_pair:
+            self.lines += [
+                "class Pair[K, V]:",
+                "    k: K",
+                "    v: V",
+                "    def __init__(self, k: K, v: V) -> None:",
+                "        self.k = k",
+                "        self.v = v",
+                "    def key(self) -> K:",
+                "        return self.k",
+                "    def first_or(self, alt: K, cond: bool) -> K:",
+                "        return self.k if cond else alt",
+                "",
+            ]
+        if has_node:
+            self.lines += [
+                "class Node[T]:",
+                "    head: T",
+                "    nxt: Node | None",
+                "    def __init__(self, head: T) -> None:",
+                "        self.head = head",
+                "        self.nxt = None",
+                "",
+            ]
+        if has_sub:
+            self.lines += [
+                "class SubBox(Box[int]):",
+                "    extra: int",
+                "    def __init__(self, v: int, e: int) -> None:",
+                "        super().__init__(v)",
+                "        self.extra = e",
+                "    def get(self) -> int:",
+                "        return super().get() + self.extra",
+                "",
+            ]
+
+        if has_rich:
+            self.lines += [
+                "class Rich[T]:",
+                "    item: T",
+                "    def __init__(self, item: T) -> None:",
+                "        self.item = item",
+                "    def walk(self, xs: list[T], flag: bool) -> list[T]:",
+                "        out: list[T] = [x for x in xs]",
+                "        if flag:",
+                "            for y in xs:",
+                "                out.append(y)",
+                "        elif not flag:",
+                "            i: int = 0",
+                "            while i < 1:",
+                "                i = i + 1",
+                "        else:",
+                "            out.append(self.item)",
+                "        try:",
+                "            c: Ctx = Ctx()",
+                "            with c as h:",
+                "                _h: int = h",
+                "        except MyErr as _ex:",
+                "            pass",
+                "        finally:",
+                "            defer noop_cleanup(1)",
+                "        def id_t(z: T) -> T:",
+                "            return z",
+                "        lowlevel:",
+                "            _sz: usize = sizeof(T)",
+                "        f_lam: (T) -> T = lambda z: z",
+                "        part: list[T] = out[0:1]",
+                "        pair: tuple[T, int] = (f_lam(id_t(self.item)), len(part))",
+                "        return [pair[0]]",
+                "",
+            ]
+
+        if not clean and r.random() < 0.45:
+            bad_defs = [
+                ["class DupG[T]:", "    x: T", "class DupG:", "    x: int"],
+                ["class DupG2[T]:", "    x: T", "class DupG2[U]:", "    x: U"],
+                ["class BadListSub(list[int]):", "    y: int"],
+                ["class BadBaseArgCnt(Box[int, str]):", "    y: int"],
+                ["class DecStatic[T]:", "    @staticmethod", "    def f() -> int:", "        return 1"],
+                ["class DecCls[T]:", "    @classmethod", "    def f(self) -> int:", "        return 1"],
+                ["class DecProp[T]:", "    v: T", "    @property", "    def p(self) -> T:", "        return self.v"],
+                ["class DecSet[T]:", "    v: T", "    @v.setter", "    def v(self, x: T) -> None:", "        self.v = x"],
+                ["class UnasG[T]:", "    a: T", "    def __init__(self) -> None:", "        pass"],
+                ["class MissRetG[T]:", "    def f(self, x: T) -> T:", "        if True:", "            return x"],
+                ["class AddG[T]:", "    a: T", "    def __init__(self, a: T) -> None:", "        self.a = a", "    def inc(self) -> T:", "        return self.a + 1"],
+            ]
+            pick_def = r.choice(bad_defs)
+            self.lines += pick_def + [""]
+            if pick_def[0].startswith("class UnasG"):
+                self.lines.append("ug: UnasG[int] = UnasG[int]()")
+            elif pick_def[0].startswith("class MissRetG"):
+                self.lines.append("mg: MissRetG[int] = MissRetG[int]()")
+            elif pick_def[0].startswith("class AddG"):
+                self.lines.append('ag: AddG[str] = AddG[str]("a")')
+
+        good = [
+            "b0: Box[int] = Box[int](1)",
+            "b1: Box[str] = Box[str](\"hi\")\ns1: str = b1.get()",
+            "b2: Box[Box[int]] = Box[Box[int]](Box[int](2))\nv2: int = b2.get().get()",
+            "b3: Box[int] = Box[int](3).rebox(4)\nsz3: usize = b3.sz()",
+            "def f_na(c: Task[int], d: Task[str]) -> None:\n    bt: Box[Task[int]] = Box[Task[int]](c)\n    bt: Box[Task[str]] = Box[Task[str]](d)",
+            "b_dup1: Box[int] = Box[int](1)\nb_dup2: Box[int] = Box[int](2)",
+        ]
+        if has_pair:
+            good.append("p0: Pair[str, int] = Pair[str, int](\"k\", 9)\npk0: str = p0.key()")
+            good.append("p1: Pair[int, tuple[str, int]] = Pair[int, tuple[str, int]](1, (\"a\", 2))")
+        if has_node:
+            good.append("n0: Node[int] = Node[int](7)\nn1: Node[int] | None = n0.nxt")
+        if has_sub:
+            good.append("sb0: SubBox = SubBox(10, 5)\nsbv: int = sb0.get() + sb0.val")
+        if imp_kind == "imp":
+            good.append("ql0: lib.Box[int] = lib.Box[int](5)\nqlv: int = ql0.get()")
+        elif imp_kind == "alias":
+            good.append("qa0: lb.Box[int] = lb.Box[int](6)\nqav: int = qa0.get()")
+        elif imp_kind == "from":
+            good.append("qf0: LibBox[int] = LibBox[int](7)\nqfv: int = qf0.get()")
+
+        bad = [
+            "e0: Box[int, str] = Box[int](1)",
+            "e2: Nope[int] = Box[int](1)",
+            "Nope[int](1)",
+            "e4: Box[int] = Box[int](\"s\")",
+            "e5: Box[int] = Box[int]()",
+            "e6: Box[str] = Box[int](1)",
+            "e10: str = Box[int](1).get()",
+            "e11: nomod.Box[int] = Box[int](1)",
+            "e12: lib.Missing[int] = Box[int](1)",
+        ]
+        if has_pair:
+            bad.append("e1: Pair[int] = Pair[int, int](1, 2)")
+            bad.append("e7: Box[int] = Pair[int, int](1, 2)")
+        if has_sub:
+            bad.append("e8: SubBox = Box[int](1)")
+            bad.append("e9: Box[int] = SubBox(1, 2)")
+
+        in_fn = r.random() < 0.7
+        ind = "    " if in_fn else ""
+        if in_fn:
+            self.lines.append("def main_g() -> None:")
+        k = r.randint(2, 4)
+        picks = r.sample(good, k=min(k, len(good))) if clean else [r.choice(good) if r.random() < 0.55 else r.choice(bad) for _ in range(k)]
+        for pick in picks:
+            for ln in pick.split("\n"):
+                self.lines.append(ind + ln)
+        if in_fn and r.random() < 0.5:
+            self.lines.append("main_g()")
+
     def program(self):
         r = self.rnd
+        if self.use_generic_cls:
+            self.gen_generic_cls()
+            return "\n".join(self.lines) + "\n"
         if self.use_tuple:
             self.gen_tuple()
             return "\n".join(self.lines) + "\n"
@@ -1036,11 +1244,12 @@ def main():
     ap.add_argument("--inherit", dest="use_inherit", action="store_true")
     ap.add_argument("--closure", dest="use_closure", action="store_true")
     ap.add_argument("--tuple", dest="use_tuple", action="store_true")
+    ap.add_argument("--generic-cls", dest="use_generic_cls", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

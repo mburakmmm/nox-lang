@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.97]
+
+Selfhost Aşama 3.6 dilim B: AST klonlama/ikame ve jenerik sınıflar (`class Box[T]:`, `Box[int]`, `Box[int](...)`, `from`/`mod.Box[int]`, `mod.Box[int](...)`, `class Sub(Base[int]):`) Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.530, `project/noxc-nightly-selfhost-plani-2026-11.md`.
+
+- `selfhost/typecheck.nox.in`: `type_to_type_expr`/`subst_type_expr`/`subst_expr`/`subst_stmt`/`subst_stmts` (`sizeof`/`alignof`/`offsetof` çıplak `T` dahil), `collect_class_names` jenerik şablon + dekoratör reddi, `lookup_generic_class`/`qualified_generic_base`/`instantiate_generic_class`/`resolve_generic_bases`/`check_pending_inst`, `try_qual_generic_call` + `index_expr_to_type_expr`, `cls_synth == 0` non-ARC uyumu. Depo korpusunda `class#generic` (26 dosya) tamamen kapandı (`files=1545`, `unsupported=437`, `accepted=428`, `rejected=680`).
+- `scripts/ck_gen.py --generic-cls` (3000 dosya: `unsupported=0`; `scripts/ck_regress.sh` 15 kipte + depoda yeşil), `tests/fixtures/ck_edge/generic_cls/` (35 dosya), `scripts/ck_mutants_generic_cls.py` (45/45 mutant yakalandı, 0 yaşayan).
+
 ## [2.2.96]
 
 Selfhost Aşama 3.6 dilim A: `tuple[...]`, tuple literali/indeksleme/`len`, `ternary` (`a if c else b`), `list_comp`/`dict_comp` ve `slice` (`obj[lo:hi:step]`) Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.529, `project/noxc-nightly-selfhost-plani-2026-11.md`.

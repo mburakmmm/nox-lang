@@ -5,7 +5,7 @@
 # (R2-G.1/G.2: dize anahtarlı sözlük ≈6× pahalı). Tablolar tek `Ck` nesnesindedir; kapsamlar derleme boyunca yaşar (Zig'in arena'sı gibi; tek tek serbest bırakılmaz).
 {{FROM_AST}}
 from ast_schema import build_sp_idx, loaded_ast
-from parser import pk, pkx, pky, parse_ast, parse_body, sref_eq, sref_len, sref_byte, utf8_bytes
+from parser import pk, pkx, pky, syn, parse_ast, parse_body, sref_eq, sref_len, sref_byte, utf8_bytes
 from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, cls_set_base, lcg, sym_intern, sym_intern_list, ty_format, ty_mangle, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed, ty_mk, ty_list, ty_dict, ty_optional, ty_class, cls_register
 
 # ---- (k1, k2) -> değer tablosu: açık adresleme, ekleme sırası korunur, silme = ölü işareti (yeniden `put` canlandırır) ----
@@ -158,6 +158,14 @@ class Ck:
     tup_n: list[int]
     tup_e: list[int]
     comp_depth: int
+    # 3.6b: jenerik sınıflar (`generic_classes`) + sentez bayrağı (`cls_synth`: classHasNonArcFields dışı) + örnek tip argümanları + ertelenen taban gövdeleri
+    gcls: Map2
+    cls_synth: list[int]
+    gcls_ts: list[int]
+    gcls_tn: list[int]
+    gcls_te: list[int]
+    defer_cls_body: bool
+    pending_inst: list[int]
 
     def __init__(self, tt: TT) -> None:
         self.tt = tt
@@ -214,6 +222,13 @@ class Ck:
         self.tup_n = []
         self.tup_e = []
         self.comp_depth = 0
+        self.gcls = Map2()
+        self.cls_synth = []
+        self.gcls_ts = []
+        self.gcls_tn = []
+        self.gcls_te = []
+        self.defer_cls_body = False
+        self.pending_inst = []
 
 # ---- Scope (Zig `Scope`) ----
 def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
@@ -645,11 +660,12 @@ def type_expr_generic(ck: Ck, a: Ast, g: int) -> int:
     # `__nox_*` (parser'ın Iterator/Generator → `__nox_Gen[T]` haritası, prelude jenerikleri): kapsam dışı
     if sref_len(gn) >= 5 and sref_byte(a, gn, 0) == 95 and sref_byte(a, gn, 1) == 95 and sref_byte(a, gn, 2) == 110 and sref_byte(a, gn, 3) == 111 and sref_byte(a, gn, 4) == 120:
         raise unsup(ck, "type_expr_generic#prelude")
-    # nitelikli jenerik (`mod.Box[int]`): modül çözümlemesi (3.12) kapsam dışı
-    for dq in range(sref_len(gn)):
-        if sref_byte(a, gn, dq) == 46:
-            raise unsup(ck, "type_expr_generic#qualified")
-    # kullanıcı jenerik sınıfı: sınıf tabloları bu dilimde boş
+    gcd: int = lookup_generic_class(ck, a, gn)
+    if gcd >= 0:
+        bound: list[int] = []
+        for gi in range(n):
+            bound.append(type_expr_to_type(ck, a, stmt_at(a, gargs, gi)))
+        return instantiate_generic_class(ck, a, gcd, bound)
     mp(ck, "unknown generic type: ")
     mp_sref(ck, a, gn)
     raise mk_fail(ck, "UnknownType")
@@ -809,9 +825,18 @@ def check_generic_construct(ck: Ck, a: Ast, fx: Fx, g: int) -> int:
         if check_expr(ck, a, fx, stmt_at(a, args, 0)) != 0:
             fail2(ck, "TypeMismatch", "the argument (capacity) of the 'ThreadChannel' constructor must be an int")
         return ty_mk(tt, 10, telem, 0)
-    for dq in range(sref_len(gn)):
-        if sref_byte(a, gn, dq) == 46:
-            raise unsup(ck, "generic_construct#qualified")
+    gcd: int = lookup_generic_class(ck, a, gn)
+    if gcd >= 0:
+        bound: list[int] = []
+        for gi in range(nt):
+            bound.append(type_expr_to_type(ck, a, stmt_at(a, targs, gi)))
+        ct: int = instantiate_generic_class(ck, a, gcd, bound)
+        ci: int = class_idx_of_type(ck, ct)
+        isid: int = ck.cls_init[ci]
+        if isid < 0:
+            isid = ck.sig_empty
+        check_args_slice(ck, a, fx, args, isid, sym_of(ck, a, gn), True)
+        return ct
     if sref_eq(a, gn, "TaskLocal"):
         if nt != 1:
             fail2(ck, "UnknownType", "'TaskLocal' takes exactly one type argument")
@@ -1855,10 +1880,86 @@ def call_gap_label(ck: Ck, a: Ast, cv: int, fi: int, ci: int) -> str:
         return "check_call#prelude"
     return ""
 
+def index_expr_to_type_expr(ck: Ck, a: Ast, e: int) -> int:
+    tag: int = a.n[e]
+    if tag == {{T:Expr.identifier}}:
+        return mk_TypeExpr_simple(a, a.n[e + 1], a.n[e + 2])
+    if tag == {{T:Expr.none_lit}}:
+        nsr: int = syn(a, "None")
+        return mk_TypeExpr_simple(a, pkx(nsr), pky(nsr))
+    if tag == {{T:Expr.attribute}}:
+        segs: list[int] = []
+        if not flatten_dotted(ck, a, e, segs) or len(segs) < 2:
+            return -1
+        st: int = len(a.l)
+        for i in range(len(segs)):
+            sr: int = ast_str_sym(ck, a, segs[i])
+            a.l.append(pkx(sr))
+            a.l.append(pky(sr))
+        return mk_TypeExpr_qualified(a, st, len(segs))
+    if tag == {{T:Expr.index}}:
+        ix: int = a.n[e + 1]
+        inner: int = index_expr_to_type_expr(ck, a, a.n[ix + {{O:Index.index}}])
+        if inner < 0:
+            return -1
+        arg_ids: list[int] = [inner]
+        asl: int = list_put_slice(a, arg_ids)
+        obj: int = a.n[ix + {{O:Index.obj}}]
+        if a.n[obj] == {{T:Expr.identifier}}:
+            return mk_TypeExpr_generic(a, mk_Generic(a, a.n[obj + 1], a.n[obj + 2], pkx(asl), pky(asl)))
+        if a.n[obj] == {{T:Expr.attribute}}:
+            qsegs: list[int] = []
+            if not flatten_dotted(ck, a, obj, qsegs) or len(qsegs) < 2:
+                return -1
+            qsr: int = ast_str_sym(ck, a, join_syms(ck, qsegs, len(qsegs), 46))
+            return mk_TypeExpr_generic(a, mk_Generic(a, pkx(qsr), pky(qsr), pkx(asl), pky(asl)))
+        return -1
+    return -1
+
+def try_qual_generic_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
+    ix: int = a.n[callee + 1]
+    obj: int = a.n[ix + {{O:Index.obj}}]
+    if a.n[obj] != {{T:Expr.attribute}}:
+        return -1
+    raw: list[int] = []
+    if not flatten_dotted(ck, a, obj, raw) or len(raw) < 2:
+        return -1
+    if is_variable_in_scope(ck, fx, raw[0]):
+        return -1
+    segs: list[int] = subst_alias(ck, raw)
+    n: int = len(segs)
+    mod: int = join_syms(ck, segs, n - 1, 46)
+    if m2_get(ck.imod, 0, mod) < 0:
+        return -1
+    last: int = segs[n - 1]
+    if ck.tt.sl[last] > 0 and ck.tt.sb[ck.tt.so[last]] == 95:
+        return -1
+    mangled: int = join_syms(ck, segs, n, 95)
+    ge: int = m2_get(ck.gcls, 0, mangled)
+    if ge < 0:
+        return -1
+    te: int = index_expr_to_type_expr(ck, a, a.n[ix + {{O:Index.index}}])
+    if te < 0:
+        return -1
+    t: int = type_expr_to_type(ck, a, te)
+    bnd: list[int] = [t]
+    ct: int = instantiate_generic_class(ck, a, ck.gcls.vv[ge], bnd)
+    msym: int = ck.tt.xa[ct]
+    ci: int = class_idx(ck, msym)
+    isid: int = ck.cls_init[ci]
+    if isid < 0:
+        isid = ck.sig_empty
+    check_args_slice(ck, a, fx, sl_at(a, c, {{O:Call.args}}), isid, mangled, False)
+    return ct
+
 def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
     callee: int = a.n[c + {{O:Call.callee}}]
     if a.n[callee] == {{T:Expr.attribute}}:
         return check_method_call(ck, a, fx, c, callee)
+    if a.n[callee] == {{T:Expr.index}}:
+        qt: int = try_qual_generic_call(ck, a, fx, c, callee)
+        if qt >= 0:
+            return qt
     if a.n[callee] != {{T:Expr.identifier}}:
         raise unsup(ck, "check_call#1")
     cv: int = pk(a.n[callee + 1], a.n[callee + 2])
@@ -2598,6 +2699,9 @@ def instantiate_tuple_class(ck: Ck, elems: list[int]) -> int:
     ck.cls_chk.append(1)
     ck.tup_s.append(len(ck.tup_e))
     ck.tup_n.append(len(elems))
+    ck.cls_synth.append(1)
+    ck.gcls_ts.append(-1)
+    ck.gcls_tn.append(0)
     m2_put(ck.cls_map, 0, sym, ci)
     cls_register(ck.tt, sym)
     ptys: list[int] = []
@@ -2612,7 +2716,542 @@ def instantiate_tuple_class(ck: Ck, elems: list[int]) -> int:
     ck.cls_init[ci] = new_sig(ck, ptys, pnms, 4)
     return ty_class(ck.tt, sym)
 
-# `collectClassNames`: ad kaydı + kapsam dışı sınıf özellikleri (kalıtım/dekoratör/sabit/jenerik/enum/mixin)
+# ---- 3.6b: AST klonlama / tip ikamesi ve jenerik sınıflar (Zig `typeToTypeExpr` / `substitute*` / `instantiateGenericClass` / `resolveGenericBases`) ----
+def ast_str_sym(ck: Ck, a: Ast, sym: int) -> int:
+    tt: TT = ck.tt
+    off: int = len(a.sb)
+    o: int = tt.so[sym]
+    n: int = tt.sl[sym]
+    for i in range(n):
+        a.sb.append(tt.sb[o + i])
+    return pk(0 - off - 1, n)
+
+def list_put_slice(a: Ast, ids: list[int]) -> int:
+    st: int = len(a.l)
+    for i in range(len(ids)):
+        a.l.append(ids[i])
+    return pk(st, len(ids))
+
+def fx_name_str(k: int) -> str:
+    if k == 0:
+        return "u8"
+    if k == 1:
+        return "u16"
+    if k == 2:
+        return "u32"
+    if k == 3:
+        return "u64"
+    if k == 4:
+        return "usize"
+    if k == 5:
+        return "i8"
+    if k == 6:
+        return "i16"
+    if k == 7:
+        return "i32"
+    if k == 8:
+        return "i64"
+    return "isize"
+
+def type_to_type_expr(ck: Ck, a: Ast, t: int) -> int:
+    tt: TT = ck.tt
+    tag: int = tt.tag[t]
+    if tag == 0:
+        sr: int = syn(a, "int")
+        return mk_TypeExpr_simple(a, pkx(sr), pky(sr))
+    if tag == 1:
+        sr1: int = syn(a, "float")
+        return mk_TypeExpr_simple(a, pkx(sr1), pky(sr1))
+    if tag == 2:
+        sr2: int = syn(a, "bool")
+        return mk_TypeExpr_simple(a, pkx(sr2), pky(sr2))
+    if tag == 3:
+        sr3: int = syn(a, "str")
+        return mk_TypeExpr_simple(a, pkx(sr3), pky(sr3))
+    if tag == 18:
+        sr18: int = syn(a, "bytes")
+        return mk_TypeExpr_simple(a, pkx(sr18), pky(sr18))
+    if tag == 4:
+        sr4: int = syn(a, "None")
+        return mk_TypeExpr_simple(a, pkx(sr4), pky(sr4))
+    if tag == 12:
+        sr12: int = syn(a, "ptr")
+        return mk_TypeExpr_simple(a, pkx(sr12), pky(sr12))
+    if tag == 16:
+        sr16: int = syn(a, fx_name_str(tt.xa[t]))
+        return mk_TypeExpr_simple(a, pkx(sr16), pky(sr16))
+    if tag == 6:
+        sr6: int = ast_str_sym(ck, a, tt.xa[t])
+        return mk_TypeExpr_simple(a, pkx(sr6), pky(sr6))
+    if tag == 15:
+        return mk_TypeExpr_optional(a, type_to_type_expr(ck, a, tt.xa[t]))
+    if tag == 14:
+        pids: list[int] = []
+        pa: int = tt.xa[t]
+        for i in range(tt.xc[t]):
+            pids.append(type_to_type_expr(ck, a, tt.fp[pa + i]))
+        psl: int = list_put_slice(a, pids)
+        rte: int = type_to_type_expr(ck, a, tt.xb[t])
+        return mk_TypeExpr_func_type(a, mk_FuncTypeExpr(a, pkx(psl), pky(psl), rte))
+    if tag == 13:
+        dids: list[int] = [type_to_type_expr(ck, a, tt.xa[t]), type_to_type_expr(ck, a, tt.xb[t])]
+        dsl: int = list_put_slice(a, dids)
+        dsr: int = syn(a, "dict")
+        return mk_TypeExpr_generic(a, mk_Generic(a, pkx(dsr), pky(dsr), pkx(dsl), pky(dsl)))
+    gnm: str = "ptr"
+    if tag == 5:
+        gnm = "list"
+    elif tag == 7:
+        gnm = "Task"
+    elif tag == 8:
+        gnm = "Channel"
+    elif tag == 9:
+        gnm = "ThreadHandle"
+    elif tag == 10:
+        gnm = "ThreadChannel"
+    elif tag == 11:
+        gnm = "TaskLocal"
+    eids: list[int] = [type_to_type_expr(ck, a, tt.xa[t])]
+    esl: int = list_put_slice(a, eids)
+    gsr: int = syn(a, gnm)
+    return mk_TypeExpr_generic(a, mk_Generic(a, pkx(gsr), pky(gsr), pkx(esl), pky(esl)))
+
+def subst_type_expr(ck: Ck, a: Ast, te: int, bnd: Map2) -> int:
+    tag: int = a.n[te]
+    if tag == {{T:TypeExpr.simple}}:
+        sym: int = sym_of(ck, a, pk(a.n[te + 1], a.n[te + 2]))
+        be: int = m2_get(bnd, 0, sym)
+        if be >= 0:
+            return type_to_type_expr(ck, a, bnd.vv[be])
+        return te
+    if tag == {{T:TypeExpr.generic}}:
+        g: int = a.n[te + 1]
+        gargs: int = sl_at(a, g, {{O:Generic.args}})
+        ids: list[int] = []
+        for i in range(pky(gargs)):
+            ids.append(subst_type_expr(ck, a, stmt_at(a, gargs, i), bnd))
+        nsl: int = list_put_slice(a, ids)
+        return mk_TypeExpr_generic(a, mk_Generic(a, a.n[g + {{O:Generic.name}}], a.n[g + {{O:Generic.name}} + 1], pkx(nsl), pky(nsl)))
+    if tag == {{T:TypeExpr.func_type}}:
+        ft: int = a.n[te + 1]
+        fps: int = sl_at(a, ft, {{O:FuncTypeExpr.params}})
+        pids: list[int] = []
+        for j in range(pky(fps)):
+            pids.append(subst_type_expr(ck, a, stmt_at(a, fps, j), bnd))
+        psl: int = list_put_slice(a, pids)
+        ret: int = subst_type_expr(ck, a, a.n[ft + {{O:FuncTypeExpr.return_type}}], bnd)
+        return mk_TypeExpr_func_type(a, mk_FuncTypeExpr(a, pkx(psl), pky(psl), ret))
+    if tag == {{T:TypeExpr.optional}}:
+        return mk_TypeExpr_optional(a, subst_type_expr(ck, a, a.n[te + 1], bnd))
+    return te
+
+def subst_exprs(ck: Ck, a: Ast, sl: int, bnd: Map2) -> int:
+    ids: list[int] = []
+    for i in range(pky(sl)):
+        ids.append(subst_expr(ck, a, stmt_at(a, sl, i), bnd))
+    return list_put_slice(a, ids)
+
+def subst_comp_clauses(ck: Ck, a: Ast, sl: int, bnd: Map2) -> int:
+    ids: list[int] = []
+    for i in range(pky(sl)):
+        cl: int = stmt_at(a, sl, i)
+        ctag: int = a.n[cl]
+        cpay: int = a.n[cl + 1]
+        if ctag == {{T:CompClause.for_clause}}:
+            nit: int = subst_expr(ck, a, a.n[cpay + {{O:CompForClause.iterable}}], bnd)
+            ids.append(mk_CompClause_for_clause(a, mk_CompForClause(a, a.n[cpay + {{O:CompForClause.var_name}}], a.n[cpay + {{O:CompForClause.var_name}} + 1], nit)))
+        else:
+            ids.append(mk_CompClause_if_clause(a, subst_expr(ck, a, cpay, bnd)))
+    return list_put_slice(a, ids)
+
+def subst_expr(ck: Ck, a: Ast, e: int, bnd: Map2) -> int:
+    tag: int = a.n[e]
+    if tag == {{T:Expr.int_lit}} or tag == {{T:Expr.float_lit}} or tag == {{T:Expr.bool_lit}} or tag == {{T:Expr.string_lit}} or tag == {{T:Expr.bytes_lit}} or tag == {{T:Expr.none_lit}} or tag == {{T:Expr.identifier}}:
+        return e
+    if tag == {{T:Expr.unary}}:
+        u: int = a.n[e + 1]
+        return mk_Expr_unary(a, mk_Unary(a, a.n[u + {{O:Unary.op}}], subst_expr(ck, a, a.n[u + {{O:Unary.operand}}], bnd)))
+    if tag == {{T:Expr.kwarg}}:
+        k: int = a.n[e + 1]
+        return mk_Expr_kwarg(a, mk_Kwarg(a, a.n[k + {{O:Kwarg.name}}], a.n[k + {{O:Kwarg.name}} + 1], subst_expr(ck, a, a.n[k + {{O:Kwarg.value}}], bnd)))
+    if tag == {{T:Expr.ternary}}:
+        t: int = a.n[e + 1]
+        return mk_Expr_ternary(a, mk_Ternary(a, subst_expr(ck, a, a.n[t + {{O:Ternary.cond}}], bnd), subst_expr(ck, a, a.n[t + {{O:Ternary.then_expr}}], bnd), subst_expr(ck, a, a.n[t + {{O:Ternary.else_expr}}], bnd)))
+    if tag == {{T:Expr.binary}}:
+        b: int = a.n[e + 1]
+        return mk_Expr_binary(a, mk_Binary(a, a.n[b + {{O:Binary.op}}], subst_expr(ck, a, a.n[b + {{O:Binary.left}}], bnd), subst_expr(ck, a, a.n[b + {{O:Binary.right}}], bnd), a.n[b + {{O:Binary.is_form}}], a.n[b + {{O:Binary.fstring}}], a.n[b + {{O:Binary.opt_eq}}], a.n[b + {{O:Binary.spread}}]))
+    if tag == {{T:Expr.call}}:
+        c: int = a.n[e + 1]
+        orig_cal: int = a.n[c + {{O:Call.callee}}]
+        cal: int = subst_expr(ck, a, orig_cal, bnd)
+        cargs: int = sl_at(a, c, {{O:Call.args}})
+        na: list[int] = []
+        for ai in range(pky(cargs)):
+            na.append(subst_expr(ck, a, stmt_at(a, cargs, ai), bnd))
+        if a.n[orig_cal] == {{T:Expr.identifier}} and len(na) >= 1 and a.n[na[0]] == {{T:Expr.identifier}}:
+            fnm: int = pk(a.n[orig_cal + 1], a.n[orig_cal + 2])
+            if sref_eq(a, fnm, "sizeof") or sref_eq(a, fnm, "alignof") or sref_eq(a, fnm, "offsetof"):
+                asym: int = sym_of(ck, a, pk(a.n[na[0] + 1], a.n[na[0] + 2]))
+                be: int = m2_get(bnd, 0, asym)
+                if be >= 0:
+                    te: int = type_to_type_expr(ck, a, bnd.vv[be])
+                    if a.n[te] == {{T:TypeExpr.simple}}:
+                        na[0] = mk_Expr_identifier(a, a.n[te + 1], a.n[te + 2])
+        asl: int = list_put_slice(a, na)
+        return mk_Expr_call(a, mk_Call(a, cal, pkx(asl), pky(asl), a.n[c + {{O:Call.fstring}}], a.n[c + {{O:Call.set_lit}}], a.n[c + {{O:Call.eval_order}}], a.n[c + {{O:Call.eval_order}} + 1], a.n[c + {{O:Call.raise_from}}], a.n[c + {{O:Call.spread_lit}}]))
+    if tag == {{T:Expr.attribute}}:
+        at_: int = a.n[e + 1]
+        return mk_Expr_attribute(a, mk_Attribute(a, subst_expr(ck, a, a.n[at_ + {{O:Attribute.obj}}], bnd), a.n[at_ + {{O:Attribute.attr}}], a.n[at_ + {{O:Attribute.attr}} + 1]))
+    if tag == {{T:Expr.index}}:
+        ix: int = a.n[e + 1]
+        return mk_Expr_index(a, mk_Index(a, subst_expr(ck, a, a.n[ix + {{O:Index.obj}}], bnd), subst_expr(ck, a, a.n[ix + {{O:Index.index}}], bnd)))
+    if tag == {{T:Expr.list_comp}}:
+        lc: int = a.n[e + 1]
+        nel: int = subst_expr(ck, a, a.n[lc + {{O:ListComp.elem}}], bnd)
+        lcsl: int = subst_comp_clauses(ck, a, sl_at(a, lc, {{O:ListComp.clauses}}), bnd)
+        return mk_Expr_list_comp(a, mk_ListComp(a, nel, pkx(lcsl), pky(lcsl), -1, a.n[lc + {{O:ListComp.is_genexpr}}]))
+    if tag == {{T:Expr.dict_comp}}:
+        dc: int = a.n[e + 1]
+        dk: int = subst_expr(ck, a, a.n[dc + {{O:DictComp.key}}], bnd)
+        dv: int = subst_expr(ck, a, a.n[dc + {{O:DictComp.value}}], bnd)
+        dcsl: int = subst_comp_clauses(ck, a, sl_at(a, dc, {{O:DictComp.clauses}}), bnd)
+        return mk_Expr_dict_comp(a, mk_DictComp(a, dk, dv, pkx(dcsl), pky(dcsl), -1))
+    if tag == {{T:Expr.lambda}}:
+        lam: int = a.n[e + 1]
+        return mk_Expr_lambda(a, mk_Lambda(a, a.n[lam + {{O:Lambda.params}}], a.n[lam + {{O:Lambda.params}} + 1], subst_expr(ck, a, a.n[lam + {{O:Lambda.body}}], bnd)))
+    if tag == {{T:Expr.slice}}:
+        sl: int = a.n[e + 1]
+        nobj: int = subst_expr(ck, a, a.n[sl + {{O:Slice.obj}}], bnd)
+        nlo: int = -1
+        if a.n[sl + {{O:Slice.lo}}] >= 0:
+            nlo = subst_expr(ck, a, a.n[sl + {{O:Slice.lo}}], bnd)
+        nhi: int = -1
+        if a.n[sl + {{O:Slice.hi}}] >= 0:
+            nhi = subst_expr(ck, a, a.n[sl + {{O:Slice.hi}}], bnd)
+        nst: int = -1
+        if a.n[sl + {{O:Slice.step}}] >= 0:
+            nst = subst_expr(ck, a, a.n[sl + {{O:Slice.step}}], bnd)
+        return mk_Expr_slice(a, mk_Slice(a, nobj, nlo, nhi, nst))
+    if tag == {{T:Expr.list_lit}}:
+        lsl: int = subst_exprs(ck, a, pk(a.n[e + 1], a.n[e + 2]), bnd)
+        return mk_Expr_list_lit(a, pkx(lsl), pky(lsl))
+    if tag == {{T:Expr.tuple_lit}}:
+        tsl: int = subst_exprs(ck, a, pk(a.n[e + 1], a.n[e + 2]), bnd)
+        return mk_Expr_tuple_lit(a, pkx(tsl), pky(tsl))
+    if tag == {{T:Expr.dict_lit}}:
+        dp_st: int = a.n[e + 1]
+        dp_n: int = a.n[e + 2]
+        dp_ids: list[int] = []
+        for di in range(dp_n):
+            pr: int = a.l[dp_st + di]
+            dp_ids.append(mk_DictPair(a, subst_expr(ck, a, a.n[pr + {{O:DictPair.key}}], bnd), subst_expr(ck, a, a.n[pr + {{O:DictPair.value}}], bnd)))
+        dpsl: int = list_put_slice(a, dp_ids)
+        return mk_Expr_dict_lit(a, pkx(dpsl), pky(dpsl))
+    if tag == {{T:Expr.await_expr}}:
+        return mk_Expr_await_expr(a, subst_expr(ck, a, a.n[e + 1], bnd))
+    if tag == {{T:Expr.spawn_expr}}:
+        return mk_Expr_spawn_expr(a, subst_expr(ck, a, a.n[e + 1], bnd))
+    gc: int = a.n[e + 1]
+    gta: int = sl_at(a, gc, {{O:GenericConstruct.type_args}})
+    gtids: list[int] = []
+    for gti in range(pky(gta)):
+        gtids.append(subst_type_expr(ck, a, stmt_at(a, gta, gti), bnd))
+    gtsl: int = list_put_slice(a, gtids)
+    gasl: int = subst_exprs(ck, a, sl_at(a, gc, {{O:GenericConstruct.args}}), bnd)
+    return mk_Expr_generic_construct(a, mk_GenericConstruct(a, a.n[gc + {{O:GenericConstruct.name}}], a.n[gc + {{O:GenericConstruct.name}} + 1], pkx(gtsl), pky(gtsl), pkx(gasl), pky(gasl), {{NONE}}, 0))
+
+def subst_stmts(ck: Ck, a: Ast, sl: int, bnd: Map2) -> int:
+    ids: list[int] = []
+    for i in range(pky(sl)):
+        ids.append(subst_stmt(ck, a, stmt_at(a, sl, i), bnd))
+    return list_put_slice(a, ids)
+
+def subst_stmt(ck: Ck, a: Ast, s: int, bnd: Map2) -> int:
+    kn: int = a.n[s + {{O:Stmt.kind}}]
+    tag: int = a.n[kn]
+    pay: int = a.n[kn + 1]
+    ln: int = a.n[s + {{O:Stmt.line}}]
+    nkn: int = -1
+    if tag == {{T:StmtKind.expr_stmt}}:
+        nkn = mk_StmtKind_expr_stmt(a, subst_expr(ck, a, pay, bnd))
+    elif tag == {{T:StmtKind.var_decl}}:
+        nte: int = subst_type_expr(ck, a, a.n[pay + {{O:VarDecl.type_expr}}], bnd)
+        nval: int = subst_expr(ck, a, a.n[pay + {{O:VarDecl.value}}], bnd)
+        nkn = mk_StmtKind_var_decl(a, mk_VarDecl(a, a.n[pay + {{O:VarDecl.name}}], a.n[pay + {{O:VarDecl.name}} + 1], nte, nval, a.n[pay + {{O:VarDecl.class_attr}}], a.n[pay + {{O:VarDecl.is_match_temp}}], a.n[pay + {{O:VarDecl.unpack_origin}}], a.n[pay + {{O:VarDecl.infer_assign}}]))
+    elif tag == {{T:StmtKind.assign}}:
+        ntg: int = subst_expr(ck, a, a.n[pay + {{O:Assign.target}}], bnd)
+        nav: int = subst_expr(ck, a, a.n[pay + {{O:Assign.value}}], bnd)
+        nann: int = a.n[pay + {{O:Assign.ann}}]
+        if nann >= 0:
+            nann = subst_type_expr(ck, a, nann, bnd)
+        nkn = mk_StmtKind_assign(a, mk_Assign(a, ntg, nav, nann))
+    elif tag == {{T:StmtKind.if_stmt}}:
+        nc: int = subst_expr(ck, a, a.n[pay + {{O:IfStmt.cond}}], bnd)
+        ntb: int = subst_stmts(ck, a, sl_at(a, pay, {{O:IfStmt.then_body}}), bnd)
+        ecs: int = sl_at(a, pay, {{O:IfStmt.elif_clauses}})
+        eids: list[int] = []
+        for ei in range(pky(ecs)):
+            ec: int = stmt_at(a, ecs, ei)
+            ecc: int = subst_expr(ck, a, a.n[ec + {{O:ElifClause.cond}}], bnd)
+            ecb: int = subst_stmts(ck, a, sl_at(a, ec, {{O:ElifClause.body}}), bnd)
+            eids.append(mk_ElifClause(a, ecc, pkx(ecb), pky(ecb)))
+        ecsl: int = list_put_slice(a, eids)
+        neb0: int = {{NONE}}
+        neb1: int = 0
+        if a.n[pay + {{O:IfStmt.else_body}}] != {{NONE}}:
+            neb: int = subst_stmts(ck, a, sl_at(a, pay, {{O:IfStmt.else_body}}), bnd)
+            neb0 = pkx(neb)
+            neb1 = pky(neb)
+        nkn = mk_StmtKind_if_stmt(a, mk_IfStmt(a, nc, pkx(ntb), pky(ntb), pkx(ecsl), pky(ecsl), neb0, neb1, a.n[pay + {{O:IfStmt.is_assert}}], a.n[pay + {{O:IfStmt.match_origin}}], a.n[pay + {{O:IfStmt.is_else_tail}}]))
+    elif tag == {{T:StmtKind.while_stmt}}:
+        wc: int = subst_expr(ck, a, a.n[pay + {{O:WhileStmt.cond}}], bnd)
+        wb: int = subst_stmts(ck, a, sl_at(a, pay, {{O:WhileStmt.body}}), bnd)
+        nkn = mk_StmtKind_while_stmt(a, mk_WhileStmt(a, wc, pkx(wb), pky(wb), a.n[pay + {{O:WhileStmt.else_origin}}]))
+    elif tag == {{T:StmtKind.for_stmt}}:
+        fit: int = subst_expr(ck, a, a.n[pay + {{O:ForStmt.iterable}}], bnd)
+        fb: int = subst_stmts(ck, a, sl_at(a, pay, {{O:ForStmt.body}}), bnd)
+        nkn = mk_StmtKind_for_stmt(a, mk_ForStmt(a, a.n[pay + {{O:ForStmt.var_name}}], a.n[pay + {{O:ForStmt.var_name}} + 1], fit, pkx(fb), pky(fb), a.n[pay + {{O:ForStmt.hoist}}], a.n[pay + {{O:ForStmt.is_async}}], a.n[pay + {{O:ForStmt.else_origin}}]))
+    elif tag == {{T:StmtKind.del_stmt}}:
+        nkn = mk_StmtKind_del_stmt(a, subst_expr(ck, a, pay, bnd))
+    elif tag == {{T:StmtKind.func_def}}:
+        fps: int = sl_at(a, pay, {{O:FuncDef.params}})
+        pids: list[int] = []
+        for pi in range(pky(fps)):
+            p: int = stmt_at(a, fps, pi)
+            pids.append(mk_Param(a, a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1], a.n[p + {{O:Param.variadic}}], a.n[p + {{O:Param.var_kw}}], a.n[p + {{O:Param.kw_only}}], a.n[p + {{O:Param.pos_only}}], subst_type_expr(ck, a, a.n[p + {{O:Param.type_expr}}], bnd), a.n[p + {{O:Param.self_inferred}}], a.n[p + {{O:Param.default}}]))
+        psl: int = list_put_slice(a, pids)
+        fret: int = subst_type_expr(ck, a, a.n[pay + {{O:FuncDef.return_type}}], bnd)
+        fbody: int = subst_stmts(ck, a, sl_at(a, pay, {{O:FuncDef.body}}), bnd)
+        nkn = mk_StmtKind_func_def(a, mk_FuncDef(a, a.n[pay + {{O:FuncDef.name}}], a.n[pay + {{O:FuncDef.name}} + 1], a.n[pay + {{O:FuncDef.type_params}}], a.n[pay + {{O:FuncDef.type_params}} + 1], pkx(psl), pky(psl), fret, a.n[pay + {{O:FuncDef.ret_omitted}}], pkx(fbody), pky(fbody), a.n[pay + {{O:FuncDef.is_async}}], a.n[pay + {{O:FuncDef.decorators}}], a.n[pay + {{O:FuncDef.decorators}} + 1], a.n[pay + {{O:FuncDef.link_name}}], a.n[pay + {{O:FuncDef.link_name}} + 1], a.n[pay + {{O:FuncDef.nonlocals}}], a.n[pay + {{O:FuncDef.nonlocals}} + 1], a.n[pay + {{O:FuncDef.globals}}], a.n[pay + {{O:FuncDef.globals}} + 1], a.n[pay + {{O:FuncDef.allow_await}}], a.n[pay + {{O:FuncDef.line}}]))
+    elif tag == {{T:StmtKind.return_stmt}}:
+        rv: int = -1
+        if pay >= 0:
+            rv = subst_expr(ck, a, pay, bnd)
+        nkn = mk_StmtKind_return_stmt(a, rv)
+    elif tag == {{T:StmtKind.raise_stmt}}:
+        nkn = mk_StmtKind_raise_stmt(a, subst_expr(ck, a, pay, bnd))
+    elif tag == {{T:StmtKind.try_stmt}}:
+        tb: int = subst_stmts(ck, a, sl_at(a, pay, {{O:TryStmt.try_body}}), bnd)
+        txs: int = sl_at(a, pay, {{O:TryStmt.except_clauses}})
+        xids: list[int] = []
+        for xi in range(pky(txs)):
+            xc: int = stmt_at(a, txs, xi)
+            xb: int = subst_stmts(ck, a, sl_at(a, xc, {{O:ExceptClause.body}}), bnd)
+            xids.append(mk_ExceptClause(a, a.n[xc + {{O:ExceptClause.class_name}}], a.n[xc + {{O:ExceptClause.class_name}} + 1], a.n[xc + {{O:ExceptClause.bind_name}}], a.n[xc + {{O:ExceptClause.bind_name}} + 1], pkx(xb), pky(xb), a.n[xc + {{O:ExceptClause.synth_bind}}], a.n[xc + {{O:ExceptClause.synth_class}}]))
+        xsl: int = list_put_slice(a, xids)
+        nfb0: int = {{NONE}}
+        nfb1: int = 0
+        if a.n[pay + {{O:TryStmt.finally_body}}] != {{NONE}}:
+            nfb: int = subst_stmts(ck, a, sl_at(a, pay, {{O:TryStmt.finally_body}}), bnd)
+            nfb0 = pkx(nfb)
+            nfb1 = pky(nfb)
+        nkn = mk_StmtKind_try_stmt(a, mk_TryStmt(a, pkx(tb), pky(tb), pkx(xsl), pky(xsl), nfb0, nfb1, a.n[pay + {{O:TryStmt.else_origin}}]))
+    elif tag == {{T:StmtKind.lowlevel_stmt}}:
+        llb: int = subst_stmts(ck, a, sl_at(a, pay, {{O:LowLevelStmt.body}}), bnd)
+        nkn = mk_StmtKind_lowlevel_stmt(a, mk_LowLevelStmt(a, pkx(llb), pky(llb)))
+    elif tag == {{T:StmtKind.with_stmt}}:
+        wcx: int = subst_expr(ck, a, a.n[pay + {{O:WithStmt.ctx_expr}}], bnd)
+        wb2: int = subst_stmts(ck, a, sl_at(a, pay, {{O:WithStmt.body}}), bnd)
+        nkn = mk_StmtKind_with_stmt(a, mk_WithStmt(a, wcx, a.n[pay + {{O:WithStmt.binding}}], a.n[pay + {{O:WithStmt.binding}} + 1], pkx(wb2), pky(wb2), a.n[pay + {{O:WithStmt.is_async}}], a.n[pay + {{O:WithStmt.uid}}]))
+    elif tag == {{T:StmtKind.defer_stmt}}:
+        dc_: int = a.n[pay + {{O:DeferStmt.call}}]
+        dcal: int = subst_expr(ck, a, a.n[dc_ + {{O:Call.callee}}], bnd)
+        dasl: int = subst_exprs(ck, a, sl_at(a, dc_, {{O:Call.args}}), bnd)
+        nkn = mk_StmtKind_defer_stmt(a, mk_DeferStmt(a, mk_Call(a, dcal, pkx(dasl), pky(dasl), a.n[dc_ + {{O:Call.fstring}}], a.n[dc_ + {{O:Call.set_lit}}], a.n[dc_ + {{O:Call.eval_order}}], a.n[dc_ + {{O:Call.eval_order}} + 1], a.n[dc_ + {{O:Call.raise_from}}], a.n[dc_ + {{O:Call.spread_lit}}])))
+    else:
+        return s
+    return mk_Stmt(a, nkn, ln, -1)
+
+def mangle_name_sym(ck: Ck, base_sym: int, elems: list[int]) -> int:
+    tt: TT = ck.tt
+    bs: list[int] = []
+    bo: int = tt.so[base_sym]
+    for i in range(tt.sl[base_sym]):
+        bs.append(tt.sb[bo + i])
+    bs.append(95)
+    bs.append(95)
+    for j in range(len(elems)):
+        if j > 0:
+            bs.append(95)
+        tt.out = []
+        ty_mangle(tt, elems[j])
+        for k in range(len(tt.out)):
+            bs.append(tt.out[k])
+    return sym_intern_list(tt, bs, 0, len(bs))
+
+# Zig `qualifiedGenericBase`: `mod.Box` / `pkg.mod.Box` -> takma ad ikamesi + modül kontrolü -> `mod_Box` sembolü (-1: nokta yok).
+def qualified_generic_base(ck: Ck, a: Ast, gn: int) -> int:
+    n: int = sref_len(gn)
+    has_dot: bool = False
+    for i in range(n):
+        if sref_byte(a, gn, i) == 46:
+            has_dot = True
+            break
+    if not has_dot:
+        return -1
+    segs: list[int] = []
+    cur: list[int] = []
+    for j in range(n):
+        b: int = sref_byte(a, gn, j)
+        if b == 46:
+            segs.append(sym_intern_list(ck.tt, cur, 0, len(cur)))
+            cur = []
+        else:
+            cur.append(b)
+    segs.append(sym_intern_list(ck.tt, cur, 0, len(cur)))
+    resolved: list[int] = subst_alias(ck, segs)
+    if len(resolved) < 2:
+        return -1
+    mod: int = join_syms(ck, resolved, len(resolved) - 1, 46)
+    if m2_get(ck.imod, 0, mod) < 0:
+        mp(ck, "unknown module: ")
+        mp_sym(ck, mod)
+        raise mk_fail(ck, "UnknownType")
+    return join_syms(ck, resolved, len(resolved), 95)
+
+def lookup_generic_class(ck: Ck, a: Ast, gn: int) -> int:
+    sym: int = sym_of(ck, a, gn)
+    ge: int = m2_get(ck.gcls, 0, sym)
+    if ge >= 0:
+        return ck.gcls.vv[ge]
+    fe: int = m2_get(ck.fimp, 0, sym)
+    if fe >= 0:
+        ge2: int = m2_get(ck.gcls, 0, ck.fimp.vv[fe])
+        if ge2 >= 0:
+            return ck.gcls.vv[ge2]
+    qsym: int = qualified_generic_base(ck, a, gn)
+    if qsym >= 0:
+        ge3: int = m2_get(ck.gcls, 0, qsym)
+        if ge3 >= 0:
+            return ck.gcls.vv[ge3]
+    return -1
+
+# Zig `instantiateGenericClass` (L11819): tip parametrelerini + sınıf adını somut mangled sınıfa bağlayarak alan/metod/gövdeleri klonlar.
+def instantiate_generic_class(ck: Ck, a: Ast, gcd: int, bound: list[int]) -> int:
+    gnm: int = pk(a.n[gcd + {{O:ClassDef.name}}], a.n[gcd + {{O:ClassDef.name}} + 1])
+    gsym: int = sym_of(ck, a, gnm)
+    tps: int = sl_at(a, gcd, {{O:ClassDef.type_params}})
+    ntp: int = pky(tps)
+    if len(bound) != ntp:
+        mp(ck, "'")
+        mp_sym(ck, gsym)
+        mp(ck, "' expects ")
+        mp_int(ck, ntp)
+        mp(ck, " type arguments, ")
+        mp_int(ck, len(bound))
+        mp(ck, " were given")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    mangled_sym: int = mangle_name_sym(ck, gsym, bound)
+    if class_idx(ck, mangled_sym) >= 0:
+        return ty_class(ck.tt, mangled_sym)
+    bnd: Map2 = Map2()
+    for i in range(ntp):
+        tpsym: int = sym_of(ck, a, pk(a.l[pkx(tps) + i * 2], a.l[pkx(tps) + i * 2 + 1]))
+        m2_put(bnd, 0, tpsym, bound[i])
+    mty: int = ty_class(ck.tt, mangled_sym)
+    m2_put(bnd, 0, gsym, mty)
+    fs: int = sl_at(a, gcd, {{O:ClassDef.fields}})
+    fids: list[int] = []
+    for fi in range(pky(fs)):
+        f: int = stmt_at(a, fs, fi)
+        fte: int = subst_type_expr(ck, a, a.n[f + {{O:FieldDecl.type_expr}}], bnd)
+        fids.append(mk_FieldDecl(a, a.n[f + {{O:FieldDecl.name}}], a.n[f + {{O:FieldDecl.name}} + 1], fte, a.n[f + {{O:FieldDecl.line}}]))
+    fsl: int = list_put_slice(a, fids)
+    ms: int = sl_at(a, gcd, {{O:ClassDef.methods}})
+    mids: list[int] = []
+    for mi in range(pky(ms)):
+        m: int = stmt_at(a, ms, mi)
+        if pky(sl_at(a, m, {{O:FuncDef.type_params}})) > 0:
+            raise unsup(ck, "class#generic_method")
+        mps: int = sl_at(a, m, {{O:FuncDef.params}})
+        pids: list[int] = []
+        for pi in range(pky(mps)):
+            p: int = stmt_at(a, mps, pi)
+            pids.append(mk_Param(a, a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1], a.n[p + {{O:Param.variadic}}], a.n[p + {{O:Param.var_kw}}], a.n[p + {{O:Param.kw_only}}], a.n[p + {{O:Param.pos_only}}], subst_type_expr(ck, a, a.n[p + {{O:Param.type_expr}}], bnd), a.n[p + {{O:Param.self_inferred}}], a.n[p + {{O:Param.default}}]))
+        psl: int = list_put_slice(a, pids)
+        mret: int = subst_type_expr(ck, a, a.n[m + {{O:FuncDef.return_type}}], bnd)
+        mbody: int = subst_stmts(ck, a, sl_at(a, m, {{O:FuncDef.body}}), bnd)
+        mids.append(mk_FuncDef(a, a.n[m + {{O:FuncDef.name}}], a.n[m + {{O:FuncDef.name}} + 1], 0, 0, pkx(psl), pky(psl), mret, a.n[m + {{O:FuncDef.ret_omitted}}], pkx(mbody), pky(mbody), a.n[m + {{O:FuncDef.is_async}}], a.n[m + {{O:FuncDef.decorators}}], a.n[m + {{O:FuncDef.decorators}} + 1], a.n[m + {{O:FuncDef.link_name}}], a.n[m + {{O:FuncDef.link_name}} + 1], a.n[m + {{O:FuncDef.nonlocals}}], a.n[m + {{O:FuncDef.nonlocals}} + 1], a.n[m + {{O:FuncDef.globals}}], a.n[m + {{O:FuncDef.globals}} + 1], a.n[m + {{O:FuncDef.allow_await}}], a.n[m + {{O:FuncDef.line}}]))
+    msl: int = list_put_slice(a, mids)
+    msr: int = ast_str_sym(ck, a, mangled_sym)
+    ccd: int = mk_ClassDef(a, pkx(msr), pky(msr), 0, 0, {{NONE}}, 0, {{NONE}}, 0, 0, 0, 0, 0, 0, 0, 0, 0, pkx(msl), pky(msl), pkx(fsl), pky(fsl), 0, 0, 0, 0)
+    ci: int = len(ck.cls_sym)
+    ck.cls_sym.append(mangled_sym)
+    ck.cls_node.append(ccd)
+    ck.cls_init.append(-1)
+    ck.cls_base.append(-1)
+    ck.cls_regd.append(0)
+    ck.cls_chk.append(0)
+    ck.tup_s.append(-1)
+    ck.tup_n.append(0)
+    ck.cls_synth.append(1)
+    ck.gcls_ts.append(len(ck.gcls_te))
+    ck.gcls_tn.append(len(bound))
+    for bi in range(len(bound)):
+        ck.gcls_te.append(bound[bi])
+    m2_put(ck.cls_map, 0, mangled_sym, ci)
+    cls_register(ck.tt, mangled_sym)
+    ensure_class_sig(ck, a, ci)
+    if ck.defer_cls_body:
+        ck.pending_inst.append(ci)
+    else:
+        ensure_class_checked(ck, a, ci)
+    return mty
+
+# `resolveGenericBases`: `class Sub(Base[int]):` -> somut `Base__int` tabanı (`defer_cls_body = True` ile gövde sonra denetlenir).
+def resolve_generic_bases(ck: Ck, a: Ast, body: int) -> None:
+    for i in range(pky(body)):
+        st: int = stmt_at(a, body, i)
+        kn: int = a.n[st + {{O:Stmt.kind}}]
+        if a.n[kn] != {{T:StmtKind.class_def}}:
+            continue
+        cd: int = a.n[kn + 1]
+        basl: int = sl_at(a, cd, {{O:ClassDef.base_args}})
+        if pky(basl) == 0:
+            continue
+        ck.cur_line = a.n[st + {{O:Stmt.line}}]
+        ck.cur_span = a.n[st + {{O:Stmt.span}}]
+        csym: int = sym_of(ck, a, pk(a.n[cd + {{O:ClassDef.name}}], a.n[cd + {{O:ClassDef.name}} + 1]))
+        if pky(sl_at(a, cd, {{O:ClassDef.type_params}})) > 0:
+            mp(ck, "a generic class ('")
+            mp_sym(ck, csym)
+            mp(ck, "') cannot have a base class (generic + inheritance is not supported in v1)")
+            raise mk_fail(ck, "TypeMismatch")
+        if pky(sl_at(a, cd, {{O:ClassDef.extra_bases}})) > 0:
+            mp(ck, "class '")
+            mp_sym(ck, csym)
+            mp(ck, "': a concrete generic base ('")
+            mp_sref(ck, a, pk(a.n[cd + {{O:ClassDef.base}}], a.n[cd + {{O:ClassDef.base}} + 1]))
+            mp(ck, "[...]') cannot be combined with other base classes")
+            raise mk_fail(ck, "TypeMismatch")
+        te: int = mk_TypeExpr_generic(a, mk_Generic(a, a.n[cd + {{O:ClassDef.base}}], a.n[cd + {{O:ClassDef.base}} + 1], pkx(basl), pky(basl)))
+        ck.defer_cls_body = True
+        t: int = -1
+        try:
+            t = type_expr_to_type(ck, a, te)
+        finally:
+            ck.defer_cls_body = False
+        if ck.tt.tag[t] != 6:
+            mp(ck, "class '")
+            mp_sym(ck, csym)
+            mp(ck, "': base '")
+            mp_sref(ck, a, pk(a.n[cd + {{O:ClassDef.base}}], a.n[cd + {{O:ClassDef.base}} + 1]))
+            mp(ck, "[...]' is not a class")
+            raise mk_fail(ck, "TypeMismatch")
+        bsr: int = ast_str_sym(ck, a, ck.tt.xa[t])
+        a.n[cd + {{O:ClassDef.base}}] = pkx(bsr)
+        a.n[cd + {{O:ClassDef.base}} + 1] = pky(bsr)
+        a.n[cd + {{O:ClassDef.base_args}}] = 0
+        a.n[cd + {{O:ClassDef.base_args}} + 1] = 0
+
+def check_pending_inst(ck: Ck, a: Ast) -> None:
+    i: int = 0
+    while i < len(ck.pending_inst):
+        ensure_class_checked(ck, a, ck.pending_inst[i])
+        i = i + 1
+    ck.pending_inst = []
+
+# `collectClassNames`: ad kaydı + kapsam dışı sınıf özellikleri (kalıtım/dekoratör/sabit/enum/mixin) + jenerik sınıf şablonları
 def collect_class_names(ck: Ck, a: Ast, body: int) -> None:
     for i in range(pky(body)):
         st: int = stmt_at(a, body, i)
@@ -2624,13 +3263,11 @@ def collect_class_names(ck: Ck, a: Ast, body: int) -> None:
         cd: int = a.n[kn + 1]
         nm: int = pk(a.n[cd + {{O:ClassDef.name}}], a.n[cd + {{O:ClassDef.name}} + 1])
         sym: int = sym_of(ck, a, nm)
-        if class_idx(ck, sym) >= 0:
+        if class_idx(ck, sym) >= 0 or m2_get(ck.gcls, 0, sym) >= 0:
             mp(ck, "class already defined: ")
             mp_sym(ck, sym)
             raise mk_fail(ck, "DuplicateDefinition")
-        if pky(sl_at(a, cd, {{O:ClassDef.type_params}})) > 0:
-            raise unsup(ck, "class#generic")
-        if pky(sl_at(a, cd, {{O:ClassDef.extra_bases}})) > 0 or pky(sl_at(a, cd, {{O:ClassDef.base_args}})) > 0 or pky(sl_at(a, cd, {{O:ClassDef.mixins}})) > 0:
+        if pky(sl_at(a, cd, {{O:ClassDef.extra_bases}})) > 0 or pky(sl_at(a, cd, {{O:ClassDef.mixins}})) > 0:
             raise unsup(ck, "class#bases")
         if pky(sl_at(a, cd, {{O:ClassDef.decorators}})) > 0:
             raise unsup(ck, "class#decorators")
@@ -2638,6 +3275,30 @@ def collect_class_names(ck: Ck, a: Ast, body: int) -> None:
             raise unsup(ck, "class#consts")
         if pky(sl_at(a, cd, {{O:ClassDef.enum_variants}})) > 0:
             raise unsup(ck, "class#enum")
+        if pky(sl_at(a, cd, {{O:ClassDef.type_params}})) > 0:
+            if a.n[cd + {{O:ClassDef.base}}] != {{NONE}}:
+                mp(ck, "a generic class ('")
+                mp_sym(ck, sym)
+                mp(ck, "') cannot have a base class (generic + inheritance is not supported in v1)")
+                raise mk_fail(ck, "TypeMismatch")
+            gms: int = sl_at(a, cd, {{O:ClassDef.methods}})
+            for gi in range(pky(gms)):
+                gm: int = stmt_at(a, gms, gi)
+                gds: int = sl_at(a, gm, {{O:FuncDef.decorators}})
+                for gdi in range(pky(gds)):
+                    gd0: int = stmt_at(a, gds, gdi)
+                    gdn: int = pk(a.n[gd0 + {{O:Decorator.name}}], a.n[gd0 + {{O:Decorator.name}} + 1])
+                    is_st: bool = sref_eq(a, gdn, "staticmethod") or sref_eq(a, gdn, "classmethod") or sref_eq(a, gdn, "property")
+                    if not is_st and sref_len(gdn) > 7:
+                        dl: int = sref_len(gdn)
+                        if sref_byte(a, gdn, dl - 7) == 46 and sref_byte(a, gdn, dl - 6) == 115 and sref_byte(a, gdn, dl - 5) == 101 and sref_byte(a, gdn, dl - 4) == 116 and sref_byte(a, gdn, dl - 3) == 116 and sref_byte(a, gdn, dl - 2) == 101 and sref_byte(a, gdn, dl - 1) == 114:
+                            is_st = True
+                    if is_st:
+                        mp(ck, "'@staticmethod'/'@classmethod'/'@property' are not supported in generic classes: ")
+                        mp_sym(ck, sym)
+                        raise mk_fail(ck, "TypeMismatch")
+            m2_put(ck.gcls, 0, sym, cd)
+            continue
         idx: int = len(ck.cls_sym)
         ck.cls_sym.append(sym)
         ck.cls_node.append(cd)
@@ -2647,6 +3308,9 @@ def collect_class_names(ck: Ck, a: Ast, body: int) -> None:
         ck.cls_chk.append(0)
         ck.tup_s.append(-1)
         ck.tup_n.append(0)
+        ck.cls_synth.append(0)
+        ck.gcls_ts.append(-1)
+        ck.gcls_tn.append(0)
         m2_put(ck.cls_map, 0, sym, idx)
         cls_register(ck.tt, sym)
 
@@ -2790,7 +3454,7 @@ def register_class_sigs(ck: Ck, a: Ast, idx: int) -> None:
         m2_put(ck.cls_unas, idx, fsym, 1)
         # classHasNonArcFields: bildirilen alan tipi Task/Channel/ThreadHandle/ThreadChannel/TaskLocal
         g: int = ck.tt.tag[ft]
-        if g == 7 or g == 8 or g == 9 or g == 10 or g == 11:
+        if ck.cls_synth[idx] == 0 and (g == 7 or g == 8 or g == 9 or g == 10 or g == 11):
             cls_set_nonarc(ck.tt, csym, 1)
     for k in range(pky(ms)):
         m2: int = stmt_at(a, ms, k)
@@ -2985,7 +3649,9 @@ def dotted_root_is(ck: Ck, a: Ast, e: int, name: str) -> bool:
 
 # argüman denetimi (checkArgs/checkArgsDecl çekirdeği): imza kimliği `sid`, ileti adı `nm` (SymbolId)
 def check_args_sig(ck: Ck, a: Ast, fx: Fx, c: int, sid: int, nm: int) -> None:
-    args: int = sl_at(a, c, {{O:Call.args}})
+    check_args_slice(ck, a, fx, sl_at(a, c, {{O:Call.args}}), sid, nm, True)
+
+def check_args_slice(ck: Ck, a: Ast, fx: Fx, args: int, sid: int, nm: int, use_span: bool) -> None:
     n: int = pky(args)
     for i in range(n):
         if a.n[stmt_at(a, args, i)] == {{T:Expr.kwarg}}:
@@ -3014,9 +3680,10 @@ def check_args_sig(ck: Ck, a: Ast, fx: Fx, c: int, sid: int, nm: int) -> None:
         pt: int = ck.fpar[st + i2]
         at_: int = check_expr_expected(ck, a, fx, ae, pt)
         if not ty_assignable(ck.tt, pt, at_):
-            sp: int = span_of(a, ae)
-            if sp >= 0:
-                ck.cur_span = sp
+            if use_span:
+                sp: int = span_of(a, ae)
+                if sp >= 0:
+                    ck.cur_span = sp
             mp(ck, "type mismatch for argument '")
             mp_sym(ck, nm)
             mp(ck, "'")
@@ -4078,6 +4745,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
         check_base_cycles(ck, a, body)
         collect_class_names(ck, a, body)
         resolve_reexport(ck, a, body)
+        resolve_generic_bases(ck, a, body)
         # registerSignatures
         for j in range(pky(body)):
             st: int = stmt_at(a, body, j)
@@ -4089,7 +4757,10 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
             elif a.n[kn2] == {{T:StmtKind.extern_def}}:
                 register_extern(ck, a, a.n[kn2 + 1])
             elif a.n[kn2] == {{T:StmtKind.class_def}}:
-                ensure_class_sig(ck, a, class_idx(ck, sym_of(ck, a, pk(a.n[a.n[kn2 + 1] + {{O:ClassDef.name}}], a.n[a.n[kn2 + 1] + {{O:ClassDef.name}} + 1]))))
+                csym_r: int = sym_of(ck, a, pk(a.n[a.n[kn2 + 1] + {{O:ClassDef.name}}], a.n[a.n[kn2 + 1] + {{O:ClassDef.name}} + 1]))
+                if m2_get(ck.gcls, 0, csym_r) < 0:
+                    ensure_class_sig(ck, a, class_idx(ck, csym_r))
+        check_pending_inst(ck, a)
         resolve_reexport(ck, a, body)
         collect_module_globals(ck, a, body)
     except CkUnsupported:
@@ -4111,7 +4782,9 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
             elif a.n[kn3] == {{T:StmtKind.extern_def}} or a.n[kn3] == {{T:StmtKind.import_stmt}} or a.n[kn3] == {{T:StmtKind.from_import_stmt}}:
                 pass
             elif a.n[kn3] == {{T:StmtKind.class_def}}:
-                ensure_class_checked(ck, a, class_idx(ck, sym_of(ck, a, pk(a.n[a.n[kn3 + 1] + {{O:ClassDef.name}}], a.n[a.n[kn3 + 1] + {{O:ClassDef.name}} + 1]))))
+                csym_b: int = sym_of(ck, a, pk(a.n[a.n[kn3 + 1] + {{O:ClassDef.name}}], a.n[a.n[kn3 + 1] + {{O:ClassDef.name}} + 1]))
+                if m2_get(ck.gcls, 0, csym_b) < 0:
+                    ensure_class_checked(ck, a, class_idx(ck, csym_b))
             else:
                 check_stmt(ck, a, top, st3)
         except CkUnsupported:

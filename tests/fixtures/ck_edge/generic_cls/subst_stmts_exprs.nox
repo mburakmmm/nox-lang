@@ -1,0 +1,46 @@
+class MyErr:
+    pass
+
+def cleanup(n: int) -> None:
+    pass
+
+class Ctx:
+    def __enter__(self) -> int:
+        return 1
+    def __exit__(self) -> None:
+        pass
+
+class Rich[T]:
+    item: T
+    def __init__(self, item: T) -> None:
+        self.item = item
+    def walk(self, xs: list[T], d: dict[str, T], flag: bool) -> list[T]:
+        out: list[T] = [x for x in xs]
+        m: dict[str, T] = {k: self.item for k in d}
+        if flag:
+            for y in xs:
+                out.append(y)
+        elif not flag:
+            i: int = 0
+            while i < 1:
+                i = i + 1
+        else:
+            out.append(self.item)
+        try:
+            c: Ctx = Ctx()
+            with c as h:
+                _h: int = h
+        except MyErr as _ex:
+            pass
+        finally:
+            defer cleanup(len(m))
+        def id_t(z: T) -> T:
+            return z
+        f_lam: (T) -> T = lambda z: z
+        part: list[T] = out[0:1]
+        picked: T = f_lam(id_t(self.item)) if len(part) > 0 else self.item
+        pair: tuple[T, int] = (picked, len(part))
+        return [pair[0]]
+
+r: Rich[int] = Rich[int](5)
+res: list[int] = r.walk([1, 2], {"a": 3}, True)

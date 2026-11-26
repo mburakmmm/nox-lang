@@ -1,0 +1,23 @@
+class Helper:
+    n: int
+    def __init__(self, n: int) -> None:
+        self.n = n
+    def inc(self) -> int:
+        return self.n + 1
+
+class Box[T]:
+    v: T
+    def __init__(self, v: T) -> None:
+        self.v = v
+    def take_sub(self, s: Sub) -> int:
+        return s.extra
+
+class Sub(Box[int]):
+    extra: int
+    def __init__(self, v: int, e: int) -> None:
+        super().__init__(v)
+        self.extra = e
+
+s: Sub = Sub(3, 4)
+h: Helper = Helper(s.v)
+x: int = h.inc() + s.take_sub(s)
