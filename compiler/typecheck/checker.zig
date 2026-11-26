@@ -911,6 +911,11 @@ pub const Checker = struct {
         });
     }
 
+    /// UR-009 (`noxc expand --json`): `@export class` yöntem imzalarındaki AST tip ifadelerini çözümlenmiş `Type`a çevirir.
+    pub fn resolveTypeExpr(self: *Checker, te: ast.TypeExpr) TypeError!Type {
+        return self.typeExprToType(te);
+    }
+
     fn typeExprToType(self: *Checker, te: ast.TypeExpr) TypeError!Type {
         switch (te) {
             .simple => |name| {

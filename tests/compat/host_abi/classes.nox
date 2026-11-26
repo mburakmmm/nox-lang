@@ -1,0 +1,84 @@
+# UR-009: `@export class` — kurucu, örnek/statik/classmethod yöntemleri, özellik, dunder'lar, özel istisna ve kapsayıcı içi sınıf örnekleri (`NOX_HOST_VALUE_HANDLE`).
+@export
+class CounterError(ValueError):
+    pass
+
+@export("instance_locked")
+class Counter:
+    n: int
+    label: str
+
+    def __init__(self, start: int, label: str) -> None:
+        self.n = start
+        self.label = label
+
+    def inc(self, by: int) -> int:
+        if by < 0:
+            raise CounterError("negative step")
+        self.n = self.n + by
+        return self.n
+
+    def note(self, text: str) -> None:
+        self.label = text
+
+    @property
+    def value(self) -> int:
+        return self.n
+
+    @value.setter
+    def value(self, v: int) -> None:
+        self.n = v
+
+    @staticmethod
+    def zero() -> int:
+        return 0
+
+    @classmethod
+    def make(cls, start: int) -> Counter:
+        return Counter(start, "made")
+
+    def twin(self) -> Counter | None:
+        if self.n == 0:
+            return None
+        return Counter(self.n, "twin")
+
+    def merge(self, others: list[Counter]) -> Counter:
+        t: int = self.n
+        for o in others:
+            t = t + o.n
+        return Counter(t, "merged")
+
+    def __repr__(self) -> str:
+        return "Counter(" + str(self.n) + ")"
+
+    def __len__(self) -> int:
+        return self.n
+
+    def __eq__(self, other: Counter) -> bool:
+        return self.n == other.n
+
+    def _hidden(self) -> int:
+        return 99
+
+class Plain:
+    x: int
+
+    def __init__(self, x: int) -> None:
+        self.x = x
+
+@export
+def make_plain(x: int) -> Plain:
+    return Plain(x)
+
+@export
+def plains(n: int) -> list[Counter]:
+    out: list[Counter] = []
+    for i in range(n):
+        out.append(Counter(i, "p"))
+    return out
+
+@export
+def first_or_none(xs: list[Counter]) -> Counter | None:
+    if len(xs) == 0:
+        return None
+    return xs[0]

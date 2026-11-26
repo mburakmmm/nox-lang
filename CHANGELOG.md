@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.89]
+
+NoxPy UR-009 (Host ABI v3 taslağı, UR-014'te donar): `@export class` — kurucu, örnek/statik/classmethod yöntemleri, `@property`, dunder'lar, özel istisna; `nox_host_handle_type_name`, `NOX_HOST_VALUE_HANDLE`. Sürüm patch: ABI yalnızca EKLENDİ (UR-008 de aynı şekilde patch olarak yayımlandı); `abi_version` 1..3 kabul edilir. Ayrıntı: spec §3.523, `docs/apis/host-abi.md`.
+
+- `compiler/host_adapt.zig`: `planClasses`/`synthesizeClasses` — `@export class` yöntemleri için derleme öncesi `@export def nox_hcls_<Sınıf>_<ad>` sarmalayıcıları sentezlenir (C sembolü `nox_host_export_<modül>_<Sınıf>_<ad>`; özellik: `_get_`/`_set_`); UR-008 konteyner adaptörleri sınıf elemanlarını da kabul eder (`nox_hv_obj_<Sınıf>` kısayolları `codegen_qbe/host_abi.zig`de üretilir).
+- `compiler/main.zig`: `expand --json` `kind: "class"`/`"exception"` kayıtları (`constructor`, `methods[]`, `method_kind`, `has_self`).
+- `runtime/host.zig`/`include/nox_host.h`: `nox_host_handle_type_name`, `NOX_HOST_VALUE_HANDLE` (9), `nox_host_value_handle`, `nox_host_value_get_handle`; `NOX_HOST_ABI_VERSION 3`.
+- Sınırlar (belgelenmiş): kapsayıcı içinde yalnızca TAM sınıf (alt sınıf reddedilir); `@dataclass`/jenerik/enum/`async` sınıf yöntemleri `--host-abi`de reddedilir.
+- Test: `tests/compat/host_abi/classes.nox` + `classes_host.c`, `expand_json_test.zig` sınıf kaydı, reddedilen biçimler.
+
 ## [2.2.88]
 
 Selfhost Aşama 3.4b-A: tekli sınıf kalıtımı Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.522, `project/noxc-nightly-selfhost-plani-2026-11.md`.

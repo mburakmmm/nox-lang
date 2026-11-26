@@ -144,3 +144,122 @@ test "expand --json fails on a type error without emitting JSON" {
     try std.testing.expect(exitCode(r) != 0);
     try std.testing.expectEqual(@as(usize, 0), r.stdout.len);
 }
+
+const ClassSource =
+    \\@export
+    \\class CounterError(ValueError):
+    \\    pass
+    \\
+    \\@export("instance_locked")
+    \\class Counter:
+    \\    """A counter."""
+    \\    n: int
+    \\
+    \\    def __init__(self, start: int, label: str = "c") -> None:
+    \\        self.n = start
+    \\
+    \\    def inc(self, by: int) -> int:
+    \\        """Add."""
+    \\        self.n = self.n + by
+    \\        return self.n
+    \\
+    \\    @property
+    \\    def value(self) -> int:
+    \\        return self.n
+    \\
+    \\    @value.setter
+    \\    def value(self, v: int) -> None:
+    \\        self.n = v
+    \\
+    \\    @staticmethod
+    \\    def zero() -> int:
+    \\        return 0
+    \\
+    \\    @classmethod
+    \\    def make(cls, start: int) -> Counter:
+    \\        return Counter(start)
+    \\
+    \\    def twin(self) -> Counter | None:
+    \\        return None
+    \\
+    \\    def __repr__(self) -> str:
+    \\        return "c"
+    \\
+    \\    def _private(self) -> int:
+    \\        return 1
+    \\
+    \\class NotExported:
+    \\    x: int
+    \\
+    \\    def __init__(self) -> None:
+    \\        self.x = 1
+    \\
+;
+
+test "expand --json (UR-009) emits class, method kinds, properties and exception records" {
+    if (builtin.os.tag == .windows) return;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "cl.nox", .data = ClassSource });
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &buf);
+    const src = try std.fmt.allocPrint(gpa, "{s}/cl.nox", .{buf[0..len]});
+    defer gpa.free(src);
+    const r = try run(gpa, io, &.{ "zig-out/bin/noxc", "expand", "--json", "--module", "fastmath", src });
+    defer gpa.free(r.stdout);
+    defer gpa.free(r.stderr);
+    if (exitCode(r) != 0) std.debug.print("{s}\n", .{r.stderr});
+    try std.testing.expectEqual(@as(u8, 0), exitCode(r));
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, r.stdout, .{});
+    defer parsed.deinit();
+    const exports = parsed.value.object.get("exports").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), exports.len); // NotExported @export taşımaz
+    const exc = exports[0].object;
+    try std.testing.expectEqualStrings("exception", exc.get("kind").?.string);
+    try std.testing.expectEqualStrings("fastmath::CounterError", exc.get("id").?.string);
+    try std.testing.expectEqualStrings("ValueError", exc.get("base").?.string);
+
+    const cls = exports[1].object;
+    try std.testing.expectEqualStrings("class", cls.get("kind").?.string);
+    try std.testing.expectEqualStrings("fastmath::Counter", cls.get("id").?.string);
+    try std.testing.expectEqualStrings("instance_locked", cls.get("thread_policy").?.string);
+    const ctor = cls.get("constructor").?.object;
+    try std.testing.expectEqualStrings("nox_host_export_fastmath_Counter___new__", ctor.get("c_symbol").?.string);
+    const cparams = ctor.get("params").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), cparams.len);
+    try std.testing.expectEqualStrings("start", cparams[0].object.get("name").?.string);
+    try std.testing.expectEqualStrings("span", cparams[1].object.get("marshal").?.string);
+    try std.testing.expect(cparams[1].object.get("has_default").?.bool);
+
+    const methods = cls.get("methods").?.array.items;
+    // inc, value(get), value(set), zero, make, twin, __repr__ (`_private` dışa açılmaz)
+    try std.testing.expectEqual(@as(usize, 7), methods.len);
+    const want = [_]struct { name: []const u8, kind: []const u8, sym: []const u8, has_self: bool }{
+        .{ .name = "inc", .kind = "instance", .sym = "nox_host_export_fastmath_Counter_inc", .has_self = true },
+        .{ .name = "value", .kind = "property_get", .sym = "nox_host_export_fastmath_Counter_get_value", .has_self = true },
+        .{ .name = "value", .kind = "property_set", .sym = "nox_host_export_fastmath_Counter_set_value", .has_self = true },
+        .{ .name = "zero", .kind = "staticmethod", .sym = "nox_host_export_fastmath_Counter_zero", .has_self = false },
+        .{ .name = "make", .kind = "classmethod", .sym = "nox_host_export_fastmath_Counter_make", .has_self = false },
+        .{ .name = "twin", .kind = "instance", .sym = "nox_host_export_fastmath_Counter_twin", .has_self = true },
+        .{ .name = "__repr__", .kind = "dunder", .sym = "nox_host_export_fastmath_Counter___repr__", .has_self = true },
+    };
+    for (want, 0..) |wm, i| {
+        const m = methods[i].object;
+        try std.testing.expectEqualStrings(wm.name, m.get("name").?.string);
+        try std.testing.expectEqualStrings(wm.kind, m.get("method_kind").?.string);
+        try std.testing.expectEqualStrings(wm.sym, m.get("c_symbol").?.string);
+        try std.testing.expectEqual(wm.has_self, m.get("has_self").?.bool);
+        try std.testing.expect(!m.get("is_async").?.bool);
+        try std.testing.expectEqualStrings("instance_locked", m.get("thread_policy").?.string);
+    }
+    try std.testing.expectEqualStrings("Add.", methods[0].object.get("doc").?.string);
+    try std.testing.expectEqual(@as(usize, 1), methods[0].object.get("params").?.array.items.len); // `self` parametre listesinde YOK
+    try std.testing.expectEqualStrings("None", methods[2].object.get("return_type").?.string);
+    try std.testing.expectEqualStrings("Counter", methods[4].object.get("return_type").?.string);
+    try std.testing.expectEqualStrings("handle", methods[4].object.get("return_marshal").?.string);
+    try std.testing.expectEqualStrings("Counter | None", methods[5].object.get("return_type").?.string);
+    try std.testing.expectEqualStrings("value", methods[5].object.get("return_marshal").?.string);
+}

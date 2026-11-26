@@ -3814,7 +3814,7 @@ fn collectHostExports(a: std.mem.Allocator, user_module: ast.Module, st: *checke
                 printErr("--host-abi: '@export def {s}': return type '{s}' cannot cross the host ABI\n", .{ fd.name, tc_types.toAlloc(a, asig.return_type) catch "?" });
                 return error.BuildFailed;
             };
-            try list.append(a, .{ .name = try host_adapt.adapterName(a, fd.name), .params = akinds, .ret = ark, .export_name = fd.name });
+            try list.append(a, .{ .name = try host_adapt.adapterName(a, fd.name), .params = akinds, .ret = ark, .export_name = host_adapt.exportNameOf(fd.name) });
             continue;
         }
         const kinds = try a.alloc(codegen.HostKind, sig.params.len);
@@ -3828,9 +3828,17 @@ fn collectHostExports(a: std.mem.Allocator, user_module: ast.Module, st: *checke
             printErr("--host-abi: '@export def {s}': return type '{s}' cannot cross the host ABI (supported: int, float, bool, str, bytes, class instances as handles, None)\n", .{ fd.name, tc_types.toAlloc(a, sig.return_type) catch "?" });
             return error.BuildFailed;
         };
-        try list.append(a, .{ .name = fd.name, .params = kinds, .ret = rk });
+        try list.append(a, .{ .name = fd.name, .params = kinds, .ret = rk, .export_name = if (std.mem.eql(u8, host_adapt.exportNameOf(fd.name), fd.name)) null else host_adapt.exportNameOf(fd.name) });
     }
-    return .{ .module_name = module_name, .exports = try list.toOwnedSlice(a) };
+    // UR-009: konteyner adaptörlerinin kullandığı sınıfların `nox_hv_obj_<Sınıf>` kısayolları (extern bildirimlerinden okunur).
+    var classes: std.ArrayListUnmanaged([]const u8) = .empty;
+    const obj_prefix = "nox_hv_obj_";
+    for (user_module.body) |stmt| {
+        if (stmt.kind != .extern_def) continue;
+        const n = stmt.kind.extern_def.name;
+        if (std.mem.startsWith(u8, n, obj_prefix) and !std.mem.eql(u8, n, "nox_hv_obj_take")) try classes.append(a, n[obj_prefix.len..]);
+    }
+    return .{ .module_name = module_name, .exports = try list.toOwnedSlice(a), .classes = try classes.toOwnedSlice(a) };
 }
 
 fn hostKindOf(t: tc_types.Type, is_ret: bool) ?codegen.HostKind {
@@ -3941,10 +3949,98 @@ fn formatCanonicalType(checker_state: *checker.Checker, t: tc_types.Type, w: *st
     }
 }
 
+/// Bir parametrenin `expand --json` kaydı (`ty == null`: tip çözümlenemedi → `unsupported`).
+fn writeParamJson(a: std.mem.Allocator, w: *std.Io.Writer, checker_state: *checker.Checker, p: ast.Param, ty: ?tc_types.Type) !void {
+    try w.writeAll("{\"name\": ");
+    try writeJsonString(w, p.name);
+    try w.writeAll(", \"type\": ");
+    var tbuf: std.Io.Writer.Allocating = .init(a);
+    if (ty) |t| try formatCanonicalType(checker_state, t, &tbuf.writer);
+    try writeJsonString(w, tbuf.written());
+    const kind: []const u8 = if (p.variadic) "var_positional" else if (p.var_kw) "var_keyword" else if (p.kw_only) "keyword_only" else if (p.pos_only) "positional_only" else "positional_or_keyword";
+    try w.print(", \"marshal\": \"{s}\"", .{if (ty) |t| marshalOf(checker_state, t) else "unsupported"});
+    try w.print(", \"kind\": \"{s}\", \"has_default\": {s}, \"default\": ", .{ kind, if (p.default != null) "true" else "false" });
+    try writeDefaultJson(w, p.default);
+    try w.writeAll("}");
+}
+
+fn docOf(fd: ast.FuncDef) ?[]const u8 {
+    if (fd.body.len > 0 and fd.body[0].kind == .expr_stmt and fd.body[0].kind.expr_stmt == .string_lit) return fd.body[0].kind.expr_stmt.string_lit;
+    return null;
+}
+
+fn writeParamsListJson(a: std.mem.Allocator, w: *std.Io.Writer, checker_state: *checker.Checker, params: []const ast.Param) !void {
+    try w.writeAll("[");
+    for (params, 0..) |p, i| {
+        if (i > 0) try w.writeAll(", ");
+        const ty: ?tc_types.Type = checker_state.resolveTypeExpr(p.type_expr) catch null;
+        try writeParamJson(a, w, checker_state, p, ty);
+    }
+    try w.writeAll("]");
+}
+
+/// UR-009: `@export class` (`kind: "class"`) ve `@export class E(Exception)` (`kind: "exception"`) kayıtları; `plan` `host_adapt.planClasses`tan gelir (checker'dan ÖNCE alınmış kaynak ağacı).
+fn writeClassJson(a: std.mem.Allocator, w: *std.Io.Writer, checker_state: *checker.Checker, plan: host_adapt.ClassPlan, path_arg: []const u8, module_name: []const u8) !void {
+    const id = try std.fmt.allocPrint(a, "{s}::{s}", .{ module_name, plan.name });
+    try w.writeAll("\n    {\"kind\": ");
+    try writeJsonString(w, if (plan.is_exception) "exception" else "class");
+    try w.writeAll(", \"id\": ");
+    try writeJsonString(w, id);
+    try w.writeAll(", \"name\": ");
+    try writeJsonString(w, plan.name);
+    if (plan.is_exception) {
+        try w.writeAll(", \"base\": ");
+        if (plan.base) |b| try writeJsonString(w, b) else try w.writeAll("null");
+    }
+    try w.writeAll(", \"doc\": ");
+    if (plan.doc) |d| try writeJsonString(w, d) else try w.writeAll("null");
+    try w.writeAll(", \"thread_policy\": ");
+    try writeJsonString(w, plan.policy);
+    try w.writeAll(", \"span\": {\"file\": ");
+    try writeJsonString(w, path_arg);
+    try w.print(", \"line\": {d}, \"column\": 1}}", .{plan.line});
+    if (plan.is_exception) {
+        try w.writeAll("}");
+        return;
+    }
+    // kurucu
+    try w.writeAll(", \"constructor\": {\"c_symbol\": ");
+    try writeJsonString(w, try std.fmt.allocPrint(a, "nox_host_export_{s}_{s}", .{ module_name, plan.ctor_name }));
+    try w.writeAll(", \"params\": ");
+    try writeParamsListJson(a, w, checker_state, plan.ctor_params);
+    try w.writeAll(", \"doc\": ");
+    if (plan.ctor) |c| {
+        if (docOf(c)) |d| try writeJsonString(w, d) else try w.writeAll("null");
+    } else try w.writeAll("null");
+    try w.writeAll("}, \"methods\": [");
+    for (plan.methods, 0..) |mp, i| {
+        if (i > 0) try w.writeAll(",");
+        try w.writeAll("\n      {\"name\": ");
+        try writeJsonString(w, mp.name);
+        try w.print(", \"method_kind\": \"{s}\", \"has_self\": {s}, \"c_symbol\": ", .{ host_adapt.methodKindName(mp.kind), if (mp.has_self) "true" else "false" });
+        try writeJsonString(w, try std.fmt.allocPrint(a, "nox_host_export_{s}_{s}", .{ module_name, mp.c_name }));
+        try w.writeAll(", \"thread_policy\": ");
+        try writeJsonString(w, plan.policy);
+        try w.print(", \"is_async\": {s}, \"params\": ", .{if (mp.fd.is_async) "true" else "false"});
+        try writeParamsListJson(a, w, checker_state, mp.params);
+        const rt: tc_types.Type = if (mp.kind == .property_set) .none else (checker_state.resolveTypeExpr(mp.fd.return_type) catch .none);
+        try w.print(", \"return_marshal\": \"{s}\", \"return_type\": ", .{marshalOf(checker_state, rt)});
+        var rbuf: std.Io.Writer.Allocating = .init(a);
+        try formatCanonicalType(checker_state, rt, &rbuf.writer);
+        try writeJsonString(w, rbuf.written());
+        try w.writeAll(", \"doc\": ");
+        if (docOf(mp.fd)) |d| try writeJsonString(w, d) else try w.writeAll("null");
+        try w.print(", \"span\": {{\"file\": ", .{});
+        try writeJsonString(w, path_arg);
+        try w.print(", \"line\": {d}, \"column\": 1}}}}", .{mp.fd.line});
+    }
+    try w.writeAll(if (plan.methods.len == 0) "]}" else "\n    ]}");
+}
+
 /// UR-007 (NoxPy): `@export` taşıyan ÜST-DÜZEY kullanıcı işlevlerinin tipli metadata'sı (şema v1, bkz. NoxPy `python/noxpy/ir.py`). Tipler/imzalar checker'ın çözümlediği
 /// `functions` tablosundan (`types.format`) gelir; docstring gövdenin ilk dize deyimidir; ilk konumsal dize argümanı `thread_policy`dir (`@export("instance_locked")`).
 /// `c_symbol` UR-002'nin üreteceği host sarmalayıcı adıdır (`nox_host_export_<modül>_<ad>`). Yalnızca `user_module` (birleştirilmemiş) taranır: stdlib dışa aktarılmaz.
-fn writeExportMetadataJson(a: std.mem.Allocator, w: *std.Io.Writer, user_module: ast.Module, checker_state: *checker.Checker, path_arg: []const u8, module_name: []const u8) !void {
+fn writeExportMetadataJson(a: std.mem.Allocator, w: *std.Io.Writer, user_module: ast.Module, plans: []const host_adapt.ClassPlan, checker_state: *checker.Checker, path_arg: []const u8, module_name: []const u8) !void {
     try w.writeAll("{\n  \"schema_version\": 1,\n  \"compiler\": {\"name\": \"noxc\", \"version\": ");
     try writeJsonString(w, build_options.version);
     try w.writeAll(", \"commit\": ");
@@ -3956,6 +4052,18 @@ fn writeExportMetadataJson(a: std.mem.Allocator, w: *std.Io.Writer, user_module:
     try w.writeAll("},\n  \"exports\": [");
     var first = true;
     for (user_module.body) |st| {
+        if (st.kind == .class_def) {
+            // UR-009: `@export class` / `@export class E(Exception)`
+            for (plans) |cp| {
+                if (!std.mem.eql(u8, cp.name, st.kind.class_def.name)) continue;
+                if (!first) try w.writeAll(",");
+                first = false;
+                var cp2 = cp;
+                if (cp2.line == 0) cp2.line = st.line;
+                try writeClassJson(a, w, checker_state, cp2, path_arg, module_name);
+            }
+            continue;
+        }
         if (st.kind != .func_def) continue;
         const fd = st.kind.func_def;
         var export_dec: ?ast.Decorator = null;
@@ -3988,17 +4096,7 @@ fn writeExportMetadataJson(a: std.mem.Allocator, w: *std.Io.Writer, user_module:
         try w.print(", \"line\": {d}, \"column\": 1}}, \"params\": [", .{line});
         for (fd.params, 0..) |p, i| {
             if (i > 0) try w.writeAll(", ");
-            try w.writeAll("{\"name\": ");
-            try writeJsonString(w, p.name);
-            try w.writeAll(", \"type\": ");
-            var tbuf: std.Io.Writer.Allocating = .init(a);
-            if (i < sig.params.len) try formatCanonicalType(checker_state, sig.params[i], &tbuf.writer);
-            try writeJsonString(w, tbuf.written());
-            const kind: []const u8 = if (p.variadic) "var_positional" else if (p.var_kw) "var_keyword" else if (p.kw_only) "keyword_only" else if (p.pos_only) "positional_only" else "positional_or_keyword";
-            try w.print(", \"marshal\": \"{s}\"", .{if (i < sig.params.len) marshalOf(checker_state, sig.params[i]) else "unsupported"});
-            try w.print(", \"kind\": \"{s}\", \"has_default\": {s}, \"default\": ", .{ kind, if (p.default != null) "true" else "false" });
-            try writeDefaultJson(w, p.default);
-            try w.writeAll("}");
+            try writeParamJson(a, w, checker_state, p, if (i < sig.params.len) sig.params[i] else null);
         }
         try w.print("], \"return_marshal\": \"{s}\", \"return_type\": ", .{marshalOf(checker_state, sig.return_type)});
         var rbuf: std.Io.Writer.Allocating = .init(a);
@@ -4031,6 +4129,14 @@ fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []c
     defer gpa.free(source);
 
     const user_module = try parseUserSource(a, source, path_arg);
+    // UR-009: `@export class` planı checker'dan ÖNCE alınır (checker `@property`/`@staticmethod` dekoratörlerini sınıf gövdesinden çıkarır).
+    const class_plans: []const host_adapt.ClassPlan = if (json) switch (try host_adapt.planClasses(a, user_module)) {
+        .ok => |p| p,
+        .err => |msg| {
+            printErr("{s}", .{msg});
+            std.process.exit(1);
+        },
+    } else &.{};
     const module = try resolveImportsForBuild(io, a, user_module, path_arg, nox_home, resource_dirs, fetch_policy);
 
     var checker_state = checker.Checker.init(a);
@@ -4051,7 +4157,7 @@ fn cmdExpand(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, args: []c
     const w = &stdout_writer.interface;
     if (json) {
         const mod_name = module_name_opt orelse moduleNameFromPath(path_arg);
-        try writeExportMetadataJson(a, w, user_module, &checker_state, path_arg, mod_name);
+        try writeExportMetadataJson(a, w, user_module, class_plans, &checker_state, path_arg, mod_name);
         try w.flush();
         return;
     }
@@ -4711,6 +4817,19 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
     var user_module = try parseUserSource(a, source, path_arg);
     // UR-008: `--host-abi` + konteyner/Optional imzalı `@export` işlevleri için Nox adaptörleri kaynağın SONUNA eklenip yeniden ayrıştırılır (satır numaraları değişmez; bkz. host_adapt.zig).
     if (g_host_abi) {
+        var host_src: []const u8 = source;
+        // UR-009: `@export class` → üst-düzey `@export def <Sınıf>_<yöntem>` sarmalayıcıları (önce); sonra UR-008 konteyner adaptörleri bunların imzalarını da kapsar.
+        switch (try host_adapt.synthesizeClasses(a, user_module)) {
+            .none => {},
+            .err => |msg| {
+                printErr("{s}", .{msg});
+                return error.BuildFailed;
+            },
+            .text => |extra| {
+                host_src = try std.mem.concat(a, u8, &.{ host_src, "\n", extra });
+                user_module = try parseUserSource(a, host_src, path_arg);
+            },
+        }
         switch (try host_adapt.synthesize(a, user_module)) {
             .none => {},
             .err => |msg| {
@@ -4718,8 +4837,8 @@ fn buildOne(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, path_arg: 
                 return error.BuildFailed;
             },
             .text => |extra| {
-                const combined = try std.mem.concat(a, u8, &.{ source, "\n", extra });
-                user_module = try parseUserSource(a, combined, path_arg);
+                host_src = try std.mem.concat(a, u8, &.{ host_src, "\n", extra });
+                user_module = try parseUserSource(a, host_src, path_arg);
             },
         }
     }

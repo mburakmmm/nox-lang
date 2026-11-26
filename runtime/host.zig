@@ -16,7 +16,8 @@ const abi_layout = @import("abi_layout");
 const SpinLock = @import("async_rt/spinlock.zig").SpinLock;
 const arc = @import("alloc/arc.zig");
 
-pub const ABI_VERSION: u32 = 2;
+/// v3 (UR-009..UR-014): v1/v2 ana makineleriyle geriye uyumlu EKLEMELER; `nox_host_context_create` 1..3 kabul eder (UR-014'te donduruldu).
+pub const ABI_VERSION: u32 = 3;
 
 pub const OK: i32 = 0;
 pub const ERR_EXCEPTION: i32 = 1;
@@ -342,6 +343,8 @@ pub const VK_BYTES: u8 = 5;
 pub const VK_LIST: u8 = 6;
 pub const VK_DICT: u8 = 7;
 pub const VK_TUPLE: u8 = 8;
+/// UR-009: Nox sınıf örneğine (ARC +1) tutulan değer düğümü — `Class | None` ve `list[Class]` gibi kapsayıcı içi sınıf örnekleri için (`NOX_HOST_VALUE_HANDLE`).
+pub const VK_HANDLE: u8 = 9;
 
 const Node = struct {
     rc: u32 = 1,
@@ -351,6 +354,9 @@ const Node = struct {
     data: []u8 = &.{},
     /// list/tuple: elemanlar; dict: [k0, v0, k1, v1, ...]
     items: std.ArrayListUnmanaged(*Node) = .empty,
+    /// VK_HANDLE: tutulan Nox nesnesi (ARC +1; düğüm bırakılırken `rt` ile bırakılır).
+    obj: ?*anyopaque = null,
+    rt: ?*anyopaque = null,
 };
 
 fn nodeNew(kind: u8) ?*Node {
@@ -372,6 +378,7 @@ fn nodeRelease(root: ?*Node) void {
     while (stack.pop()) |n| {
         n.rc -= 1;
         if (n.rc != 0) continue;
+        if (n.kind == VK_HANDLE) releaseObject(n.rt, n.obj);
         for (n.items.items) |c| stack.append(std.heap.page_allocator, c) catch {};
         n.items.deinit(std.heap.page_allocator);
         if (n.data.len != 0) std.heap.page_allocator.free(n.data);
@@ -539,6 +546,8 @@ fn coreCount(n: *const Node) ?usize {
 fn lockedCtx(ctx_ptr: ?*anyopaque) ?*Context {
     const ctx = ctxFrom(ctx_ptr) orelse return null;
     ctx.lock.lock();
+    // VK_HANDLE düğümleri ARC nesnesi tutar: değer işlemleri (`release`/`dict_set` değişimi vb.) nesneyi bırakabilir → ARC sahipliği çağıran iş parçacığına devredilir.
+    if (ctx.rt) |rt| asap.handOverArcOwner(@ptrCast(@alignCast(rt)));
     return ctx;
 }
 
@@ -693,6 +702,70 @@ pub export fn nox_host_value_is_valid(ctx_ptr: ?*anyopaque, v: u64) i32 {
     return if (vslotOf(ctx, v) != null) 1 else 0;
 }
 
+// ---- UR-009 (ABI v3): sınıf örneği tutamaçları + kapsayıcı içi sınıf değerleri ----
+
+/// `h` tutamacının Nox sınıf adı (`"Counter"`): BORÇLU UTF-8 görünümü (sınıf adı derleyicinin ürettiği değişmez veridir; yine de yalnızca `h` geçerliyken kullanılmalıdır).
+/// Host, farklı modüllerden gelen tutamaçların beklenen sınıfa ait olduğunu bununla doğrular (sınıf düzeni/etiketi görünmez).
+pub export fn nox_host_handle_type_name(ctx_ptr: ?*anyopaque, h: u64, out: ?*Span) i32 {
+    const o = out orelse return ERR_INVAL;
+    o.* = .{ .data = null, .len = 0 };
+    const ctx = ctxFrom(ctx_ptr) orelse return ERR_INVAL;
+    ctx.lock.lock();
+    defer ctx.lock.unlock();
+    const slot = slotOf(ctx, h) orelse return ERR_INVALID_HANDLE;
+    const name = classNameOf(ctx.rt, slot.obj) orelse return ERR_STATE;
+    o.* = .{ .data = name.ptr, .len = name.len };
+    return OK;
+}
+
+fn classNameOf(rt: ?*anyopaque, obj: ?*anyopaque) ?[]const u8 {
+    const p = obj orelse return null;
+    const f = dispatch_registry.classNameFn() orelse return null;
+    const tag: *const i64 = @ptrCast(@alignCast(p));
+    return std.mem.span(abi_ptr.cstr(f(abi_ptr.arg(rt), tag.*, abi_ptr.arg(p))));
+}
+
+/// `h` tutamacının nesnesini tutan (ARC +1) `NOX_HOST_VALUE_HANDLE` değeri; host kendi tutamacını yine bırakır.
+pub export fn nox_host_value_handle(ctx_ptr: ?*anyopaque, h: u64, out: ?*u64) i32 {
+    const o = out orelse return ERR_INVAL;
+    o.* = 0;
+    const ctx = lockedCtx(ctx_ptr) orelse return ERR_INVAL;
+    defer ctx.lock.unlock();
+    const slot = slotOf(ctx, h) orelse return ERR_INVALID_HANDLE;
+    return coreHandleValue(ctx, slot.obj, o);
+}
+
+/// Nesneyi (ARC +1 alınır) tutan yeni `VK_HANDLE` düğümü; `obj == null` → `VK_NONE` düğümü (Nox `Class | None`in `None`ı).
+fn coreHandleValue(ctx: *Context, obj: ?*anyopaque, out: *u64) i32 {
+    if (obj == null) return coreScalar(ctx, VK_NONE, 0, 0, null, out);
+    const n = nodeNew(VK_HANDLE) orelse return ERR_NOMEM;
+    n.obj = obj;
+    n.rt = ctx.rt;
+    arc.nox_rc_retain(obj);
+    const h = valueNew(ctx, n);
+    if (h == 0) return ERR_NOMEM; // `valueNew` düğümü bıraktı (nesne ARC'si de `nodeRelease` ile geri verildi)
+    out.* = h;
+    return OK;
+}
+
+/// `NOX_HOST_VALUE_HANDLE` değerinin nesnesine YENİ bir `NoxHostHandle` (host `nox_host_handle_release` ile bırakır).
+pub export fn nox_host_value_get_handle(ctx_ptr: ?*anyopaque, v: u64, out: ?*u64) i32 {
+    const o = out orelse return ERR_INVAL;
+    o.* = 0;
+    const ctx = lockedCtx(ctx_ptr) orelse return ERR_INVAL;
+    defer ctx.lock.unlock();
+    const n = nodeOf(ctx, v) orelse return ERR_INVALID_HANDLE;
+    if (n.kind != VK_HANDLE) return ERR_INVAL;
+    arc.nox_rc_retain(n.obj);
+    const nh = nox_host_handle_new(ctx_ptr, n.obj);
+    if (nh == 0) {
+        releaseObject(ctx.rt, n.obj);
+        return ERR_NOMEM;
+    }
+    o.* = nh;
+    return OK;
+}
+
 // -- İÇ ilkeller: sentezlenen Nox adaptörleri `extern def ... with_rt` ile çağırır (bağlam kilidi ZATEN elde; bağlam `rt.host_ctx`ten) --
 // Hata kodlaması Nox tarafında kolaydır: handle'lar 0 = başarısız/geçersiz, durum işlevleri 0 = OK.
 
@@ -811,6 +884,33 @@ pub export fn nox_hv_new_bytes(rt: ?*anyopaque, s: ?[*:0]const u8) i64 {
 /// `bytes` içeriği için YENİ bir Nox `bytes` (`str` ile aynı ABI).
 pub export fn nox_hv_bytes(rt: ?*anyopaque, h: i64) ?[*:0]u8 {
     return nox_hv_str(rt, h);
+}
+
+/// UR-009: `h` bir `NOX_HOST_VALUE_HANDLE` düğümü ve nesnesinin sınıf adı TAM olarak `name` ise 1 (alt sınıf örnekleri kapsayıcı içinde REDDEDİLİR; belgelenmiş sınır), değilse 0.
+pub export fn nox_hv_class_is(rt: ?*anyopaque, h: i64, name: ?[*:0]const u8) i64 {
+    const ctx = curCtx(rt) orelse return 0;
+    const n = nodeOf(ctx, @bitCast(h)) orelse return 0;
+    if (n.kind != VK_HANDLE) return 0;
+    const want = std.mem.span(name orelse return 0);
+    const got = classNameOf(rt, n.obj) orelse return 0;
+    return if (std.mem.eql(u8, got, want)) 1 else 0;
+}
+
+/// UR-009: `VK_HANDLE` düğümünün nesnesi (ARC +1: çağıran sahip olur; `with_rt` sınıf-dönüşlü extern fabrikası sözleşmesi). Tür denetimi `nox_hv_class_is` ile ÖNCEDEN yapılır.
+pub export fn nox_hv_obj_take(rt: ?*anyopaque, h: i64) ?*anyopaque {
+    const ctx = curCtx(rt) orelse return null;
+    const n = nodeOf(ctx, @bitCast(h)) orelse return null;
+    if (n.kind != VK_HANDLE) return null;
+    arc.nox_rc_retain(n.obj);
+    return n.obj;
+}
+
+/// UR-009: Nox nesnesi (BORÇLU; düğüm kendi +1'ini alır) için `VK_HANDLE` düğümü (YENİ handle; 0 = bellek yok).
+pub export fn nox_hv_new_obj(rt: ?*anyopaque, obj: ?*anyopaque) i64 {
+    const ctx = curCtx(rt) orelse return 0;
+    var out: u64 = 0;
+    if (coreHandleValue(ctx, obj, &out) != OK) return 0;
+    return @bitCast(out);
 }
 
 pub export fn nox_hv_append(rt: ?*anyopaque, c: i64, item: i64) i64 {

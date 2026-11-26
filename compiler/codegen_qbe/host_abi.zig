@@ -256,8 +256,35 @@ pub fn genHostExport(self: *Codegen, mod: []const u8, ex: HostExport) CodegenErr
     try self.qbeFuncEnd();
 }
 
+/// UR-009: kapsayıcı adaptörleri (`host_adapt.zig`) sınıf örneklerini `extern def nox_hv_obj_<Sınıf>(h) -> Sınıf` / `nox_hv_new_obj_<Sınıf>(o: Sınıf) -> int` ile alır/verir: `extern def` sembol adı = Nox adı olduğundan
+/// her sınıf için ince bir kısayol gerekir; ikisi de çalışma zamanının sınıf-bağımsız ilkellerine (`nox_hv_obj_take`/`nox_hv_new_obj`) devreder (ARC sözleşmesi: dönen sınıf nesnesi +1, parametre ödünç).
+fn genHostClassStubs(self: *Codegen, cn: []const u8) CodegenError!void {
+    resetFn(self);
+    const take_sym = try std.fmt.allocPrint(self.allocator, "$nox_hv_obj_{s}", .{cn});
+    try self.qbeFuncHeaderStart(.l, take_sym);
+    try self.qbeFuncParam(.l, "%rt", true);
+    try self.qbeFuncParam(.l, "%h", false);
+    try self.qbeFuncHeaderEnd();
+    const r1 = try self.newTemp();
+    try self.qbeCall(.{ .name = r1, .ty = .l }, "$nox_hv_obj_take", &.{ .{ .ty = .l, .text = "%rt" }, .{ .ty = .l, .text = "%h" } });
+    try self.qbeRet(r1);
+    try self.qbeFuncEnd();
+
+    resetFn(self);
+    const new_sym = try std.fmt.allocPrint(self.allocator, "$nox_hv_new_obj_{s}", .{cn});
+    try self.qbeFuncHeaderStart(.l, new_sym);
+    try self.qbeFuncParam(.l, "%rt", true);
+    try self.qbeFuncParam(.l, "%o", false);
+    try self.qbeFuncHeaderEnd();
+    const r2 = try self.newTemp();
+    try self.qbeCall(.{ .name = r2, .ty = .l }, "$nox_hv_new_obj", &.{ .{ .ty = .l, .text = "%rt" }, .{ .ty = .l, .text = "%o" } });
+    try self.qbeRet(r2);
+    try self.qbeFuncEnd();
+}
+
 /// `generateModule`nin `registerFunc` geçişinden SONRA, işlev gövdeleri üretilmeden ÖNCE çağrılır (bkz. `ffi_callback.zig`nin aynı konumu).
 pub fn genHostAbi(self: *Codegen, opts: codegen.HostAbiOpts) CodegenError!void {
     try genHostModuleEntry(self, opts.module_name);
+    for (opts.classes) |cn| try genHostClassStubs(self, cn);
     for (opts.exports) |ex| try genHostExport(self, opts.module_name, ex);
 }

@@ -307,7 +307,8 @@ pub const QbeArg = qbe_emit.QbeArg;
 pub const HostKind = enum { int, float, bool, str, bytes, handle, none };
 /// `name`: çağrılan Nox işlevi; `export_name`: dışa açık C sembolünün parçası (UR-008: konteyner imzalarında `name` sentezlenen adaptördür, `export_name` kullanıcı işlevinin adıdır).
 pub const HostExport = struct { name: []const u8, params: []const HostKind, ret: HostKind, export_name: ?[]const u8 = null };
-pub const HostAbiOpts = struct { module_name: []const u8, exports: []const HostExport };
+/// `classes`: UR-009 — konteyner adaptörlerinde kullanılan sınıf adları; her biri için `nox_hv_obj_<Sınıf>`/`nox_hv_new_obj_<Sınıf>` (handle ↔ sınıf nesnesi) çalışma zamanı kısayolları üretilir.
+pub const HostAbiOpts = struct { module_name: []const u8, exports: []const HostExport, classes: []const []const u8 = &.{} };
 pub const QbeCallDst = qbe_emit.QbeCallDst;
 pub const QbeAllocSize = qbe_emit.QbeAllocSize;
 

@@ -33,8 +33,8 @@
 extern "C" {
 #endif
 
-/* v2 (UR-008) v1'e GERİYE UYUMLU eklemedir: `NoxHostContextConfig.abi_version` olarak 1 ya da 2 verilebilir; değer-ağacı API'si (aşağıda) yalnızca eklenmiştir. */
-#define NOX_HOST_ABI_VERSION 2u
+/* v2 (UR-008) ve v3 (UR-009..UR-014) v1'e GERİYE UYUMLU eklemelerdir: `NoxHostContextConfig.abi_version` olarak 1, 2 ya da 3 verilebilir; v2/v3 API'si (aşağıda) yalnızca eklenmiştir. */
+#define NOX_HOST_ABI_VERSION 3u
 
 typedef int32_t NoxHostStatus;
 #define NOX_HOST_OK 0
@@ -100,6 +100,7 @@ typedef uint64_t NoxHostValue;
 #define NOX_HOST_VALUE_LIST 6
 #define NOX_HOST_VALUE_DICT 7
 #define NOX_HOST_VALUE_TUPLE 8
+#define NOX_HOST_VALUE_HANDLE 9 /* v3 (UR-009): bir sınıf örneğini tutan değer (`Class | None`, `list[Class]`; bkz. aşağıdaki nox_host_value_handle) */
 
 NoxHostStatus nox_host_value_none(NoxHostContext *ctx, NoxHostValue *out);
 NoxHostStatus nox_host_value_int(NoxHostContext *ctx, int64_t v, NoxHostValue *out);
@@ -121,6 +122,16 @@ NoxHostStatus nox_host_value_item(NoxHostContext *ctx, NoxHostValue v, size_t in
 NoxHostStatus nox_host_value_dict_entry(NoxHostContext *ctx, NoxHostValue v, size_t index, NoxHostValue *key_out, NoxHostValue *value_out); /* eklenme sırası */
 NoxHostStatus nox_host_value_release(NoxHostContext *ctx, NoxHostValue v);
 int32_t nox_host_value_is_valid(NoxHostContext *ctx, NoxHostValue v);
+
+/* ---- v3 (UR-009): sınıf örnekleri `NoxHostHandle` olarak, kapsayıcı içinde `NOX_HOST_VALUE_HANDLE` olarak geçer ----
+ * `nox_host_value_handle`: `h` tutamacının nesnesini tutan yeni bir değer (nesne ARC +1; host kendi `h`ini yine bırakır). `nox_host_value_get_handle`: `NOX_HOST_VALUE_HANDLE` değerinin
+ * nesnesine YENİ bir tutamaç verir (host `nox_host_handle_release` ile bırakır). `Class | None` için `None`, `nox_host_value_none` ile kurulur. Kapsayıcı İÇİNDE yalnızca TAM sınıf
+ * örnekleri kabul edilir (alt sınıf örneği Nox tarafında ValueError olarak döner; üst-düzey `NoxHostHandle` parametrelerinde bu kısıt yoktur). */
+NoxHostStatus nox_host_value_handle(NoxHostContext *ctx, NoxHostHandle h, NoxHostValue *out);
+NoxHostStatus nox_host_value_get_handle(NoxHostContext *ctx, NoxHostValue v, NoxHostHandle *out);
+/* Tutamacın Nox sınıf adı (UTF-8, ör. "Counter"; `h` geçerliyken geçerli). Host, tutamacın beklenen sınıfa ait olduğunu bununla doğrular: üst-düzey `NoxHostHandle` parametrelerinde
+ * tür denetimi HOST'un sorumluluğundadır (yanlış sınıfın tutamacını vermek tanımsız davranıştır). */
+NoxHostStatus nox_host_handle_type_name(NoxHostContext *ctx, NoxHostHandle h, NoxHostSpan *out);
 
 /* Hata incelemesi. Span'ler nox_host_error_release'e kadar geçerlidir; class_name/message UTF-8'dir. */
 void nox_host_error_release(NoxHostError *err);

@@ -3,7 +3,7 @@
 The Host ABI lets a **C or Python host** call Nox code: it is the reverse direction of [NNI](nni.md) (where Nox calls native plugins). A Nox library marked with
 `@export` is compiled with `--host-abi`; the host then talks to it through a small, versioned C header, `include/nox_host.h`.
 
-> **Experimental (ABI v2).** v2 only *adds* the value-tree API; hosts built against v1 (`abi_version = 1`) keep working. `abi_version`/`struct_size` carry versioning, but the interface may change incompatibly until it has been validated by real hosts
+> **Experimental (ABI v2 → v3, being frozen).** v2 only *adds* the value-tree API and v3 (UR-009 … UR-014) only *adds* classes, callbacks, tasks, buffers and capabilities; hosts built against v1/v2 (`abi_version = 1` or `2`) keep working. `abi_version`/`struct_size` carry versioning, but the interface may change incompatibly until it has been validated by real hosts
 > (for example NoxPy). It is **not** covered by the NNI binary-compatibility promise. Native code called this way runs with full native authority — the host is
 > outside Nox's type and ownership guarantees ([trust boundary](../language/ffi.md)).
 
@@ -14,7 +14,7 @@ noxc build --emit-obj --host-abi --module-name fastmath src/lib.nox          # r
 noxc build --emit-shared-lib --host-abi --module-name fastmath src/lib.nox   # .so / .dylib exporting only nox_host_* symbols
 ```
 
-Only top-level `def`s decorated with `@export` are exported (the same set `noxc expand --json` reports). `--host-abi` needs the LLVM backend and a desktop target.
+Top-level `def`s and `class`es decorated with `@export` are exported (the same set `noxc expand --json` reports). `--host-abi` needs the LLVM backend and a desktop target.
 In the shared-library form every symbol except `nox_host_*` is made local (macOS `-exported_symbols_list`, ELF `--version-script`), so two independently built Nox
 extensions can live in one process without symbol clashes. Link an object or static archive yourself with the same export policy.
 
@@ -28,6 +28,7 @@ extensions can live in one process without symbol clashes. Link an object or sta
 | `str` | `const uint8_t *data, size_t len` (UTF-8, validated) | `NoxHostBuffer *` (host frees) |
 | `bytes` | `const uint8_t *data, size_t len` (raw, embedded zeros kept) | `NoxHostBuffer *` |
 | class instance | `NoxHostHandle` | `NoxHostHandle *` |
+| `Class \| None`, `list[Class]`, … (v3) | `NoxHostValue` (`NOX_HOST_VALUE_HANDLE` items) | `NoxHostValue *` |
 | `T \| None`, `list[T]`, `dict[K, V]`, `tuple[...]` | `NoxHostValue` (v2) | `NoxHostValue *` (v2; host releases) |
 | `None` | — | no `out` parameter |
 
@@ -55,9 +56,49 @@ How it works: for each `@export` whose signature contains a container/`Optional`
 handles to Nox values with Nox's own code generator, calls your function and converts the result back; the exported C symbol is still `nox_host_export_<module>_<name>`. A value of the wrong
 kind (a `str` where a `list` is expected, a wrong tuple length, a stale handle) surfaces as a `ValueError` (`NOX_HOST_ERR_EXCEPTION`).
 
-Supported element types: `int`, `float`, `bool`, `str`, `bytes`, nested `list`/`dict` (scalar keys)/`tuple`, and `T | None`. Not supported inside containers: class instances, and
+Supported element types: `int`, `float`, `bool`, `str`, `bytes`, **user classes (v3)**, nested `list`/`dict` (scalar keys)/`tuple`, and `T | None`. Not supported inside containers:
 `int | None` / `float | None` / `bool | None` (the Nox compiler itself cannot build such lists yet; `str | None` and container `| None` elements work). `noxc expand --json` reports
 the transfer form of every parameter and return value as `marshal`/`return_marshal` (`scalar`, `span`, `handle`, `value`, `none`).
+
+## Exported classes (ABI v3, UR-009)
+
+```python
+@export("instance_locked")          # optional thread policy, reported in `expand --json`
+class Counter:
+    def __init__(self, start: int) -> None: ...
+    def inc(self, by: int) -> int: ...
+    @property
+    def value(self) -> int: ...
+    @value.setter
+    def value(self, v: int) -> None: ...
+    @staticmethod
+    def zero() -> int: ...
+    @classmethod
+    def make(cls, start: int) -> Counter: ...
+    def __repr__(self) -> str: ...
+
+@export
+class CounterError(ValueError): ...   # metadata only: errors surface as NoxHostError with this class name
+```
+
+Each exported class produces C functions named `nox_host_export_<module>_<Class>_<member>`:
+
+| Member | C symbol suffix | C shape (after `ctx`) |
+|---|---|---|
+| constructor (`__init__` params; none → no params) | `<Class>___new__` | `<params>, NoxHostHandle *out, err` |
+| instance method / `__repr__ __str__ __eq__ __len__ __iter__ __next__ __enter__ __exit__` | `<Class>_<name>` (`<Class>___repr__`) | `NoxHostHandle self, <params>, [ret *out,] err` |
+| `@property` getter / setter | `<Class>_get_<name>` / `<Class>_set_<name>` | `NoxHostHandle self, [value]` |
+| `@staticmethod` / `@classmethod` | `<Class>_<name>` | `<params>, [ret *out,] err` (no `self`; `cls` is the class) |
+
+Methods starting with `_` (other than the dunders above), generic/enum/`@dataclass` classes and `async` methods are not exported (`--host-abi` rejects the unsupported ones with a clear message).
+`noxc expand --json` reports `"kind": "class"` (with `constructor` and `methods[]`: `method_kind` = `instance | staticmethod | classmethod | property_get | property_set | dunder`, `has_self`,
+`c_symbol`, `params` without `self`, `return_type`, `return_marshal`, `thread_policy`, `is_async`) and `"kind": "exception"` (with `base`). Since the checker strips `@property`/`@staticmethod`
+from class bodies, the metadata is taken from the source tree *before* checking.
+
+Handles are type-unchecked on the way in (a handle of another class is undefined behaviour), so a host verifies a handle with `nox_host_handle_type_name(ctx, h, &span)` (the Nox class name, e.g. `"Counter"`).
+Class instances inside containers travel as `NOX_HOST_VALUE_HANDLE` values: `nox_host_value_handle(ctx, h, &v)` wraps a handle's object (the host keeps and releases its own handle) and
+`nox_host_value_get_handle(ctx, v, &h)` gives a **new** handle (release it with `nox_host_handle_release`). `Class | None` uses `nox_host_value_none` for `None`. Inside containers only the *exact* class
+is accepted (a subclass instance or another class raises `ValueError`); top-level `NoxHostHandle` parameters have no such restriction.
 
 ## Lifecycle
 
@@ -85,5 +126,5 @@ Types are spelled canonically as written in Nox source: `tuple[int, str]`, `list
 ## Known limits
 
 - Out-of-memory and fixed-width integer overflow traps terminate the process; they cannot be turned into a recoverable error (Nox has no unwind tables).
-- `async def` exports, generics and host-provided allocators are not supported. Containers hold scalars, `str`/`bytes` and nested containers only (no class instances).
+- `async def` exports, generics and host-provided allocators are not supported yet (v3 work in progress: UR-010 … UR-013).
 - The static archive form cannot hide the runtime's symbols.
