@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.100]
+
+Selfhost tip denetleyicisi **Aşama 3.6 tamamlandı (dilim D — prelude jenerik tipleri/çağrıları & `protocol_def`)** (spec §3.533):
+
+- **Prelude jenerik tipleri & çağrıları (`selfhost/typecheck.nox.in`):** `type_expr_generic#prelude` (26 → 0) kaldırıldı; `try_desugar_prelude_call` + `short_circuit_any_all` + `is_prelude_name` + `mk_dunder_call` ile `any`/`all` genexpr, `__iter__`, `next`, `list`, `set`, `bool`, `max`/`min`, `hex`/`oct`/`bin`, `pow`, `int(s, base)`, `zip`, `sorted`, `sum_float`, `format`, `round` yönlendirmeleri eklendi (`check_call#prelude` 18 → 0). Jeneratör gövdeleri (`yield`) Aşama 3.8 için `stmts_have_yield` (`register_func#generator`) ile ayrıldı.
+- **Protokoller (`protocol_def`, `toplevel#9` 21 → 0):** `collect_protocols`, `register_func` örtük protokol tip parametreleri, `satisfies_protocol` yapısal eşleşme, `not mentions_protocol` boş liste koruması ve heterojen değer tipleri için `ensure_protocol_base` / `ensure_protocol_box` / `assignable_or_coerce` (13 nokta).
+- **Test & doğrulama:** `scripts/ck_gen.py --prelude-proto` (3000 dosya `unsupported=0`), `tests/fixtures/ck_edge/prelude_proto/*.nox` (27 dosya `unsupported=0 accepted=4 rejected=23`), `scripts/ck_mutants_prelude_proto.py` (41/41 yakalandı, 0 yaşayan). `scripts/ck_regress.sh` 17 kip + depo (`files=1620 unsupported=383 accepted=471 rejected=766 diagnostics=1837 skipped_parse=56`) yeşil.
+
 ## [2.2.99]
 
 Selfhost tip denetleyicisi Aşama 3.6 dilim C — **jenerik işlevler ve jenerik metodlar** (spec §3.532):

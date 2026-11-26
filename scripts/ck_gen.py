@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False):
         self.rnd = rnd
+        self.use_prelude_proto = use_prelude_proto
         self.use_generic_fn = use_generic_fn
         self.use_generic_cls = use_generic_cls
         self.use_tuple = use_tuple
@@ -1292,8 +1293,135 @@ class Gen:
         if in_fn and r.random() < 0.5:
             self.lines.append("main_gf()")
 
+    def gen_prelude_proto(self):
+        r = self.rnd
+        clean = r.random() < 0.45
+        self.lines.append("protocol Measurable:")
+        self.lines.append("    def score(self: Measurable) -> int:")
+        self.lines.append("        pass")
+        self.lines.append("    def tag(self: Measurable) -> str:")
+        self.lines.append("        pass")
+        self.lines.append("")
+        self.lines += [
+            "class GoodA:",
+            "    v: int",
+            "    def __init__(self, v: int) -> None:",
+            "        self.v = v",
+            "    def score(self) -> int:",
+            "        return self.v",
+            "    def tag(self) -> str:",
+            "        return \"a\"",
+            "",
+            "class GoodB:",
+            "    s: str",
+            "    def __init__(self, s: str) -> None:",
+            "        self.s = s",
+            "    def score(self) -> int:",
+            "        return len(self.s)",
+            "    def tag(self) -> str:",
+            "        return self.s",
+            "",
+            "class BadMiss:",
+            "    v: int",
+            "    def __init__(self, v: int) -> None:",
+            "        self.v = v",
+            "    def score(self) -> int:",
+            "        return self.v",
+            "",
+            "class BadRet:",
+            "    v: int",
+            "    def __init__(self, v: int) -> None:",
+            "        self.v = v",
+            "    def score(self) -> str:",
+            "        return \"no\"",
+            "    def tag(self) -> str:",
+            "        return \"r\"",
+            "",
+            "class HasBool:",
+            "    v: int",
+            "    def __init__(self, v: int) -> None:",
+            "        self.v = v",
+            "    def __bool__(self) -> bool:",
+            "        return self.v != 0",
+            "",
+            "def read_score(m: Measurable) -> int:",
+            "    return m.score()",
+            "",
+            "def take_list(ms: list[Measurable]) -> int:",
+            "    return len(ms)",
+            "",
+        ]
+        if r.random() < 0.2:
+            self.lines += [
+                "def __nox_hex(n: int) -> str:",
+                "    return \"0x\"",
+                "def __nox_max_list(xs: list[int]) -> int:",
+                "    return xs[0]",
+                "def __nox_int_base(s: str, b: int) -> int:",
+                "    return b",
+                "def __nox_format_int(x: int, spec: str) -> str:",
+                "    return spec",
+                "def __nox_any_range(a: int, b: int, p: (int) -> bool) -> bool:",
+                "    return p(a)",
+                "",
+            ]
+        good = [
+            "s1: int = read_score(GoodA(3))",
+            "s2: int = read_score(GoodB(\"hi\"))",
+            "xs: list[Measurable] = [GoodA(1), GoodB(\"x\")]",
+            "xs.append(GoodA(2))",
+            "m0: Measurable = GoodB(\"y\")",
+            "opt: Measurable | None = GoodA(4)",
+            "lr: list[int] = list(range(3))",
+            "lc: list[int] = list([1, 2])",
+            "ls: list[str] = list(\"ab\")",
+            "lk: list[str] = list({\"k\": 1})",
+            "b1: bool = bool(1)",
+            "b2: bool = bool(\"ok\")",
+            "b3: bool = bool([1, 2])",
+            "b4: bool = bool(GoodA(1))",
+            "b5: bool = bool(HasBool(1))",
+        ]
+        if any("__nox_hex" in ln for ln in self.lines):
+            good += [
+                "hx: str = hex(15)",
+                "mx: int = max([1, 2])",
+                "ib: int = int(\"ff\", 16)",
+                "fi: str = format(5, \"d\")",
+                "fb: str = format(True, \"d\")",
+                "ar: bool = any(i > 0 for i in range(3))",
+            ]
+        bad = [
+            "e0: int = read_score(1)",
+            "e1: int = read_score(BadMiss(1))",
+            "e2: int = read_score(BadRet(1))",
+            "e3: int = take_list([])",
+            "e4: list[int] = list(1)",
+            "e5: bool = bool(None)",
+            "e6: str = format(1, 2)",
+            "e7: str = format([1], \"\")",
+            "e8: str = format(GoodA(1), \"d\")",
+            "e9: list[Measurable] = [BadMiss(1)]",
+        ]
+        if not clean and r.random() < 0.15:
+            bad.append("e10: int = take_list([BadMiss(1)])")
+        in_fn = r.random() < 0.7
+        ind = "    " if in_fn else ""
+        if in_fn:
+            self.lines.append("def main_pp() -> None:")
+        k = r.randint(2, 4)
+        picks = r.sample(good, k=min(k, len(good))) if clean else [r.choice(good) if r.random() < 0.55 else r.choice(bad) for _ in range(k)]
+        for pick in picks:
+            for ln in pick.split("\n"):
+                self.lines.append(ind + ln)
+        if in_fn and r.random() < 0.5:
+            self.lines.append("main_pp()")
+
     def program(self):
         r = self.rnd
+        if self.use_prelude_proto:
+            self.gen_prelude_proto()
+            return "\n".join(self.lines) + "\n"
         if self.use_generic_fn:
             self.gen_generic_fn()
             return "\n".join(self.lines) + "\n"
@@ -1381,11 +1509,12 @@ def main():
     ap.add_argument("--tuple", dest="use_tuple", action="store_true")
     ap.add_argument("--generic-cls", dest="use_generic_cls", action="store_true")
     ap.add_argument("--generic-fn", dest="use_generic_fn", action="store_true")
+    ap.add_argument("--prelude-proto", dest="use_prelude_proto", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

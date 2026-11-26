@@ -1,0 +1,54 @@
+protocol Shape:
+    def area(self: Shape) -> float:
+        pass
+    def scale(self: Shape, k: float) -> None:
+        pass
+
+class Sq:
+    s: float
+    def __init__(self, s: float) -> None:
+        self.s = s
+    def area(self) -> float:
+        return self.s * self.s
+    def scale(self, k: float) -> None:
+        self.s = self.s * k
+
+class Cir:
+    r: float
+    def __init__(self, r: float) -> None:
+        self.r = r
+    def area(self) -> float:
+        return 3.0 * self.r * self.r
+    def scale(self, k: float) -> None:
+        self.r = self.r * k
+
+class Holder:
+    s: Shape
+    def __init__(self, s: Shape) -> None:
+        self.s = s
+
+def describe(s: Shape) -> float:
+    return s.area()
+
+def make(f: bool) -> Shape:
+    if f:
+        return Sq(2.0)
+    return Cir(1.0)
+
+def take_fn(cb: (Shape) -> None) -> None:
+    pass
+
+def noop(s: Shape) -> None:
+    pass
+
+xs: list[Shape] = [Sq(1.0), Cir(2.0)]
+xs.append(Sq(3.0))
+xs.insert(0, Cir(0.5))
+xs[0] = Sq(4.0)
+one: Shape = make(True)
+opt: Shape | None = Cir(1.0)
+h: Holder = Holder(Sq(1.0))
+h.s = Cir(2.0)
+a1: float = describe(Sq(2.0))
+a2: float = describe(one)
+take_fn(noop)

@@ -45,33 +45,31 @@ Döngü (her dilim):
 - `qrun` bildirimi hep "exit 0" der; gerçek sonuç `cikis=` satırı.
 - Zig'in test-fast'i `error: '...' failed` satırları basar; `failed command:` satırları tek başına hata değildir (stderr basan testler).
 
-## 4. DURUM (2026-11-26, v2.2.99 sonrası)
+## 4. DURUM (2026-11-26, v2.2.100 sonrası)
 
-Yayınlananlar (hepsi Zig ile eşit, mutasyon testli): 3.12 dilim A (`extern def`, v2.2.83), **dilim B** import/from-import/takma ad/nitelikli çağrı ve tip (v2.2.87, spec §3.521), **3.4b-A** tekli sınıf kalıtımı (v2.2.88, §3.522), **3.7-A** kapanış/iç içe `def`/`lambda`/`defer` (v2.2.94, §3.528), **3.6-A** `tuple`/`ternary`/`list_comp`/`dict_comp`/`slice` (v2.2.96, §3.529), **3.6-B** AST klonlama/ikame + jenerik sınıflar (`Box[T]`, `mod.Box[T](...)`, `Sub(Base[int])`, v2.2.97, §3.530), **v2.2.98** Nightly CI + frontend/harness sağlamlaştırmaları (§8 ve spec §3.531), **3.6-C** jenerik işlevler ve jenerik metodlar (`def f[T]`, `unify_type_expr`, lambda çıkarımı, `def m[T](self, ...)`, `self.m[T](...)`, v2.2.99, §3.532). (`origin/main` Host ABI UR-009..015 ile v2.2.93/v2.2.95'e ilerledi; DOKUNMA.)
+Yayınlananlar (hepsi Zig ile eşit, mutasyon testli): 3.12 dilim A (`extern def`, v2.2.83), **dilim B** import/from-import/takma ad/nitelikli çağrı ve tip (v2.2.87, spec §3.521), **3.4b-A** tekli sınıf kalıtımı (v2.2.88, §3.522), **3.7-A** kapanış/iç içe `def`/`lambda`/`defer` (v2.2.94, §3.528), **3.6-A** `tuple`/`ternary`/`list_comp`/`dict_comp`/`slice` (v2.2.96, §3.529), **3.6-B** AST klonlama/ikame + jenerik sınıflar (`Box[T]`, `mod.Box[T](...)`, `Sub(Base[int])`, v2.2.97, §3.530), **v2.2.98** Nightly CI + frontend/harness sağlamlaştırmaları (§8 ve spec §3.531), **3.6-C** jenerik işlevler ve jenerik metodlar (`def f[T]`, `unify_type_expr`, lambda çıkarımı, `def m[T](self, ...)`, `self.m[T](...)`, v2.2.99, §3.532), **3.6-D** prelude jenerik tipleri/çağrıları & `protocol_def` (monomorfik + heterojen kutulama, v2.2.100, §3.533 — **Aşama 3.6 tamamlandı**). (`origin/main` Host ABI UR-009..015 ile v2.2.93/v2.2.95'e ilerledi; DOKUNMA.)
 
-**Sıradaki iş (3.6 dilim D):** `type_expr_generic#prelude` (26) / `check_call#prelude` (18) ve `protocol_def` (`toplevel#9`, 21).
+**Sıradaki iş:** İmza özellikleri (`register_func#1` varsayılan/`*args`/`**kwargs` imzaları, `register_func#2` dekoratörlü üst-düzey işlevler, `check_args_sig#kwarg`), ardından `spawn#shared_arg` (`SpawnSharedMutation` + mutasyon grafı).
 
 ## 5. KALAN İŞ SIRASI (Zig işlev konumları `checker.zig` ≈ satır; graf yenilenince kayar — `graphify explain` ile yeniden bul)
 
-Histogram (`xargs ./zig-out/bin/noxc-nightly ck-diff check --why < <(git ls-files '*.nox' | grep -v '^selfhost/')`; son ölçüm v2.2.99 depo: 1580 dosya, **422 kapsam dışı**, 453 kabul, 705 ret, 1705 tanılama, 56 ayrıştırma atlanan):
+Histogram (`xargs ./zig-out/bin/noxc-nightly ck-diff check --why < <(git ls-files '*.nox' | grep -v '^selfhost/')`; son ölçüm v2.2.100 depo: 1620 dosya, **383 kapsam dışı**, 471 kabul, 766 ret, 1837 tanılama, 56 ayrıştırma atlanan):
 
 | Etiket | Dosya | Anlamı / Zig karşılığı |
 |---|---|---|
 | `spawn#shared_arg` | 50 | `SpawnSharedMutation`: `collectSpawnTargets`, `computeMutatesGraph` (`scanMutatesGraphFunc`), `checkNoPostSpawnCallerMutation`, `removeAwaitedTaskSharing` |
 | `check_call#intrinsic` | 48 | `nox.http.serve*` (12 ad) / `nox.thread.start|pool_run`: `matchIntrinsicKind` (≈3837), `tryResolveHttpServeCall/FdCall/MulticoreCall/Generic` (≈3565–3890), `validateHttpHandler` (≈3480), `tryResolveThreadSpawnCall` (≈3889), `tryResolvePoolRunCall` (≈3939); bu dilimde yalnız kapı (`is_intrinsic_call`) var |
 | `class#consts` | 33 | sınıf sabitleri: `registerClassSignatures` `cd.consts` (≈4064–4100), `class_attr_promote.zig` ön geçişi, `Sınıf.NAME` okuma/atama (`receiverClassName`, `checkAttribute` ≈8545, `checkAssign` ≈6798) |
-| `check_binary#1/#2` | 27+10 | dunder operatörler (`__add__`…), `hasDunder` yeniden yazımları |
-| `type_expr_generic#prelude` | 26 | `__nox_*` prelude jenerik tipleri (`core.nox` yönlendirmesi) |
-| `register_func#1` | 25 | varsayılan/`*args`/`**kwargs` işlev imzaları (`registerFunc` ≈2961, `validateParamDefaults`, `expandCallArgs`) |
-| `toplevel#9` | 21 | `protocol_def` (`collectProtocols`, `satisfiesProtocol`, `ensureProtocolBase`) |
+| `check_binary#1/#2` | 28+10 | dunder operatörler (`__add__`…), `hasDunder` yeniden yazımları |
+| `register_func#1` | 26 | varsayılan/`*args`/`**kwargs` işlev imzaları (`registerFunc` ≈2961, `validateParamDefaults`, `expandCallArgs`) |
+| `register_func#generator` | 22 | `generator_desugar.zig` (`yield`/`yield from` durum makinesi — Aşama 3.8) |
 | `nonlocal` | 20 | `nonlocal_desugar` hücre dönüşümü |
 | `extern#decorators` | 19 | `@ffi.*`, `@capability.requires` (`registerExternFunc` ≈2096, `registerCapabilityDecorator`) |
-| `check_call#prelude` | 18 | `tryDesugarPreludeCall` (≈8605: `max/min/sorted/sum/round/map/filter/any/all/list/set/bool/next/zip/enumerate/reversed/hex/oct/bin/pow/format`) |
 | `class#decorators` | 15 | sınıf dekoratörleri (`@repr/@packed/@dataclass/@derive`; `derive.zig`) |
 | `register_func#2` | 13 | dekoratörlü üst-düzey işlev imzaları (`async def f[T]` dahil) |
 | `class#bases` | 11 | çoklu taban/mixin (`mixin_flatten.zig` tam yolu, `validateMixinCompat`) |
-| `check_stmt#1/#2`, `elem_grow`, `toplevel#2`, `check_args_sig#kwarg`, `list_extend`, `check_call#1`, `class#method_features`, `check_call#lowlevel`, `stmt_kind#nested_async`, `class#method_param_features` | 4–10 her biri | küçük kapılar: `__nox_*` ad kuralı / tuple açma (`tryFuseTupleUnpack`), `:=` çıkarımı (`infer_assign`), liste büyütme (`grow_stmt_gate`), `type` takma adları (`type_alias.zig`), kwarg çağrılar, async/dekoratörlü metot, `adopt`, iç içe `async def` |
-| diğer | — | `class#unassigned_multi` (HashMap sırası), `class#explicit_base_call` (`Taban.metod(self)`→`super()`), `check_identifier#fromimport`, dekoratörlü iç `def`, `spawn#attribute`, `slice#bytes` (`class#generic` 26→0 v2.2.97'de, `class#generic_method` 5→0 ve `register_func#2` 29→13 v2.2.99'da kapandı) |
+| `check_stmt#1/#2`, `toplevel#2`, `elem_grow`, `check_args_sig#kwarg`, `list_extend`, `check_call#1`, `class#method_features`, `check_call#lowlevel`, `stmt_kind#nested_async`, `class#method_param_features` | 4–10 her biri | küçük kapılar: `__nox_*` ad kuralı / tuple açma (`tryFuseTupleUnpack`), `:=` çıkarımı (`infer_assign`), liste büyütme (`grow_stmt_gate`), `type` takma adları (`type_alias.zig`), kwarg çağrılar, async/dekoratörlü metot, `adopt`, iç içe `async def` |
+| diğer | — | `class#unassigned_multi` (HashMap sırası), `class#explicit_base_call` (`Taban.metod(self)`→`super()`), `attr#bound_method`, `check_identifier#fromimport`, dekoratörlü iç `def`, `spawn#attribute`, `slice#bytes` (`type_expr_generic#prelude`/`check_call#prelude`/`toplevel#9` v2.2.100'de kapandı) |
 
 **Önerilen sıra (kullanıcının sırası):** (1) **jenerik/protokol/prelude** (`type_expr_generic#prelude`, `check_call#prelude`, `class#generic`, `toplevel#9` protokol; monomorphization = `instantiateGeneric` ≈12383, `unifyTypeExpr` ≈11185, `substituteStmts` ≈11682: **AST kopyalamak yerine tip-parametre bağlamasıyla (binding haritası) denetlemek** düşünülebilir ama tanı metinleri Zig ile birebir kalmalı; bu bir TASARIM kararıdır → önce kullanıcıya/planı yazan oturuma sor) → (2) **imza özellikleri** (`register_func#1/#2`, kwarg çağrılar) → (3) **spawn analizleri** → (4) `class#consts/decorators/bases` → (5) intrinsic'ler (`nox.http.serve*`/`nox.thread.*`; stdlib tip adlarına `nox_http_HttpRequest` vb. bağlıdır, ham kipte yalnız elle tanımlı mangled sınıflarla çözülür) → (6) küçük kapılar → (7) **`ck-diff checkm`** (yükleyici + prelude birleşik modül; kalıtım+jenerik+prelude olmadan tümüyle `class#base`/prelude'a düşer; `__all__`/`requirePublic`/`validateModuleExports` burada) → (8) kapanış: tanı sırası/sayısı eşitliği, perf/bellek bütçesi (stdlib kontrolü ≤ 2× Zig, sızıntı testi), belge (3.13–3.17). 3.14 kararı kullanıcıya aittir.
 
