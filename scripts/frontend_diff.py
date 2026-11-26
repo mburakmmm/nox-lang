@@ -11,7 +11,7 @@
 Karşılaştırılan: çıkış kodu + stdout (+ `--stderr` ile stderr). Bir fark bulunursa ilk farkı gösterir ve dosyayı satır düzeyinde küçültür (ddmin); en küçük örnek `--out` dizinine yazılır.
 Çıkış: 0 = fark yok, 1 = fark var, 2 = ortam hatası (ikili yok vb.).
 """
-import argparse, concurrent.futures, difflib, os, subprocess, sys, tempfile
+import argparse, concurrent.futures, difflib, json, os, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOXC = os.path.join(ROOT, "zig-out/bin/noxc")
@@ -103,6 +103,18 @@ OOM_RE = re.compile(rb"out of memory|OutOfMemory", re.I)
 OK_CATEGORIES = ("SUCCESS", "EXPECTED_LANGUAGE_ERROR")
 
 
+def _is_json_lex_error(out):
+    s = out.strip()
+    if not s.startswith(b"{"):
+        return False
+    try:
+        obj = json.loads(s.decode("utf-8"))
+    except Exception:
+        return False
+    err = obj.get("error") if isinstance(obj, dict) else None
+    return isinstance(err, str) and bool(err) and not OOM_RE.search(err.encode("utf-8"))
+
+
 def classify(rc, err, out=b""):
     """R1-P1.9: bir çalıştırmanın sonucunu sınıflandırır. Yalnızca SUCCESS ve EXPECTED_LANGUAGE_ERROR eşdeğerlik KANITI olabilir; ortak çökme/timeout/OOM başarı DEĞİLDİR."""
     if rc == 0:
@@ -113,8 +125,8 @@ def classify(rc, err, out=b""):
         return "OOM"
     if rc < 0 or rc >= 128 or CRASH_RE.search(err):  # sinyal (POSIX) / Windows özel durum kodları (0xC0000005 ...) / Zig panic izi
         return "COMPILER_CRASH"
-    if rc == 1 and (re.search(rb"error|unexpected|unterminated|inconsistent|tab used", err, re.I) or out.startswith(b"ERROR ") or b"\nERROR " in out[-400:]):
-        return "EXPECTED_LANGUAGE_ERROR"  # `noxc tokens` sözcük hatasını stdout'a `ERROR <ad> <satır:sütun>` olarak yazar
+    if rc == 1 and (re.search(rb"error|unexpected|unterminated|inconsistent|tab used", err, re.I) or out.startswith(b"ERROR ") or b"\nERROR " in out[-400:] or _is_json_lex_error(out)):
+        return "EXPECTED_LANGUAGE_ERROR"  # `noxc tokens` sözcük hatasını stdout'a `ERROR <ad>` veya `--json`'da `{"error":"<ad>"}` olarak yazar
     if rc == 1 and not err.strip():
         return "UNEXPECTED_EXIT"
     return "INFRASTRUCTURE_ERROR" if rc in (126, 127) else "UNEXPECTED_EXIT"
@@ -263,6 +275,12 @@ def selftest():
     assert same(err, err, True), "aynı beklenen sözdizimi hatası eşdeğerdir"
     assert not same(err, (0, b"", b""), False), "hata ↔ başarı fark olmalı"
     assert classify(crash[0], crash[2]) == "COMPILER_CRASH" and classify(-9, b"TIMEOUT") == "TIMEOUT" and classify(1, b"x: syntax error") == "EXPECTED_LANGUAGE_ERROR"
+    assert classify(1, b"", b'{"error":"UnterminatedString"}\n') == "EXPECTED_LANGUAGE_ERROR"
+    assert classify(1, b"", b'{"error":"UnexpectedChar","line":1,"col":1,"start":0,"end":1}\n') == "EXPECTED_LANGUAGE_ERROR"
+    assert same((1, b'{"error":"UnterminatedString"}\n', b""), (1, b'{"error":"UnterminatedString"}\n', b""), False)
+    assert classify(1, b"", b'{"error":""}\n') == "UNEXPECTED_EXIT"
+    assert classify(1, b"", b'{"tokens":[]}\n') == "UNEXPECTED_EXIT"
+    assert classify(1, b"", b'{"error":"OutOfMemory"}\n') == "UNEXPECTED_EXIT"
     print("frontend_diff --selftest: tamam (fark yakalama + küçültme + ortak çökme/timeout başarı sayılmaz)")
     return 0
 

@@ -2952,6 +2952,10 @@ pub const Parser = struct {
                 self.last_diagnostic = .{ .found = .string_lit, .span = span_mod.fromToken(self.tokens[self.pos - 1]), .note = "bytes can only contain ASCII literal characters (use \\xHH escapes for other byte values)" };
                 return error.UnexpectedToken;
             }
+            if (c == '\r' and i + 1 < inner.len and inner[i + 1] == '\n') {
+                i += 1; // R1-P1.12 (v2.2.98): CRLF kaynak satır sonu → `\n` (decodeEscapes/normalizeCrlf ile aynı, Python evrensel satır sonu)
+                continue;
+            }
             if (c != '\\' or i + 1 >= inner.len) {
                 try out.append(self.allocator, c);
                 i += 1;
@@ -3770,4 +3774,13 @@ test "dil yüzeyi 2 (v2.2.22): çıplak raise yalnızca except içinde; tek yıl
     try std.testing.expect(clause.synth_bind and clause.bind_name != null);
     try std.testing.expect(body[1].kind.var_decl.value == .binary and body[1].kind.var_decl.value.binary.spread);
     try std.testing.expect(body[2].kind.var_decl.value == .call and body[2].kind.var_decl.value.call.spread_lit);
+}
+
+test "R1-P1.12 (v2.2.98): üç tırnaklı bytes literalinde kaynak CRLF '\\n' olur, '\\r\\n' kaçışı korunur" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const m = try parseSource(a, "b: bytes = b\"\"\"tri\r\nple\"\"\"\ne: bytes = b\"a\\r\\nb\"\n");
+    try std.testing.expectEqualStrings("tri\nple", m.body[0].kind.var_decl.value.bytes_lit);
+    try std.testing.expectEqualStrings("a\r\nb", m.body[1].kind.var_decl.value.bytes_lit);
 }

@@ -45,9 +45,9 @@ Döngü (her dilim):
 - `qrun` bildirimi hep "exit 0" der; gerçek sonuç `cikis=` satırı.
 - Zig'in test-fast'i `error: '...' failed` satırları basar; `failed command:` satırları tek başına hata değildir (stderr basan testler).
 
-## 4. DURUM (2026-11-26, v2.2.97 sonrası)
+## 4. DURUM (2026-11-26, v2.2.98 sonrası)
 
-Yayınlananlar (hepsi Zig ile eşit, mutasyon testli): 3.12 dilim A (`extern def`, v2.2.83), **dilim B** import/from-import/takma ad/nitelikli çağrı ve tip (v2.2.87, spec §3.521), **3.4b-A** tekli sınıf kalıtımı (v2.2.88, §3.522), **3.7-A** kapanış/iç içe `def`/`lambda`/`defer` (v2.2.94, §3.528), **3.6-A** `tuple`/`ternary`/`list_comp`/`dict_comp`/`slice` (v2.2.96, §3.529), **3.6-B** AST klonlama/ikame + jenerik sınıflar (`Box[T]`, `mod.Box[T](...)`, `Sub(Base[int])`, v2.2.97, §3.530). (`origin/main` Host ABI UR-009..015 ile v2.2.93/v2.2.95'e ilerledi; DOKUNMA.)
+Yayınlananlar (hepsi Zig ile eşit, mutasyon testli): 3.12 dilim A (`extern def`, v2.2.83), **dilim B** import/from-import/takma ad/nitelikli çağrı ve tip (v2.2.87, spec §3.521), **3.4b-A** tekli sınıf kalıtımı (v2.2.88, §3.522), **3.7-A** kapanış/iç içe `def`/`lambda`/`defer` (v2.2.94, §3.528), **3.6-A** `tuple`/`ternary`/`list_comp`/`dict_comp`/`slice` (v2.2.96, §3.529), **3.6-B** AST klonlama/ikame + jenerik sınıflar (`Box[T]`, `mod.Box[T](...)`, `Sub(Base[int])`, v2.2.97, §3.530), **v2.2.98** Nightly CI + frontend/harness sağlamlaştırmaları (§8 ve spec §3.531). (`origin/main` Host ABI UR-009..015 ile v2.2.93/v2.2.95'e ilerledi; DOKUNMA.)
 
 **Sıradaki iş (3.6 dilim C):** jenerik işlevler (`def f[T](...):` + `unifyTypeExpr` + `instantiateGeneric`, `register_func#1/#2`) ve jenerik metodlar (`class#generic_method`), ardından `type_expr_generic#prelude` / `check_call#prelude` ve `protocol_def` (`toplevel#9`).
 
@@ -86,4 +86,15 @@ Histogram (`xargs ./zig-out/bin/noxc-nightly ck-diff check --why < <(git ls-file
 
 ## 7. İLGİLİ DOSYALAR
 
-`selfhost/typecheck.nox.in` (kaynak), `selfhost/types.nox` (tip tablosu `TT`, `ty_*`), `selfhost/ast_schema.nox` + `scripts/gen_selfhost_ast.py` (AST düzeni; `{{O:Tür.alan}}`, `{{T:...}}`, `{{NONE}}`), `compiler/selfhost_ck_diff.zig` (`ck-diff` sürücüsü), `compiler/typecheck/checker.zig` (referans), `scripts/ck_gen.py`, `scripts/ck_regress.sh`, `scripts/ck_mutate.py`, `scripts/ck_mutants_{import,inherit,closure}.py`, `tests/fixtures/ck_edge/{import,inherit,closure}/`, `project/noxc-nightly-selfhost-plani-2026-11.md` (plan + canlı takip), spec §3.50x–§3.528, hafıza dosyası `~/.claude/projects/-Users-melihburakmemis-Documents-nox-lang/memory/project_selfhost_stage3_state_2026_11_25.md`.
+`selfhost/typecheck.nox.in` (kaynak), `selfhost/types.nox` (tip tablosu `TT`, `ty_*`), `selfhost/ast_schema.nox` + `scripts/gen_selfhost_ast.py` (AST düzeni; `{{O:Tür.alan}}`, `{{T:...}}`, `{{NONE}}`), `compiler/selfhost_ck_diff.zig` (`ck-diff` sürücüsü), `compiler/typecheck/checker.zig` (referans), `scripts/ck_gen.py`, `scripts/ck_regress.sh`, `scripts/ck_mutate.py`, `scripts/ck_mutants_{import,inherit,closure,tuple,generic_cls}.py`, `tests/fixtures/ck_edge/{import,inherit,closure,tuple,generic_cls}/`, `project/noxc-nightly-selfhost-plani-2026-11.md` (plan + canlı takip), spec §3.50x–§3.531, hafıza dosyası `~/.claude/projects/-Users-melihburakmemis-Documents-nox-lang/memory/project_selfhost_stage3_state_2026_11_25.md`.
+
+## 8. KAPSAM DIŞI MÜDAHALELER (kullanıcı onayıyla — Claude bilgisine)
+
+Normalde §0 yalnız `selfhost/typecheck.nox.in` ve `scripts/ck_*` dosyalarını kapsar; ancak Nightly CI loglarındaki iki frontend hatası ve `ck_regress.sh` boru sorunu üzerine **kullanıcıdan açık onay alınarak (`v2.2.98`)** aşağıdaki müdahaleler yapılmıştır (codegen, Host ABI ve runtime'a yine DOKUNULMAMIŞTIR):
+
+1. **[scripts/frontend_diff.py](../../scripts/frontend_diff.py) — JSON lexer hata sınıflandırması (P0):**
+   - `tokens --json [--trivia]` modunda dil hatası aldığında `cmdTokens` stderr'e yazmadan stdout'a `{"error":"<LexError>"...}` JSON'u yazıp `rc=1` döner; önceki `classify()` bunu `UNEXPECTED_EXIT` sayıyordu (Nightly CI'da 2445 dosyada 369 başarısızlık). `_is_json_lex_error()` eklendi (`OutOfMemory` hariç → `EXPECTED_LANGUAGE_ERROR`); `--selftest` yeni JSON vakalarıyla güncellendi ve `--component lexer --sub-args="--json --trivia" --fuzz 800 --seed 3` 2445 dosyada `FARK YOK` verdi.
+2. **[compiler/parser/parser.zig](../../compiler/parser/parser.zig) & [selfhost/parser.nox.in](../../selfhost/parser.nox.in) (`selfhost/parser.nox` üretildi) — üç tırnaklı `bytes` literal CRLF normalleştirmesi (P1):**
+   - `decodeBytes` / `decode_bytes` artık ham `\r\n` kaynak satır sonlarını (`decodeEscapes`/`normalizeCrlf` ile aynı şekilde) `\n` yapar; açık `\r\n` kaçışları (`b"a\r\nb"`) olduğu gibi korunur. `bytes_type.nox` ve `ok2.nox` üzerindeki `fmt(CRLF x) != fmt(x)` ihlalleri kapandı; `fmt_properties.py` hem `noxc` hem `noxc-nightly`'de `ok=1589, skip=56` (0 ihlal) ve `frontend_diff.py --component parser|fmt` eşit geçti; `parser.zig` altına yeni Zig birim testi eklendi.
+3. **[scripts/ck_regress.sh](../../scripts/ck_regress.sh) — `| head -1` çıkış kodu kaybı düzeltmesi (P1):**
+   - Her kip ve `repo` çalıştırması artık boru kullanmadan `check_out()` yardımcısından geçer; gerçek çıkış kodu korunur ve çok gruplu `xargs` dahil tüm çıktı satırlarının `^ck-diff: OK` ile başladığı doğrulanır.

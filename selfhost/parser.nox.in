@@ -1219,6 +1219,9 @@ def decode_bytes(p: P, ti: int) -> int:
         c: int = at(a.src, i)
         if c >= 128:
             bad_str(p, {{K:string_lit}}, "bytes can only contain ASCII literal characters (use \\xHH escapes for other byte values)")
+        if c == 13 and i + 1 < hi_ and at(a.src, i + 1) == 10:
+            i = i + 1
+            continue
         if c != 92 or i + 1 >= hi_:
             a.sb.append(c)
             i = i + 1

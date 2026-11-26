@@ -7,6 +7,24 @@ OUT=${1:-${TMPDIR:-/tmp}/ck_regress}
 N=${2:-1500}
 BIN=./zig-out/bin/noxc-nightly
 rc=0
+check_out() {
+  label="$1"
+  st="$2"
+  out="$3"
+  first=$(printf '%s\n' "$out" | head -n 1)
+  echo "$label: $first"
+  if [ "$st" -ne 0 ]; then
+    rc=1
+    printf '%s\n' "$out" | sed -n '2,6p'
+    return
+  fi
+  bad=$(printf '%s\n' "$out" | grep -v '^ck-diff: OK' || true)
+  if [ -z "$first" ] || [ -n "$bad" ]; then
+    rc=1
+    printf '%s\n' "$bad" | head -n 5
+  fi
+}
+
 seed=200
 for mode in "" --async --methods --builtins --recv --try --construct --ptr --extern --spawn --import --inherit --closure --tuple --generic-cls; do
   seed=$((seed + 1))
@@ -15,11 +33,11 @@ for mode in "" --async --methods --builtins --recv --try --construct --ptr --ext
   dir="$OUT/$name"
   rm -rf "$dir"
   python3 scripts/ck_gen.py --out "$dir" --count "$N" --seed "$seed" $mode >/dev/null || { echo "$name: üreteç hatası"; rc=1; continue; }
-  res=$($BIN ck-diff check "$dir"/*.nox 2>&1 | head -1)
-  echo "$name: $res"
-  case "$res" in "ck-diff: OK"*) ;; *) rc=1 ;; esac
+  out=$("$BIN" ck-diff check "$dir"/*.nox 2>&1)
+  st=$?
+  check_out "$name" "$st" "$out"
 done
-res=$(git ls-files '*.nox' | grep -v '^selfhost/' | xargs $BIN ck-diff check 2>&1 | head -1)
-echo "repo: $res"
-case "$res" in "ck-diff: OK"*) ;; *) rc=1 ;; esac
+out=$(git ls-files '*.nox' | grep -v '^selfhost/' | xargs "$BIN" ck-diff check 2>&1)
+st=$?
+check_out "repo" "$st" "$out"
 exit $rc

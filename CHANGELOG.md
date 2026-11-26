@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.98]
+
+Nightly CI + frontend/harness sağlamlaştırmaları (**kullanıcı onayıyla** tip denetleyicisi kapsamı dışında `scripts/frontend_diff.py` + `compiler/parser/parser.zig` + `selfhost/parser.nox.in` dosyalarına da müdahale edildi; ayrıntı `project/selfhost-typecheck-devir-notu-2026-11-26.md` §8 ve spec §3.531):
+
+- **P0 — `scripts/frontend_diff.py` JSON lexer hata sınıflandırması:** `classify()` artık `tokens --json [--trivia]` hatası (`rc=1`, boş stderr, stdout'ta `{"error":"<LexError>"...}`) için `_is_json_lex_error()` ile `EXPECTED_LANGUAGE_ERROR` üretir (`OutOfMemory` hariç); Nightly CI'da 2445 dosyadaki 369 sahte `UNEXPECTED_EXIT` başarısızlığı kapandı (`frontend_diff.py --component lexer --sub-args="--json --trivia" --fuzz 800 --seed 3`: 2445 dosya `FARK YOK`; `--selftest` genişletildi).
+- **P1 — Üç tırnaklı `bytes` literal CRLF normalleştirmesi (`compiler/parser/parser.zig` `decodeBytes` + `selfhost/parser.nox.in` `decode_bytes`):** ham `\r\n` kaynak satır sonları `decodeEscapes`/`normalizeCrlf` ile aynı şekilde `\n`'ye normalleştirilir (açık `\\r\\n` kaçışları korunur); `tests/golden/codegen_cases/bytes_type.nox` ve `tests/golden/frontend_bytes_literals/ok2.nox` üzerindeki `fmt(CRLF x) != fmt(x)` ihlalleri kapandı (`fmt_properties.py` hem `noxc` hem `noxc-nightly`'de `ok=1589, skip=56`, 0 ihlal; yeni Zig birim testi).
+- **P1 — `scripts/ck_regress.sh` çıkış kodu koruması:** `| head -1` borusu kaldırıldı; `check_out()` alt kabuk çıkış kodunu doğrudan saklar ve tüm `ck-diff` satırlarının `ck-diff: OK` olduğunu doğrular (çok gruplu `xargs` dahil).
+
 ## [2.2.97]
 
 Selfhost Aşama 3.6 dilim B: AST klonlama/ikame ve jenerik sınıflar (`class Box[T]:`, `Box[int]`, `Box[int](...)`, `from`/`mod.Box[int]`, `mod.Box[int](...)`, `class Sub(Base[int]):`) Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.530, `project/noxc-nightly-selfhost-plani-2026-11.md`.
