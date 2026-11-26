@@ -8,7 +8,7 @@
 from ast_schema import Ast, at, dump_module, mk_Assign, mk_Attribute, mk_Binary, mk_Call, mk_ClassDef, mk_CompClause_for_clause, mk_CompClause_if_clause, mk_CompForClause, mk_DeferStmt, mk_DictComp, mk_DictPair, mk_ElifClause, mk_ExceptClause, mk_Expr_attribute, mk_Expr_await_expr, mk_Expr_binary, mk_Expr_call, mk_Expr_dict_comp, mk_Expr_dict_lit, mk_Expr_generic_construct, mk_Expr_identifier, mk_Expr_index, mk_Expr_kwarg, mk_Expr_lambda, mk_Expr_list_comp, mk_Expr_list_lit, mk_Expr_slice, mk_Expr_spawn_expr, mk_Expr_ternary, mk_Expr_tuple_lit, mk_Expr_unary, mk_FieldDecl, mk_ForStmt, mk_FuncDef, mk_FuncTypeExpr, mk_Generic, mk_GenericConstruct, mk_IfStmt, mk_Index, mk_Kwarg, mk_Lambda, mk_ListComp, mk_LowLevelStmt, mk_Param, mk_Slice, mk_Stmt, mk_StmtKind_assign, mk_StmtKind_defer_stmt, mk_StmtKind_del_stmt, mk_StmtKind_expr_stmt, mk_StmtKind_for_stmt, mk_StmtKind_func_def, mk_StmtKind_if_stmt, mk_StmtKind_lowlevel_stmt, mk_StmtKind_raise_stmt, mk_StmtKind_return_stmt, mk_StmtKind_try_stmt, mk_StmtKind_var_decl, mk_StmtKind_while_stmt, mk_StmtKind_with_stmt, mk_Ternary, mk_TryStmt, mk_TypeExpr_func_type, mk_TypeExpr_generic, mk_TypeExpr_optional, mk_TypeExpr_qualified, mk_TypeExpr_simple, mk_Unary, mk_VarDecl, mk_WhileStmt, mk_WithStmt, mk_fail, put
 from ast_schema import build_sp_idx, loaded_ast
 from parser import pk, pkx, pky, syn, parse_ast, parse_body, sref_eq, sref_len, sref_byte, utf8_bytes
-from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, cls_set_base, lcg, sym_intern, sym_intern_list, ty_format, ty_mangle, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed, ty_mk, ty_list, ty_dict, ty_optional, ty_class, cls_register
+from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, cls_set_base, lcg, sym_intern, sym_intern_list, ty_format, ty_mangle, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed, ty_mk, ty_list, ty_dict, ty_optional, ty_class, cls_register, is_subclass
 
 # ---- (k1, k2) -> değer tablosu: açık adresleme, ekleme sırası korunur, silme = ölü işareti (yeniden `put` canlandırır) ----
 class Map2:
@@ -168,6 +168,10 @@ class Ck:
     gcls_te: list[int]
     defer_cls_body: bool
     pending_inst: list[int]
+    # 3.6c: jenerik işlevler + jenerik metodlar (`generic_functions`, `generic_method_names`, `generic_methods`)
+    gfn: Map2
+    gm_names: Map2
+    gmeth: Map2
 
     def __init__(self, tt: TT) -> None:
         self.tt = tt
@@ -231,6 +235,9 @@ class Ck:
         self.gcls_te = []
         self.defer_cls_body = False
         self.pending_inst = []
+        self.gfn = Map2()
+        self.gm_names = Map2()
+        self.gmeth = Map2()
 
 # ---- Scope (Zig `Scope`) ----
 def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
@@ -827,6 +834,38 @@ def check_generic_construct(ck: Ck, a: Ast, fx: Fx, g: int) -> int:
         if check_expr(ck, a, fx, stmt_at(a, args, 0)) != 0:
             fail2(ck, "TypeMismatch", "the argument (capacity) of the 'ThreadChannel' constructor must be an int")
         return ty_mk(tt, 10, telem, 0)
+    gfd: int = lookup_generic_func(ck, a, gn)
+    if gfd >= 0:
+        gf_sym: int = sym_of(ck, a, pk(a.n[gfd + 0], a.n[gfd + 0 + 1]))
+        gf_tps: int = sl_at(a, gfd, 2)
+        gf_ntp: int = pky(gf_tps)
+        if nt != gf_ntp:
+            mp(ck, "'")
+            mp_sref(ck, a, gn)
+            mp(ck, "' takes ")
+            mp_int(ck, gf_ntp)
+            mp(ck, " type argument(s), ")
+            mp_int(ck, nt)
+            mp(ck, " given")
+            raise mk_fail(ck, "ArgumentCountMismatch")
+        gf_ps: int = sl_at(a, gfd, 4)
+        gf_needs_exp: bool = n < pky(gf_ps)
+        for gfi in range(n):
+            if a.n[stmt_at(a, args, gfi)] == 17:
+                gf_needs_exp = True
+        if not gf_needs_exp:
+            for gfp_i in range(pky(gf_ps)):
+                if a.n[stmt_at(a, gf_ps, gfp_i) + 2] != 0 or a.n[stmt_at(a, gf_ps, gfp_i) + 3] != 0:
+                    gf_needs_exp = True
+        if gf_needs_exp:
+            mp(ck, "a call with explicit type arguments ('")
+            mp_sref(ck, a, gn)
+            mp(ck, "[...]') must pass every argument positionally (no defaults, keywords or *args)")
+            raise mk_fail(ck, "ArgumentCountMismatch")
+        gf_exp: list[int] = []
+        for gfei in range(nt):
+            gf_exp.append(type_expr_to_type(ck, a, stmt_at(a, targs, gfei)))
+        return instantiate_generic_func(ck, a, fx, gfd, gf_sym, args, gf_exp, True)
     gcd: int = lookup_generic_class(ck, a, gn)
     if gcd >= 0:
         bound: list[int] = []
@@ -1139,6 +1178,11 @@ def check_identifier(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
     gi: int = m2_get(ck.globs, 0, sym)
     if gi >= 0:
         return ck.globs.vv[gi]
+    if m2_get(ck.gfn, 0, sym) >= 0:
+        mp(ck, "the generic function '")
+        mp_sym(ck, sym)
+        mp(ck, "' cannot be used as a value (it can only be called)")
+        raise mk_fail(ck, "TypeMismatch")
     # resolveIdentifierAsFunctionValue: üst-düzey (generic/async olmayan) işlev adı bir değer olarak
     fe: int = m2_get(ck.fmap, 0, sym)
     if fe >= 0:
@@ -1864,7 +1908,7 @@ def check_builtin_call(ck: Ck, a: Ast, fx: Fx, c: int, cv: int) -> int:
     return check_ptr_builtin(ck, a, fx, c, cv)
 
 # Zig'de ayrı yolu olan (prelude yönlendirmesi, ptr/lowlevel ailesi, dahili `__nox_*`) ama bu dilimde taşınmayan ad: kapsam dışı etiketi; "" = yok.
-def call_gap_label(ck: Ck, a: Ast, cv: int, fi: int, ci: int) -> str:
+def call_gap_label(ck: Ck, a: Ast, cv: int, fi: int, gfi: int, ci: int) -> str:
     if sref_len(cv) >= 6 and sref_byte(a, cv, 0) == 95 and sref_byte(a, cv, 1) == 95 and sref_byte(a, cv, 2) == 110 and sref_byte(a, cv, 3) == 111 and sref_byte(a, cv, 4) == 120 and sref_byte(a, cv, 5) == 95:
         return "check_call#internal"
     # `adopt(p)`: beklenen-tip bağlamı (`checkExprExpected` dalı) taşınmadı
@@ -1878,7 +1922,7 @@ def call_gap_label(ck: Ck, a: Ast, cv: int, fi: int, ci: int) -> str:
         prel = True
     if sref_eq(a, cv, "hex") or sref_eq(a, cv, "oct") or sref_eq(a, cv, "bin") or sref_eq(a, cv, "pow") or sref_eq(a, cv, "format"):
         prel = True
-    if prel and fi < 0 and ci < 0:
+    if prel and fi < 0 and gfi < 0 and ci < 0:
         return "check_call#prelude"
     return ""
 
@@ -1938,13 +1982,41 @@ def try_qual_generic_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
         return -1
     mangled: int = join_syms(ck, segs, n, 95)
     ge: int = m2_get(ck.gcls, 0, mangled)
-    if ge < 0:
+    gfe: int = m2_get(ck.gfn, 0, mangled)
+    if ge < 0 and gfe < 0:
         return -1
     te: int = index_expr_to_type_expr(ck, a, a.n[ix + 1])
     if te < 0:
         return -1
     t: int = type_expr_to_type(ck, a, te)
     bnd: list[int] = [t]
+    if gfe >= 0:
+        gfd: int = ck.gfn.vv[gfe]
+        gf_tps: int = sl_at(a, gfd, 2)
+        gf_ntp: int = pky(gf_tps)
+        if gf_ntp != 1:
+            mp(ck, "'")
+            mp_sym(ck, mangled)
+            mp(ck, "' takes ")
+            mp_int(ck, gf_ntp)
+            mp(ck, " type argument(s), 1 given")
+            raise mk_fail(ck, "ArgumentCountMismatch")
+        cargs: int = sl_at(a, c, 1)
+        gf_ps: int = sl_at(a, gfd, 4)
+        gf_needs_exp: bool = pky(cargs) < pky(gf_ps)
+        for ci2 in range(pky(cargs)):
+            if a.n[stmt_at(a, cargs, ci2)] == 17:
+                gf_needs_exp = True
+        if not gf_needs_exp:
+            for pi2 in range(pky(gf_ps)):
+                if a.n[stmt_at(a, gf_ps, pi2) + 2] != 0 or a.n[stmt_at(a, gf_ps, pi2) + 3] != 0:
+                    gf_needs_exp = True
+        if gf_needs_exp:
+            mp(ck, "a call with explicit type arguments ('")
+            mp_sym(ck, mangled)
+            mp(ck, "[...]') must pass every argument positionally (no defaults, keywords or *args)")
+            raise mk_fail(ck, "ArgumentCountMismatch")
+        return instantiate_generic_func(ck, a, fx, gfd, mangled, cargs, bnd, True)
     ct: int = instantiate_generic_class(ck, a, ck.gcls.vv[ge], bnd)
     msym: int = ck.tt.xa[ct]
     ci: int = class_idx(ck, msym)
@@ -1956,6 +2028,10 @@ def try_qual_generic_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
 
 def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
     callee: int = a.n[c + 0]
+    if len(ck.gm_names.k1) > 0 and (a.n[callee] == 9 or a.n[callee] == 10):
+        gmt: int = try_resolve_generic_method_call(ck, a, fx, c, callee)
+        if gmt >= 0:
+            return gmt
     if a.n[callee] == 9:
         return check_method_call(ck, a, fx, c, callee)
     if a.n[callee] == 10:
@@ -1974,8 +2050,9 @@ def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
         return bt
     sym: int = sym_of(ck, a, cv)
     fi: int = m2_get(ck.fmap, 0, sym)
+    gfi: int = m2_get(ck.gfn, 0, sym)
     ci: int = class_idx(ck, sym)
-    gap: str = call_gap_label(ck, a, cv, fi, ci)
+    gap: str = call_gap_label(ck, a, cv, fi, gfi, ci)
     if len(gap) > 0:
         raise unsup(ck, gap)
     # yerel değer çağrısı (Zig: önce kapsam): işlev-tipli değer kapsam dışı, diğeri hata
@@ -1988,6 +2065,8 @@ def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
         mp_sym(ck, sym)
         mp(ck, "' is not a function and cannot be called")
         raise mk_fail(ck, "TypeMismatch")
+    if gfi >= 0:
+        return instantiate_generic_func(ck, a, fx, ck.gfn.vv[gfi], sym, sl_at(a, c, 1), [], False)
     if fi < 0 and ci < 0:
         # `from X.Y import foo [as bar]` ile bağlanan çıplak çağrı (yerel tanım her zaman öncelikli)
         fie: int = m2_get(ck.fimp, 0, sym)
@@ -2586,6 +2665,9 @@ def is_variable_in_scope(ck: Ck, fx: Fx, sym: int) -> bool:
 # Zig `resolveMangledCall` (generic işlev/sınıf bu kipte yoktur): mangled ad işlev ya da sınıf mı; değilse `nf_kind` ile bulunamadı iletisi.
 # nf_kind 0 (from-import): "'<s1>' could not be imported (the source module has no member named '<s2>')"; 1 (nitelikli çağrı): "module '<s1>' has no member named '<s2>'".
 def resolve_mangled_call(ck: Ck, a: Ast, fx: Fx, c: int, ms: int, nf_kind: int, s1: int, s2: int) -> int:
+    gfe: int = m2_get(ck.gfn, 0, ms)
+    if gfe >= 0:
+        return instantiate_generic_func(ck, a, fx, ck.gfn.vv[gfe], ms, sl_at(a, c, 1), [], False)
     fe: int = m2_get(ck.fmap, 0, ms)
     if fe >= 0:
         if m2_get(ck.afn, 0, ms) >= 0:
@@ -2866,6 +2948,39 @@ def subst_comp_clauses(ck: Ck, a: Ast, sl: int, bnd: Map2) -> int:
             ids.append(mk_CompClause_if_clause(a, subst_expr(ck, a, cpay, bnd)))
     return list_put_slice(a, ids)
 
+def te_to_index_expr(ck: Ck, a: Ast, te: int) -> int:
+    tag: int = a.n[te]
+    if tag == 0:
+        return mk_Expr_identifier(a, a.n[te + 1], a.n[te + 2])
+    if tag == 1:
+        g: int = a.n[te + 1]
+        gargs: int = sl_at(a, g, 2)
+        if pky(gargs) != 1:
+            return -1
+        inner: int = te_to_index_expr(ck, a, stmt_at(a, gargs, 0))
+        if inner < 0:
+            return -1
+        obj: int = mk_Expr_identifier(a, a.n[g + 0], a.n[g + 0 + 1])
+        return mk_Expr_index(a, mk_Index(a, obj, inner))
+    return -1
+
+def subst_type_arg_expr(ck: Ck, a: Ast, e: int, bnd: Map2) -> int:
+    tag: int = a.n[e]
+    if tag == 5:
+        be: int = m2_get(bnd, 0, sym_of(ck, a, pk(a.n[e + 1], a.n[e + 2])))
+        if be < 0:
+            return e
+        res: int = te_to_index_expr(ck, a, type_to_type_expr(ck, a, bnd.vv[be]))
+        if res >= 0:
+            return res
+        return e
+    if tag == 10:
+        ix: int = a.n[e + 1]
+        if a.n[a.n[ix + 0]] != 5:
+            return e
+        return mk_Expr_index(a, mk_Index(a, a.n[ix + 0], subst_type_arg_expr(ck, a, a.n[ix + 1], bnd)))
+    return e
+
 def subst_expr(ck: Ck, a: Ast, e: int, bnd: Map2) -> int:
     tag: int = a.n[e]
     if tag == 0 or tag == 1 or tag == 2 or tag == 3 or tag == 23 or tag == 4 or tag == 5:
@@ -2899,6 +3014,14 @@ def subst_expr(ck: Ck, a: Ast, e: int, bnd: Map2) -> int:
                     te: int = type_to_type_expr(ck, a, bnd.vv[be])
                     if a.n[te] == 0:
                         na[0] = mk_Expr_identifier(a, a.n[te + 1], a.n[te + 2])
+        if a.n[cal] == 10:
+            cix: int = a.n[cal + 1]
+            cobj: int = a.n[cix + 0]
+            if a.n[cobj] == 9:
+                cat: int = a.n[cobj + 1]
+                cattr: int = pk(a.n[cat + 1], a.n[cat + 1 + 1])
+                if m2_get(ck.gm_names, 0, sym_of(ck, a, cattr)) >= 0:
+                    cal = mk_Expr_index(a, mk_Index(a, cobj, subst_type_arg_expr(ck, a, a.n[cix + 1], bnd)))
         asl: int = list_put_slice(a, na)
         return mk_Expr_call(a, mk_Call(a, cal, pkx(asl), pky(asl), a.n[c + 3], a.n[c + 4], a.n[c + 5], a.n[c + 5 + 1], a.n[c + 7], a.n[c + 8]))
     if tag == 9:
@@ -3161,10 +3284,10 @@ def instantiate_generic_class(ck: Ck, a: Ast, gcd: int, bound: list[int]) -> int
     fsl: int = list_put_slice(a, fids)
     ms: int = sl_at(a, gcd, 16)
     mids: list[int] = []
+    def_gms: list[int] = []
     for mi in range(pky(ms)):
         m: int = stmt_at(a, ms, mi)
-        if pky(sl_at(a, m, 2)) > 0:
-            raise unsup(ck, "class#generic_method")
+        is_gm: bool = pky(sl_at(a, m, 2)) > 0
         mps: int = sl_at(a, m, 4)
         pids: list[int] = []
         for pi in range(pky(mps)):
@@ -3173,7 +3296,16 @@ def instantiate_generic_class(ck: Ck, a: Ast, gcd: int, bound: list[int]) -> int
         psl: int = list_put_slice(a, pids)
         mret: int = subst_type_expr(ck, a, a.n[m + 6], bnd)
         mbody: int = subst_stmts(ck, a, sl_at(a, m, 8), bnd)
-        mids.append(mk_FuncDef(a, a.n[m + 0], a.n[m + 0 + 1], 0, 0, pkx(psl), pky(psl), mret, a.n[m + 7], pkx(mbody), pky(mbody), a.n[m + 10], a.n[m + 11], a.n[m + 11 + 1], a.n[m + 13], a.n[m + 13 + 1], a.n[m + 15], a.n[m + 15 + 1], a.n[m + 17], a.n[m + 17 + 1], a.n[m + 19], a.n[m + 20]))
+        tp0: int = 0
+        tp1: int = 0
+        if is_gm:
+            tp0 = a.n[m + 2]
+            tp1 = a.n[m + 2 + 1]
+        cm: int = mk_FuncDef(a, a.n[m + 0], a.n[m + 0 + 1], tp0, tp1, pkx(psl), pky(psl), mret, a.n[m + 7], pkx(mbody), pky(mbody), a.n[m + 10], a.n[m + 11], a.n[m + 11 + 1], a.n[m + 13], a.n[m + 13 + 1], a.n[m + 15], a.n[m + 15 + 1], a.n[m + 17], a.n[m + 17 + 1], a.n[m + 19], a.n[m + 20])
+        if is_gm:
+            def_gms.append(cm)
+        else:
+            mids.append(cm)
     msl: int = list_put_slice(a, mids)
     msr: int = ast_str_sym(ck, a, mangled_sym)
     ccd: int = mk_ClassDef(a, pkx(msr), pky(msr), 0, 0, -4611686018427387904, 0, -4611686018427387904, 0, 0, 0, 0, 0, 0, 0, 0, 0, pkx(msl), pky(msl), pkx(fsl), pky(fsl), 0, 0, 0, 0)
@@ -3194,11 +3326,531 @@ def instantiate_generic_class(ck: Ck, a: Ast, gcd: int, bound: list[int]) -> int
     m2_put(ck.cls_map, 0, mangled_sym, ci)
     cls_register(ck.tt, mangled_sym)
     ensure_class_sig(ck, a, ci)
+    for gmi in range(len(def_gms)):
+        gm: int = def_gms[gmi]
+        gmn: int = pk(a.n[gm + 0], a.n[gm + 0 + 1])
+        gmsym: int = sym_of(ck, a, gmn)
+        if pky(sl_at(a, gm, 11)) > 0 or a.n[gm + 10] != 0 or a.n[gm + 19] != 0:
+            raise unsup(ck, "class#method_features")
+        gm_ps: int = sl_at(a, gm, 4)
+        for gpi in range(pky(gm_ps)):
+            gp: int = stmt_at(a, gm_ps, gpi)
+            if a.n[gp + 8] >= 0 or a.n[gp + 2] != 0 or a.n[gp + 3] != 0 or a.n[gp + 4] != 0 or a.n[gp + 5] != 0:
+                raise unsup(ck, "class#method_param_features")
+        if pky(sl_at(a, gm, 2)) != 1:
+            mp(ck, "generic method '")
+            mp_sym(ck, gsym)
+            mp(ck, ".")
+            mp_sref(ck, a, gmn)
+            mp(ck, "' can take a single type parameter")
+            raise mk_fail(ck, "TypeMismatch")
+        if sref_len(gmn) >= 2 and sref_byte(a, gmn, 0) == 95 and sref_byte(a, gmn, 1) == 95:
+            mp(ck, "special method '")
+            mp_sym(ck, gsym)
+            mp(ck, ".")
+            mp_sref(ck, a, gmn)
+            mp(ck, "' cannot be generic")
+            raise mk_fail(ck, "TypeMismatch")
+        m2_put(ck.gmeth, mangled_sym, gmsym, gm)
+        m2_put(ck.gm_names, 0, gmsym, 1)
     if ck.defer_cls_body:
         ck.pending_inst.append(ci)
     else:
         ensure_class_checked(ck, a, ci)
     return mty
+
+def is_tp_in_slice(ck: Ck, a: Ast, sym: int, tps: int) -> bool:
+    for i in range(pky(tps)):
+        if sym_of(ck, a, pk(a.l[pkx(tps) + i * 2], a.l[pkx(tps) + i * 2 + 1])) == sym:
+            return True
+    return False
+
+def sym_has_prefix_dunder(ck: Ck, a: Ast, cls_sym: int, gn: int) -> bool:
+    tt: TT = ck.tt
+    gl: int = sref_len(gn)
+    cl: int = tt.sl[cls_sym]
+    if cl <= gl + 2:
+        return False
+    co: int = tt.so[cls_sym]
+    for i in range(gl):
+        if tt.sb[co + i] != sref_byte(a, gn, i):
+            return False
+    return tt.sb[co + gl] == 95 and tt.sb[co + gl + 1] == 95
+
+def unify_type_expr(ck: Ck, a: Ast, te: int, actual: int, tps: int, bnd: Map2, fn_sym: int) -> None:
+    tag: int = a.n[te]
+    tt: TT = ck.tt
+    if tag == 0:
+        nr: int = pk(a.n[te + 1], a.n[te + 2])
+        sym: int = sym_of(ck, a, nr)
+        if is_tp_in_slice(ck, a, sym, tps):
+            be: int = m2_get(bnd, 0, sym)
+            if be >= 0:
+                if bnd.vv[be] != actual:
+                    mp(ck, "in the call to '")
+                    mp_sym(ck, fn_sym)
+                    mp(ck, "', the type parameter '")
+                    mp_sref(ck, a, nr)
+                    mp(ck, "' resolved to conflicting types")
+                    raise mk_fail(ck, "TypeMismatch")
+            else:
+                m2_put(bnd, 0, sym, actual)
+            return
+        declared: int = type_expr_to_type(ck, a, te)
+        if not ty_assignable(tt, declared, actual):
+            mp(ck, "type mismatch for argument '")
+            mp_sym(ck, fn_sym)
+            mp(ck, "'")
+            raise mk_fail(ck, "TypeMismatch")
+        return
+    if tag == 1:
+        g: int = a.n[te + 1]
+        gn: int = pk(a.n[g + 0], a.n[g + 0 + 1])
+        gargs: int = sl_at(a, g, 2)
+        n: int = pky(gargs)
+        if sref_eq(a, gn, "list") and n == 1:
+            if tt.tag[actual] != 5:
+                mp(ck, "type mismatch for argument '")
+                mp_sym(ck, fn_sym)
+                mp(ck, "'")
+                raise mk_fail(ck, "TypeMismatch")
+            unify_type_expr(ck, a, stmt_at(a, gargs, 0), tt.xa[actual], tps, bnd, fn_sym)
+            return
+        if sref_eq(a, gn, "dict") and n == 2:
+            if tt.tag[actual] != 13:
+                mp(ck, "type mismatch for argument '")
+                mp_sym(ck, fn_sym)
+                mp(ck, "'")
+                raise mk_fail(ck, "TypeMismatch")
+            unify_type_expr(ck, a, stmt_at(a, gargs, 0), tt.xa[actual], tps, bnd, fn_sym)
+            unify_type_expr(ck, a, stmt_at(a, gargs, 1), tt.xb[actual], tps, bnd, fn_sym)
+            return
+        if sref_eq(a, gn, "ptr") and n == 1:
+            if tt.tag[actual] != 17:
+                mp(ck, "type mismatch for argument '")
+                mp_sym(ck, fn_sym)
+                mp(ck, "'")
+                raise mk_fail(ck, "TypeMismatch")
+            unify_type_expr(ck, a, stmt_at(a, gargs, 0), tt.xa[actual], tps, bnd, fn_sym)
+            return
+        if tt.tag[actual] == 6:
+            ci: int = class_idx(ck, tt.xa[actual])
+            if ci >= 0 and ck.gcls_tn[ci] == n and sym_has_prefix_dunder(ck, a, tt.xa[actual], gn):
+                for gi in range(n):
+                    unify_type_expr(ck, a, stmt_at(a, gargs, gi), ck.gcls_te[ck.gcls_ts[ci] + gi], tps, bnd, fn_sym)
+                return
+        mp(ck, "unknown generic type: ")
+        mp_sref(ck, a, gn)
+        raise mk_fail(ck, "UnknownType")
+    if tag == 2:
+        ft: int = a.n[te + 1]
+        fps: int = sl_at(a, ft, 0)
+        if tt.tag[actual] != 14 or tt.xc[actual] != pky(fps):
+            mp(ck, "in the call to '")
+            mp_sym(ck, fn_sym)
+            mp(ck, "', the function-typed argument does not match the expected signature")
+            raise mk_fail(ck, "TypeMismatch")
+        pa: int = tt.xa[actual]
+        for fi in range(pky(fps)):
+            unify_type_expr(ck, a, stmt_at(a, fps, fi), tt.fp[pa + fi], tps, bnd, fn_sym)
+        unify_type_expr(ck, a, a.n[ft + 2], tt.xb[actual], tps, bnd, fn_sym)
+        return
+    if tag == 3:
+        inner_te: int = a.n[te + 1]
+        if tt.tag[actual] == 15:
+            unify_type_expr(ck, a, inner_te, tt.xa[actual], tps, bnd, fn_sym)
+        elif actual != 4:
+            unify_type_expr(ck, a, inner_te, actual, tps, bnd, fn_sym)
+        return
+    declared_q: int = type_expr_to_type(ck, a, te)
+    if not ty_assignable(tt, declared_q, actual):
+        mp(ck, "type mismatch for argument '")
+        mp_sym(ck, fn_sym)
+        mp(ck, "'")
+        raise mk_fail(ck, "TypeMismatch")
+
+def infer_lambda_ret(ck: Ck, a: Ast, fx: Fx, e: int, ptypes: list[int]) -> int:
+    lam: int = a.n[e + 1]
+    isc: int = sc_new(ck, fx.scope, True)
+    lps: int = sl_at(a, lam, 0)
+    for i in range(pky(lps)):
+        sc_declare(ck, isc, sym_of(ck, a, pk(a.l[pkx(lps) + i * 2], a.l[pkx(lps) + i * 2 + 1])), ptypes[i])
+    ifx: Fx = Fx(isc, 4, False)
+    return check_expr(ck, a, ifx, a.n[lam + 2])
+
+def check_lambda_args_against(ck: Ck, a: Ast, fx: Fx, sid: int, args: int) -> None:
+    np: int = ck.fpn[sid]
+    st: int = ck.fps[sid]
+    for i in range(pky(args)):
+        arg: int = stmt_at(a, args, i)
+        if a.n[arg] == 19 and i < np:
+            check_lambda(ck, a, fx, arg, ck.fpar[st + i])
+
+def lookup_generic_func(ck: Ck, a: Ast, gn: int) -> int:
+    sym: int = sym_of(ck, a, gn)
+    ge: int = m2_get(ck.gfn, 0, sym)
+    if ge >= 0:
+        return ck.gfn.vv[ge]
+    fe: int = m2_get(ck.fimp, 0, sym)
+    if fe >= 0:
+        ge2: int = m2_get(ck.gfn, 0, ck.fimp.vv[fe])
+        if ge2 >= 0:
+            return ck.gfn.vv[ge2]
+    qsym: int = qualified_generic_base(ck, a, gn)
+    if qsym >= 0:
+        ge3: int = m2_get(ck.gfn, 0, qsym)
+        if ge3 >= 0:
+            return ck.gfn.vv[ge3]
+    return -1
+
+def instantiate_generic_func(ck: Ck, a: Ast, fx: Fx, gfd: int, fn_sym: int, args: int, explicit: list[int], has_exp: bool) -> int:
+    na: int = pky(args)
+    for ki in range(na):
+        if a.n[stmt_at(a, args, ki)] == 17:
+            raise unsup(ck, "check_args_sig#kwarg")
+    ps: int = sl_at(a, gfd, 4)
+    np: int = pky(ps)
+    if na < np:
+        p0: int = stmt_at(a, ps, na)
+        mp(ck, "in the call to '")
+        mp_sym(ck, fn_sym)
+        mp(ck, "', argument '")
+        mp_sref(ck, a, pk(a.n[p0 + 0], a.n[p0 + 0 + 1]))
+        mp(ck, "' is missing")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    if na != np:
+        mp(ck, "'")
+        mp_sym(ck, fn_sym)
+        mp(ck, "' expects ")
+        mp_int(ck, np)
+        mp(ck, " arguments, ")
+        mp_int(ck, na)
+        mp(ck, " were given")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    tps: int = sl_at(a, gfd, 2)
+    ntp: int = pky(tps)
+    bnd: Map2 = Map2()
+    if has_exp:
+        for ei in range(ntp):
+            tpsym: int = sym_of(ck, a, pk(a.l[pkx(tps) + ei * 2], a.l[pkx(tps) + ei * 2 + 1]))
+            m2_put(bnd, 0, tpsym, explicit[ei])
+    for pi in range(np):
+        p: int = stmt_at(a, ps, pi)
+        pte: int = a.n[p + 6]
+        if a.n[pte] == 2:
+            continue
+        arg: int = stmt_at(a, args, pi)
+        at_: int = -1
+        is_emp: bool = (a.n[arg] == 11 and a.n[arg + 2] == 0) or (a.n[arg] == 12 and a.n[arg + 2] == 0)
+        if is_emp:
+            sv_c: int = len(ck.mb)
+            sv_l: int = ck.cur_line
+            sv_s: int = ck.cur_span
+            try:
+                at_ = type_expr_to_type(ck, a, pte)
+            except CkErr:
+                ck.mb = ck.mb[:sv_c]
+                ck.cur_line = sv_l
+                ck.cur_span = sv_s
+                at_ = -1
+        if at_ < 0 and has_exp:
+            sv_c2: int = len(ck.mb)
+            sv_l2: int = ck.cur_line
+            sv_s2: int = ck.cur_span
+            sub_pt: int = -1
+            try:
+                sub_te: int = subst_type_expr(ck, a, pte, bnd)
+                sub_pt = type_expr_to_type(ck, a, sub_te)
+            except CkErr:
+                ck.mb = ck.mb[:sv_c2]
+                ck.cur_line = sv_l2
+                ck.cur_span = sv_s2
+                sub_pt = -1
+            if sub_pt >= 0:
+                at_ = check_expr_expected(ck, a, fx, arg, sub_pt)
+        if at_ < 0:
+            at_ = check_expr(ck, a, fx, arg)
+        unify_type_expr(ck, a, pte, at_, tps, bnd, fn_sym)
+    for pi2 in range(np):
+        p2: int = stmt_at(a, ps, pi2)
+        pte2: int = a.n[p2 + 6]
+        if a.n[pte2] != 2:
+            continue
+        arg2: int = stmt_at(a, args, pi2)
+        act: int = -1
+        if a.n[arg2] == 19:
+            lam: int = a.n[arg2 + 1]
+            ft: int = a.n[pte2 + 1]
+            fps: int = sl_at(a, ft, 0)
+            lps: int = sl_at(a, lam, 0)
+            if pky(lps) != pky(fps):
+                mp(ck, "the lambda takes ")
+                mp_int(ck, pky(lps))
+                mp(ck, " parameters, '")
+                mp_sym(ck, fn_sym)
+                mp(ck, "' expects a function with ")
+                mp_int(ck, pky(fps))
+                mp(ck, " parameters")
+                raise mk_fail(ck, "ArgumentCountMismatch")
+            ptypes: list[int] = []
+            for li in range(pky(fps)):
+                lsv_c: int = len(ck.mb)
+                lsv_l: int = ck.cur_line
+                lsv_s: int = ck.cur_span
+                lsub: int = subst_type_expr(ck, a, stmt_at(a, fps, li), bnd)
+                lpt: int = -1
+                try:
+                    lpt = type_expr_to_type(ck, a, lsub)
+                except CkErr:
+                    ck.mb = ck.mb[:lsv_c]
+                    ck.cur_line = lsv_l
+                    ck.cur_span = lsv_s
+                    mp(ck, "in the call to '")
+                    mp_sym(ck, fn_sym)
+                    mp(ck, "', the lambda parameter type could not be inferred — first pass an argument that binds the type parameter (e.g. a list)")
+                    raise mk_fail(ck, "TypeMismatch")
+                ptypes.append(lpt)
+            lret: int = infer_lambda_ret(ck, a, fx, arg2, ptypes)
+            ty_func_begin(ck.tt)
+            for pti in range(len(ptypes)):
+                ty_func_param(ck.tt, ptypes[pti])
+            act = ty_func_end(ck.tt, lret)
+        else:
+            act = check_expr(ck, a, fx, arg2)
+        unify_type_expr(ck, a, pte2, act, tps, bnd, fn_sym)
+    bound: list[int] = []
+    for ti in range(ntp):
+        tpr: int = pk(a.l[pkx(tps) + ti * 2], a.l[pkx(tps) + ti * 2 + 1])
+        be: int = m2_get(bnd, 0, sym_of(ck, a, tpr))
+        if be < 0:
+            mp(ck, "for '")
+            mp_sym(ck, fn_sym)
+            mp(ck, "', the type parameter '")
+            mp_sref(ck, a, tpr)
+            mp(ck, "' could not be inferred (only inference from argument types is supported)")
+            raise mk_fail(ck, "TypeMismatch")
+        bound.append(bnd.vv[be])
+    mangled_sym: int = mangle_name_sym(ck, fn_sym, bound)
+    fe: int = m2_get(ck.fmap, 0, mangled_sym)
+    if fe >= 0:
+        csid: int = ck.fmap.vv[fe]
+        check_lambda_args_against(ck, a, fx, csid, args)
+        return ck.fret[csid]
+    pids: list[int] = []
+    for pi3 in range(np):
+        p3: int = stmt_at(a, ps, pi3)
+        pids.append(mk_Param(a, a.n[p3 + 0], a.n[p3 + 0 + 1], a.n[p3 + 2], a.n[p3 + 3], a.n[p3 + 4], a.n[p3 + 5], subst_type_expr(ck, a, a.n[p3 + 6], bnd), a.n[p3 + 7], a.n[p3 + 8]))
+    psl: int = list_put_slice(a, pids)
+    cret: int = subst_type_expr(ck, a, a.n[gfd + 6], bnd)
+    cbody: int = subst_stmts(ck, a, sl_at(a, gfd, 8), bnd)
+    msr: int = ast_str_sym(ck, a, mangled_sym)
+    conc: int = mk_FuncDef(a, pkx(msr), pky(msr), 0, 0, pkx(psl), pky(psl), cret, a.n[gfd + 7], pkx(cbody), pky(cbody), a.n[gfd + 10], 0, 0, -4611686018427387904, 0, 0, 0, a.n[gfd + 17], a.n[gfd + 17 + 1], a.n[gfd + 19], a.n[gfd + 20])
+    register_func(ck, a, conc)
+    check_function_body(ck, a, conc)
+    sid: int = ck.fmap.vv[m2_get(ck.fmap, 0, mangled_sym)]
+    check_lambda_args_against(ck, a, fx, sid, args)
+    return ck.fret[sid]
+
+def extract_generic_methods(ck: Ck, a: Ast, body: int) -> None:
+    for i in range(pky(body)):
+        st: int = stmt_at(a, body, i)
+        kn: int = a.n[st + 0]
+        if a.n[kn] != 8:
+            continue
+        cd: int = a.n[kn + 1]
+        if pky(sl_at(a, cd, 14)) > 0:
+            continue
+        ms: int = sl_at(a, cd, 16)
+        has_gm: bool = False
+        for j in range(pky(ms)):
+            m: int = stmt_at(a, ms, j)
+            if pky(sl_at(a, m, 2)) > 0:
+                has_gm = True
+                break
+        if not has_gm:
+            continue
+        ck.cur_line = a.n[st + 1]
+        ck.cur_span = a.n[st + 2]
+        csym: int = sym_of(ck, a, pk(a.n[cd + 0], a.n[cd + 0 + 1]))
+        for k in range(pky(ms)):
+            m2: int = stmt_at(a, ms, k)
+            tps: int = sl_at(a, m2, 2)
+            if pky(tps) == 0:
+                continue
+            mn: int = pk(a.n[m2 + 0], a.n[m2 + 0 + 1])
+            msym: int = sym_of(ck, a, mn)
+            if pky(sl_at(a, m2, 11)) > 0 or a.n[m2 + 10] != 0 or a.n[m2 + 19] != 0:
+                raise unsup(ck, "class#method_features")
+            mps: int = sl_at(a, m2, 4)
+            for pi in range(pky(mps)):
+                gp: int = stmt_at(a, mps, pi)
+                if a.n[gp + 8] >= 0 or a.n[gp + 2] != 0 or a.n[gp + 3] != 0 or a.n[gp + 4] != 0 or a.n[gp + 5] != 0:
+                    raise unsup(ck, "class#method_param_features")
+            if pky(tps) != 1:
+                mp(ck, "generic method '")
+                mp_sym(ck, csym)
+                mp(ck, ".")
+                mp_sref(ck, a, mn)
+                mp(ck, "' can take a single type parameter (v1: `obj.method[T](...)` with a single type argument)")
+                raise mk_fail(ck, "TypeMismatch")
+            if sref_len(mn) >= 2 and sref_byte(a, mn, 0) == 95 and sref_byte(a, mn, 1) == 95:
+                mp(ck, "special method '")
+                mp_sym(ck, csym)
+                mp(ck, ".")
+                mp_sref(ck, a, mn)
+                mp(ck, "' cannot be generic")
+                raise mk_fail(ck, "TypeMismatch")
+            if m2_get(ck.gmeth, csym, msym) >= 0:
+                mp(ck, "generic method '")
+                mp_sym(ck, csym)
+                mp(ck, ".")
+                mp_sref(ck, a, mn)
+                mp(ck, "' is already defined")
+                raise mk_fail(ck, "DuplicateDefinition")
+            m2_put(ck.gmeth, csym, msym, m2)
+            m2_put(ck.gm_names, 0, msym, 1)
+
+def try_resolve_generic_method_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
+    explicit: bool = a.n[callee] == 10
+    at_e: int = callee
+    if explicit:
+        ix: int = a.n[callee + 1]
+        if a.n[a.n[ix + 0]] != 9:
+            return -1
+        at_e = a.n[ix + 0]
+    elif a.n[callee] != 9:
+        return -1
+    at_: int = a.n[at_e + 1]
+    attr: int = pk(a.n[at_ + 1], a.n[at_ + 1 + 1])
+    asym: int = sym_of(ck, a, attr)
+    if m2_get(ck.gm_names, 0, asym) < 0:
+        return -1
+    obj: int = a.n[at_ + 0]
+    if a.n[obj] == 8:
+        oc: int = a.n[obj + 1]
+        ocal: int = a.n[oc + 0]
+        if a.n[ocal] == 5 and sref_eq(a, pk(a.n[ocal + 1], a.n[ocal + 2]), "super"):
+            return -1
+    recv_t: int = check_expr(ck, a, fx, obj)
+    if ck.tt.tag[recv_t] != 6:
+        return -1
+    cur: int = ck.tt.xa[recv_t]
+    def_sym: int = -1
+    gm: int = -1
+    while cur >= 0:
+        ge: int = m2_get(ck.gmeth, cur, asym)
+        if ge >= 0:
+            def_sym = cur
+            gm = ck.gmeth.vv[ge]
+            break
+        ci: int = class_idx(ck, cur)
+        if ci < 0:
+            break
+        cur = ck.cls_base[ci]
+    if def_sym < 0:
+        return -1
+    args: int = sl_at(a, c, 1)
+    na: int = pky(args)
+    for ki in range(na):
+        if a.n[stmt_at(a, args, ki)] == 17:
+            raise unsup(ck, "check_args_sig#kwarg")
+    ps: int = sl_at(a, gm, 4)
+    if pky(ps) != na + 1:
+        mp(ck, "'")
+        mp_sym(ck, def_sym)
+        mp(ck, ".")
+        mp_sym(ck, asym)
+        mp(ck, "' expects ")
+        mp_int(ck, pky(ps) - 1)
+        mp(ck, " arguments, ")
+        mp_int(ck, na)
+        mp(ck, " were given")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    tps: int = sl_at(a, gm, 2)
+    tpr: int = pk(a.l[pkx(tps)], a.l[pkx(tps) + 1])
+    tpsym: int = sym_of(ck, a, tpr)
+    bnd: Map2 = Map2()
+    if explicit:
+        ix2: int = a.n[callee + 1]
+        te: int = index_expr_to_type_expr(ck, a, a.n[ix2 + 1])
+        if te < 0:
+            mp(ck, "the type argument of '")
+            mp_sym(ck, def_sym)
+            mp(ck, ".")
+            mp_sym(ck, asym)
+            mp(ck, "' could not be resolved (only a type name or a single-argument generic type)")
+            raise mk_fail(ck, "TypeMismatch")
+        m2_put(bnd, 0, tpsym, type_expr_to_type(ck, a, te))
+    else:
+        for pi in range(na):
+            p: int = stmt_at(a, ps, pi + 1)
+            pte: int = a.n[p + 6]
+            arg: int = stmt_at(a, args, pi)
+            at_t: int = -1
+            is_emp: bool = (a.n[arg] == 11 and a.n[arg + 2] == 0) or (a.n[arg] == 12 and a.n[arg + 2] == 0)
+            if is_emp:
+                sv_c: int = len(ck.mb)
+                sv_l: int = ck.cur_line
+                sv_s: int = ck.cur_span
+                try:
+                    at_t = type_expr_to_type(ck, a, pte)
+                except CkErr:
+                    ck.mb = ck.mb[:sv_c]
+                    ck.cur_line = sv_l
+                    ck.cur_span = sv_s
+                    at_t = -1
+            if at_t < 0:
+                at_t = check_expr(ck, a, fx, arg)
+            unify_type_expr(ck, a, pte, at_t, tps, bnd, asym)
+    be: int = m2_get(bnd, 0, tpsym)
+    if be < 0:
+        mp(ck, "for '")
+        mp_sym(ck, def_sym)
+        mp(ck, ".")
+        mp_sym(ck, asym)
+        mp(ck, "', the type parameter '")
+        mp_sref(ck, a, tpr)
+        mp(ck, "' could not be inferred (write `obj.")
+        mp_sym(ck, asym)
+        mp(ck, "[Type](...)` explicitly)")
+        raise mk_fail(ck, "TypeMismatch")
+    bound: int = bnd.vv[be]
+    mangled_m: int = mangle_name_sym(ck, asym, [bound])
+    def_ci: int = class_idx(ck, def_sym)
+    me: int = m2_get(ck.cls_meths, def_ci, mangled_m)
+    sid: int = -1
+    if me >= 0:
+        sid = ck.cls_meths.vv[me]
+    else:
+        pids: list[int] = []
+        for pi2 in range(pky(ps)):
+            p2: int = stmt_at(a, ps, pi2)
+            pids.append(mk_Param(a, a.n[p2 + 0], a.n[p2 + 0 + 1], a.n[p2 + 2], a.n[p2 + 3], a.n[p2 + 4], a.n[p2 + 5], subst_type_expr(ck, a, a.n[p2 + 6], bnd), a.n[p2 + 7], a.n[p2 + 8]))
+        psl: int = list_put_slice(a, pids)
+        cret: int = subst_type_expr(ck, a, a.n[gm + 6], bnd)
+        cbody: int = subst_stmts(ck, a, sl_at(a, gm, 8), bnd)
+        msr: int = ast_str_sym(ck, a, mangled_m)
+        conc: int = mk_FuncDef(a, pkx(msr), pky(msr), 0, 0, pkx(psl), pky(psl), cret, a.n[gm + 7], pkx(cbody), pky(cbody), a.n[gm + 10], 0, 0, -4611686018427387904, 0, 0, 0, a.n[gm + 17], a.n[gm + 17 + 1], a.n[gm + 19], a.n[gm + 20])
+        stys: list[int] = []
+        snms: list[int] = []
+        for pi3 in range(pky(psl) - 1):
+            sp_n: int = stmt_at(a, psl, pi3 + 1)
+            stys.append(type_expr_to_type(ck, a, a.n[sp_n + 6]))
+            snms.append(sym_of(ck, a, pk(a.n[sp_n + 0], a.n[sp_n + 0 + 1])))
+        sret: int = type_expr_to_type(ck, a, cret)
+        sid = new_sig(ck, stys, snms, sret)
+        for sci in range(len(ck.cls_sym)):
+            if is_subclass(ck.tt, ck.cls_sym[sci], def_sym):
+                m2_put(ck.cls_meths, sci, mangled_m, sid)
+        sv_cl: int = ck.cur_line
+        sv_cs: int = ck.cur_span
+        try:
+            check_method_body(ck, a, def_ci, conc, False)
+        finally:
+            ck.cur_line = sv_cl
+            ck.cur_span = sv_cs
+    check_args_sig(ck, a, fx, c, sid, mangled_m)
+    return ck.fret[sid]
 
 # `resolveGenericBases`: `class Sub(Base[int]):` -> somut `Base__int` tabanı (`defer_cls_body = True` ile gövde sonra denetlenir).
 def resolve_generic_bases(ck: Ck, a: Ast, body: int) -> None:
@@ -3401,6 +4053,8 @@ def register_class_sigs(ck: Ck, a: Ast, idx: int) -> None:
     ms: int = sl_at(a, cd, 16)
     for i in range(pky(ms)):
         m: int = stmt_at(a, ms, i)
+        if pky(sl_at(a, m, 2)) > 0:
+            continue
         mn: int = pk(a.n[m + 0], a.n[m + 0 + 1])
         if sref_eq(a, mn, "release") or sref_eq(a, mn, "trace") or sref_eq(a, mn, "gc_free"):
             mp(ck, "class '")
@@ -3460,12 +4114,11 @@ def register_class_sigs(ck: Ck, a: Ast, idx: int) -> None:
             cls_set_nonarc(ck.tt, csym, 1)
     for k in range(pky(ms)):
         m2: int = stmt_at(a, ms, k)
+        if pky(sl_at(a, m2, 2)) > 0:
+            continue
         mname: int = pk(a.n[m2 + 0], a.n[m2 + 0 + 1])
         if pky(sl_at(a, m2, 11)) > 0 or a.n[m2 + 10] != 0 or a.n[m2 + 19] != 0:
             raise unsup(ck, "class#method_features")
-        if pky(sl_at(a, m2, 2)) > 0:
-            # `extractGenericMethods` ön geçişi jenerik metodları sınıftan çıkarır (kendi tanıları var): kapsam dışı
-            raise unsup(ck, "class#generic_method")
         ps: int = sl_at(a, m2, 4)
         p0n: int = 0
         if pky(ps) > 0:
@@ -3550,7 +4203,7 @@ def check_class(ck: Ck, a: Ast, idx: int) -> None:
     before: int = len(ck.dcode)
     for i in range(pky(ms)):
         m: int = stmt_at(a, ms, i)
-        if sref_eq(a, pk(a.n[m + 0], a.n[m + 0 + 1]), "__init__"):
+        if pky(sl_at(a, m, 2)) == 0 and sref_eq(a, pk(a.n[m + 0], a.n[m + 0 + 1]), "__init__"):
             check_method_guarded(ck, a, idx, m, True)
     if len(ck.dcode) == before:
         nun: int = 0
@@ -3572,7 +4225,7 @@ def check_class(ck: Ck, a: Ast, idx: int) -> None:
             record_diag(ck, a)
     for j in range(pky(ms)):
         m2: int = stmt_at(a, ms, j)
-        if not sref_eq(a, pk(a.n[m2 + 0], a.n[m2 + 0 + 1]), "__init__"):
+        if pky(sl_at(a, m2, 2)) == 0 and not sref_eq(a, pk(a.n[m2 + 0], a.n[m2 + 0 + 1]), "__init__"):
             check_method_guarded(ck, a, idx, m2, False)
 
 def check_method_guarded(ck: Ck, a: Ast, idx: int, m: int, is_init: bool) -> None:
@@ -4449,7 +5102,7 @@ def register_extern(ck: Ck, a: Ast, ed: int) -> None:
             mp(ck, "' cannot have a default value")
             raise mk_fail(ck, "TypeMismatch")
     sym: int = sym_of(ck, a, nm)
-    if m2_get(ck.fmap, 0, sym) >= 0:
+    if m2_get(ck.fmap, 0, sym) >= 0 or m2_get(ck.gfn, 0, sym) >= 0:
         mp(ck, "function already defined: ")
         mp_sref(ck, a, nm)
         raise mk_fail(ck, "DuplicateDefinition")
@@ -4507,16 +5160,21 @@ def register_func(ck: Ck, a: Ast, fd: int) -> None:
         p: int = stmt_at(a, ps, i)
         if a.n[p + 8] >= 0 or a.n[p + 2] != 0 or a.n[p + 3] != 0 or a.n[p + 4] != 0 or a.n[p + 5] != 0:
             raise unsup(ck, "register_func#1")
-    if pky(sl_at(a, fd, 2)) > 0 or pky(sl_at(a, fd, 11)) > 0 or pky(sl_at(a, fd, 15)) > 0:
+    if pky(sl_at(a, fd, 11)) > 0 or pky(sl_at(a, fd, 15)) > 0:
         raise unsup(ck, "register_func#2")
     if sref_eq(a, nm, "main"):
         mp(ck, "'main' is a reserved name: Nox has no 'def main()' convention, top-level statements are already the program's entry point — define this function under another name")
         raise mk_fail(ck, "DuplicateDefinition")
     sym: int = sym_of(ck, a, nm)
-    if m2_get(ck.fmap, 0, sym) >= 0:
+    if m2_get(ck.fmap, 0, sym) >= 0 or m2_get(ck.gfn, 0, sym) >= 0:
         mp(ck, "function already defined: ")
         mp_sym(ck, sym)
         raise mk_fail(ck, "DuplicateDefinition")
+    if pky(sl_at(a, fd, 2)) > 0:
+        if a.n[fd + 10] != 0:
+            raise unsup(ck, "register_func#2")
+        m2_put(ck.gfn, 0, sym, fd)
+        return
     tys: list[int] = []
     pnames: list[int] = []
     for k in range(pky(ps)):
@@ -4746,6 +5404,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
         collect_imports(ck, a, body)
         check_base_cycles(ck, a, body)
         collect_class_names(ck, a, body)
+        extract_generic_methods(ck, a, body)
         resolve_reexport(ck, a, body)
         resolve_generic_bases(ck, a, body)
         # registerSignatures
@@ -4780,7 +5439,9 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
         kn3: int = a.n[st3 + 0]
         try:
             if a.n[kn3] == 7:
-                check_function_body(ck, a, a.n[kn3 + 1])
+                fdsym_b: int = sym_of(ck, a, pk(a.n[a.n[kn3 + 1] + 0], a.n[a.n[kn3 + 1] + 0 + 1]))
+                if m2_get(ck.gfn, 0, fdsym_b) < 0:
+                    check_function_body(ck, a, a.n[kn3 + 1])
             elif a.n[kn3] == 10 or a.n[kn3] == 15 or a.n[kn3] == 16:
                 pass
             elif a.n[kn3] == 8:

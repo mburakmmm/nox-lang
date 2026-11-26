@@ -1,0 +1,15 @@
+class Box[T]:
+    v: T
+    def __init__(self, v: T) -> None:
+        self.v = v
+    def map[U](self, y: U) -> tuple[T, U]:
+        return (self.v, y)
+    def wrap[U](self, y: U) -> list[U]:
+        return [y]
+    def again[U](self, y: U) -> list[U]:
+        return self.wrap[U](y)
+
+b: Box[int] = Box[int](10)
+p: tuple[int, str] = b.map("hi")
+q: tuple[int, bool] = b.map[bool](True)
+w: list[str] = b.again("ok")

@@ -11,6 +11,14 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.99]
+
+Selfhost tip denetleyicisi Aşama 3.6 dilim C — **jenerik işlevler ve jenerik metodlar** (spec §3.532):
+
+- **Jenerik işlevler (`selfhost/typecheck.nox.in`):** `def f[T](...):` kaydı (`Ck.gfn`), `check_identifier` değer kullanımı reddi, açık `f[T](...)` ve `mod.f[T](...)` (`check_generic_construct`, `try_qual_generic_call`), örtük tip çıkarımı (`unify_type_expr` + `instantiate_generic_func`: temel, `list`/`dict`/`ptr`, jenerik sınıf, `func_type`, `optional` dalları), lambda parametre/dönüş çıkarımı ve önbellek isabeti doğrulaması (`infer_lambda_ret`, `check_lambda_args_against`), boş `[]`/`{}` ve açık tip beklenen-tip yayılımı.
+- **Jenerik metodlar:** `extract_generic_methods`, jenerik sınıf içinde jenerik metot desteği (`instantiate_generic_class` `def_gms`), `try_resolve_generic_method_call` (kalıtım zinciri, `obj.m(...)` / `obj.m[T](...)`, `super()` kapısı, alt sınıf `cls_meths` kaydı), ve `subst_expr` içinde `self.m[T](...)` için `subst_type_arg_expr`/`te_to_index_expr`.
+- **Test & mutasyon altyapısı:** `scripts/ck_gen.py --generic-fn` (3000 dosya `unsupported=0`), `tests/fixtures/ck_edge/generic_fn/*.nox` (40 dosya `unsupported=0 accepted=8 rejected=32 diagnostics=35`), `scripts/ck_mutants_generic_fn.py` (45/45 yakalandı, 0 yaşayan), `scripts/ck_mutate.py` `.zig-cache/o` budama (`prune_zig_cache`). `scripts/ck_regress.sh` 16 kip + depo (`files=1580 unsupported=422 accepted=453 rejected=705 diagnostics=1705 skipped_parse=56`; `register_func#2` 29 → 13, `class#generic_method` 5 → 0) yeşil.
+
 ## [2.2.98]
 
 Nightly CI + frontend/harness sağlamlaştırmaları (**kullanıcı onayıyla** tip denetleyicisi kapsamı dışında `scripts/frontend_diff.py` + `compiler/parser/parser.zig` + `selfhost/parser.nox.in` dosyalarına da müdahale edildi; ayrıntı `project/selfhost-typecheck-devir-notu-2026-11-26.md` §8 ve spec §3.531):

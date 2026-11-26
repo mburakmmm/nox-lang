@@ -1,0 +1,46 @@
+def head_or[T](xs: list[T], alt: T) -> T:
+    if len(xs) > 0:
+        return xs[0]
+    return alt
+
+def get_dict[K, V](d: dict[K, V], k: K) -> V:
+    return d[k]
+
+def read_p[T](p: ptr[T]) -> T:
+    lowlevel:
+        return ptr_read[T](p)
+
+def opt_u[T](x: T | None, alt: T) -> T:
+    return alt
+
+def wrap_i(x: int) -> int:
+    return x + 1
+
+def apply_fn[T, U](x: T, fn: (T) -> U) -> U:
+    return fn(x)
+
+class Item:
+    k: int
+    def __init__(self, k: int) -> None:
+        self.k = k
+
+class Box[T]:
+    v: T
+    def __init__(self, v: T) -> None:
+        self.v = v
+
+def unbox[T](b: Box[T]) -> T:
+    return b.v
+
+a: int = head_or([1, 2], 0)
+b: int = get_dict({"a": 3}, "a")
+c: int = opt_u(None, 5)
+d: int = opt_u(6, 5)
+o: int | None = 7
+e: int = opt_u(o, 5)
+f: int = apply_fn(9, wrap_i)
+g: int = unbox(Box[int](11))
+lowlevel:
+    x0: int = 12
+    px: ptr[int] = ptr_of(x0)
+    h: int = read_p(px)

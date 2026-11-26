@@ -10,6 +10,8 @@ Bitişte kaynak geri yüklenir ve nightly YENİDEN derlenir (bayat mutant ikilis
 import builtins
 import functools
 import json
+import os
+import shutil
 import subprocess
 import sys
 
@@ -27,6 +29,22 @@ def sh(cmd, **kw):
 def build():
     r = sh("python3 scripts/gen_selfhost_parser.py && zig build nightly")
     return r.returncode == 0, (r.stdout + r.stderr)[-600:]
+
+
+def prune_zig_cache(base_o):
+    o_dir = ".zig-cache/o"
+    if not os.path.isdir(o_dir):
+        return
+    for name in os.listdir(o_dir):
+        if name not in base_o:
+            p = os.path.join(o_dir, name)
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
 
 
 def corpus_files(dirs, repo):
@@ -60,7 +78,6 @@ def main():
         names = set(only[0].split(","))
         mutants = [m for m in mutants if m["ad"] in names]
     files = corpus_files(args[1:], repo)
-    import os
     if os.path.exists(BACKUP):
         print("önceki yarım kalmış koşunun yedeği geri yükleniyor")
         open(SRC, "w", encoding="utf-8").write(open(BACKUP, encoding="utf-8").read())
@@ -72,6 +89,7 @@ def main():
     if not base_ok:
         print("taban çizgisi Zig ile eşit değil, mutasyon testi anlamsız:", base_sig[:200])
         sys.exit(2)
+    base_o = set(os.listdir(".zig-cache/o")) if os.path.isdir(".zig-cache/o") else set()
     try:
         for m in mutants:
             n = orig.count(m["eski"])
@@ -84,8 +102,10 @@ def main():
             if not ok:
                 print(f"[{m['ad']}] derlenemedi (mutant geçersiz sayıldı): {tail[-200:]}")
                 survived.append(m["ad"] + " (derlenmedi)")
+                prune_zig_cache(base_o)
                 continue
             same, first = run_diff(files)
+            prune_zig_cache(base_o)
             if same and first == base_sig:
                 print(f"[{m['ad']}] YAŞADI (yakalanmadı)")
                 survived.append(m["ad"])
@@ -97,6 +117,7 @@ def main():
         if os.path.exists(BACKUP):
             os.remove(BACKUP)
         ok, tail = build()
+        prune_zig_cache(base_o)
         print("kaynak geri yüklendi; nightly yeniden derlendi:", "tamam" if ok else "HATA " + tail)
     print(f"özet: yakalanan={len(caught)} yaşayan={len(survived)}")
     for s in survived:

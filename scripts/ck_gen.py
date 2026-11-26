@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False):
         self.rnd = rnd
+        self.use_generic_fn = use_generic_fn
         self.use_generic_cls = use_generic_cls
         self.use_tuple = use_tuple
         self.use_closure = use_closure
@@ -1160,8 +1161,142 @@ class Gen:
         if in_fn and r.random() < 0.5:
             self.lines.append("main_g()")
 
+    def gen_generic_fn(self):
+        """3.6 dilim C: jenerik işlevler (`def f[T]`, `unify_type_expr`, açık `f[int](...)`, lambda çıkarımı, `from`/`mod.f`) ve jenerik metodlar (`class C: def m[T](self, ...)` + `class Box[T]: def map[U]`)."""
+        r = self.rnd
+        clean = r.random() < 0.45
+        imp_kind = r.choice(["none", "imp", "alias", "from"])
+        if imp_kind == "imp":
+            self.lines += ["import lib", "def lib_gid[T](x: T) -> T:", "    return x", ""]
+        elif imp_kind == "alias":
+            self.lines += ["import lib as lb", "def lib_gid[T](x: T) -> T:", "    return x", ""]
+        elif imp_kind == "from":
+            self.lines += ["from lib import gid as lgid", "def lib_gid[T](x: T) -> T:", "    return x", ""]
+
+        has_cls = r.random() < 0.5
+        has_gcls = r.random() < 0.45
+        self.lines += [
+            "def gid[T](x: T) -> T:",
+            "    return x",
+            "",
+            "def same[T](a: T, b: T) -> T:",
+            "    return a",
+            "",
+            "def gpair[A, B](a: A, b: B) -> tuple[A, B]:",
+            "    return (a, b)",
+            "",
+            "def first_or_none[T](xs: list[T]) -> T | None:",
+            "    if len(xs) > 0:",
+            "        return xs[0]",
+            "    return None",
+            "",
+            "def apply_one[T, U](x: T, fn: (T) -> U) -> U:",
+            "    return fn(x)",
+            "",
+            "def opt_val[T](x: T | None, alt: T) -> T:",
+            "    return alt",
+            "",
+        ]
+        if has_cls:
+            self.lines += [
+                "class Util:",
+                "    tag: int",
+                "    def __init__(self, tag: int) -> None:",
+                "        self.tag = tag",
+                "    def wrap[T](self, x: T) -> list[T]:",
+                "        return [x]",
+                "    def again[T](self, x: T) -> list[T]:",
+                "        return self.wrap[T](x)",
+                "",
+                "class SubUtil(Util):",
+                "    pass",
+                "",
+            ]
+        if has_gcls:
+            self.lines += [
+                "class Box[T]:",
+                "    v: T",
+                "    def __init__(self, v: T) -> None:",
+                "        self.v = v",
+                "    def map[U](self, y: U) -> tuple[T, U]:",
+                "        return (self.v, y)",
+                "",
+                "def unbox[T](b: Box[T]) -> T:",
+                "    return b.v",
+                "",
+            ]
+
+        if not clean and r.random() < 0.4:
+            bad_defs = [
+                ["def dupf[T](x: T) -> T:", "    return x", "def dupf(x: int) -> int:", "    return x"],
+                ["extern def extf(x: int) -> int from \"libc\"", "def extf[T](x: T) -> T:", "    return x"],
+                ["def mk[T]() -> list[T]:", "    return []", "bad_mk: list[int] = mk()"],
+                ["def inc_bad[T](x: T) -> T:", "    return x + 1", "bi: str = inc_bad(\"hi\")"],
+                ["class BGM2:", "    def m[A, B](self, x: A) -> A:", "        return x"],
+                ["class BGMD:", "    def __add__[T](self, x: T) -> T:", "        return x"],
+                ["class BGMDup:", "    def m[T](self, x: T) -> T:", "        return x", "    def m[U](self, x: U) -> U:", "        return x"],
+            ]
+            self.lines += r.choice(bad_defs) + [""]
+
+        good = [
+            "g0: int = gid(42)",
+            "g1: str = gid[str](\"ok\")",
+            "g2: int = same(1, gid(2))",
+            "g3: tuple[str, int] = gpair(\"k\", 9)",
+            "g4: int | None = first_or_none([1, 2])",
+            "g5: list[str] = first_or_none[list[str]]([]) or []" if False else "g5: int | None = first_or_none[int]([])",
+            "g6: int = apply_one(3, lambda v: v + 1)",
+            "g7: int = apply_one[int, int](4, lambda v: v * 2)",
+            "g8: int = opt_val(None, 5)",
+            "g9: int = opt_val(10, 5)",
+        ]
+        if has_cls:
+            good.append("u0: Util = Util(1)\nui0: list[int] = u0.wrap(5)\nui1: list[str] = u0.again[str](\"a\")")
+            good.append("su0: SubUtil = SubUtil(2)\nsui: list[int] = su0.wrap[int](9)")
+        if has_gcls:
+            good.append("bx0: Box[int] = Box[int](7)\nub0: int = unbox(bx0)\nmp0: tuple[int, str] = bx0.map(\"z\")")
+        if imp_kind == "imp":
+            good.append("ql0: int = lib.gid(5)\nql1: str = lib.gid[str](\"q\")")
+        elif imp_kind == "alias":
+            good.append("qa0: int = lb.gid(6)\nqa1: str = lb.gid[str](\"q\")")
+        elif imp_kind == "from":
+            good.append("qf0: int = lgid(7)\nqf1: str = lgid[str](\"q\")")
+
+        bad = [
+            "e0: int = same(1, \"s\")",
+            "e1: int = gid()",
+            "e2: int = gid(1, 2)",
+            "e3: int = gid[int, str](1)",
+            "e4: int = gid[int]()",
+            "e5: int = gid[str](1)",
+            "fnv = gid",
+            "e6: int = apply_one(1, lambda a, b: a)",
+            "e7: int = first_or_none([])",
+            "e8: str = opt_val(1, \"a\")",
+        ]
+        if has_cls:
+            bad.append("ub0: Util = Util(1)\ne9: list[int] = ub0.wrap()")
+            bad.append("ub1: Util = Util(1)\ne10: list[int] = ub1.wrap[1 + 2](1)")
+        if has_gcls:
+            bad.append("eb0: Box[int] = Box[int](1)\ne11: str = unbox(eb0)")
+
+        in_fn = r.random() < 0.7
+        ind = "    " if in_fn else ""
+        if in_fn:
+            self.lines.append("def main_gf() -> None:")
+        k = r.randint(2, 4)
+        picks = r.sample(good, k=min(k, len(good))) if clean else [r.choice(good) if r.random() < 0.55 else r.choice(bad) for _ in range(k)]
+        for pick in picks:
+            for ln in pick.split("\n"):
+                self.lines.append(ind + ln)
+        if in_fn and r.random() < 0.5:
+            self.lines.append("main_gf()")
+
     def program(self):
         r = self.rnd
+        if self.use_generic_fn:
+            self.gen_generic_fn()
+            return "\n".join(self.lines) + "\n"
         if self.use_generic_cls:
             self.gen_generic_cls()
             return "\n".join(self.lines) + "\n"
@@ -1245,11 +1380,12 @@ def main():
     ap.add_argument("--closure", dest="use_closure", action="store_true")
     ap.add_argument("--tuple", dest="use_tuple", action="store_true")
     ap.add_argument("--generic-cls", dest="use_generic_cls", action="store_true")
+    ap.add_argument("--generic-fn", dest="use_generic_fn", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 
