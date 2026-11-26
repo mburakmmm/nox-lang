@@ -1,11 +1,10 @@
-# Host ABI (`nox_host.h`) — experimental
+# Host ABI (`nox_host.h`) — v3 release candidate (frozen, append-only)
 
 The Host ABI lets a **C or Python host** call Nox code: it is the reverse direction of [NNI](nni.md) (where Nox calls native plugins). A Nox library marked with
 `@export` is compiled with `--host-abi`; the host then talks to it through a small, versioned C header, `include/nox_host.h`.
 
-> **Experimental (ABI v2 → v3, being frozen).** v2 only *adds* the value-tree API and v3 (UR-009 … UR-014) only *adds* classes, callbacks, tasks, buffers and capabilities; hosts built against v1/v2 (`abi_version = 1` or `2`) keep working. `abi_version`/`struct_size` carry versioning, but the interface may change incompatibly until it has been validated by real hosts
-> (for example NoxPy). It is **not** covered by the NNI binary-compatibility promise. Native code called this way runs with full native authority — the host is
-> outside Nox's type and ownership guarantees ([trust boundary](../language/ffi.md)).
+> **Frozen as v3-rc (append-only).** Struct layouts, status/value/dtype/capability numbers and function signatures are fixed and checked by a C11 `_Static_assert` gate (`tests/compat/host_abi/abi_layout.c`). Hosts built against v1 (`abi_version = 1`) or v2 keep working;
+> v3 only *adds*. The ABI becomes **v3-stable** after NoxPy phases 3–6 have validated it end to end (see [Stability](stability.md)). Native code called this way runs with full native authority — the host is outside Nox's type and ownership guarantees ([trust boundary](../language/ffi.md)).
 
 ## Building
 
@@ -175,6 +174,23 @@ Any number of read-only pins may coexist; at most one exclusive writable pin (ot
 `resize` on a pinned buffer raises a recoverable `RuntimeError` (it never relocates memory under the host). Other classes give `NOX_HOST_ERR_INVAL`. `NoxHostBufferView` is 176 bytes (`shape` at 40, `strides` at 104, `pin_id` at 168).
 Contract for Nox code: do not grow the list returned by `as_list()` while the buffer may be pinned.
 
+## Capabilities, allocator, traps and isolation (ABI v3, UR-013 / UR-015)
+
+- **Probing.** `uint64_t nox_host_capabilities(void)` returns the `NOX_HOST_CAP_*` bits this runtime supports (`VALUE_TREE`, `CLASSES`, `CALLBACKS`, `ASYNC_TASKS` (not on wasm/freestanding), `PINNED_BUFFERS`, `TYPED_ARRAYS`, `CUSTOM_ALLOCATOR`, `SUBINTERPRETERS`, `RECOVERABLE_TRAPS`).
+- **Allocator.** `NoxHostContextConfig.allocator` may point to a `NoxHostAllocator` (the layout of `nox_embed.h`; the two headers share one definition). Nox's managed heap (lists, dicts, ARC objects, the runtime state) is then served by it and handed back in full when the
+  context is destroyed. It requires `abi_version >= 3` (`NOX_HOST_ERR_INVAL` otherwise; `NOX_HOST_ERR_VERSION` for a too-small struct) and must be thread-safe and outlive the context. Host-side tables (value trees, handle tables) keep using the system allocator.
+- **Recoverable integer overflow (UR-015).** Under `--host-abi`, plain `int` `+ - *` and every fixed-width integer trap are *checked* and do **not** terminate the process: the export returns `NOX_HOST_ERR_OVERFLOW` (11) with a `NoxHostError` (`OverflowError`,
+  `integer overflow in type '…'`), the context stays healthy (`add(20, 22) == 42` afterwards) and other contexts are untouched. The trap is not catchable with `except` inside Nox (it carries no Nox class) but `finally` blocks run. Outside `--host-abi`, plain `int` still wraps and
+  fixed-width overflow still stops the program. Overflow in module top-level code (`nox_host_module_init_*` globals) still stops the process.
+- **Out of memory — known limit.** Allocation failure *inside the runtime* still ends the process (`nox_out_of_memory`): Nox has no unwind tables, so a safe recoverable OOM needs a guarded-stack barrier that is not part of this ABI yet. Failures in the host-side tables (value trees, tasks,
+  handles) already return `NOX_HOST_ERR_NOMEM`.
+- **Context isolation (subinterpreters).** A `NoxHostContext` shares no mutable runtime state with another: the module-level declarations reachable from the core host path are write-once function-pointer registries filled with the same values by every context of one extension
+  (`dispatch_registry`, `diag_sink`), the immutable pinned empty string, and per-OS-thread scheduler slots (a task worker owns its own). `runtime/host.zig` declares no module-level `var` (checked by `scripts/check_host_isolation.py` and `scripts/check_global_state.py`).
+  Standard-library modules that keep process-wide caches (`nox.http`/`nox.tls` pools and CA store, `nox.sqlite`/`nox.postgres` library loaders, `nox.terminal`, `nox.signal`) are **not** isolation-safe and should not be used in an extension that may be loaded into several subinterpreters.
+  `tests/compat/host_abi/traps_host.c` runs independent contexts concurrently on several threads.
+- **Windows.** `noxc build --backend llvm --emit-obj|--emit-shared-lib --host-abi --target windows-x64` produces a COFF object / `.dll` + import `.lib`; the DLL exports **exactly** the `nox_host_*` symbols (an explicit `.def` list built from the COFF symbol tables, instead of mingw's export-everything default).
+  Checked on a cross-build (the export table is verified by the test-suite); loading into a CPython `.pyd` on a real Windows machine is still to be validated by NoxPy.
+
 ## Lifecycle
 
 1. `nox_host_context_create` — a context owns one isolated Nox runtime.
@@ -200,6 +216,6 @@ Types are spelled canonically as written in Nox source: `tuple[int, str]`, `list
 
 ## Known limits
 
-- Out-of-memory and fixed-width integer overflow traps terminate the process; they cannot be turned into a recoverable error (Nox has no unwind tables).
-- Generics and host-provided allocators are not supported yet (v3 work in progress: UR-012, UR-013). Async tasks: see above for the cooperative-cancel and single-lock limits.
+- Out-of-memory inside the runtime terminates the process (Nox has no unwind tables); integer overflow is recoverable (`NOX_HOST_ERR_OVERFLOW`).
+- Generic exports are not supported. Async tasks: see above for the cooperative-cancel and single-lock limits. Out-of-memory inside the runtime is not recoverable (see above).
 - The static archive form cannot hide the runtime's symbols.

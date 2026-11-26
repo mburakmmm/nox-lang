@@ -33,12 +33,15 @@ typedef struct NoxEmbedSlot {
    free: aynı len/alignment ile bırakır. Çağrılar farklı iş parçacıklarından gelebilir; ayırıcı iş parçacığı-güvenli olmalı ve
    nox_app_destroy dönene kadar yaşamalıdır. Nox yönetilen heap'i (liste/sözlük/ARC/RuntimeState) buradan ayırır; nox.thread
    çocukları ve havuz iş parçacıkları sistem ayırıcısını kullanmaya devam eder. */
+#ifndef NOX_HOST_ALLOCATOR_DEFINED /* nox_host.h aynı tanımı paylaşır (iki başlık birlikte eklenebilir) */
+#define NOX_HOST_ALLOCATOR_DEFINED
 typedef struct NoxHostAllocator {
     uint32_t size; /* sizeof(NoxHostAllocator) */
     void *ctx;
     void *(*alloc)(void *ctx, size_t len, size_t alignment);
     void (*free)(void *ctx, void *ptr, size_t len, size_t alignment);
 } NoxHostAllocator;
+#endif
 
 /* size alanı düzeni ayırır; ABI numarası 1 kalır. Eski host sizeof(NoxHostConfigV1) verir ve sistem ayırıcısı kullanılır;
    yeni host sizeof(NoxHostConfig) verir ve allocator alanını (NULL olabilir) doldurur. */

@@ -320,3 +320,20 @@ test "expand --json (UR-011) reports is_async for functions and methods" {
     }
     try std.testing.expect(saw_async_fn and saw_sync_fn and saw_async_method);
 }
+
+test "expand --json (UR-014) reports a b\"...\" default as hex" {
+    if (builtin.os.tag == .windows) return;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const r = try run(gpa, io, &.{ "zig-out/bin/noxc", "expand", "--json", "--module", "bd", "tests/compat/host_abi/bytes_default.nox" });
+    defer gpa.free(r.stdout);
+    defer gpa.free(r.stderr);
+    try std.testing.expectEqual(@as(u8, 0), exitCode(r));
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, r.stdout, .{});
+    defer parsed.deinit();
+    const f = parsed.value.object.get("exports").?.array.items[0].object;
+    const p0 = f.get("params").?.array.items[0].object;
+    try std.testing.expectEqualStrings("bytes", p0.get("type").?.string);
+    try std.testing.expect(p0.get("has_default").?.bool);
+    try std.testing.expectEqualStrings("00016162", p0.get("default").?.object.get("hex").?.string);
+}

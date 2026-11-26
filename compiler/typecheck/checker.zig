@@ -2676,6 +2676,7 @@ pub const Checker = struct {
                 .float_lit => .float,
                 .bool_lit => .boolean,
                 .string_lit => .str,
+                .bytes_lit => .bytes, // UR-014: `b"..."` sabit bayt dizisi varsayılan değer olabilir (expand --json `default` alanı `hex` olarak yazar)
                 .none_lit => .none,
                 .unary => |u| if (u.op == .neg and u.operand.* == .int_lit) Type.int else if (u.op == .neg and u.operand.* == .float_lit) Type.float else return self.fail(error.TypeMismatch, "function '{s}', parameter '{s}': the default value can only be a constant literal", .{ fname, p.name }),
                 else => return self.fail(error.TypeMismatch, "function '{s}', parameter '{s}': the default value can only be a constant literal (int/float/bool/str/None, a negative number)", .{ fname, p.name }),

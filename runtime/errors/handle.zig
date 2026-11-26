@@ -23,6 +23,7 @@ const wasm_host = @import("../wasm_host.zig");
 const builtin = @import("builtin");
 const abi_ptr = @import("../abi_ptr.zig");
 const asap = @import("../alloc/asap.zig");
+const arc = @import("../alloc/arc.zig");
 const abi_layout = @import("abi_layout");
 const bridge = @import("../async_rt/bridge.zig");
 const dispatch_registry = @import("../alloc/dispatch_registry.zig");
@@ -229,7 +230,23 @@ pub export fn nox_out_of_memory() noreturn {
     haltProcess();
 }
 
-export fn nox_int_overflow_trap(rt: ?*anyopaque, kind_name: ?[*:0]const u8) noreturn {
+/// UR-015 (Host ABI): `--host-abi` bağlamında sabit-genişlikli tamsayı taşması süreci ÖLDÜRMEZ: bekleyen bir "taşma tuzağı" istisnası (etiketi hiçbir sınıfla eşleşmeyen, bu yüzden `except` ile yakalanamayan ama
+/// `finally`'lerin çalıştığı özel bir nesne) bırakılır, çağıran kod normal istisna yayılımıyla işlevden çıkar ve `nox_host_capture` bunu `NOX_HOST_ERR_OVERFLOW`a çevirir. Bağlam sağlıklı kalır.
+pub const TRAP_TAG_OVERFLOW: i64 = -0x4f56_4552;
+
+fn hostTrap(rt: ?*anyopaque, tag: i64, name: ?[*:0]const u8) bool {
+    const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return false));
+    if (state.host_ctx == null) return false;
+    const obj = arc.nox_rc_alloc(rt, 16) orelse return false;
+    const words: [*]i64 = @ptrCast(@alignCast(obj));
+    words[0] = tag;
+    words[1] = if (name) |n| @as(i64, @intCast(@intFromPtr(n))) else 0;
+    nox_raise(rt, obj, 0);
+    return true;
+}
+
+export fn nox_int_overflow_trap(rt: ?*anyopaque, kind_name: ?[*:0]const u8) void {
+    if (hostTrap(rt, TRAP_TAG_OVERFLOW, kind_name)) return;
     const name = kind_name orelse "?";
     diag_sink.report(rt, "nox: integer overflow in type '{s}' — terminating the program\n", .{name});
     haltProcess();

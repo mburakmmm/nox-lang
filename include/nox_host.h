@@ -1,9 +1,10 @@
 #ifndef NOX_HOST_H
 #define NOX_HOST_H
 
-/* nox_host.h — Nox kütüphanesini bir C/Python ana makinesinden ÇAĞIRMA ABI'si (v1, DENEYSEL).
+/* nox_host.h — Nox kütüphanesini bir C/Python ana makinesinden ÇAĞIRMA ABI'si (v3-rc: DONDURULDU, yalnızca EKLEMELİ).
  *
- * KARARLILIK: deneysel. `abi_version`/`size` alanları sürümlemeyi taşır; NoxPy gerçek kullanımla doğrulayana kadar uyumsuz değişiklik OLABİLİR (bkz. docs/apis/stability.md).
+ * KARARLILIK: v3-rc — yapı düzenleri, durum/tür/dtype/yetenek numaraları ve işlev imzaları DONMUŞTUR (tests/compat/host_abi/abi_layout.c `_Static_assert` kapısı); sonraki sürümler yalnızca işlev/sabit/yetenek biti/yeni yapı EKLER.
+ * NoxPy aşama 3–6 uçtan uca doğrulayınca v3-stable olur (bkz. docs/apis/stability.md). v1/v2 ana makineleri (`abi_version` 1..3) çalışmaya devam eder.
  * GÜVEN SINIRI (AGENTS.md §9.5): bu başlıkla çağrılan Nox kodu TAM yerel yetkiyle çalışır; host Nox'un tip/sahiplik garantilerinin DIŞINDADIR. Nox nesnelerinin iç bellek
  * düzeni burada ASLA görünmez: yalnızca opak işaretçiler, (veri, uzunluk) span'leri ve host'a AİT kopya tamponlar geçer.
  *
@@ -46,6 +47,7 @@ typedef int32_t NoxHostStatus;
 #define NOX_HOST_ERR_UTF8 5 /* `str` parametresi geçerli UTF-8 değil */
 #define NOX_HOST_ERR_STATE 6
 #define NOX_HOST_ERR_INVALID_HANDLE 7 /* bırakılmış, sahte ya da başka bağlamın handle'ı */
+#define NOX_HOST_ERR_OVERFLOW 11 /* v3 (UR-015): kontrollü tamsayı taşması (kurtarılabilir; süreç ölmez, bağlam sağlıklı kalır) */
 #define NOX_HOST_ERR_BUSY 10 /* v3 (UR-012): arabellekte çakışan sabitleme var (yazma/okuma) */
 #define NOX_HOST_ERR_CANCELLED 9 /* v3 (UR-011): asenkron görev iptal edildi (nihai durum; ayrıntı yok) */
 #define NOX_HOST_ERR_HOST_EXCEPTION 8 /* v3 (UR-010): bir host geri çağrısı istisna fırlattı; nox_host_error_host_token ile özgün jeton alınır */
@@ -68,11 +70,23 @@ typedef struct NoxHostBuffer {
     size_t len;
 } NoxHostBuffer;
 
-/* v1: size = sizeof(NoxHostContextConfig), abi_version = NOX_HOST_ABI_VERSION, allocator NULL OLMALIDIR (host ayırıcısı sonraki sürüm). */
+/* v3 (UR-013): isteğe bağlı host ayırıcısı (`nox_embed.h` ile AYNI düzen; iki başlık birlikte eklenebilir). `alloc`: en az `len` bayt, `alignment` hizalı bellek (sıfırlı olması gerekmez), yetersizse NULL; `free`: aynı
+ * len/alignment ile bırakır. İş parçacığı-güvenli olmalı ve bağlam yok edilene kadar yaşamalıdır. Nox'un yönetilen heap'i (liste/sözlük/ARC/RuntimeState) buradan beslenir; bağlam yok edilince hepsi geri verilir. */
+#ifndef NOX_HOST_ALLOCATOR_DEFINED
+#define NOX_HOST_ALLOCATOR_DEFINED
+typedef struct NoxHostAllocator {
+    uint32_t size; /* sizeof(NoxHostAllocator) */
+    void *ctx;
+    void *(*alloc)(void *ctx, size_t len, size_t alignment);
+    void (*free)(void *ctx, void *ptr, size_t len, size_t alignment);
+} NoxHostAllocator;
+#endif
+
+/* size = sizeof(NoxHostContextConfig), abi_version = 1..NOX_HOST_ABI_VERSION. `allocator`: NULL = sistem ayırıcısı (v1/v2 ana makineleri NULL vermelidir; v3'ten itibaren bir NoxHostAllocator* olabilir, abi_version >= 3 gerekir). */
 typedef struct NoxHostContextConfig {
     uint32_t size;
     uint32_t abi_version;
-    const void *allocator;
+    const NoxHostAllocator *allocator;
 } NoxHostContextConfig;
 
 uint32_t nox_host_abi_version(void);
@@ -128,6 +142,19 @@ NoxHostStatus nox_host_value_item(NoxHostContext *ctx, NoxHostValue v, size_t in
 NoxHostStatus nox_host_value_dict_entry(NoxHostContext *ctx, NoxHostValue v, size_t index, NoxHostValue *key_out, NoxHostValue *value_out); /* eklenme sırası */
 NoxHostStatus nox_host_value_release(NoxHostContext *ctx, NoxHostValue v);
 int32_t nox_host_value_is_valid(NoxHostContext *ctx, NoxHostValue v);
+
+/* ---- v3 (UR-013): çalışma zamanı yetenek yoklaması ---- */
+#define NOX_HOST_CAP_VALUE_TREE (1ULL << 0)
+#define NOX_HOST_CAP_CLASSES (1ULL << 1)
+#define NOX_HOST_CAP_CALLBACKS (1ULL << 2)
+#define NOX_HOST_CAP_ASYNC_TASKS (1ULL << 3)
+#define NOX_HOST_CAP_PINNED_BUFFERS (1ULL << 4)
+#define NOX_HOST_CAP_TYPED_ARRAYS (1ULL << 5)
+#define NOX_HOST_CAP_CUSTOM_ALLOCATOR (1ULL << 6)
+#define NOX_HOST_CAP_SUBINTERPRETERS (1ULL << 7)
+#define NOX_HOST_CAP_RECOVERABLE_TRAPS (1ULL << 8) /* UR-015: `--host-abi`de tamsayı taşması NOX_HOST_ERR_OVERFLOW döner (düz `int` +,-,* ve sabit-genişlikli tuzaklar) */
+/* Hangi özelliklerin bu kütüphane sürümünde olduğunu bildirir (bit numaraları donmuştur; yeni özellikler yeni bit alır). ASYNC_TASKS wasm/freestanding'de yoktur. */
+uint64_t nox_host_capabilities(void);
 
 /* ---- v3 (UR-009): sınıf örnekleri `NoxHostHandle` olarak, kapsayıcı içinde `NOX_HOST_VALUE_HANDLE` olarak geçer ----
  * `nox_host_value_handle`: `h` tutamacının nesnesini tutan yeni bir değer (nesne ARC +1; host kendi `h`ini yine bırakır). `nox_host_value_get_handle`: `NOX_HOST_VALUE_HANDLE` değerinin

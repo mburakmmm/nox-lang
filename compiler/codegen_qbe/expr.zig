@@ -1202,6 +1202,13 @@ pub fn emitBin(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, result_
 /// dosyasının "Aritmetik taşma kontrolü" bölümü). v1.169.0: taşma HER İKİ
 /// backend'de (QBE ve LLVM) AYNI şekilde yakalanamaz bir tuzağa düşer —
 /// önceden LLVM sessizce sarıyordu (backend'e bağlı program anlamı).
+/// UR-015: `--host-abi` düz `int` işlemi — `i64` kontrolü, sonuç düz `int` (fixed_int işareti yok).
+fn hostCheckedInt(self: *Codegen, mnemonic: []const u8, l: Value, r: Value) CodegenError!Value {
+    var v = try self.emitCheckedFixedBin(mnemonic, l, r, .i64);
+    v.fixed_int = null;
+    return v;
+}
+
 pub fn emitCheckedFixedBin(self: *Codegen, mnemonic: []const u8, l: Value, r: Value, kind: types.FixedIntKind) CodegenError!Value {
     return switch (kind.bitWidth()) {
         8, 16 => self.emitCheckedFixedBinNarrow(mnemonic, l, r, kind),
@@ -1362,7 +1369,8 @@ pub fn emitMul64OverflowCheck(self: *Codegen, l: Value, r: Value, raw: Value, ki
     try self.qbeLabel(trap_label);
     const name_sym = try self.internFmtString(kind.name());
     try self.qbeCall(null, "$nox_int_overflow_trap", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = name_sym } });
-    try self.emitDefaultReturn(self.current_ret_qtype);
+    // UR-015: `--host-abi` modüllerinde taşma kurtarılabilirdir (çalışma zamanı bekleyen bir tuzak bırakıp DÖNER): normal istisna yayılımıyla çık.
+    if (self.host_abi != null) try self.emitRaisePropagate() else try self.emitDefaultReturn(self.current_ret_qtype);
     try self.qbeLabel(ok_label);
 }
 
@@ -1377,7 +1385,8 @@ pub fn emitOverflowTrapIfNonzero(self: *Codegen, cond: []const u8, kind: types.F
     try self.qbeLabel(trap_label);
     const name_sym = try self.internFmtString(kind.name());
     try self.qbeCall(null, "$nox_int_overflow_trap", &.{ .{ .ty = .l, .text = RT_PARAM }, .{ .ty = .l, .text = name_sym } });
-    try self.emitDefaultReturn(self.current_ret_qtype);
+    // UR-015: `--host-abi` modüllerinde taşma kurtarılabilirdir (çalışma zamanı bekleyen bir tuzak bırakıp DÖNER): normal istisna yayılımıyla çık.
+    if (self.host_abi != null) try self.emitRaisePropagate() else try self.emitDefaultReturn(self.current_ret_qtype);
     try self.qbeLabel(ok_label);
 }
 
@@ -2267,10 +2276,13 @@ pub fn genBinary(self: *Codegen, b: ast.Binary) CodegenError!Value {
     // OLMASINI GARANTİ ettiğinden, YALNIZCA `l0`ye BAKMAK yeterlidir.
     const fixed_kind: ?types.FixedIntKind = l0.fixed_int;
 
+    // UR-015: `--host-abi` modüllerinde DÜZ `int` (i64) `+`/`-`/`*` KONTROLLÜDÜR (Python tarafı `OverflowError` bekler; sarma sessiz yanlış sonuç olurdu). Sonuç `int` kalır (`fixed_int` işareti atılır).
+    // Standalone programlar/kütüphaneler (`--host-abi` olmadan) değişmez: düz `int` sarmaya devam eder.
+    const host_checked = fixed_kind == null and common == .l and self.host_abi != null and l0.qtype == .l and r0.qtype == .l and l0.heap == .none and r0.heap == .none;
     return switch (b.op) {
-        .add => if (fixed_kind) |k| self.emitCheckedFixedBin("add", l, r, k) else self.emitBin("add", l, r, common),
-        .sub => if (fixed_kind) |k| self.emitCheckedFixedBin("sub", l, r, k) else self.emitBin("sub", l, r, common),
-        .mul => if (fixed_kind) |k| self.emitCheckedFixedBin("mul", l, r, k) else self.emitBin("mul", l, r, common),
+        .add => if (fixed_kind) |k| self.emitCheckedFixedBin("add", l, r, k) else if (host_checked) hostCheckedInt(self, "add", l, r) else self.emitBin("add", l, r, common),
+        .sub => if (fixed_kind) |k| self.emitCheckedFixedBin("sub", l, r, k) else if (host_checked) hostCheckedInt(self, "sub", l, r) else self.emitBin("sub", l, r, common),
+        .mul => if (fixed_kind) |k| self.emitCheckedFixedBin("mul", l, r, k) else if (host_checked) hostCheckedInt(self, "mul", l, r) else self.emitBin("mul", l, r, common),
         .floordiv => blk: {
             try emitZeroDivisorCheck(self, r, common);
             break :blk self.genFloorDiv(l, r, common);

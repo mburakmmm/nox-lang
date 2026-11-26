@@ -12,7 +12,7 @@ This page is the single compatibility matrix for Nox 2.x. The long-form policy i
 | `nox.json` manifest, `nox.lock` format | compatible; new optional fields may be added | file formats |
 | `noxc` subcommands and documented flags | existing behaviour kept; new flags may be added | CLI |
 | **NNI v1** | **binary compatibility** — a plugin built against NNI v1 loads on every Nox implementing NNI v1; members are only appended to `NoxApiV1` | C ABI |
-| **Host ABI v1 (`nox_host.h`)** | **experimental** — versioned (`abi_version`/`struct_size`) but may change incompatibly until validated by real hosts | C ABI |
+| **Host ABI v3-rc (`nox_host.h`)** | **frozen, append-only (release candidate)** — layouts, status codes `0..11`, value kinds `0..11`, dtype/capability ids and every v1/v2/v3 function signature are fixed (`_Static_assert` gate `tests/compat/host_abi/abi_layout.c`); hosts built against v1 or v2 keep working (`abi_version` 1..3). Future releases may only *append* functions, constants, capability bits and new structs. It is promoted to **v3-stable** once NoxPy phases 3–6 have validated it end to end; until then an incompatible fix is possible only for a defect that cannot be worked around, and would be announced as such in the changelog | C ABI |
 | **Plugin API 1** | manifest format and `nox.plugin` semantics fixed; optional fields may be added | manifest + Nox module |
 | `extern def` C-ABI type mapping | fixed | FFI |
 | **Internal runtime ABI**, IR, generated symbols | **none** | — |
@@ -27,6 +27,7 @@ Everything below is additive: a program, library or plugin written for 2.0 build
 |---|---|
 | **NNI v1** | no change: `NOX_NNI_ABI_VERSION` is still 1 and `NoxApiV1` has the same members in the same order. The documentation is checked against `include/nox_nni.h` on every change (`scripts/check_docs.py`). Fuzzing found and fixed three bugs in the host side in 2.1.149; none changed the ABI. |
 | **Plugin API 1** | no change to the manifest or to `nox.plugin`. |
+| **Host ABI (`nox_host.h`)** | v2 → v3 (UR-008 … UR-015): classes, callbacks, async tasks, pinned buffers, typed arrays, a host allocator, capability probing and recoverable integer overflow, all additive (`NOX_HOST_ABI_VERSION` is 3; `abi_version` 1 and 2 are still accepted). Frozen as **v3-rc**; see [Host ABI](host-abi.md). The Nox-side `nox.host` module is part of the standard library and follows its source-compatibility promise only after v3-stable. |
 | **NAPI (language and standard library)** | additions only: variadic and implicit-`None` functions documented, new builtins (`pow` with a modulus, `hex`, `oct`, `bin`, `int(text, base)`, `min`/`max` `default=`), new modules (`nox.lz4`, `nox.xxhash`, `nox.yyjson`, `nox.pcre2`, `nox.brotli`, and `compress` in `nox.zstd`), and the package `source` label. See [What's new in 2.2](../whatsnew/2.2.md). |
 | **Platforms** | Windows x86-64 and Linux riscv64 cross-compilation from any host with `zig`; iOS and Android remain experimental. |
 

@@ -350,3 +350,121 @@ test "host-abi: pinned buffer + TYPED_ARRAY zero-copy (UR-012)" {
     try std.testing.expectEqual(@as(u8, 0), exitCode(r));
     try std.testing.expect(std.mem.indexOf(u8, r.stdout, "ALL OK") != null);
 }
+
+test "host-abi: kurtarılabilir taşma + host ayırıcısı + yetenekler + bağlam yalıtımı (UR-013/UR-015)" {
+    if (builtin.os.tag == .windows) return;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    if (!fileExists(io, "zig-out/lib/noxrt.o")) return;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &buf);
+    const dir = buf[0..len];
+    const obj = try std.fmt.allocPrint(gpa, "{s}/tr.o", .{dir});
+    defer gpa.free(obj);
+    const exe = try std.fmt.allocPrint(gpa, "{s}/tr_host", .{dir});
+    defer gpa.free(exe);
+
+    const built = try run(gpa, io, &.{ "zig-out/bin/noxc", "build", "--backend", "llvm", "--emit-obj", "--host-abi", "--module-name", "tr", "-o", obj, "tests/compat/host_abi/traps.nox" });
+    defer gpa.free(built.stdout);
+    defer gpa.free(built.stderr);
+    if (exitCode(built) != 0) std.debug.print("noxc: {s}\n", .{built.stderr});
+    try std.testing.expectEqual(@as(u8, 0), exitCode(built));
+
+    const cc = run(gpa, io, &.{ "clang", "-I", "include", "tests/compat/host_abi/traps_host.c", obj, "zig-out/lib/noxrt.o", "-lm", "-pthread", "-o", exe }) catch return; // clang yoksa atla
+    defer gpa.free(cc.stdout);
+    defer gpa.free(cc.stderr);
+    if (exitCode(cc) != 0) {
+        std.debug.print("clang: {s}\n", .{cc.stderr});
+        return error.LinkFailed;
+    }
+    const r = try run(gpa, io, &.{exe});
+    defer gpa.free(r.stdout);
+    defer gpa.free(r.stderr);
+    if (exitCode(r) != 0) std.debug.print("host çıktısı:\n{s}{s}\n", .{ r.stdout, r.stderr });
+    try std.testing.expectEqual(@as(u8, 0), exitCode(r));
+    try std.testing.expect(std.mem.indexOf(u8, r.stdout, "ALL OK") != null);
+}
+
+test "host-abi: C11 _Static_assert düzen kapısı derlenir (UR-014)" {
+    if (builtin.os.tag == .windows) return;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const r = run(gpa, io, &.{ "clang", "-std=c11", "-Wall", "-Werror", "-fsyntax-only", "-I", "include", "tests/compat/host_abi/abi_layout.c" }) catch return; // clang yoksa atla
+    defer gpa.free(r.stdout);
+    defer gpa.free(r.stderr);
+    if (exitCode(r) != 0) std.debug.print("clang: {s}\n", .{r.stderr});
+    try std.testing.expectEqual(@as(u8, 0), exitCode(r));
+}
+
+test "host-abi: Windows DLL YALNIZCA nox_host_* sembollerini dışa açar (UR-013)" {
+    if (builtin.os.tag == .windows) return;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    if (!fileExists(io, "zig-out/lib/noxrt-windows-x64.o")) return;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const len = try tmp.dir.realPath(io, &buf);
+    const dll = try std.fmt.allocPrint(gpa, "{s}/fm.dll", .{buf[0..len]});
+    defer gpa.free(dll);
+    const built = try run(gpa, io, &.{ "zig-out/bin/noxc", "build", "--backend", "llvm", "--emit-shared-lib", "--host-abi", "--module-name", "fm", "--target", "windows-x64", "-o", dll, "tests/compat/host_abi/fm.nox" });
+    defer gpa.free(built.stdout);
+    defer gpa.free(built.stderr);
+    if (exitCode(built) != 0) return; // zig yok ya da hedef araç zinciri kurulu değil: atla
+    const def_path = try std.fmt.allocPrint(gpa, "{s}/fm.def", .{buf[0..len]});
+    defer gpa.free(def_path);
+    const def = try tmp.dir.readFileAlloc(io, "fm.def", gpa, .limited(1024 * 1024));
+    defer gpa.free(def);
+    try std.testing.expect(std.mem.indexOf(u8, def, "nox_host_export_fm_add") != null);
+    try std.testing.expect(std.mem.indexOf(u8, def, "nox_host_module_init_fm") != null);
+    var it = std.mem.tokenizeScalar(u8, def, '\n');
+    _ = it.next(); // EXPORTS
+    while (it.next()) |line| try std.testing.expect(std.mem.startsWith(u8, std.mem.trim(u8, line, " "), "nox_host_"));
+    // PE dışa aktarım tablosu: DLL'in dışa aktardığı HER ad `nox_host_` ile başlamalı (mingw'in "hepsini dışa aç" varsayılanı kapalı).
+    const bytes = try tmp.dir.readFileAlloc(io, "fm.dll", gpa, .limited(64 * 1024 * 1024));
+    defer gpa.free(bytes);
+    const names = try peExportNames(gpa, bytes);
+    defer gpa.free(names);
+    try std.testing.expect(names.len >= 10);
+    for (names) |n| try std.testing.expect(std.mem.startsWith(u8, n, "nox_host_"));
+}
+
+/// Asgari PE (x64) dışa aktarım tablosu okuyucusu: ad işaretçileri `bytes` içindeki dilimlerdir.
+fn peExportNames(gpa: std.mem.Allocator, bytes: []const u8) ![][]const u8 {
+    const pe = std.mem.readInt(u32, bytes[0x3c..][0..4], .little);
+    const nsec = std.mem.readInt(u16, bytes[pe + 6 ..][0..2], .little);
+    const optsz = std.mem.readInt(u16, bytes[pe + 20 ..][0..2], .little);
+    const opt = pe + 24;
+    const dd = opt + (if (std.mem.readInt(u16, bytes[opt..][0..2], .little) == 0x20b) @as(usize, 112) else 96);
+    const exp_rva = std.mem.readInt(u32, bytes[dd..][0..4], .little);
+    const sec_off = opt + optsz;
+    const Rva = struct {
+        fn off(b: []const u8, so: usize, n: u16, rva: u32) usize {
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                const e = b[so + i * 40 ..];
+                const vs = std.mem.readInt(u32, e[8..12], .little);
+                const va = std.mem.readInt(u32, e[12..16], .little);
+                const rs = std.mem.readInt(u32, e[16..20], .little);
+                const ro = std.mem.readInt(u32, e[20..24], .little);
+                if (rva >= va and rva < va + @max(vs, rs)) return rva - va + ro;
+            }
+            return 0;
+        }
+    };
+    const ed = Rva.off(bytes, sec_off, nsec, exp_rva);
+    const n_names = std.mem.readInt(u32, bytes[ed + 24 ..][0..4], .little);
+    const names_rva = std.mem.readInt(u32, bytes[ed + 32 ..][0..4], .little);
+    const names_off = Rva.off(bytes, sec_off, nsec, names_rva);
+    var out = try gpa.alloc([]const u8, n_names);
+    var k: usize = 0;
+    while (k < n_names) : (k += 1) {
+        const r = std.mem.readInt(u32, bytes[names_off + k * 4 ..][0..4], .little);
+        const o = Rva.off(bytes, sec_off, nsec, r);
+        const end = std.mem.indexOfScalarPos(u8, bytes, o, 0).?;
+        out[k] = bytes[o..end];
+    }
+    return out;
+}

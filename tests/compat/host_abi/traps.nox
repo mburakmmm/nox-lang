@@ -1,0 +1,40 @@
+# UR-015: `--host-abi` altında tamsayı taşması kurtarılabilir hatadır (süreç ölmez, bağlam sağlıklı kalır).
+@export
+def add(a: int, b: int) -> int:
+    return a + b
+
+@export
+def sub(a: int, b: int) -> int:
+    return a - b
+
+@export
+def mul(a: int, b: int) -> int:
+    return a * b
+
+@export
+def narrow(x: int) -> int:
+    y: i32 = i32(x)
+    return int(y)
+
+@export
+def guarded(a: int, b: int) -> int:
+    try:
+        return a + b
+    except Exception:
+        return -1
+
+@export
+def with_finally(a: int, b: int) -> int:
+    t: int = 0
+    try:
+        t = a + b
+    finally:
+        t = t + 0
+    return t
+
+@export
+def loop_sum(n: int, step: int) -> int:
+    t: int = 0
+    for i in range(n):
+        t = t + step
+    return t

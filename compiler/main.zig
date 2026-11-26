@@ -4629,6 +4629,36 @@ fn linkMobile(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []
 }
 
 /// `--target wasm32-wasi`: LLVM IR'ı `zig cc -target wasm32-wasi` ile wasi-libc + `noxrt-wasm32-wasi.o`ya bağlar, `.wasm` üretir.
+/// UR-013: bir COFF nesnesinin (x64/x86) TANIMLI dış sembollerinden `prefix` ile başlayanları `out`a ekler (sıradan 18 baytlık sembol girdileri; kısa adlar satır içi, uzunlar dize tablosunda).
+fn coffDefinedExterns(a: std.mem.Allocator, bytes: []const u8, prefix: []const u8, out: *std.ArrayListUnmanaged([]const u8)) !void {
+    if (bytes.len < 20) return;
+    const machine = std.mem.readInt(u16, bytes[0..2], .little);
+    if (machine != 0x8664 and machine != 0x14c and machine != 0xaa64) return;
+    const sym_off: usize = std.mem.readInt(u32, bytes[8..12], .little);
+    const nsyms: usize = std.mem.readInt(u32, bytes[12..16], .little);
+    if (sym_off == 0 or sym_off + nsyms * 18 > bytes.len) return;
+    const str_off = sym_off + nsyms * 18;
+    var i: usize = 0;
+    while (i < nsyms) {
+        const e = bytes[sym_off + i * 18 ..][0..18];
+        const aux: usize = e[17];
+        defer i += 1 + aux;
+        const section = std.mem.readInt(i16, e[12..14], .little);
+        if (e[16] != 2 or section <= 0) continue; // dış (EXTERNAL) ve bir bölümde tanımlı
+        var name: []const u8 = undefined;
+        if (std.mem.readInt(u32, e[0..4], .little) == 0) {
+            const off: usize = std.mem.readInt(u32, e[4..8], .little);
+            if (str_off + off >= bytes.len) continue;
+            const tail = bytes[str_off + off ..];
+            name = tail[0 .. std.mem.indexOfScalar(u8, tail, 0) orelse tail.len];
+        } else {
+            name = e[0..8];
+            name = name[0 .. std.mem.indexOfScalar(u8, name, 0) orelse 8];
+        }
+        if (std.mem.startsWith(u8, name, prefix)) try out.append(a, try a.dupe(u8, name));
+    }
+}
+
 /// UR-001 (NoxPy, v2.2.75): masaüstü kütüphane çıktısı (LLVM). `.ll` → `-fPIC` nesne (`main`siz: `library_mode`); `--emit-static-lib` nesne + `noxrt.o`yu arşivler,
 /// `--emit-shared-lib` `.so`/`.dylib`/`.dll` bağlar (ELF'te `--no-undefined`). `info == null` ana makine hedefidir. Dışa aktarım yüzeyi (`nox_host.h`) UR-002'nin işidir.
 fn linkDesktopLib(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem: []const u8, ir: []const u8, info: ?qbe_target.HostedTargetInfo, emit: EmitKind, output_override: ?[]const u8, resource_dirs: project.ResourceDirs, module: ast.Module, extern_root: ?[]const u8) ![]const u8 {
@@ -4689,7 +4719,7 @@ fn linkDesktopLib(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem
     try ld.append(a, "-shared");
     if (!target_win and !target_mac) try ld.append(a, "-Wl,--no-undefined");
     // UR-003 (NoxPy): `--host-abi` ile YALNIZCA `nox_host_*` sembolleri dışa açılır; çalışma zamanı/kullanıcı sembolleri yerel olur (iki bağımsız Nox eklentisi aynı süreçte sembol
-    // karışmadan yaşar, `nm -gU` yalnızca `nox_host_*` gösterir). Windows DLL'inde şimdilik mingw varsayılanı (tüm semboller) geçerlidir.
+    // karışmadan yaşar, `nm -gU` yalnızca `nox_host_*` gösterir). Windows DLL'inde aynısı bir `.def` dışa aktarım listesiyle sağlanır (aşağıda).
     if (g_host_abi and !target_win) {
         const list_path = try std.fmt.allocPrint(a, "{s}.exports", .{base});
         if (target_mac) {
@@ -4700,7 +4730,35 @@ fn linkDesktopLib(gpa: std.mem.Allocator, io: std.Io, a: std.mem.Allocator, stem
             try ld.append(a, try std.fmt.allocPrint(a, "-Wl,--version-script={s}", .{list_path}));
         }
     }
+    // UR-013 (Windows COFF): `--host-abi` DLL'i YALNIZCA `nox_host_*` sembollerini dışa açar (mingw'in "hepsini dışa aç" varsayılanı yerine açık `.def` dışa aktarım listesi). Liste, nesne + çalışma zamanı
+    // nesnesinin COFF sembol tablolarından okunur (araç bağımsız: `nm`/`dumpbin` gerekmez); `.lib` içe aktarma kitaplığı da aynı liste ile üretilir.
+    var def_path: ?[]const u8 = null;
+    if (g_host_abi and target_win) {
+        var names: std.ArrayListUnmanaged([]const u8) = .empty;
+        for ([_][]const u8{ obj_path, rt_path }) |obj_file| {
+            const bytes = std.Io.Dir.cwd().readFileAlloc(io, obj_file, gpa, .limited(256 * 1024 * 1024)) catch continue;
+            defer gpa.free(bytes);
+            try coffDefinedExterns(a, bytes, "nox_host_", &names);
+        }
+        std.mem.sort([]const u8, names.items, {}, struct {
+            fn lt(_: void, x: []const u8, y: []const u8) bool {
+                return std.mem.lessThan(u8, x, y);
+            }
+        }.lt);
+        var def: std.ArrayListUnmanaged(u8) = .empty;
+        try def.appendSlice(a, "EXPORTS\n");
+        var prev: []const u8 = "";
+        for (names.items) |n| {
+            if (std.mem.eql(u8, n, prev)) continue;
+            prev = n;
+            try def.appendSlice(a, try std.fmt.allocPrint(a, "    {s}\n", .{n}));
+        }
+        const dp = try std.fmt.allocPrint(a, "{s}.def", .{base});
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dp, .data = def.items });
+        def_path = dp;
+    }
     try ld.appendSlice(a, &.{ "-o", shared, obj_path, rt_path });
+    if (def_path) |dp| try ld.append(a, dp);
     if (swap_path) |sp| try ld.append(a, sp);
     try ld.append(a, "-lm");
     if (target_win) try ld.appendSlice(a, &.{ "-lntdll", "-lws2_32", "-lcrypt32" });

@@ -39,6 +39,8 @@ pub const ERR_HOST_EXCEPTION: i32 = 8;
 pub const ERR_CANCELLED: i32 = 9;
 /// UR-012: sabitlenmiş arabellekte çakışan sabitleme (yazma/okuma) — `nox_host_handle_pin_buffer` reddedildi.
 pub const ERR_BUSY: i32 = 10;
+/// UR-015: sabit-genişlikli tamsayı taşması (kurtarılabilir; süreç ölmez, bağlam sağlıklı kalır).
+pub const ERR_OVERFLOW: i32 = 11;
 
 const CTX_MAGIC: u32 = 0x4e58_4843; // "NXHC"
 const ERR_MAGIC: u32 = 0x4e58_4845; // "NXHE"
@@ -53,7 +55,16 @@ pub const CallbackOps = extern struct {
 };
 
 /// `nox_host_context_create` yapılandırması. `size`/`abi_version` zorunlu; `allocator` v1'de NULL OLMALIDIR (host ayırıcısı sonraki sürüm).
-pub const Config = extern struct { size: u32, abi_version: u32, allocator: ?*const anyopaque };
+pub const Config = extern struct { size: u32, abi_version: u32, allocator: ?*const HostAllocator };
+
+/// UR-013: host ayırıcısı (`include/nox_embed.h`daki `NoxHostAllocator` ile BİREBİR aynı düzen). `alloc`: en az `len` bayt, `alignment` hizalı; yetersizse NULL. `free`: aynı `len`/`alignment` ile bırakır. Her iki işlev iş parçacığı-güvenli
+/// olmalı ve bağlam yok edilene kadar yaşamalıdır.
+pub const HostAllocator = extern struct {
+    size: u32,
+    ctx: ?*anyopaque,
+    alloc: ?*const fn (?*anyopaque, usize, usize) callconv(.c) ?*anyopaque,
+    free: ?*const fn (?*anyopaque, ?*anyopaque, usize, usize) callconv(.c) void,
+};
 
 /// UR-010 (addendum): bağlam kilidi YENİDEN-GİRİŞLİdir. Kilit sahibi iş parçacığı (`owner`) bir host geri çağrısı içindeyken aynı bağlama yeniden girebilir (`depth` artar); BAŞKA iş parçacıkları kilit
 /// boşalana (`depth == 0`) dek bekler — geri çağrı sırasında askıdaki Nox çerçevelerine/ARC durumuna yabancı iş parçacığı giremez. `nox_host_context_destroy` çalışırken `depth > 0` ise yok etme ERTELENİR (son `unlock`ta yapılır).
@@ -112,6 +123,8 @@ const Context = struct {
     magic: u32,
     rt: ?*anyopaque,
     lock: RLock = .{},
+    /// UR-013: host ayırıcısının kopyası (null: sistem ayırıcısı); `rt` yönetilen heap'ini buradan besler.
+    host_alloc: ?HostAllocator = null,
     /// UR-006: bu bağlamın `NoxHostHandle` tablosu. Yuva = tutulan Nox nesnesi (ARC +1) + nesil sayacı; serbest yuvalar `free_slots`ta.
     slots: std.ArrayListUnmanaged(Slot) = .empty,
     free_slots: std.ArrayListUnmanaged(u32) = .empty,
@@ -180,7 +193,7 @@ pub const Span = extern struct { data: ?[*]const u8, len: usize };
 pub const Buffer = extern struct { data: ?[*]u8, len: usize };
 
 /// `ctx`: hatayı üreten bağlam — `nox_host_error_release` istisna nesnesini (ARC) bağlam kilidi ALTINDA bırakır; hata, bağlam yok edilmeden ÖNCE bırakılmalıdır (belgelenmiş).
-const HostError = struct { magic: u32, ctx: *Context, rt: ?*anyopaque, exception: ?*anyopaque, line: i64, host_token: u64 = 0, synth_class: []const u8 = "", synth_msg: []const u8 = "" };
+const HostError = struct { magic: u32, ctx: *Context, rt: ?*anyopaque, exception: ?*anyopaque, line: i64, host_token: u64 = 0, synth_class: []const u8 = "", synth_msg: []const u8 = "", owned_msg: bool = false };
 
 pub export fn nox_host_abi_version() u32 {
     return ABI_VERSION;
@@ -191,17 +204,77 @@ pub export fn nox_host_context_create(config: ?*const Config, out: ?*?*anyopaque
     o.* = null;
     const cfg = config orelse return ERR_INVAL;
     if (cfg.size < @sizeOf(Config)) return ERR_VERSION;
-    if (cfg.abi_version < 1 or cfg.abi_version > ABI_VERSION) return ERR_VERSION; // v2 başlığı v1 ana makinelerini de kabul eder (UR-008 eklemelidir)
-    if (cfg.allocator != null) return ERR_INVAL; // v1: host ayırıcısı yok
+    if (cfg.abi_version < 1 or cfg.abi_version > ABI_VERSION) return ERR_VERSION; // v2/v3 başlıkları v1/v2 ana makinelerini de kabul eder (eklemeli)
+    // UR-013: `allocator` yalnızca ABI v3 ana makineleri içindir (v1/v2'de alan "NULL OLMALI" idi).
+    if (cfg.allocator != null and cfg.abi_version < 3) return ERR_INVAL;
+    if (cfg.allocator) |ha| {
+        if (ha.size < @sizeOf(HostAllocator)) return ERR_VERSION;
+        if (ha.alloc == null or ha.free == null) return ERR_INVAL;
+    }
     const ctx = std.heap.page_allocator.create(Context) catch return ERR_NOMEM;
-    const rt = asap.nox_runtime_init() orelse {
+    ctx.* = .{ .magic = CTX_MAGIC, .rt = null };
+    if (cfg.allocator) |ha| ctx.host_alloc = ha.*;
+    const rt = (if (ctx.host_alloc != null)
+        asap.nox_runtime_init_with_allocator(.{ .ptr = ctx, .vtable = &host_alloc_vtable })
+    else
+        asap.nox_runtime_init()) orelse {
         std.heap.page_allocator.destroy(ctx);
         return ERR_NOMEM;
     };
-    ctx.* = .{ .magic = CTX_MAGIC, .rt = rt };
+    ctx.rt = rt;
     rtState(rt).host_ctx = ctx; // UR-008: `nox_hv_*` ilkelleri bağlamı `rt`den bulur
     o.* = ctx;
     return OK;
+}
+
+const host_alloc_vtable: std.mem.Allocator.VTable = .{
+    .alloc = hostAlloc,
+    .resize = hostResize,
+    .remap = hostRemap,
+    .free = hostFree,
+};
+
+fn hostAlloc(p: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+    _ = ret_addr;
+    const ctx: *Context = @ptrCast(@alignCast(p));
+    const h = ctx.host_alloc orelse return null;
+    const f = h.alloc orelse return null;
+    return @ptrCast(f(h.ctx, len, alignment.toByteUnits()));
+}
+
+fn hostResize(p: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+    _ = .{ p, memory, alignment, new_len, ret_addr };
+    return false;
+}
+
+fn hostRemap(p: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+    _ = .{ p, memory, alignment, new_len, ret_addr };
+    return null;
+}
+
+fn hostFree(p: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+    _ = ret_addr;
+    const ctx: *Context = @ptrCast(@alignCast(p));
+    const h = ctx.host_alloc orelse return;
+    const f = h.free orelse return;
+    f(h.ctx, memory.ptr, memory.len, alignment.toByteUnits());
+}
+
+/// UR-013: çalışma zamanının desteklediği özellik bitleri (host, kullanmadan önce yoklar). Bit numaraları DONDURULMUŞTUR; yeni özellikler yeni bit alır.
+pub const CAP_VALUE_TREE: u64 = 1 << 0;
+pub const CAP_CLASSES: u64 = 1 << 1;
+pub const CAP_CALLBACKS: u64 = 1 << 2;
+pub const CAP_ASYNC_TASKS: u64 = 1 << 3;
+pub const CAP_PINNED_BUFFERS: u64 = 1 << 4;
+pub const CAP_TYPED_ARRAYS: u64 = 1 << 5;
+pub const CAP_CUSTOM_ALLOCATOR: u64 = 1 << 6;
+pub const CAP_SUBINTERPRETERS: u64 = 1 << 7;
+pub const CAP_RECOVERABLE_TRAPS: u64 = 1 << 8;
+
+pub export fn nox_host_capabilities() u64 {
+    var caps: u64 = CAP_VALUE_TREE | CAP_CLASSES | CAP_CALLBACKS | CAP_PINNED_BUFFERS | CAP_TYPED_ARRAYS | CAP_CUSTOM_ALLOCATOR | CAP_SUBINTERPRETERS | CAP_RECOVERABLE_TRAPS;
+    if (threaded) caps |= CAP_ASYNC_TASKS;
+    return caps;
 }
 
 /// Bağlamı yok eder. Bağlam başka bir iş parçacığında kullanılıyorsa (derinlik > 0) o iş bitene dek BEKLER; çağıran bir host geri çağrısının içindeyse (kilit bu iş parçacığında tutuluyor) yok etme, en dıştaki çağrı
@@ -313,6 +386,22 @@ pub export fn nox_host_capture(ctx_ptr: ?*anyopaque, out_err: ?*?*anyopaque) i32
     const state: *asap.RuntimeState = @ptrCast(@alignCast(rt orelse return ERR_INVAL));
     const line = errors_handle.pendingLine(state);
     const exc = errors_handle.nox_exception_take(rt);
+    // UR-015: taşma tuzağı — Nox sınıfı olmayan özel nesne; kurtarılabilir `ERR_OVERFLOW`.
+    if (exc) |eo| {
+        const w: [*]const i64 = @ptrCast(@alignCast(eo));
+        if (w[0] == errors_handle.TRAP_TAG_OVERFLOW) {
+            const tname: []const u8 = if (w[1] != 0) std.mem.span(@as([*:0]const u8, @ptrFromInt(@as(usize, @intCast(@as(u64, @bitCast(w[1]))))))) else "?";
+            arc.nox_rc_free_payload(rt, eo, 16);
+            const owned: ?[]u8 = std.fmt.allocPrint(std.heap.page_allocator, "integer overflow in type '{s}'", .{tname}) catch null;
+            const er = newSynthError(ctx, "OverflowError", owned orelse "integer overflow") orelse {
+                if (owned) |m| std.heap.page_allocator.free(m);
+                return ERR_NOMEM;
+            };
+            er.owned_msg = owned != null;
+            if (out_err) |o| o.* = er else errDrop(er);
+            return ERR_OVERFLOW;
+        }
+    }
     const e = std.heap.page_allocator.create(HostError) catch {
         releaseException(rt, exc);
         return ERR_NOMEM;
@@ -353,6 +442,7 @@ pub export fn nox_host_error_release(err_ptr: ?*anyopaque) void {
     if (ctx.rt) |rt| asap.handOverArcOwner(@ptrCast(@alignCast(rt)));
     releaseException(e.rt, e.exception);
     ctx.lock.unlock();
+    if (e.owned_msg) std.heap.page_allocator.free(@constCast(e.synth_msg));
     std.heap.page_allocator.destroy(e);
 }
 
@@ -1125,6 +1215,7 @@ fn taskRecFree(ctx: *Context, rec: *TaskRec) void {
 /// Kilitsiz hata bırakma (kilit ELDE ya da bağlam yok ediliyor).
 fn errDrop(e: *HostError) void {
     e.magic = 0;
+    if (e.owned_msg) std.heap.page_allocator.free(@constCast(e.synth_msg));
     releaseException(e.rt, e.exception);
     std.heap.page_allocator.destroy(e);
 }
@@ -2030,4 +2121,16 @@ test "UR-008: değer ağacı kurulur, okunur, döngü reddedilir, bırakılır (
     try std.testing.expectEqual(@as(usize, 1), n);
     try std.testing.expectEqual(ERR_INVAL, nox_host_value_dict_set(ctx_ptr, l, k, b)); // dict değil
     // kalan handle'lar (b, l, it, d, k) bağlam yok edilirken bırakılır
+}
+
+// UR-014: Zig tarafı düzenleri `include/nox_host.h` (tests/compat/host_abi/abi_layout.c) ile AYNI olmalıdır; sapma derleme hatasıdır. (64-bit hedefler.)
+comptime {
+    if (@sizeOf(usize) == 8) {
+        std.debug.assert(@sizeOf(Config) == 16 and @offsetOf(Config, "abi_version") == 4 and @offsetOf(Config, "allocator") == 8);
+        std.debug.assert(@sizeOf(Span) == 16 and @offsetOf(Span, "len") == 8);
+        std.debug.assert(@sizeOf(Buffer) == 16 and @offsetOf(Buffer, "len") == 8);
+        std.debug.assert(@sizeOf(HostAllocator) == 32 and @offsetOf(HostAllocator, "ctx") == 8 and @offsetOf(HostAllocator, "alloc") == 16 and @offsetOf(HostAllocator, "free") == 24);
+        std.debug.assert(@sizeOf(CallbackOps) == 40 and @offsetOf(CallbackOps, "user_data") == 8 and @offsetOf(CallbackOps, "invoke") == 16 and @offsetOf(CallbackOps, "retain") == 24 and @offsetOf(CallbackOps, "release") == 32);
+        std.debug.assert(@sizeOf(BufferView) == 176 and @offsetOf(BufferView, "shape") == 40 and @offsetOf(BufferView, "strides") == 104 and @offsetOf(BufferView, "pin_id") == 168);
+    }
 }

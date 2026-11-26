@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.93]
+
+NoxPy UR-013 + UR-015 + UR-014: host ayırıcısı, yetenek yoklaması, kurtarılabilir tamsayı taşması, Windows `.dll` dışa aktarım kısıtı, bağlam yalıtımı denetimi ve **Host ABI v3-rc DONDURMASI** (`include/nox_host.h` yalnızca-ekleme; `docs/apis/stability.md`). Sürüm patch: ABI yalnızca EKLENDİ. Ayrıntı: spec §3.527, `docs/apis/host-abi.md`.
+
+- UR-013: `NoxHostContextConfig.allocator` artık `const NoxHostAllocator *` (`nox_embed.h` ile aynı düzen, ortak tanım koruması); Nox'un yönetilen heap'i oradan beslenir ve yok etmede tamamen geri verilir (`abi_version >= 3`). `uint64_t nox_host_capabilities()` + `NOX_HOST_CAP_*` (0..8). `--host-abi` Windows DLL'i yalnızca `nox_host_*` dışa açar (COFF sembol tablolarından üretilen `.def`; önceden mingw hepsini açıyordu). `scripts/check_host_isolation.py` (host.zig'de dosya-seviyesi `var` yok) + bağlam yalıtımı çok iş parçacıklı C testi; alt yorumlayıcı denetimi belgelendi.
+- UR-015: `--host-abi` altında düz `int` `+ - *` kontrollü, taşma (ve sabit-genişlikli tuzaklar) `NOX_HOST_ERR_OVERFLOW` (11) döner, süreç/bağlam sağlıklı kalır (`nox_int_overflow_trap` artık bekleyen "tuzak nesnesi" bırakıp döner; yakalanamaz ama `finally` çalışır); `NOX_HOST_CAP_RECOVERABLE_TRAPS`. Sınır (belgelenmiş): çalışma zamanı İÇİNDEKİ bellek yetersizliği hâlâ süreci sonlandırır (kurtarılabilir OOM korumalı-yığın bariyeri ister; ayrı karar).
+- UR-014: Host ABI **v3-rc**: `tests/compat/host_abi/abi_layout.c` (C11 `_Static_assert`: boyut/ofset/sabit/durum kodu/imza; precheck'te + C++ başlık denetimi) ve `runtime/host.zig` derleme-zamanı eşdeğeri; `b"..."` sabit bayt varsayılanı checker'da kabul (golden `bytes_default_param`, `expand --json` `hex`).
+- Test: `traps.nox` + `traps_host.c` (taşma, host ayırıcısı denge, v1/v2 uyumu, 4 iş parçacığı yalıtımı), `abi_layout.c`, Windows DLL dışa aktarım tablosu (PE ayrıştırıcı), `expand_json_test.zig`.
+
 ## [2.2.92]
 
 NoxPy UR-012 + addendum düzeltmeleri (Host ABI v3 taslağı): sıfır kopya sabitlenmiş arabellekler ve bulk sayısal diziler; geri çağrı yeniden girişinin kilit modeli düzeltildi (addendum); tutamaç sınıf doğrulaması. Sürüm patch: yalnızca EKLEME (kilit modeli v3-taslağı içi düzeltmedir). Ayrıntı: spec §3.526, `docs/apis/host-abi.md`.
