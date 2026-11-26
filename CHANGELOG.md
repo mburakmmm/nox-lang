@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.94]
+
+Selfhost Aşama 3.7-A: iç içe `def`, `lambda`, `defer` ve işlev-değeri çağrısı Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.528, `project/noxc-nightly-selfhost-plani-2026-11.md`.
+
+- `selfhost/typecheck.nox.in`: `check_nested_def`/`check_lambda`/`check_defer`, yakalanan değişkene yazma hatası, `f(x)` ile işlev-tipli yerel çağrısı. Kapsam dışı: `nonlocal`, iç içe `async def`, dekoratörlü iç `def`, modül düzeyi lambda'da ≥2 ihlalli yakalama. Depo korpusunda tüm tanılamalar Zig ile eşit.
+- `scripts/ck_gen.py --closure` (ck_regress.sh'a eklendi), `tests/fixtures/ck_edge/closure/`, `scripts/ck_mutants_closure.py`.
+
 ## [2.2.93]
 
 NoxPy UR-013 + UR-015 + UR-014: host ayırıcısı, yetenek yoklaması, kurtarılabilir tamsayı taşması, Windows `.dll` dışa aktarım kısıtı, bağlam yalıtımı denetimi ve **Host ABI v3-rc DONDURMASI** (`include/nox_host.h` yalnızca-ekleme; `docs/apis/stability.md`). Sürüm patch: ABI yalnızca EKLENDİ. Ayrıntı: spec §3.527, `docs/apis/host-abi.md`.

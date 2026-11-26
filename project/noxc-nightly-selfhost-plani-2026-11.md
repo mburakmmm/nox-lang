@@ -159,6 +159,7 @@ Alt aşamalar (her biri ayrı kapanır, bir önceki bitmeden sonrakine geçilmez
 - [ ] 3.9 Enum/`match`/`derive`/dekoratör işlemleri.
 - [ ] 3.10 Standart kütüphane çağrı kuralları: yerleşikler, str/list/dict/set metodları, `nox.*` yerleşik sihirli işlevler.
 - [ ] 3.11 `index_call_fixup`, `bound_method_fixup`, `guard_normalize`, `class_attr_promote` geçişleri.
+- [~] 3.7 Kapanış/iç içe def/lambda/defer: **v2.2.94 dilim A** (spec §3.528); açık: `nonlocal` hücre dönüşümü, iç içe `async def` kaldırma (`hoistNestedAsync`), dekoratörlü iç `def`, `check_expr_inner#18` (dilim ifadeleri ayrı).
 - [~] 3.4b Tekli sınıf kalıtımı: **v2.2.88 dilim A** (spec §3.522): `class D(B)`, `super()`, override, döngü, devralma; açık: açık taban çağrısı yeniden yazımı, çoklu taban/mixin (`class#bases`), sınıf sabitleri (`class#consts`, `class_attr_promote`), dekoratör/jenerik sınıf, ≥2 atanmamış alan (Zig HashMap sırası).
 - [~] 3.12 Modül yükleme/çözümleme (`module_loader`, `__all__`, from-import, paket yolu): **v2.2.83 dilim A** (`extern def`), **v2.2.87 dilim B** (ham `check` kipinde `import`/`from-import`/takma ad/nitelikli çağrı ve tip, `resolve_reexport`, spec §3.521); açık: `nox.http.serve*`/`nox.thread.*` intrinsic çözümleri (`check_call#intrinsic`), from-import değer kullanımı, `__all__`/`requirePublic`/`validateModuleExports` (`checkm` birleşik modül; kalıtım 3.4b + prelude 3.6 olmadan `checkm` hâlâ tümüyle `class#base` kapsam dışı).
 - [ ] 3.13 Tanı biçimi: hata kodu + konum + "çıkarım notu" (`:=`), `noxc explain` ile uyum.

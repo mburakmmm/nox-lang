@@ -8,7 +8,7 @@ N=${2:-1500}
 BIN=./zig-out/bin/noxc-nightly
 rc=0
 seed=200
-for mode in "" --async --methods --builtins --recv --try --construct --ptr --extern --spawn --import --inherit; do
+for mode in "" --async --methods --builtins --recv --try --construct --ptr --extern --spawn --import --inherit --closure; do
   seed=$((seed + 1))
   name=$(printf '%s' "$mode" | tr -d '-')
   [ -z "$name" ] && name=base

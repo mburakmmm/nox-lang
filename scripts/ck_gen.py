@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False):
         self.rnd = rnd
+        self.use_closure = use_closure
         self.use_inherit = use_inherit
         self.use_import = use_import
         self.use_spawn = use_spawn
@@ -818,8 +819,58 @@ class Gen:
                 stmts.append("z = super().m0()")
         self.lines += stmts
 
+    def gen_closure(self):
+        """iç içe `def` (yakalama, yazma yasağı, eksik return, jenerik yasağı), işlev değeri çağrısı, `lambda` (beklenen tip/arite/dönüş uyuşmazlığı, modül düzeyi yakalama), `defer`."""
+        r = self.rnd
+        self.lines += ["def apply(f: (int) -> int, x: int) -> int:", "    return f(x)", "", "def run0(f: () -> None) -> None:", "    f()", "",
+                       "def cleanup(n: int) -> None:", "    pass", "", "g0: int = 5", ""]
+        in_fn = r.random() < 0.7
+        ind = "    " if in_fn else ""
+        body = []
+        body.append(r.choice(["k: int = 3", "k: str = \"s\"", "k: int = 3"]))
+        loop = r.random() < 0.25 and not in_fn
+        def stmt():
+            c = r.choice(["nested", "nested", "call", "lam", "lam", "lamvar", "defer", "fnvar", "capw", "nogen", "retmiss"])
+            if c == "nested":
+                ret = r.choice(["int", "int", "str", "None"])
+                cap = r.choice(["k", "g0", "a", "zz"])
+                val = {"int": f"a + {cap}", "str": f"str({cap})", "None": "pass"}[ret]
+                lines = [f"def inner(a: int) -> {ret}:"]
+                lines.append(f"    {'return ' if ret != 'None' else ''}{val}" if ret != "None" else "    pass")
+                return lines
+            if c == "call":
+                return [r.choice(["x1: int = inner(1)", "x2: int = inner()", "x3: int = inner(\"s\")", "inner(1, 2)", "x4: str = inner(1)", "x5: int = nope(1)"])]
+            if c == "lam":
+                return [r.choice(["r1: int = apply(lambda v: v + 1, 2)", "r2: int = apply(lambda v: v + k, 2)", "r3: int = apply(lambda: 1, 2)", "r4: int = apply(lambda v, w: v, 2)", "r5: int = apply(lambda v: \"s\", 2)",
+                                  "r6: int = apply(lambda v: v + g0, 2)", "r7: int = apply(lambda v: v + zz, 2)", "run0(lambda: print(1))", "run0(lambda: 1)", "run0(lambda v: print(v))"])]
+            if c == "lamvar":
+                return [r.choice(["f1: (int) -> int = lambda v: v * 2", "f2: () -> None = lambda: print(1)", "f3: int = lambda v: v", "f4: (int) -> str = lambda v: str(v)", "f5: (int) -> int = lambda v: k", "x6 = lambda v: v"])]
+            if c == "defer":
+                return [r.choice(["defer cleanup(1)", "defer cleanup()", "defer nope(1)", "defer cleanup(k)", "defer inner(1)"])]
+            if c == "fnvar":
+                return ["fv: (int) -> int = lambda v: v", r.choice(["y1: int = fv(1)", "y2: int = fv()", "y3: int = fv(\"s\")", "y4: str = fv(1)", "fv(1, 2)"])]
+            if c == "capw":
+                return ["def inner(a: int) -> int:", r.choice(["    k = 4", "    g0 = 4", "    a = 4"]), "    return a"]
+            if c == "nogen":
+                return [r.choice(["def gen[T](a: T) -> T:\n    return a", "def inner(a: int) -> int:\n    if a > 0:\n        return 1"])]
+            return ["def inner(a: int) -> int:", "    if a > 0:", "        return 1"]
+        for _ in range(r.randint(1, 5)):
+            for l in stmt():
+                body += l.split("\n")
+        if loop:
+            body = ["for i in range(3):"] + ["    " + l for l in body] + ["    h: (int) -> int = lambda v: v + i"]
+        if in_fn:
+            self.lines += ["def main_f() -> None:"] + ["    " + l for l in body]
+            if r.random() < 0.5:
+                self.lines.append("main_f()")
+        else:
+            self.lines += body
+
     def program(self):
         r = self.rnd
+        if self.use_closure:
+            self.gen_closure()
+            return "\n".join(self.lines) + "\n"
         if self.use_inherit:
             self.gen_inherit()
             return "\n".join(self.lines) + "\n"
@@ -891,11 +942,12 @@ def main():
     ap.add_argument("--spawn", dest="use_spawn", action="store_true")
     ap.add_argument("--import", dest="use_import", action="store_true")
     ap.add_argument("--inherit", dest="use_inherit", action="store_true")
+    ap.add_argument("--closure", dest="use_closure", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

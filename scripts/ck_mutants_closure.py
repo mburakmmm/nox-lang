@@ -1,0 +1,48 @@
+"""3.7 (kapanış: iç içe def / lambda / defer / işlev değeri çağrısı) mutantları:
+`python3 scripts/ck_mutate.py scripts/ck_mutants_closure.py <ck_gen --closure dizini> tests/fixtures/ck_edge/closure --repo`.
+Eşdeğer mutantlar (gözlemlenebilir fark yok; yakalama kümesi yalnız lambda'nın modül düzeyi denetiminde kullanılır): `nested_scope_nocaps`, `defer_scope_nocaps`."""
+ND = "def check_nested_def(ck: Ck, a: Ast, fx: Fx, fd: int) -> int:\n    inner: int = sc_new(ck, fx.scope, True)"
+LM = "    inner: int = sc_new(ck, fx.scope, True)\n    for i in range(pky(lps)):"
+DF = "    inner: int = sc_new(ck, fx.scope, True)\n    ifx: Fx = Fx(inner, 4, False)\n    ck.cur_span = -1"
+MUTANTS = [
+    ("fnval_ret", "            check_args_func_type(ck, a, fx, c, lt, sym)\n            return ck.tt.xb[lt]", "            check_args_func_type(ck, a, fx, c, lt, sym)\n            return 0"),
+    ("fnval_args_drop", "            check_args_func_type(ck, a, fx, c, lt, sym)\n            return ck.tt.xb[lt]", "            return ck.tt.xb[lt]"),
+    ("nested_scope_nocaps", ND, "def check_nested_def(ck: Ck, a: Ast, fx: Fx, fd: int) -> int:\n    inner: int = sc_new(ck, fx.scope, False)"),
+    ("nested_scope_noparent", ND, "def check_nested_def(ck: Ck, a: Ast, fx: Fx, fd: int) -> int:\n    inner: int = sc_new(ck, -1, True)"),
+    ("nested_param_outer", "        sc_declare(ck, inner, sym_of(ck, a, pk(a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1])), type_expr_to_type(ck, a, a.n[p + {{O:Param.type_expr}}]))", "        sc_declare(ck, fx.scope, sym_of(ck, a, pk(a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1])), type_expr_to_type(ck, a, a.n[p + {{O:Param.type_expr}}]))"),
+    ("nested_ret_ignored", "    ifx: Fx = Fx(inner, ret, False)\n    body: int = sl_at(a, fd, {{O:FuncDef.body}})", "    ifx: Fx = Fx(inner, 4, False)\n    body: int = sl_at(a, fd, {{O:FuncDef.body}})"),
+    ("nested_missing_drop", "    if ret != 4 and not always_returns(a, body):\n        mp(ck, \"nested function '\")", "    if False:\n        mp(ck, \"nested function '\")"),
+    ("nested_missing_msg", "' does not return a value on all paths\")\n        raise mk_fail(ck, \"MissingReturn\")\n    tys: list[int] = []", "' misses a return\")\n        raise mk_fail(ck, \"MissingReturn\")\n    tys: list[int] = []"),
+    ("nested_functype_ret", "    return ty_func_end(ck.tt, ret)\n\n# `checkLambda`", "    return ty_func_end(ck.tt, 0)\n\n# `checkLambda`"),
+    ("nested_functype_params", "    for k in range(len(tys)):\n        ty_func_param(ck.tt, tys[k])\n    return ty_func_end(ck.tt, ret)\n\n# `checkLambda`", "    return ty_func_end(ck.tt, ret)\n\n# `checkLambda`"),
+    ("stmt_generic_drop", "        if pky(sl_at(a, pay, {{O:FuncDef.type_params}})) > 0:\n            mp(ck, \"a nested function definition CANNOT be generic: \")", "        if False:\n            mp(ck, \"a nested function definition CANNOT be generic: \")"),
+    ("stmt_async_drop", "        if a.n[pay + {{O:FuncDef.is_async}}] != 0:\n            raise unsup(ck, \"stmt_kind#nested_async\")", "        if False:\n            raise unsup(ck, \"stmt_kind#nested_async\")"),
+    ("stmt_decor_drop", "        if pky(sl_at(a, pay, {{O:FuncDef.decorators}})) > 0 or pky(sl_at(a, pay, {{O:FuncDef.nonlocals}})) > 0 or a.n[pay + {{O:FuncDef.allow_await}}] != 0:", "        if pky(sl_at(a, pay, {{O:FuncDef.nonlocals}})) > 0 or a.n[pay + {{O:FuncDef.allow_await}}] != 0:"),
+    ("stmt_declare_drop", "        sc_declare(ck, fx.scope, sym_of(ck, a, pk(a.n[pay + {{O:FuncDef.name}}], a.n[pay + {{O:FuncDef.name}} + 1])), ft)", "        pass"),
+    ("assign_capture_drop", "        if ck.sp[fx.scope] >= 0 and sc_exists(ck, ck.sp[fx.scope], sym):", "        if False:"),
+    ("assign_capture_msg", "can only be READ (assignment is not supported)", "is read-only"),
+    ("assign_capture_chain", "sc_exists(ck, ck.sp[fx.scope], sym):", "sc_lookup_local(ck, ck.sp[fx.scope], sym) >= 0:"),
+    ("lam_noexpected_drop", "    if expected < 0:\n        fail2(ck, \"TypeMismatch\", \"'lambda' can only be used where the expected function type is known", "    if False:\n        fail2(ck, \"TypeMismatch\", \"'lambda' can only be used where the expected function type is known"),
+    ("lam_notfunc_drop", "    if tt.tag[expected] != 14:\n        fail2(", "    if False:\n        fail2("),
+    ("lam_count_loose", "    if tt.xc[expected] != pky(lps):", "    if tt.xc[expected] < pky(lps):"),
+    ("lam_param_types", "tt.fp[tt.xa[expected] + i])\n    ret: int = tt.xb[expected]", "0)\n    ret: int = tt.xb[expected]"),
+    ("lam_scope_nocaps", LM, "    inner: int = sc_new(ck, fx.scope, False)\n    for i in range(pky(lps)):"),
+    ("lam_none_branch", "    if ret == 4:\n        grow_stmt_gate(ck, a, ifx, body)\n        check_expr(ck, a, ifx, body)", "    if False:\n        grow_stmt_gate(ck, a, ifx, body)\n        check_expr(ck, a, ifx, body)"),
+    ("lam_ret_mismatch_drop", "        if not ty_assignable(tt, ret, rt):\n            mp(ck, \"return type mismatch\")\n            raise mk_fail(ck, \"TypeMismatch\")\n    # modül", "        if False:\n            mp(ck, \"return type mismatch\")\n            raise mk_fail(ck, \"TypeMismatch\")\n    # modül"),
+    ("lam_module_drop", "    if fx.ret < 0:\n        bad: int = 0", "    if False:\n        bad: int = 0"),
+    ("lam_module_globals", "ck.caps.dead[ce] == 0 and m2_get(ck.globs, 0, ck.caps.k2[ce]) < 0:", "ck.caps.dead[ce] == 0:"),
+    ("lam_module_order_gate", "        if bad > 1:\n            raise unsup(ck, \"lambda#captures_order\")", "        if False:\n            raise unsup(ck, \"lambda#captures_order\")"),
+    ("lam_module_msg", "' defined inside a loop/block — use the lambda inside a function, or define the variable at the top level\")", "' is local\")"),
+    ("lam_return_type", "            raise mk_fail(ck, \"TypeMismatch\")\n    # modül düzeyindeki lambda yalnız", "            raise mk_fail(ck, \"ArgumentCountMismatch\")\n    # modül düzeyindeki lambda yalnız"),
+    ("defer_module_drop", "    if fx.ret < 0:\n        fail2(ck, \"TypeMismatch\", \"'defer' can only be used inside a function/method\")", "    if False:\n        fail2(ck, \"TypeMismatch\", \"'defer' can only be used inside a function/method\")"),
+    ("defer_span_keep", DF, "    inner: int = sc_new(ck, fx.scope, True)\n    ifx: Fx = Fx(inner, 4, False)\n    pass"),
+    ("defer_scope_nocaps", DF, "    inner: int = sc_new(ck, fx.scope, False)\n    ifx: Fx = Fx(inner, 4, False)\n    ck.cur_span = -1"),
+    ("defer_ret", DF, "    inner: int = sc_new(ck, fx.scope, True)\n    ifx: Fx = Fx(inner, -1, False)\n    ck.cur_span = -1"),
+    ("defer_gate_drop", "    ck.cur_span = -1\n    grow_stmt_gate(ck, a, ifx, ce)\n    check_expr(ck, a, ifx, ce)", "    ck.cur_span = -1\n    check_expr(ck, a, ifx, ce)"),
+    ("nonlocal_gate_drop", "    if stmts_have_nonlocal(a, body):\n        ck.why = \"nonlocal\"\n        return 2", "    if False:\n        return 2"),
+    ("nonlocal_class_drop", "        elif tag == {{T:StmtKind.class_def}}:\n            ms: int = sl_at(a, pay, {{O:ClassDef.methods}})\n            for q in range(pky(ms)):\n                m: int = stmt_at(a, ms, q)\n                if pky(sl_at(a, m, {{O:FuncDef.nonlocals}})) > 0 or stmts_have_nonlocal(a, sl_at(a, m, {{O:FuncDef.body}})):\n                    return True\n", "        elif tag == {{T:StmtKind.class_def}}:\n            pass\n"),
+    ("nonlocal_func_body_drop", "            if pky(sl_at(a, pay, {{O:FuncDef.nonlocals}})) > 0 or stmts_have_nonlocal(a, sl_at(a, pay, {{O:FuncDef.body}})):\n                return True\n        elif tag == {{T:StmtKind.class_def}}:", "            if pky(sl_at(a, pay, {{O:FuncDef.nonlocals}})) > 0:\n                return True\n        elif tag == {{T:StmtKind.class_def}}:"),
+    ("nonlocal_if_else_drop", "            if a.n[pay + {{O:IfStmt.else_body}}] != {{NONE}} and stmts_have_nonlocal(a, sl_at(a, pay, {{O:IfStmt.else_body}})):\n                return True\n        elif tag == {{T:StmtKind.while_stmt}}:", "        elif tag == {{T:StmtKind.while_stmt}}:"),
+    ("nonlocal_for_drop", "            if stmts_have_nonlocal(a, sl_at(a, pay, {{O:ForStmt.body}})):\n                return True\n        elif tag == {{T:StmtKind.try_stmt}}:", "            pass\n        elif tag == {{T:StmtKind.try_stmt}}:"),
+    ("nonlocal_try_finally_drop", "            if a.n[pay + {{O:TryStmt.finally_body}}] != {{NONE}} and stmts_have_nonlocal(a, sl_at(a, pay, {{O:TryStmt.finally_body}})):\n                return True\n        elif tag == {{T:StmtKind.with_stmt}}:", "        elif tag == {{T:StmtKind.with_stmt}}:"),
+]

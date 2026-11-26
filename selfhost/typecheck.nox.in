@@ -720,6 +720,8 @@ def check_expr_inner(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
         return check_spawn(ck, a, fx, a.n[e + 1])
     if tag == {{T:Expr.generic_construct}}:
         return check_generic_construct(ck, a, fx, a.n[e + 1])
+    if tag == {{T:Expr.lambda}}:
+        return check_lambda(ck, a, fx, e, -1)
     raise unsup(ck, "check_expr_inner#" + str(tag))
 
 # `spawn f(...)`: yalnızca üst-düzey `async def` çağrısı (iç içe async/`obj.metod` sarmalayıcısı kapsam dışı) -> `Task[T]`.
@@ -1172,7 +1174,9 @@ def check_expr_expected(ck: Ck, a: Ast, fx: Fx, e: int, expected_in: int) -> int
     tag: int = a.n[e]
     tt: TT = ck.tt
     expected: int = expected_in
-    if tag == {{T:Expr.list_comp}} or tag == {{T:Expr.dict_comp}} or tag == {{T:Expr.lambda}} or tag == {{T:Expr.tuple_lit}} or tag == {{T:Expr.ternary}}:
+    if tag == {{T:Expr.lambda}}:
+        return check_lambda(ck, a, fx, e, expected_in)
+    if tag == {{T:Expr.list_comp}} or tag == {{T:Expr.dict_comp}} or tag == {{T:Expr.tuple_lit}} or tag == {{T:Expr.ternary}}:
         raise unsup(ck, "check_expr_expected#1")
     # `y: list[str] | None = []`: Optional'ın taşıdığı list/dict beklenen tip olur
     if expected >= 0 and tt.tag[expected] == 15 and (tag == {{T:Expr.list_lit}} or tag == {{T:Expr.dict_lit}}):
@@ -1690,7 +1694,8 @@ def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
     lt: int = sc_lookup(ck, fx.scope, sym)
     if lt >= 0:
         if ck.tt.tag[lt] == 14:
-            raise unsup(ck, "check_call#fnvalue")
+            check_args_func_type(ck, a, fx, c, lt, sym)
+            return ck.tt.xb[lt]
         mp(ck, "'")
         mp_sym(ck, sym)
         mp(ck, "' is not a function and cannot be called")
@@ -1886,7 +1891,106 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
             raise unsup(ck, "check_stmt#async_with")
         check_with(ck, a, fx, pay)
         return
+    if tag == {{T:StmtKind.func_def}}:
+        if pky(sl_at(a, pay, {{O:FuncDef.type_params}})) > 0:
+            mp(ck, "a nested function definition CANNOT be generic: ")
+            mp_sref(ck, a, pk(a.n[pay + {{O:FuncDef.name}}], a.n[pay + {{O:FuncDef.name}} + 1]))
+            raise mk_fail(ck, "TypeMismatch")
+        if a.n[pay + {{O:FuncDef.is_async}}] != 0:
+            raise unsup(ck, "stmt_kind#nested_async")
+        if pky(sl_at(a, pay, {{O:FuncDef.decorators}})) > 0 or pky(sl_at(a, pay, {{O:FuncDef.nonlocals}})) > 0 or a.n[pay + {{O:FuncDef.allow_await}}] != 0:
+            raise unsup(ck, "stmt_kind#nested_features")
+        ft: int = check_nested_def(ck, a, fx, pay)
+        sc_declare(ck, fx.scope, sym_of(ck, a, pk(a.n[pay + {{O:FuncDef.name}}], a.n[pay + {{O:FuncDef.name}} + 1])), ft)
+        return
+    if tag == {{T:StmtKind.defer_stmt}}:
+        check_defer(ck, a, fx, pay)
+        return
     raise unsup(ck, "stmt_kind#" + str(tag))
+
+# `checkNestedFuncDef`: gövde, dış kapsamı üst zincir (yakalama kaydıyla) olan yeni kapsamda denetlenir; sonuç işlev tipi.
+def check_nested_def(ck: Ck, a: Ast, fx: Fx, fd: int) -> int:
+    inner: int = sc_new(ck, fx.scope, True)
+    ps: int = sl_at(a, fd, {{O:FuncDef.params}})
+    for i in range(pky(ps)):
+        p: int = stmt_at(a, ps, i)
+        sc_declare(ck, inner, sym_of(ck, a, pk(a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1])), type_expr_to_type(ck, a, a.n[p + {{O:Param.type_expr}}]))
+    ret: int = type_expr_to_type(ck, a, a.n[fd + {{O:FuncDef.return_type}}])
+    ifx: Fx = Fx(inner, ret, False)
+    body: int = sl_at(a, fd, {{O:FuncDef.body}})
+    check_block(ck, a, ifx, body)
+    if ret != 4 and not always_returns(a, body):
+        mp(ck, "nested function '")
+        mp_sref(ck, a, pk(a.n[fd + {{O:FuncDef.name}}], a.n[fd + {{O:FuncDef.name}} + 1]))
+        mp(ck, "' does not return a value on all paths")
+        raise mk_fail(ck, "MissingReturn")
+    tys: list[int] = []
+    for j in range(pky(ps)):
+        tys.append(type_expr_to_type(ck, a, a.n[stmt_at(a, ps, j) + {{O:Param.type_expr}}]))
+    ty_func_begin(ck.tt)
+    for k in range(len(tys)):
+        ty_func_param(ck.tt, tys[k])
+    return ty_func_end(ck.tt, ret)
+
+# `checkLambda`: beklenen işlev tipi gerekir; gövde (ifade) `return`/ifade deyimi olarak iç kapsamda denetlenir.
+def check_lambda(ck: Ck, a: Ast, fx: Fx, e: int, expected: int) -> int:
+    lam: int = a.n[e + 1]
+    if expected < 0:
+        fail2(ck, "TypeMismatch", "'lambda' can only be used where the expected function type is known (a function-typed parameter/variable/return)")
+    tt: TT = ck.tt
+    if tt.tag[expected] != 14:
+        fail2(ck, "TypeMismatch", "'lambda' can only be used where a function type is expected")
+    lps: int = sl_at(a, lam, {{O:Lambda.params}})
+    if tt.xc[expected] != pky(lps):
+        mp(ck, "the lambda takes ")
+        mp_int(ck, pky(lps))
+        mp(ck, " parameters but the expected function type takes ")
+        mp_int(ck, tt.xc[expected])
+        mp(ck, " parameters")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    inner: int = sc_new(ck, fx.scope, True)
+    for i in range(pky(lps)):
+        sc_declare(ck, inner, sym_of(ck, a, pk(a.l[pkx(lps) + i * 2], a.l[pkx(lps) + i * 2 + 1])), tt.fp[tt.xa[expected] + i])
+    ret: int = tt.xb[expected]
+    ifx: Fx = Fx(inner, ret, False)
+    body: int = a.n[lam + {{O:Lambda.body}}]
+    if ret == 4:
+        grow_stmt_gate(ck, a, ifx, body)
+        check_expr(ck, a, ifx, body)
+    else:
+        rt: int = check_expr_expected(ck, a, ifx, body, ret)
+        if not ty_assignable(tt, ret, rt):
+            mp(ck, "return type mismatch")
+            raise mk_fail(ck, "TypeMismatch")
+    # modül düzeyindeki lambda yalnız modül-global'lerini yakalayabilir (Zig `closure_infos` HashMap sırası: ≥2 ihlalde sıra taklit edilemez)
+    if fx.ret < 0:
+        bad: int = 0
+        bsym: int = -1
+        for ce in range(len(ck.caps.k1)):
+            if ck.caps.k1[ce] == ck.sc[inner] and ck.caps.dead[ce] == 0 and m2_get(ck.globs, 0, ck.caps.k2[ce]) < 0:
+                bad = bad + 1
+                bsym = ck.caps.k2[ce]
+        if bad > 1:
+            raise unsup(ck, "lambda#captures_order")
+        if bad == 1:
+            mp(ck, "a module-level lambda cannot capture the local variable '")
+            mp_sym(ck, bsym)
+            mp(ck, "' defined inside a loop/block — use the lambda inside a function, or define the variable at the top level")
+            raise mk_fail(ck, "TypeMismatch")
+    return expected
+
+# `checkDeferStmt`: çağrı, `None` dönen sentetik iç içe işlevin gövdesi olarak denetlenir (yakalamalar kapanış gibi).
+def check_defer(ck: Ck, a: Ast, fx: Fx, d: int) -> None:
+    if fx.ret < 0:
+        fail2(ck, "TypeMismatch", "'defer' can only be used inside a function/method")
+    ce: int = len(a.n)
+    a.n.append({{T:Expr.call}})
+    a.n.append(a.n[d])
+    inner: int = sc_new(ck, fx.scope, True)
+    ifx: Fx = Fx(inner, 4, False)
+    ck.cur_span = -1
+    grow_stmt_gate(ck, a, ifx, ce)
+    check_expr(ck, a, ifx, ce)
 
 def scope_live_names(ck: Ck, scope: int) -> list[int]:
     out: list[int] = []
@@ -3341,7 +3445,12 @@ def check_assign(ck: Ck, a: Ast, fx: Fx, asg: int) -> None:
         return
     existing: int = sc_lookup_local(ck, fx.scope, sym)
     if existing < 0:
-        # kapsam üst zinciri yok (iç içe def kapsam dışı); modül global'i denenir
+        if ck.sp[fx.scope] >= 0 and sc_exists(ck, ck.sp[fx.scope], sym):
+            mp(ck, "'")
+            mp_sym(ck, sym)
+            mp(ck, "' is a variable captured from OUTSIDE the nested function and can only be READ (assignment is not supported)")
+            raise mk_fail(ck, "TypeMismatch")
+        # modül global'i denenir
         gi: int = m2_get(ck.globs, 0, sym)
         if gi < 0:
             mp(ck, "undefined variable: ")
@@ -3664,6 +3773,54 @@ def stmts_assign_name_ints(a: Ast, s: int, xs: list[int]) -> bool:
                 return True
     return False
 
+# `nonlocal_desugar` kapısı: herhangi bir (iç içe) `def` `nonlocal` bildiriyorsa Zig sahip işlevin değişkenini hücreye (`__nl_x[0]`) çevirir: kapsam dışı.
+def stmts_have_nonlocal(a: Ast, s: int) -> bool:
+    for i in range(pky(s)):
+        st: int = stmt_at(a, s, i)
+        kn: int = a.n[st + {{O:Stmt.kind}}]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == {{T:StmtKind.func_def}}:
+            if pky(sl_at(a, pay, {{O:FuncDef.nonlocals}})) > 0 or stmts_have_nonlocal(a, sl_at(a, pay, {{O:FuncDef.body}})):
+                return True
+        elif tag == {{T:StmtKind.class_def}}:
+            ms: int = sl_at(a, pay, {{O:ClassDef.methods}})
+            for q in range(pky(ms)):
+                m: int = stmt_at(a, ms, q)
+                if pky(sl_at(a, m, {{O:FuncDef.nonlocals}})) > 0 or stmts_have_nonlocal(a, sl_at(a, m, {{O:FuncDef.body}})):
+                    return True
+        elif tag == {{T:StmtKind.if_stmt}}:
+            if stmts_have_nonlocal(a, sl_at(a, pay, {{O:IfStmt.then_body}})):
+                return True
+            ecs: int = sl_at(a, pay, {{O:IfStmt.elif_clauses}})
+            for j in range(pky(ecs)):
+                if stmts_have_nonlocal(a, sl_at(a, a.l[pkx(ecs) + j], {{O:ElifClause.body}})):
+                    return True
+            if a.n[pay + {{O:IfStmt.else_body}}] != {{NONE}} and stmts_have_nonlocal(a, sl_at(a, pay, {{O:IfStmt.else_body}})):
+                return True
+        elif tag == {{T:StmtKind.while_stmt}}:
+            if stmts_have_nonlocal(a, sl_at(a, pay, {{O:WhileStmt.body}})):
+                return True
+        elif tag == {{T:StmtKind.for_stmt}}:
+            if stmts_have_nonlocal(a, sl_at(a, pay, {{O:ForStmt.body}})):
+                return True
+        elif tag == {{T:StmtKind.try_stmt}}:
+            if stmts_have_nonlocal(a, sl_at(a, pay, {{O:TryStmt.try_body}})):
+                return True
+            exs: int = sl_at(a, pay, {{O:TryStmt.except_clauses}})
+            for k in range(pky(exs)):
+                if stmts_have_nonlocal(a, sl_at(a, a.l[pkx(exs) + k], {{O:ExceptClause.body}})):
+                    return True
+            if a.n[pay + {{O:TryStmt.finally_body}}] != {{NONE}} and stmts_have_nonlocal(a, sl_at(a, pay, {{O:TryStmt.finally_body}})):
+                return True
+        elif tag == {{T:StmtKind.with_stmt}}:
+            if stmts_have_nonlocal(a, sl_at(a, pay, {{O:WithStmt.body}})):
+                return True
+        elif tag == {{T:StmtKind.lowlevel_stmt}}:
+            if stmts_have_nonlocal(a, sl_at(a, pay, {{O:LowLevelStmt.body}})):
+                return True
+    return False
+
 # `Checker.checkModule` (skaler dilim). Dönüş: 0 = kabul, 1 = tanılama/hata (ayrıntı `nox_ck_diag_*`/`o_*`), 2 = kapsam dışı.
 def check_module(ck: Ck, a: Ast, body: int) -> int:
     ck.cur_line = 0
@@ -3676,6 +3833,9 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
         if kn == {{T:StmtKind.protocol_def}} or kn == {{T:StmtKind.type_alias}}:
             ck.why = "toplevel#" + str(kn)
             return 2
+    if stmts_have_nonlocal(a, body):
+        ck.why = "nonlocal"
+        return 2
     try:
         ck.sig_empty = new_sig(ck, [], [], 4)
         collect_imports(ck, a, body)
