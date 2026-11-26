@@ -41,6 +41,7 @@ fn isScalarName(n: []const u8) bool {
 /// Desteklenen tip mi? `nested`: bir kapsayıcının ELEMANI mı? Nox codegen'i kapsayıcı eleman olarak `int | None`/`float | None`/`bool | None` (kutulanmış skaler) derleyemez
 /// (`list[int | None]`, `dict[str, int | None]`, `tuple[int | None, str]`: dil sınırı); üst-düzey parametre/dönüşte ve heap tipli (`str`/`bytes`/konteyner) Optional elemanlarda sorun yoktur.
 fn validElem(te: ast.TypeExpr, nested: bool, cls: *const ClassSet) bool {
+    if (isHostObjectType(te)) return true;
     switch (te) {
         .simple => |n| return isScalarName(n) or cls.contains(n),
         .optional => |inner| {
@@ -60,6 +61,15 @@ fn validElem(te: ast.TypeExpr, nested: bool, cls: *const ClassSet) bool {
         },
         else => return false,
     }
+}
+
+/// UR-010: `nox.host.HostObject` (host'un yönettiği opak nesne) — C sınırında `NoxHostExternalRef` (u64) olarak geçer.
+pub fn isHostObjectType(te: ast.TypeExpr) bool {
+    return switch (te) {
+        .simple => |n| std.mem.eql(u8, n, "HostObject"),
+        .qualified => |segs| segs.len >= 1 and std.mem.eql(u8, segs[segs.len - 1], "HostObject"),
+        else => false,
+    };
 }
 
 /// Modülün üst-düzey (jenerik/enum olmayan) sınıf adları: kapsayıcı içinde `NOX_HOST_VALUE_HANDLE` olarak geçebilirler (UR-009).
@@ -149,6 +159,11 @@ const Synth = struct {
         const name = try self.fresh("nox_hin_");
         try self.in_memo.put(self.a, ty, name);
         var d: std.ArrayListUnmanaged(u8) = .empty;
+        if (isHostObjectType(te)) {
+            try self.p(&d, "def {s}(h: int) -> {s}:\n    nox_host_expect(h, 11, \"host object\")\n    return {s}(nox_hv_ref(h))\n\n", .{ name, ty, ty });
+            try self.helpers.appendSlice(self.a, d.items);
+            return name;
+        }
         switch (te) {
             .simple => |n| {
                 if (self.classes.contains(n)) {
@@ -221,6 +236,11 @@ const Synth = struct {
         const name = try self.fresh("nox_hout_");
         try self.out_memo.put(self.a, ty, name);
         var d: std.ArrayListUnmanaged(u8) = .empty;
+        if (isHostObjectType(te)) {
+            try self.p(&d, "def {s}(v: {s}) -> int:\n    return nox_hv_new_ref(v.ref)\n\n", .{ name, ty });
+            try self.helpers.appendSlice(self.a, d.items);
+            return name;
+        }
         switch (te) {
             .simple => |n| {
                 if (self.classes.contains(n)) {
@@ -282,6 +302,8 @@ const prelude =
     \\extern def nox_hv_append(c: int, item: int) -> int from "zig-out/lib/noxrt.o" with_rt
     \\extern def nox_hv_dict_set(d: int, k: int, v: int) -> int from "zig-out/lib/noxrt.o" with_rt
     \\extern def nox_hv_class_is(h: int, name: str) -> int from "zig-out/lib/noxrt.o" with_rt
+    \\extern def nox_hv_ref(h: int) -> int from "zig-out/lib/noxrt.o" with_rt
+    \\extern def nox_hv_new_ref(ref: int) -> int from "zig-out/lib/noxrt.o" with_rt
     \\
     \\def nox_host_expect(h: int, kind: int, what: str) -> None:
     \\    k: int = nox_hv_kind(h)
@@ -554,8 +576,8 @@ pub fn synthesize(a: std.mem.Allocator, module: ast.Module) !Result {
         if (stmt.kind != .func_def) continue;
         const fd = stmt.kind.func_def;
         if (!isExport(fd) or fd.is_async or fd.type_params.len > 0) continue;
-        var needs = isContainerish(fd.return_type);
-        for (fd.params) |prm| needs = needs or isContainerish(prm.type_expr);
+        var needs = isContainerish(fd.return_type) or isHostObjectType(fd.return_type);
+        for (fd.params) |prm| needs = needs or isContainerish(prm.type_expr) or isHostObjectType(prm.type_expr);
         if (!needs) continue;
         any = true;
 
@@ -571,6 +593,10 @@ pub fn synthesize(a: std.mem.Allocator, module: ast.Module) !Result {
                 if (!validElem(prm.type_expr, false, &cls)) return fail(a, "--host-abi: '@export def {s}': parameter '{s}' has a container/Optional type with unsupported elements (supported: int, float, bool, str, bytes, user classes, T | None, list, dict with scalar keys, tuple; int/float/bool | None are not supported inside containers)\n", .{ fd.name, prm.name });
                 try head.appendSlice(a, try std.fmt.allocPrint(a, "a{d}: int", .{i}));
                 try args.appendSlice(a, try std.fmt.allocPrint(a, "{s}(a{d})", .{ try s.inName(prm.type_expr), i }));
+            } else if (isHostObjectType(prm.type_expr)) {
+                const t = (try textOf(a, prm.type_expr)).?;
+                try head.appendSlice(a, try std.fmt.allocPrint(a, "a{d}: int", .{i}));
+                try args.appendSlice(a, try std.fmt.allocPrint(a, "{s}(a{d})", .{ t, i }));
             } else {
                 const t = (try textOf(a, prm.type_expr)) orelse return fail(a, "--host-abi: '@export def {s}': parameter '{s}' has a type that cannot cross the host ABI\n", .{ fd.name, prm.name });
                 try head.appendSlice(a, try std.fmt.allocPrint(a, "a{d}: {s}", .{ i, t }));
@@ -581,6 +607,8 @@ pub fn synthesize(a: std.mem.Allocator, module: ast.Module) !Result {
         const ret_none = fd.return_type == .simple and std.mem.eql(u8, fd.return_type.simple, "None");
         if (ret_none) {
             try adapters.appendSlice(a, try std.fmt.allocPrint(a, "{s}) -> None:\n    {s}\n\n", .{ head.items, call }));
+        } else if (isHostObjectType(fd.return_type)) {
+            try adapters.appendSlice(a, try std.fmt.allocPrint(a, "{s}) -> int:\n    return {s}.export_ref()\n\n", .{ head.items, call }));
         } else if (isContainerish(fd.return_type)) {
             if (!validElem(fd.return_type, false, &cls)) return fail(a, "--host-abi: '@export def {s}': return type is a container/Optional with unsupported elements (supported: int, float, bool, str, bytes, user classes, T | None, list, dict with scalar keys, tuple)\n", .{fd.name});
             try adapters.appendSlice(a, try std.fmt.allocPrint(a, "{s}) -> int:\n    return {s}({s})\n\n", .{ head.items, try s.outName(fd.return_type), call }));

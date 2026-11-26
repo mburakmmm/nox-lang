@@ -1555,6 +1555,8 @@ pub const Checker = struct {
         .{ .name = "grpc", .caps = &.{.network} },
         .{ .name = "grpc_server", .caps = &.{.network} },
         .{ .name = "gzip", .caps = &.{} },
+        // UR-010: Host ABI geri çağrıları (`HostObject`/`HostError`); yalnızca `--host-abi` eklentilerinde anlamlıdır (kurulu geri çağrı yoksa RuntimeError).
+        .{ .name = "host", .caps = &.{} },
         .{ .name = "http", .caps = &.{.network} },
         .{ .name = "json", .caps = &.{} },
         // Saf Nox (`nox.base64` ve `nox.crypto` üzerine). Mobil hedefte de geçerlidir.

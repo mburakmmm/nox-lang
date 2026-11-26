@@ -1,0 +1,175 @@
+# nox.host — Host ABI geri çağrıları (UR-010, Host ABI v3; DENEYSEL Nox yüzeyi).
+#
+# Bir `--host-abi` eklentisi içindeki Nox kodu, ana makinenin (ör. Python) yönettiği opak nesneleri tutabilir ve çağırabilir. `HostObject` bir `NoxHostExternalRef` belirtecini sarar (Nox belirteci
+# ASLA çözmez); `call` host'un `NoxHostCallbackOps.invoke` geri çağrısını bağlam kilidi AÇIKKEN çağırır (host → Nox yeniden girişi kilitlenmez). Host'un fırlattığı istisna `HostError` olarak
+# yükselir; yakalanmazsa dışa açık işlev `NOX_HOST_ERR_HOST_EXCEPTION` döner ve `nox_host_error_host_token` özgün istisna jetonunu verir (bkz. docs/apis/host-abi.md).
+#
+# Sahiplik: `HostObject` oluşturulurken host `retain`, yok edilirken `release` alır (ARC, `__del__`). `HostArgs`/`HostResult` host-tarafı değer ağaçlarını (NoxHostValue) sarar ve yok edilirken bırakır.
+# Geri çağrılar kurulu değilse (`nox_host_context_set_callbacks` çağrılmadı) `call` RuntimeError fırlatır.
+
+extern def nox_host_ref_retain(ref: int) -> None from "zig-out/lib/noxrt.o" with_rt
+extern def nox_host_ref_release(ref: int) -> None from "zig-out/lib/noxrt.o" with_rt
+extern def nox_host_call_external(target: int, args: int) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_host_call_status() -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_host_call_err_token() -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_host_call_err_message() -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_kind(h: int) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_int(h: int) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_float(h: int) -> float from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_str(h: int) -> str from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_len(h: int) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_item(h: int, i: int) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_release(h: int) -> None from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_new(kind: int) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_new_int(v: int) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_new_float(v: float) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_new_bool(v: int) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_new_str(v: str) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_new_bytes(v: bytes) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_append(c: int, item: int) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_ref(h: int) -> int from "zig-out/lib/noxrt.o" with_rt
+extern def nox_hx_new_ref(ref: int) -> int from "zig-out/lib/noxrt.o" with_rt
+
+# Host geri çağrısı istisna fırlattı. `token`: host'un istisna nesnesi belirteci (HostError yok edilirken host `release` alır). ALAN SIRASI SABİTTİR: `runtime/host.zig` jetonu
+# `Exception` alanlarından (message, line, cause) hemen sonra okur.
+class HostError(Exception):
+    token: int
+
+    def __init__(self: HostError, message: str, token: int) -> None:
+        super().__init__(message)
+        self.token = token
+
+    def __del__(self: HostError) -> None:
+        if self.token != 0:
+            nox_host_ref_release(self.token)
+
+def _raise_call_failure() -> None:
+    st: int = nox_host_call_status()
+    if st == 8:
+        raise HostError(nox_host_call_err_message(), nox_host_call_err_token())
+    if st == 6:
+        raise RuntimeError("host callbacks are not installed (nox_host_context_set_callbacks)")
+    raise RuntimeError("host callback failed with status " + str(st))
+
+def _push(c: int, item: int) -> None:
+    st: int = nox_hx_append(c, item)
+    nox_hx_release(item)
+    if st != 0:
+        raise ValueError("cannot add the value to the host argument tuple")
+
+# Host'tan gelen değer ağacı (geri çağrı sonucu ya da bir öğesi). Yok edilirken bırakılır.
+class HostResult:
+    h: int
+
+    def __init__(self: HostResult, h: int) -> None:
+        self.h = h
+
+    def __del__(self: HostResult) -> None:
+        nox_hx_release(self.h)
+
+    # NOX_HOST_VALUE_* türü: 0 none, 1 int, 2 float, 3 bool, 4 str, 5 bytes, 6 list, 7 dict, 8 tuple, 9 handle, 11 external ref.
+    def kind(self: HostResult) -> int:
+        return nox_hx_kind(self.h)
+
+    def is_none(self: HostResult) -> bool:
+        return nox_hx_kind(self.h) == 0
+
+    def as_int(self: HostResult) -> int:
+        k: int = nox_hx_kind(self.h)
+        if k != 1 and k != 3:
+            raise ValueError("host value is not an int")
+        return nox_hx_int(self.h)
+
+    def as_bool(self: HostResult) -> bool:
+        if nox_hx_kind(self.h) != 3:
+            raise ValueError("host value is not a bool")
+        return nox_hx_int(self.h) != 0
+
+    def as_float(self: HostResult) -> float:
+        k: int = nox_hx_kind(self.h)
+        if k == 1:
+            return float(nox_hx_int(self.h))
+        if k != 2:
+            raise ValueError("host value is not a float")
+        return nox_hx_float(self.h)
+
+    def as_str(self: HostResult) -> str:
+        if nox_hx_kind(self.h) != 4:
+            raise ValueError("host value is not a str")
+        return nox_hx_str(self.h)
+
+    def len(self: HostResult) -> int:
+        k: int = nox_hx_kind(self.h)
+        if k != 6 and k != 7 and k != 8:
+            raise ValueError("host value has no length")
+        return nox_hx_len(self.h)
+
+    def item(self: HostResult, i: int) -> HostResult:
+        k: int = nox_hx_kind(self.h)
+        if k != 6 and k != 8:
+            raise ValueError("host value is not a list/tuple")
+        c: int = nox_hx_item(self.h, i)
+        if c == 0:
+            raise IndexError("host value index out of range")
+        return HostResult(c)
+
+    def as_object(self: HostResult) -> HostObject:
+        if nox_hx_kind(self.h) != 11:
+            raise ValueError("host value is not a host object")
+        return HostObject(nox_hx_ref(self.h))
+
+# Geri çağrı argümanları (bir tuple değeri). `add_*` sırayla ekler.
+class HostArgs:
+    h: int
+
+    def __init__(self: HostArgs) -> None:
+        self.h = nox_hx_new(8)
+
+    def __del__(self: HostArgs) -> None:
+        nox_hx_release(self.h)
+
+    def add_none(self: HostArgs) -> None:
+        _push(self.h, nox_hx_new(0))
+
+    def add_int(self: HostArgs, v: int) -> None:
+        _push(self.h, nox_hx_new_int(v))
+
+    def add_float(self: HostArgs, v: float) -> None:
+        _push(self.h, nox_hx_new_float(v))
+
+    def add_bool(self: HostArgs, v: bool) -> None:
+        _push(self.h, nox_hx_new_bool(int(v)))
+
+    def add_str(self: HostArgs, v: str) -> None:
+        _push(self.h, nox_hx_new_str(v))
+
+    def add_bytes(self: HostArgs, v: bytes) -> None:
+        _push(self.h, nox_hx_new_bytes(v))
+
+    def add_object(self: HostArgs, o: HostObject) -> None:
+        _push(self.h, nox_hx_new_ref(o.ref))
+
+# Host'un yönettiği opak nesne (ör. Python çağrılabilir). `ref` `NoxHostExternalRef`tir; Nox onu hiçbir zaman çözmez.
+class HostObject:
+    ref: int
+
+    def __init__(self: HostObject, ref: int) -> None:
+        nox_host_ref_retain(ref)
+        self.ref = ref
+
+    def __del__(self: HostObject) -> None:
+        nox_host_ref_release(self.ref)
+
+    # Host'a bu nesneye YENİ bir başvuru verir (host kendi `release`ini çağırır): `-> HostObject` dönen `@export` işlevleri kullanır.
+    def export_ref(self: HostObject) -> int:
+        nox_host_ref_retain(self.ref)
+        return self.ref
+
+    def call(self: HostObject, args: HostArgs) -> HostResult:
+        r: int = nox_host_call_external(self.ref, args.h)
+        if r == 0:
+            _raise_call_failure()
+        return HostResult(r)
+
+    def call0(self: HostObject) -> HostResult:
+        return self.call(HostArgs())

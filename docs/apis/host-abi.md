@@ -28,6 +28,7 @@ extensions can live in one process without symbol clashes. Link an object or sta
 | `str` | `const uint8_t *data, size_t len` (UTF-8, validated) | `NoxHostBuffer *` (host frees) |
 | `bytes` | `const uint8_t *data, size_t len` (raw, embedded zeros kept) | `NoxHostBuffer *` |
 | class instance | `NoxHostHandle` | `NoxHostHandle *` |
+| `nox.host.HostObject` (v3) | `NoxHostExternalRef` | `NoxHostExternalRef *` (a new host-owned reference) |
 | `Class \| None`, `list[Class]`, … (v3) | `NoxHostValue` (`NOX_HOST_VALUE_HANDLE` items) | `NoxHostValue *` |
 | `T \| None`, `list[T]`, `dict[K, V]`, `tuple[...]` | `NoxHostValue` (v2) | `NoxHostValue *` (v2; host releases) |
 | `None` | — | no `out` parameter |
@@ -100,6 +101,30 @@ Class instances inside containers travel as `NOX_HOST_VALUE_HANDLE` values: `nox
 `nox_host_value_get_handle(ctx, v, &h)` gives a **new** handle (release it with `nox_host_handle_release`). `Class | None` uses `nox_host_value_none` for `None`. Inside containers only the *exact* class
 is accepted (a subclass instance or another class raises `ValueError`); top-level `NoxHostHandle` parameters have no such restriction.
 
+## Host objects and callbacks (ABI v3, UR-010)
+
+A Nox extension can hold and call opaque host objects (a Python callable, say) through `nox.host.HostObject` (see [nox.host](../stdlib/host.md)). The host identifies such an object by a
+`NoxHostExternalRef` (`uint64_t`, 0 invalid) and installs one `NoxHostCallbackOps` table per context with `nox_host_context_set_callbacks` (`struct_size` must be at least `sizeof`; a table without
+`invoke` is `NOX_HOST_ERR_INVAL`; `NULL` removes the table; clear it only after the Nox objects holding refs are gone):
+
+```c
+typedef struct NoxHostCallbackOps {
+    uint32_t struct_size; void *user_data;
+    NoxHostStatus (*invoke)(void *user_data, NoxHostContext *ctx, NoxHostExternalRef target, NoxHostValue args_tuple,
+                            NoxHostValue *out_result, uint64_t *out_err_token, NoxHostBuffer *out_err_msg);
+    void (*retain)(void *user_data, NoxHostExternalRef ref);
+    void (*release)(void *user_data, NoxHostExternalRef ref);
+} NoxHostCallbackOps;
+```
+
+- **Reentrancy.** `invoke`, `retain` and `release` run with the context lock **released**; the callback may call `nox_host_value_*` or any `nox_host_export_*` on the same context. After it returns the lock is re-taken.
+- **Arguments/result.** `args_tuple` is a borrowed `NOX_HOST_VALUE_TUPLE`. The callback builds `*out_result` with `nox_host_value_*` (leave it `0` for `None`); Nox owns and releases it.
+- **Exceptions.** Return `NOX_HOST_ERR_HOST_EXCEPTION` and set `*out_err_token` (a host reference; one `+1` passes to Nox) and optionally `*out_err_msg` (UTF-8, *borrowed*: copied before `invoke`
+  returns, no `nox_host_buffer_release`). Nox raises `nox.host.HostError`. If it is not caught, the export returns `NOX_HOST_ERR_HOST_EXCEPTION` and `nox_host_error_host_token(err)` yields the token so the host
+  can restore its original exception; the token's `release` callback fires when the error is released (read the token first). Any other non-OK status becomes a `RuntimeError`.
+- **Values.** `NOX_HOST_VALUE_EXTERNAL_REF` (`nox_host_value_external_ref` / `nox_host_value_get_external_ref`) carries a ref inside containers (`retain` on creation, `release` when the value is released).
+- A `HostObject` returned from an `@export` function gives the host a **new** reference (the host releases it itself).
+
 ## Lifecycle
 
 1. `nox_host_context_create` — a context owns one isolated Nox runtime.
@@ -110,7 +135,7 @@ is accepted (a subclass instance or another class raises `ValueError`); top-leve
 ## Threads
 
 A context is guarded by a lock: **any OS thread may use a context, one call at a time**. Contexts are completely independent, so the parallel pattern is **one
-context per thread**. There is no fixed table of thread slots, so threads may come and go without limit. Callbacks into the host are not part of v1.
+context per thread**. There is no fixed table of thread slots, so threads may come and go without limit. Callbacks into the host (v3) run with the lock released (see above).
 
 ## Handles
 
@@ -126,5 +151,5 @@ Types are spelled canonically as written in Nox source: `tuple[int, str]`, `list
 ## Known limits
 
 - Out-of-memory and fixed-width integer overflow traps terminate the process; they cannot be turned into a recoverable error (Nox has no unwind tables).
-- `async def` exports, generics and host-provided allocators are not supported yet (v3 work in progress: UR-010 … UR-013).
+- `async def` exports, generics and host-provided allocators are not supported yet (v3 work in progress: UR-011 … UR-013).
 - The static archive form cannot hide the runtime's symbols.

@@ -1,0 +1,60 @@
+# UR-010: host nesneleri (`HostObject`), yeniden-girişli geri çağrılar ve host istisnası.
+from nox.host import HostObject, HostArgs, HostResult, HostError
+
+@export
+def add(a: int, b: int) -> int:
+    return a + b
+
+@export
+def apply_twice(cb: HostObject, x: int) -> int:
+    a: HostArgs = HostArgs()
+    a.add_int(x)
+    r: HostResult = cb.call(a)
+    b: HostArgs = HostArgs()
+    b.add_int(r.as_int())
+    return cb.call(b).as_int()
+
+@export
+def describe(cb: HostObject, name: str, scale: float) -> str:
+    a: HostArgs = HostArgs()
+    a.add_str(name)
+    a.add_float(scale)
+    a.add_bool(True)
+    a.add_none()
+    return cb.call(a).as_str()
+
+@export
+def try_call(cb: HostObject) -> str:
+    try:
+        cb.call0()
+    except HostError as e:
+        return "caught: " + e.message
+    return "no error"
+
+@export
+def call_uncaught(cb: HostObject) -> int:
+    return cb.call0().as_int()
+
+@export
+def passthrough(cb: HostObject) -> HostObject:
+    return cb
+
+@export
+def call_all(cbs: list[HostObject], x: int) -> list[int]:
+    out: list[int] = []
+    for cb in cbs:
+        a: HostArgs = HostArgs()
+        a.add_int(x)
+        out.append(cb.call(a).as_int())
+    return out
+
+@export
+def maybe(cb: HostObject | None) -> int:
+    if cb is None:
+        return -1
+    return cb.call0().as_int()
+
+@export
+def child(cb: HostObject) -> HostObject:
+    a: HostArgs = HostArgs()
+    return cb.call(a).as_object()

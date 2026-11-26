@@ -17,6 +17,7 @@
  *                                 | bytes → const uint8_t *data, size_t len (ham bayt; gömülü 0 korunur)
  *                                 | sınıf örneği → NoxHostHandle (uint64_t; bağlama ait, nesil-denetimli opak tutamaç)
  *                                 | T | None, list[T], dict[K, V], tuple[...] → NoxHostValue (uint64_t, v2; bkz. "değer ağaçları" bölümü)
+ *                                 | nox.host.HostObject → NoxHostExternalRef (uint64_t, v3)
  *                         (dönüş → `out` işaretçisi): int → int64_t* | float → double* | bool → uint8_t* | str → NoxHostBuffer* (UTF-8, host serbest bırakır)
  *                                 | bytes → NoxHostBuffer* | sınıf örneği → NoxHostHandle* (host `nox_host_handle_release` ile bırakır) | None → `out` parametresi YOKTUR.
  * İŞLEV İMZASI:  NoxHostStatus nox_host_export_<modül>_<ad>(NoxHostContext *ctx, <parametreler...>, [<dönüş> *out,] NoxHostError **err);
@@ -45,6 +46,7 @@ typedef int32_t NoxHostStatus;
 #define NOX_HOST_ERR_UTF8 5 /* `str` parametresi geçerli UTF-8 değil */
 #define NOX_HOST_ERR_STATE 6
 #define NOX_HOST_ERR_INVALID_HANDLE 7 /* bırakılmış, sahte ya da başka bağlamın handle'ı */
+#define NOX_HOST_ERR_HOST_EXCEPTION 8 /* v3 (UR-010): bir host geri çağrısı istisna fırlattı; nox_host_error_host_token ile özgün jeton alınır */
 
 /* Nox sınıf örneğine opak, nesil-denetimli tutamaç (0 geçersizdir). Bir tutamaç yalnızca ÜRETEN bağlamda geçerlidir; ham işaretçi/bellek düzeni görünmez. */
 typedef uint64_t NoxHostHandle;
@@ -100,6 +102,7 @@ typedef uint64_t NoxHostValue;
 #define NOX_HOST_VALUE_LIST 6
 #define NOX_HOST_VALUE_DICT 7
 #define NOX_HOST_VALUE_TUPLE 8
+#define NOX_HOST_VALUE_EXTERNAL_REF 11 /* v3 (UR-010): host nesne belirteci (bkz. NoxHostExternalRef) */
 #define NOX_HOST_VALUE_HANDLE 9 /* v3 (UR-009): bir sınıf örneğini tutan değer (`Class | None`, `list[Class]`; bkz. aşağıdaki nox_host_value_handle) */
 
 NoxHostStatus nox_host_value_none(NoxHostContext *ctx, NoxHostValue *out);
@@ -132,6 +135,28 @@ NoxHostStatus nox_host_value_get_handle(NoxHostContext *ctx, NoxHostValue v, Nox
 /* Tutamacın Nox sınıf adı (UTF-8, ör. "Counter"; `h` geçerliyken geçerli). Host, tutamacın beklenen sınıfa ait olduğunu bununla doğrular: üst-düzey `NoxHostHandle` parametrelerinde
  * tür denetimi HOST'un sorumluluğundadır (yanlış sınıfın tutamacını vermek tanımsız davranıştır). */
 NoxHostStatus nox_host_handle_type_name(NoxHostContext *ctx, NoxHostHandle h, NoxHostSpan *out);
+
+/* ---- v3 (UR-010): host nesneleri ve yeniden-girişli geri çağrılar ----
+ * `NoxHostExternalRef`, host'un yönettiği opak bir nesneyi (ör. Python çağrılabilir) betimleyen belirteçtir (0 geçersiz); Nox onu hiçbir zaman çözmez. Nox `nox.host.HostObject` ile tutar ve çağırır.
+ * Geri çağrılar (invoke/retain/release) bağlam kilidi AÇIKKEN çağrılır: `invoke` içinden aynı bağlamda `nox_host_value_*` / `nox_host_export_*` çağrıları KİLİTLENMEZ.
+ * `invoke`: `args` ödünç bir TUPLE değeridir; sonucu `*out_result`a host kurar (Nox sahip olur ve bırakır; 0 = None). Hata için NOX_HOST_ERR_HOST_EXCEPTION döndürüp `*out_err_token`a host'un
+ * istisna belirtecini (Nox'a +1 başvuru geçer; HostError yok edilince `release` alır) ve isteğe bağlı UTF-8 ileti `*out_err_msg`a (ÖDÜNÇ: `invoke` dönünce kopyalanır; nox_host_buffer_release GEREKMEZ) yazılır.
+ * Başka her hata durumu RuntimeError olur. `retain`/`release` null olabilir. `struct_size` >= sizeof(NoxHostCallbackOps) olmalıdır (aksi NOX_HOST_ERR_VERSION). ops == NULL geri çağrıları kaldırır. */
+typedef uint64_t NoxHostExternalRef;
+typedef struct NoxHostCallbackOps {
+    uint32_t struct_size;
+    void *user_data;
+    NoxHostStatus (*invoke)(void *user_data, NoxHostContext *ctx, NoxHostExternalRef target, NoxHostValue args_tuple,
+                            NoxHostValue *out_result, uint64_t *out_err_token, NoxHostBuffer *out_err_msg);
+    void (*retain)(void *user_data, NoxHostExternalRef ref);
+    void (*release)(void *user_data, NoxHostExternalRef ref);
+} NoxHostCallbackOps;
+NoxHostStatus nox_host_context_set_callbacks(NoxHostContext *ctx, const NoxHostCallbackOps *ops);
+/* NOX_HOST_ERR_HOST_EXCEPTION'da host'un `*out_err_token` değeri (Nox kaynaklı istisnada 0); `nox_host_error_release`e kadar geçerlidir. Host özgün istisnayı jetondan geri kurar. */
+uint64_t nox_host_error_host_token(const NoxHostError *err);
+/* NOX_HOST_VALUE_EXTERNAL_REF: değer belirteci tutar (host `retain` alır; değer bırakılınca `release`). `get`: belirteç ÖDÜNÇTÜR. Geri çağrılar kurulu değilse NOX_HOST_ERR_STATE. */
+NoxHostStatus nox_host_value_external_ref(NoxHostContext *ctx, NoxHostExternalRef ref, NoxHostValue *out);
+NoxHostStatus nox_host_value_get_external_ref(NoxHostContext *ctx, NoxHostValue v, NoxHostExternalRef *out);
 
 /* Hata incelemesi. Span'ler nox_host_error_release'e kadar geçerlidir; class_name/message UTF-8'dir. */
 void nox_host_error_release(NoxHostError *err);

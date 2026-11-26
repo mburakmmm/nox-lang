@@ -3904,13 +3904,16 @@ fn writeDefaultJson(w: *std.Io.Writer, d: ?ast.Expr) !void {
 
 /// UR-008 (NoxPy, v2.2.86): parametre/dönüşün C sınırındaki taşıma biçimi — `scalar` (int/float/bool), `span` (str/bytes: veri+uzunluk), `handle` (sınıf: `NoxHostHandle`),
 /// `value` (konteyner/Optional/tuple: `NoxHostValue`), `none` (yalnız dönüş).
+/// UR-010: `nox.host.HostObject` (derleyicinin mangled sınıf adı) — `external_ref` olarak taşınır.
+const host_object_class = "nox_host_HostObject";
+
 fn marshalOf(checker_state: *checker.Checker, t: tc_types.Type) []const u8 {
     return switch (t) {
         .int, .float, .boolean, .fixed_int => "scalar",
         .str, .bytes => "span",
         .none => "none",
         .list, .dict, .optional => "value",
-        .class => |name| if (checker_state.tuple_elem_types.contains(name)) "value" else "handle",
+        .class => |name| if (std.mem.eql(u8, name, host_object_class)) "external_ref" else if (checker_state.tuple_elem_types.contains(name)) "value" else "handle",
         else => "unsupported",
     };
 }
@@ -3920,7 +3923,9 @@ fn marshalOf(checker_state: *checker.Checker, t: tc_types.Type) []const u8 {
 fn formatCanonicalType(checker_state: *checker.Checker, t: tc_types.Type, w: *std.Io.Writer) std.Io.Writer.Error!void {
     switch (t) {
         .class => |name| {
-            if (checker_state.tuple_elem_types.get(name)) |elems| {
+            if (std.mem.eql(u8, name, host_object_class)) {
+                try w.writeAll("HostObject");
+            } else if (checker_state.tuple_elem_types.get(name)) |elems| {
                 try w.writeAll("tuple[");
                 for (elems, 0..) |e, i| {
                     if (i > 0) try w.writeAll(", ");

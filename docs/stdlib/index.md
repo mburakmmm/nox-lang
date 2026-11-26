@@ -22,7 +22,7 @@ with no capability requirement. `nox.crypto` and `nox.time` are finer-grained: o
 
 | Capability | Meaning | Modules |
 |---|---|---|
-| none | pure computation | `strings`, `mathx`, `bigint`, `decimal`, `fraction`, `argparse`, `fnmatch`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `zlib`, `tar`, `zip`, `zstd`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `ed25519`, `crypto`*, `time`* |
+| none | pure computation | `host`, `strings`, `mathx`, `bigint`, `decimal`, `fraction`, `argparse`, `fnmatch`, `random`, `collections`, `bits`, `buffer`, `binary`, `path`, `console`, `json`, `toml`, `yaml`, `csv`, `regex`, `unicode`, `template`, `validate`, `url`, `gzip`, `zlib`, `tar`, `zip`, `zstd`, `protobuf`, `db`, `orm`, `router`, `reflect`, `web`, `mem`, `test`, `uuid`, `base64`, `jwt`, `ed25519`, `crypto`*, `time`* |
 | `filesystem` | files and directories | `fs`, `glob`, `tempfile`, `sqlite`, `timezone`, `wasm` |
 | `network` | sockets | `http`, `websocket`, `tls`, `smtp`, `postgres`, `mysql`, `redis`, `redis_cluster`, `grpc`, `grpc_server`, `udp`, `dns`, `safehttp` |
 | `network` + `filesystem` | both | `transfer` |
@@ -53,6 +53,7 @@ Some names are available **without any import**: `print`, `len`, `range`, `sorte
 | [`nox.random`](random.md) | pseudo-random numbers and shuffling |
 | [`nox.time`](time.md) | wall clock, sleeping, calendar date-times, monotonic intervals |
 | [`nox.tasks`](tasks.md) | task groups: add, wait, limit, cancel |
+| [`nox.host`](host.md) | host objects and reentrant callbacks for Host ABI extensions (experimental) |
 | [`nox.property`](property.md) | seeded property-based testing with size shrinking and replay |
 | [`nox.regex`](regex.md), [`nox.pcre2`](pcre2.md) | regular expressions (groups, alternation, captures); PCRE2 with JIT |
 | [`nox.unicode`](unicode.md) | Unicode normalization (NFC/NFD/NFKC/NFKD) and Turkish case mapping |

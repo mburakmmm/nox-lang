@@ -11,6 +11,15 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.90]
+
+NoxPy UR-010 (Host ABI v3 taslağı): host nesneleri ve yeniden-girişli geri çağrılar — `NoxHostExternalRef`, `NoxHostCallbackOps`, `NOX_HOST_ERR_HOST_EXCEPTION`, `nox_host_error_host_token`, `NOX_HOST_VALUE_EXTERNAL_REF`; yeni stdlib modülü `nox.host`. Sürüm patch: ABI yalnızca EKLENDİ (v1/v2/v3-taslağı ana makineler etkilenmez). Ayrıntı: spec §3.524, `docs/apis/host-abi.md`, `docs/stdlib/host.md`.
+
+- `runtime/host.zig`: bağlam başına `NoxHostCallbackOps` kopyası; `invoke`/`retain`/`release` bağlam kilidi AÇIKKEN çağrılır (kilit çağrıdan sonra yeniden alınır, ARC sahipliği devredilir); `VK_EXTERNAL_REF` değer düğümü; host istisnası (`status 8`) ve jetonu `HostError` alanından `nox_host_capture`da okunur; `nox_host_call_external` ve `nox_hx_*` iç ilkelleri.
+- `stdlib/nox/host.nox`: `HostObject` (ARC ile retain/release), `HostArgs`, `HostResult`, `HostError`. `compiler/host_adapt.zig`: `HostObject` parametre/dönüş/konteyner eleman desteği; `expand --json` `marshal: "external_ref"`.
+- Karar (belirtimde yoktu): hata iletisi tamponu `invoke` dönene kadar ÖDÜNÇTÜR (Nox kopyalar); jeton +1 Nox'a geçer ve `HostError` yok edilince `release` alır; geri çağrı kurulu değilse `call` RuntimeError.
+- Test: `tests/compat/host_abi/callbacks.nox` + `callbacks_host.c` (çok türlü argüman, yeniden giriş, yakalanan/yakalanmayan host istisnası + jeton, `list[HostObject]`/`HostObject | None`, retain/release dengesi), `expand_json_test.zig`.
+
 ## [2.2.89]
 
 NoxPy UR-009 (Host ABI v3 taslağı, UR-014'te donar): `@export class` — kurucu, örnek/statik/classmethod yöntemleri, `@property`, dunder'lar, özel istisna; `nox_host_handle_type_name`, `NOX_HOST_VALUE_HANDLE`. Sürüm patch: ABI yalnızca EKLENDİ (UR-008 de aynı şekilde patch olarak yayımlandı); `abi_version` 1..3 kabul edilir. Ayrıntı: spec §3.523, `docs/apis/host-abi.md`.

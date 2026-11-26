@@ -263,3 +263,33 @@ test "expand --json (UR-009) emits class, method kinds, properties and exception
     try std.testing.expectEqualStrings("Counter | None", methods[5].object.get("return_type").?.string);
     try std.testing.expectEqualStrings("value", methods[5].object.get("return_marshal").?.string);
 }
+
+test "expand --json (UR-010) reports HostObject as external_ref" {
+    if (builtin.os.tag == .windows) return;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const r = try run(gpa, io, &.{ "zig-out/bin/noxc", "expand", "--json", "--module", "cb", "tests/compat/host_abi/callbacks.nox" });
+    defer gpa.free(r.stdout);
+    defer gpa.free(r.stderr);
+    try std.testing.expectEqual(@as(u8, 0), exitCode(r));
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, r.stdout, .{});
+    defer parsed.deinit();
+    const exports = parsed.value.object.get("exports").?.array.items;
+    var found_pass = false;
+    var found_all = false;
+    for (exports) |e| {
+        const o = e.object;
+        const name = o.get("name").?.string;
+        if (std.mem.eql(u8, name, "passthrough")) {
+            found_pass = true;
+            try std.testing.expectEqualStrings("external_ref", o.get("return_marshal").?.string);
+            try std.testing.expectEqualStrings("HostObject", o.get("return_type").?.string);
+            try std.testing.expectEqualStrings("external_ref", o.get("params").?.array.items[0].object.get("marshal").?.string);
+        } else if (std.mem.eql(u8, name, "call_all")) {
+            found_all = true;
+            try std.testing.expectEqualStrings("list[HostObject]", o.get("params").?.array.items[0].object.get("type").?.string);
+            try std.testing.expectEqualStrings("value", o.get("params").?.array.items[0].object.get("marshal").?.string);
+        }
+    }
+    try std.testing.expect(found_pass and found_all);
+}

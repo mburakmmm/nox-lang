@@ -27,9 +27,20 @@ pub const ERR_VERSION: i32 = 4;
 pub const ERR_UTF8: i32 = 5;
 pub const ERR_STATE: i32 = 6;
 pub const ERR_INVALID_HANDLE: i32 = 7;
+/// UR-010: bir host geri çağrısı (Python) istisna fırlattı; `nox_host_error_host_token` ile özgün istisna jetonu alınır.
+pub const ERR_HOST_EXCEPTION: i32 = 8;
 
 const CTX_MAGIC: u32 = 0x4e58_4843; // "NXHC"
 const ERR_MAGIC: u32 = 0x4e58_4845; // "NXHE"
+
+/// UR-010: host geri çağrı tablosu (`NoxHostCallbackOps`; ABI donduruldu: alan sırası/boyutu değişmez).
+pub const CallbackOps = extern struct {
+    struct_size: u32,
+    user_data: ?*anyopaque,
+    invoke: ?*const fn (user_data: ?*anyopaque, ctx: ?*anyopaque, target: u64, args: u64, out_result: *u64, out_err_token: *u64, out_err_msg: *Buffer) callconv(.c) i32,
+    retain: ?*const fn (user_data: ?*anyopaque, ref: u64) callconv(.c) void,
+    release: ?*const fn (user_data: ?*anyopaque, ref: u64) callconv(.c) void,
+};
 
 /// `nox_host_context_create` yapılandırması. `size`/`abi_version` zorunlu; `allocator` v1'de NULL OLMALIDIR (host ayırıcısı sonraki sürüm).
 pub const Config = extern struct { size: u32, abi_version: u32, allocator: ?*const anyopaque };
@@ -46,6 +57,13 @@ const Context = struct {
     /// UR-008: bu bağlamın `NoxHostValue` tablosu (host-tarafı değer ağaçları; Nox nesnesi DEĞİLDİR).
     vals: std.ArrayListUnmanaged(VSlot) = .empty,
     free_vals: std.ArrayListUnmanaged(u32) = .empty,
+    /// UR-010: host geri çağrıları (null = kurulmadı) ve son başarısız çağrının hata durumu (Nox tarafı hemen sonra okur).
+    cb: ?CallbackOps = null,
+    call_status: i32 = 0,
+    call_err_token: u64 = 0,
+    call_err_msg: []u8 = &.{},
+    /// Yok edilirken geri çağrılar kilit AÇILMADAN yapılır (kilit tutulmuyor).
+    closing: bool = false,
 };
 
 const VSlot = struct { node: ?*Node, gen: u16 };
@@ -57,7 +75,7 @@ pub const Span = extern struct { data: ?[*]const u8, len: usize };
 pub const Buffer = extern struct { data: ?[*]u8, len: usize };
 
 /// `ctx`: hatayı üreten bağlam — `nox_host_error_release` istisna nesnesini (ARC) bağlam kilidi ALTINDA bırakır; hata, bağlam yok edilmeden ÖNCE bırakılmalıdır (belgelenmiş).
-const HostError = struct { magic: u32, ctx: *Context, rt: ?*anyopaque, exception: ?*anyopaque, line: i64 };
+const HostError = struct { magic: u32, ctx: *Context, rt: ?*anyopaque, exception: ?*anyopaque, line: i64, host_token: u64 = 0 };
 
 pub export fn nox_host_abi_version() u32 {
     return ABI_VERSION;
@@ -84,6 +102,7 @@ pub export fn nox_host_context_create(config: ?*const Config, out: ?*?*anyopaque
 pub export fn nox_host_context_destroy(ctx_ptr: ?*anyopaque) void {
     const ctx = ctxFrom(ctx_ptr) orelse return;
     const rt = ctx.rt;
+    ctx.closing = true;
     // Açık kalan handle'ların nesneleri çalışma zamanı kapanmadan ÖNCE bırakılır (sızıntı/sarkan başvuru yok).
     for (ctx.slots.items) |slot| releaseObject(rt, slot.obj);
     ctx.slots.deinit(std.heap.page_allocator);
@@ -91,6 +110,7 @@ pub export fn nox_host_context_destroy(ctx_ptr: ?*anyopaque) void {
     for (ctx.vals.items) |vs| nodeRelease(vs.node);
     ctx.vals.deinit(std.heap.page_allocator);
     ctx.free_vals.deinit(std.heap.page_allocator);
+    if (ctx.call_err_msg.len != 0) std.heap.page_allocator.free(ctx.call_err_msg);
     rtState(rt).host_ctx = null;
     ctx.magic = 0;
     ctx.rt = null;
@@ -170,14 +190,15 @@ pub export fn nox_host_capture(ctx_ptr: ?*anyopaque, out_err: ?*?*anyopaque) i32
         releaseException(rt, exc);
         return ERR_NOMEM;
     };
-    e.* = .{ .magic = ERR_MAGIC, .ctx = ctx, .rt = rt, .exception = exc, .line = line };
+    const token = hostErrorToken(rt, exc);
+    e.* = .{ .magic = ERR_MAGIC, .ctx = ctx, .rt = rt, .exception = exc, .line = line, .host_token = token };
     if (out_err) |o| {
         o.* = e;
     } else {
         releaseException(rt, exc);
         std.heap.page_allocator.destroy(e);
     }
-    return ERR_EXCEPTION;
+    return if (token != 0) ERR_HOST_EXCEPTION else ERR_EXCEPTION;
 }
 
 fn releaseException(rt: ?*anyopaque, exc: ?*anyopaque) void {
@@ -345,6 +366,9 @@ pub const VK_DICT: u8 = 7;
 pub const VK_TUPLE: u8 = 8;
 /// UR-009: Nox sınıf örneğine (ARC +1) tutulan değer düğümü — `Class | None` ve `list[Class]` gibi kapsayıcı içi sınıf örnekleri için (`NOX_HOST_VALUE_HANDLE`).
 pub const VK_HANDLE: u8 = 9;
+/// 10 = TYPED_ARRAY (UR-012 için ayrılmış).
+/// UR-010: host'un yönettiği opak nesne belirteci (`NoxHostExternalRef`); düğüm bırakıldığında host `release` geri çağrısı alır.
+pub const VK_EXTERNAL_REF: u8 = 11;
 
 const Node = struct {
     rc: u32 = 1,
@@ -357,6 +381,8 @@ const Node = struct {
     /// VK_HANDLE: tutulan Nox nesnesi (ARC +1; düğüm bırakılırken `rt` ile bırakılır).
     obj: ?*anyopaque = null,
     rt: ?*anyopaque = null,
+    /// VK_EXTERNAL_REF: belirteç `i`de; bırakma geri çağrısı için sahip bağlam.
+    ctx: ?*Context = null,
 };
 
 fn nodeNew(kind: u8) ?*Node {
@@ -379,6 +405,7 @@ fn nodeRelease(root: ?*Node) void {
         n.rc -= 1;
         if (n.rc != 0) continue;
         if (n.kind == VK_HANDLE) releaseObject(n.rt, n.obj);
+        if (n.kind == VK_EXTERNAL_REF) if (n.ctx) |c| externalRelease(c, @bitCast(n.i));
         for (n.items.items) |c| stack.append(std.heap.page_allocator, c) catch {};
         n.items.deinit(std.heap.page_allocator);
         if (n.data.len != 0) std.heap.page_allocator.free(n.data);
@@ -700,6 +727,243 @@ pub export fn nox_host_value_is_valid(ctx_ptr: ?*anyopaque, v: u64) i32 {
     const ctx = lockedCtx(ctx_ptr) orelse return 0;
     defer ctx.lock.unlock();
     return if (vslotOf(ctx, v) != null) 1 else 0;
+}
+
+// ---- UR-010 (ABI v3): host nesne belirteçleri (`NoxHostExternalRef`) ve yeniden-girişli geri çağrılar ----
+// Kural: host geri çağrıları (`invoke`/`retain`/`release`) bağlam kilidi AÇIKKEN çağrılır; böylece geri çağrı içinden host → Nox çağrıları (aynı bağlam) kilitlenmeden çalışır. Çağrıdan sonra
+// kilit yeniden alınır ve ARC sahipliği bu iş parçacığına devredilir. Kilidin elde olduğu varsayılır (Nox kodu `nox_host_enter` içinde çalışır); bağlam yok edilirken kilit tutulmaz (`closing`).
+
+fn cbUnlock(ctx: *Context) void {
+    if (!ctx.closing) ctx.lock.unlock();
+}
+
+fn cbRelock(ctx: *Context) void {
+    if (ctx.closing) return;
+    ctx.lock.lock();
+    if (ctx.rt) |rt| asap.handOverArcOwner(@ptrCast(@alignCast(rt)));
+}
+
+fn externalRetain(ctx: *Context, ref: u64) void {
+    const ops = ctx.cb orelse return;
+    const f = ops.retain orelse return;
+    cbUnlock(ctx);
+    f(ops.user_data, ref);
+    cbRelock(ctx);
+}
+
+fn externalRelease(ctx: *Context, ref: u64) void {
+    const ops = ctx.cb orelse return;
+    const f = ops.release orelse return;
+    cbUnlock(ctx);
+    f(ops.user_data, ref);
+    cbRelock(ctx);
+}
+
+/// Geri çağrı tablosunu kurar (`ops == NULL` temizler). `struct_size` en az `sizeof(NoxHostCallbackOps)` olmalı ve `invoke` dolu olmalıdır. Tablo kopyalanır.
+/// Yaşayan `HostObject`/belirteç varken temizlemek host tarafı `release`lerini kaçırır: önce nesneleri bırakın.
+pub export fn nox_host_context_set_callbacks(ctx_ptr: ?*anyopaque, ops: ?*const CallbackOps) i32 {
+    const ctx = lockedCtx(ctx_ptr) orelse return ERR_INVAL;
+    defer ctx.lock.unlock();
+    const o = ops orelse {
+        ctx.cb = null;
+        return OK;
+    };
+    if (o.struct_size < @sizeOf(CallbackOps)) return ERR_VERSION;
+    if (o.invoke == null) return ERR_INVAL;
+    ctx.cb = o.*;
+    return OK;
+}
+
+/// Hatanın host istisna jetonu (`NOX_HOST_ERR_HOST_EXCEPTION`ta geri çağrının verdiği belirteç; Nox kaynaklı istisnada 0). Jeton `nox_host_error_release`e kadar geçerlidir.
+pub export fn nox_host_error_host_token(err_ptr: ?*anyopaque) u64 {
+    const e = errFrom(err_ptr) orelse return 0;
+    return e.host_token;
+}
+
+/// `nox.host.HostError`ın jeton alanı: `Exception` alanlarından (`message`, `line`, `cause`) SONRA gelen ilk alan (bkz. stdlib/nox/host.nox; `host_error_layout` testi düzeni korur).
+fn hostErrorToken(rt: ?*anyopaque, obj: ?*anyopaque) u64 {
+    const p = obj orelse return 0;
+    const name = classNameOf(rt, p) orelse return 0;
+    if (!std.mem.eql(u8, name, host_error_class)) return 0;
+    const base: [*]const u8 = @ptrCast(p);
+    const slot: *align(1) const u64 = @ptrCast(base + abi_layout.TAG_SIZE + abi_layout.VTABLE_PTR_SIZE + 3 * 8);
+    return slot.*;
+}
+
+const host_error_class = "nox_host_HostError";
+
+pub export fn nox_host_value_external_ref(ctx_ptr: ?*anyopaque, ref: u64, out: ?*u64) i32 {
+    const o = out orelse return ERR_INVAL;
+    o.* = 0;
+    if (ref == 0) return ERR_INVAL;
+    const ctx = lockedCtx(ctx_ptr) orelse return ERR_INVAL;
+    defer ctx.lock.unlock();
+    return coreExternalValue(ctx, ref, o);
+}
+
+/// Belirteci tutan düğüm (host `retain` alır; düğüm bırakılırken `release`).
+fn coreExternalValue(ctx: *Context, ref: u64, out: *u64) i32 {
+    if (ctx.cb == null) return ERR_STATE;
+    const n = nodeNew(VK_EXTERNAL_REF) orelse return ERR_NOMEM;
+    n.i = @bitCast(ref);
+    n.ctx = ctx;
+    externalRetain(ctx, ref);
+    const h = valueNew(ctx, n);
+    if (h == 0) return ERR_NOMEM; // `valueNew` düğümü bıraktı (`release` geri çağrısı dahil)
+    out.* = h;
+    return OK;
+}
+
+/// Değerin belirteci (BORÇLU: host kendi başvuru sayımını tutuyorsa `retain` etmelidir).
+pub export fn nox_host_value_get_external_ref(ctx_ptr: ?*anyopaque, v: u64, out: ?*u64) i32 {
+    const o = out orelse return ERR_INVAL;
+    o.* = 0;
+    const ctx = lockedCtx(ctx_ptr) orelse return ERR_INVAL;
+    defer ctx.lock.unlock();
+    const n = nodeOf(ctx, v) orelse return ERR_INVALID_HANDLE;
+    if (n.kind != VK_EXTERNAL_REF) return ERR_INVAL;
+    o.* = @bitCast(n.i);
+    return OK;
+}
+
+fn clearCallError(ctx: *Context) void {
+    ctx.call_status = 0;
+    ctx.call_err_token = 0;
+    if (ctx.call_err_msg.len != 0) std.heap.page_allocator.free(ctx.call_err_msg);
+    ctx.call_err_msg = &.{};
+}
+
+/// `nox.host.HostObject` ilkeli: belirtece `retain`.
+pub export fn nox_host_ref_retain(rt: ?*anyopaque, ref: i64) void {
+    const ctx = curCtx(rt) orelse return;
+    externalRetain(ctx, @bitCast(ref));
+}
+
+pub export fn nox_host_ref_release(rt: ?*anyopaque, ref: i64) void {
+    const ctx = curCtx(rt) orelse return;
+    externalRelease(ctx, @bitCast(ref));
+}
+
+/// `nox.host.HostObject.call` ilkeli: `target` host nesnesini `args` (tuple değer handle'ı) ile çağırır. Dönüş: sonuç değer handle'ı (>0; `None` sonucu `none` düğümüdür) ya da 0 = hata
+/// (`nox_host_call_status`/`_err_token`/`_err_message` ile okunur). Kilit geri çağrı boyunca AÇIKTIR; sonuç handle'ı Nox tarafına geçer (`nox_hv_release` ile bırakılır).
+pub export fn nox_host_call_external(rt: ?*anyopaque, target: i64, args: i64) i64 {
+    const ctx = curCtx(rt) orelse return 0;
+    clearCallError(ctx);
+    const ops = ctx.cb orelse {
+        ctx.call_status = ERR_STATE;
+        return 0;
+    };
+    const f = ops.invoke orelse {
+        ctx.call_status = ERR_STATE;
+        return 0;
+    };
+    var result: u64 = 0;
+    var token: u64 = 0;
+    var msg: Buffer = .{ .data = null, .len = 0 };
+    cbUnlock(ctx);
+    const st = f(ops.user_data, ctx, @bitCast(target), @bitCast(args), &result, &token, &msg);
+    cbRelock(ctx);
+    if (st == OK) {
+        if (result == 0) {
+            var none: u64 = 0;
+            if (coreScalar(ctx, VK_NONE, 0, 0, null, &none) != OK) {
+                ctx.call_status = ERR_NOMEM;
+                return 0;
+            }
+            return @bitCast(none);
+        }
+        if (nodeOf(ctx, result) == null) {
+            ctx.call_status = ERR_INVALID_HANDLE;
+            return 0;
+        }
+        return @bitCast(result);
+    }
+    if (result != 0) _ = valueRelease(ctx, result);
+    ctx.call_status = st;
+    ctx.call_err_token = token;
+    if (msg.data) |d| if (msg.len != 0) {
+        ctx.call_err_msg = std.heap.page_allocator.dupe(u8, d[0..msg.len]) catch &.{}; // geri çağrı belleği ÖDÜNÇTÜR (invoke dönünce geçersiz sayılır)
+    };
+    return 0;
+}
+
+pub export fn nox_host_call_status(rt: ?*anyopaque) i64 {
+    const ctx = curCtx(rt) orelse return ERR_STATE;
+    return ctx.call_status;
+}
+
+pub export fn nox_host_call_err_token(rt: ?*anyopaque) i64 {
+    const ctx = curCtx(rt) orelse return 0;
+    const t = ctx.call_err_token;
+    ctx.call_err_token = 0; // jetonun sahipliği Nox'taki HostError'a geçer
+    return @bitCast(t);
+}
+
+pub export fn nox_host_call_err_message(rt: ?*anyopaque) ?[*:0]u8 {
+    const ctx = curCtx(rt) orelse return str_mod.nox_str_from_bytes(rt, "");
+    return str_mod.nox_str_from_bytes(rt, ctx.call_err_msg);
+}
+
+/// `nox.host` değer-ağacı ilkelleri (`nox_hv_*` ile aynı iş; ayrı sembol adları, çünkü `--host-abi` önsözü `nox_hv_*` extern'lerini kendi kaynağında bildirir ve aynı ad iki kez bildirilemez).
+pub export fn nox_hx_kind(rt: ?*anyopaque, h: i64) i64 {
+    return nox_hv_kind(rt, h);
+}
+pub export fn nox_hx_int(rt: ?*anyopaque, h: i64) i64 {
+    return nox_hv_int(rt, h);
+}
+pub export fn nox_hx_float(rt: ?*anyopaque, h: i64) f64 {
+    return nox_hv_float(rt, h);
+}
+pub export fn nox_hx_str(rt: ?*anyopaque, h: i64) ?[*:0]u8 {
+    return nox_hv_str(rt, h);
+}
+pub export fn nox_hx_len(rt: ?*anyopaque, h: i64) i64 {
+    return nox_hv_len(rt, h);
+}
+pub export fn nox_hx_item(rt: ?*anyopaque, h: i64, i: i64) i64 {
+    return nox_hv_item(rt, h, i);
+}
+pub export fn nox_hx_release(rt: ?*anyopaque, h: i64) void {
+    nox_hv_release(rt, h);
+}
+pub export fn nox_hx_new(rt: ?*anyopaque, kind: i64) i64 {
+    return nox_hv_new(rt, kind);
+}
+pub export fn nox_hx_new_int(rt: ?*anyopaque, v: i64) i64 {
+    return nox_hv_new_int(rt, v);
+}
+pub export fn nox_hx_new_float(rt: ?*anyopaque, v: f64) i64 {
+    return nox_hv_new_float(rt, v);
+}
+pub export fn nox_hx_new_bool(rt: ?*anyopaque, v: i64) i64 {
+    return nox_hv_new_bool(rt, v);
+}
+pub export fn nox_hx_new_str(rt: ?*anyopaque, s: ?[*:0]const u8) i64 {
+    return nox_hv_new_str(rt, s);
+}
+pub export fn nox_hx_new_bytes(rt: ?*anyopaque, s: ?[*:0]const u8) i64 {
+    return nox_hv_new_bytes(rt, s);
+}
+pub export fn nox_hx_append(rt: ?*anyopaque, c: i64, item: i64) i64 {
+    return nox_hv_append(rt, c, item);
+}
+pub export fn nox_hv_ref(rt: ?*anyopaque, h: i64) i64 {
+    return nox_hx_ref(rt, h);
+}
+pub export fn nox_hv_new_ref(rt: ?*anyopaque, ref: i64) i64 {
+    return nox_hx_new_ref(rt, ref);
+}
+/// `VK_EXTERNAL_REF` düğümünün belirteci / belirteç için yeni düğüm (0 = geri çağrı yok/bellek yok).
+pub export fn nox_hx_ref(rt: ?*anyopaque, h: i64) i64 {
+    const ctx = curCtx(rt) orelse return 0;
+    const n = nodeOf(ctx, @bitCast(h)) orelse return 0;
+    return if (n.kind == VK_EXTERNAL_REF) n.i else 0;
+}
+pub export fn nox_hx_new_ref(rt: ?*anyopaque, ref: i64) i64 {
+    const ctx = curCtx(rt) orelse return 0;
+    var out: u64 = 0;
+    if (coreExternalValue(ctx, @bitCast(ref), &out) != OK) return 0;
+    return @bitCast(out);
 }
 
 // ---- UR-009 (ABI v3): sınıf örneği tutamaçları + kapsayıcı içi sınıf değerleri ----
