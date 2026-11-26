@@ -1367,6 +1367,11 @@ fn workerMain(ctx: *Context) void {
             continue;
         }
         sch.run() catch {
+            // Bayrak, görevler bitirilmeden (on_done host'u uyandırmadan) ÖNCE kurulur: aksi halde host
+            // on_done'dan hemen sonra yeni görev başlatabilir ve ERR_STATE yerine OK alır (aarch64 yarışı).
+            ctx.tmu.lock();
+            ctx.async_dead = true;
+            ctx.tmu.unlock();
             failAllDeadlocked(ctx);
             dead = true;
         };

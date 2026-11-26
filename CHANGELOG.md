@@ -11,6 +11,10 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.95]
+
+Host ABI UR-011 duzeltmesi: cikmaz (deadlock) bildiriminde `async_dead` bayragi, gorevler bitirilip on_done cagrilmadan ONCE kuruluyor (runtime/host.zig). aarch64 CI'da host on_done sonrasi hemen yeni gorev baslatip ERR_STATE yerine OK aliyordu (v2.2.93 CI kirmizisi). Runtime ABI manifesti yenilendi.
+
 ## [2.2.94]
 
 Selfhost Aşama 3.7-A: iç içe `def`, `lambda`, `defer` ve işlev-değeri çağrısı Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.528, `project/noxc-nightly-selfhost-plani-2026-11.md`.
