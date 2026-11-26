@@ -46,6 +46,7 @@ typedef int32_t NoxHostStatus;
 #define NOX_HOST_ERR_UTF8 5 /* `str` parametresi geçerli UTF-8 değil */
 #define NOX_HOST_ERR_STATE 6
 #define NOX_HOST_ERR_INVALID_HANDLE 7 /* bırakılmış, sahte ya da başka bağlamın handle'ı */
+#define NOX_HOST_ERR_CANCELLED 9 /* v3 (UR-011): asenkron görev iptal edildi (nihai durum; ayrıntı yok) */
 #define NOX_HOST_ERR_HOST_EXCEPTION 8 /* v3 (UR-010): bir host geri çağrısı istisna fırlattı; nox_host_error_host_token ile özgün jeton alınır */
 
 /* Nox sınıf örneğine opak, nesil-denetimli tutamaç (0 geçersizdir). Bir tutamaç yalnızca ÜRETEN bağlamda geçerlidir; ham işaretçi/bellek düzeni görünmez. */
@@ -157,6 +158,23 @@ uint64_t nox_host_error_host_token(const NoxHostError *err);
 /* NOX_HOST_VALUE_EXTERNAL_REF: değer belirteci tutar (host `retain` alır; değer bırakılınca `release`). `get`: belirteç ÖDÜNÇTÜR. Geri çağrılar kurulu değilse NOX_HOST_ERR_STATE. */
 NoxHostStatus nox_host_value_external_ref(NoxHostContext *ctx, NoxHostExternalRef ref, NoxHostValue *out);
 NoxHostStatus nox_host_value_get_external_ref(NoxHostContext *ctx, NoxHostValue v, NoxHostExternalRef *out);
+
+/* ---- v3 (UR-011): `@export async def` görevleri ----
+ * Her `@export async def foo(...)` için `--host-abi` şunu üretir (parametre eşlemesi senkron ihracatla aynıdır; sonuç ayrı alınır):
+ *   NoxHostStatus nox_host_async_start_<modül>_foo(NoxHostContext *ctx, <parametreler...>, NoxHostTaskCallback on_done, void *user_data, NoxHostTask *out_task, NoxHostError **err);
+ * Başarıda `*out_task` doludur (0 geçersiz) ve `on_done` görev başına ENAZ VE ENÇOK bir kez çağrılır (`nox_host_task_release` ile ilgilenmekten vazgeçmediğiniz sürece): işçi iş parçacığından, bağlam kilidi
+ * AÇIKKEN (içinden `nox_host_task_take_result`, `nox_host_value_*`, `nox_host_export_*` çağrılabilir). `final_status`: OK, ERR_EXCEPTION, ERR_HOST_EXCEPTION, ERR_CANCELLED ya da ERR_STATE (çıkmaz: Nox
+ * RuntimeError("deadlock in async task"); süreç ölmez, ancak o bağlamda yeni görev başlatılamaz). Başlatma hatası yalnızca durum kodudur (`*err` NULL'lanır; NOX_HOST_ERR_UTF8/INVALID_HANDLE/INVAL/STATE/NOMEM).
+ * Parametre değerleri başlatma sırasında kopyalanır/çoğaltılır (host `NoxHostValue`/`NoxHostHandle`larını hemen bırakabilir); `NoxHostExternalRef` belirteçlerini ise görev bitene kadar canlı tutmak host'un işidir.
+ * Sonuç her zaman bir `NoxHostValue`dur (sınıf dönüşü NOX_HOST_VALUE_HANDLE; None → `*out_val == 0`). `nox_host_task_take_result` bağlam kilidini BEKLEMEZ, sonucu bir kez devreder (tekrar: NOX_HOST_ERR_STATE) ve nihai durumu
+ * döndürür; ERR_EXCEPTION/ERR_HOST_EXCEPTION/ERR_STATE'te `*out_err` istisnayı verir (`nox_host_error_release`). `nox_host_task_cancel` kooperatiftir (görev bir sonraki `await`inde `CancelledError` alır) ve yine kilit beklemez.
+ * `nox_host_task_release` çalışan görevi iptal eder ve `on_done`u susturur; bitmiş görevde sonucu/hatayı (alınmadıysa) bırakır. Bağlamı yok etmek çalışan görevleri iptal eder ve işçiyi bekler.
+ * Bağlam kilidi görev Nox kodu çalıştırırken tutulur (G/Ç/zamanlayıcı beklerken ve geri çağrılarda açılır): paralel iş yükleri için bağlam başına bir iş parçacığı kullanın. */
+typedef uint64_t NoxHostTask;
+typedef void (*NoxHostTaskCallback)(void *user_data, NoxHostContext *ctx, NoxHostTask task, NoxHostStatus final_status);
+NoxHostStatus nox_host_task_cancel(NoxHostContext *ctx, NoxHostTask task);
+NoxHostStatus nox_host_task_take_result(NoxHostContext *ctx, NoxHostTask task, NoxHostValue *out_val, NoxHostError **out_err);
+NoxHostStatus nox_host_task_release(NoxHostContext *ctx, NoxHostTask task);
 
 /* Hata incelemesi. Span'ler nox_host_error_release'e kadar geçerlidir; class_name/message UTF-8'dir. */
 void nox_host_error_release(NoxHostError *err);

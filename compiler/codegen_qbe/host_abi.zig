@@ -25,7 +25,7 @@ const ERR_INVALID_HANDLE_RET = "7";
 
 fn qtypeOf(k: HostKind) ?types.QbeType {
     return switch (k) {
-        .int, .str, .bytes, .handle => .l,
+        .int, .str, .bytes, .handle, .value => .l,
         .float => .d,
         .bool => .w,
         .none => null,
@@ -111,13 +111,14 @@ pub fn genHostModuleEntry(self: *Codegen, mod: []const u8) CodegenError!void {
 }
 
 pub fn genHostExport(self: *Codegen, mod: []const u8, ex: HostExport) CodegenError!void {
+    if (ex.is_async) return genHostAsyncExport(self, mod, ex);
     resetFn(self);
     const sym = try std.fmt.allocPrint(self.allocator, "$nox_host_export_{s}_{s}", .{ mod, ex.export_name orelse ex.name });
     try self.qbeFuncHeaderStart(.w, sym);
     try self.qbeFuncParam(.l, "%ctx", true);
     for (ex.params, 0..) |k, i| {
         switch (k) {
-            .int, .handle => try self.qbeFuncParam(.l, try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}), false),
+            .int, .handle, .value => try self.qbeFuncParam(.l, try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}), false),
             .float => try self.qbeFuncParam(.d, try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}), false),
             .bool => try self.qbeFuncParam(.w, try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}), false),
             .str, .bytes => {
@@ -180,7 +181,7 @@ pub fn genHostExport(self: *Codegen, mod: []const u8, ex: HostExport) CodegenErr
     var owned: std.ArrayListUnmanaged([]const u8) = .empty; // çağrı sonrası bırakılacak `str` temp'leri
     for (ex.params, 0..) |k, i| {
         switch (k) {
-            .int => try call_args.append(self.allocator, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}) }),
+            .int, .value => try call_args.append(self.allocator, .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}) }),
             .handle => try call_args.append(self.allocator, .{ .ty = .l, .text = handle_objs.items[i] }),
             .float => try call_args.append(self.allocator, .{ .ty = .d, .text = try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}) }),
             .bool => {
@@ -227,7 +228,7 @@ pub fn genHostExport(self: *Codegen, mod: []const u8, ex: HostExport) CodegenErr
     var status: []const u8 = "0";
     if (result) |r| {
         switch (ex.ret) {
-            .int => try self.qbeStore(.l, r, "%out"),
+            .int, .value => try self.qbeStore(.l, r, "%out"),
             .handle => {
                 // handle sahipliği (ARC +1) bağlam tablosuna geçer; tablo dolu/bellek yoksa nesne bırakılır ve ERR_NOMEM döner.
                 const hh = try self.newTemp();
@@ -253,6 +254,231 @@ pub fn genHostExport(self: *Codegen, mod: []const u8, ex: HostExport) CodegenErr
     for (owned.items) |s| try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = rt }, .{ .ty = .l, .text = s } });
     try emitLeave(self);
     try self.qbeRet(status);
+    try self.qbeFuncEnd();
+}
+
+/// UR-011: `@export async def` — `nox_host_async_start_<modül>_<ad>(ctx, <parametreler>, on_done, user_data, *out_task, err)`.
+/// Parametreler senkron sarmalayıcıyla AYNI doğrulanır/dönüştürülür; ama Nox işlevi çağrılmaz: dönüştürülen değerler 8 baytlık sözcükler olarak bir argüman bloğuna yazılır ve `nox_host_async_submit` ile işçiye verilir.
+/// İşçi, `$nox_host_athunk_<modül>_<ad>(rt, argv)`yi çalıştırır: değerleri okur, Nox'un `Task[int]` dönen başlatma işlevini çağırır (`spawn` argümanları kendi sahipliğini alır), bu başlatma için ayrılan geçici kopyaları
+/// (str/bytes kopyaları, sınıf nesnesi başvurusu) bırakır. Konteyner (`NoxHostValue`) parametreleri görev için çoğaltılır (görev bırakır). Başlatma hatası yalnızca durum kodudur (`*err` NULL'lanır).
+fn genHostAsyncExport(self: *Codegen, mod: []const u8, ex: HostExport) CodegenError!void {
+    const ename = ex.export_name orelse ex.name;
+    const thunk_sym = try std.fmt.allocPrint(self.allocator, "$nox_host_athunk_{s}_{s}", .{ mod, ename });
+
+    // ---- işçi tarafı: thunk ----
+    resetFn(self);
+    try self.qbeFuncHeaderStart(.l, thunk_sym);
+    try self.qbeFuncParam(.l, "%rt", true);
+    try self.qbeFuncParam(.l, "%argv", false);
+    try self.qbeFuncHeaderEnd();
+    var targs: std.ArrayListUnmanaged(QbeArg) = .empty;
+    try targs.append(self.allocator, .{ .ty = .l, .text = "%rt" });
+    var to_release: std.ArrayListUnmanaged(struct { name: []const u8, is_str: bool }) = .empty;
+    for (ex.params, 0..) |k, i| {
+        const addr = try self.newTemp();
+        try self.qbeOp2Imm(addr, .l, "add", "%argv", @as(i64, @intCast(i)) * 8);
+        const v = try self.newTemp();
+        switch (k) {
+            .float => try self.qbeLoad(v, .d, .d, addr),
+            .bool => try self.qbeLoad(v, .w, .w, addr),
+            .none => return error.Unsupported,
+            else => try self.qbeLoad(v, .l, .l, addr),
+        }
+        const ty: types.QbeType = switch (k) {
+            .float => .d,
+            .bool => .w,
+            else => .l,
+        };
+        try targs.append(self.allocator, .{ .ty = ty, .text = v });
+        if (k == .str or k == .bytes) try to_release.append(self.allocator, .{ .name = v, .is_str = true });
+        if (k == .handle) try to_release.append(self.allocator, .{ .name = v, .is_str = false });
+    }
+    const fn_sym = try self.userFnSym(ex.name);
+    const task = try self.newTemp();
+    try self.qbeCall(.{ .name = task, .ty = .l }, fn_sym, targs.items);
+    for (to_release.items) |r| {
+        if (r.is_str) {
+            try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = "%rt" }, .{ .ty = .l, .text = r.name } });
+        } else {
+            try self.qbeCall(null, "$nox_host_obj_release", &.{ .{ .ty = .l, .text = "%rt" }, .{ .ty = .l, .text = r.name } });
+        }
+    }
+    try self.qbeCall(null, "$nox_host_async_free_args", &.{.{ .ty = .l, .text = "%argv" }});
+    try self.qbeRet(task);
+    try self.qbeFuncEnd();
+
+    // ---- host tarafı: başlatma sarmalayıcısı ----
+    resetFn(self);
+    const sym = try std.fmt.allocPrint(self.allocator, "$nox_host_async_start_{s}_{s}", .{ mod, ename });
+    try self.qbeFuncHeaderStart(.w, sym);
+    try self.qbeFuncParam(.l, "%ctx", true);
+    for (ex.params, 0..) |k, i| {
+        switch (k) {
+            .int, .handle, .value => try self.qbeFuncParam(.l, try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}), false),
+            .float => try self.qbeFuncParam(.d, try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}), false),
+            .bool => try self.qbeFuncParam(.w, try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}), false),
+            .str, .bytes => {
+                try self.qbeFuncParam(.l, try std.fmt.allocPrint(self.allocator, "%d{d}", .{i}), false);
+                try self.qbeFuncParam(.l, try std.fmt.allocPrint(self.allocator, "%n{d}", .{i}), false);
+            },
+            .none => return error.Unsupported,
+        }
+    }
+    try self.qbeFuncParam(.l, "%on_done", false);
+    try self.qbeFuncParam(.l, "%ud", false);
+    try self.qbeFuncParam(.l, "%out_task", false);
+    try self.qbeFuncParam(.l, "%err", false);
+    try self.qbeFuncHeaderEnd();
+
+    const rt = try emitCtxCheck(self);
+    try self.qbeCall(null, "$nox_host_clear_err", &.{.{ .ty = .l, .text = "%err" }});
+
+    // 0) çıkış işaretçisi ve geri çağrı zorunlu
+    for ([_][]const u8{ "%out_task", "%on_done" }) |p| {
+        const isnull = try self.newTemp();
+        try self.qbeOp2Imm(isnull, .w, "ceql", p, 0);
+        const bad_l = try self.newLabel("host_async_arg_bad");
+        const next_l = try self.newLabel("host_async_arg_ok");
+        try self.qbeJnz(isnull, bad_l, next_l);
+        try self.qbeLabel(bad_l);
+        try emitLeave(self);
+        try self.qbeRet(ERR_INVAL_RET);
+        try self.qbeLabel(next_l);
+    }
+
+    // 1) str doğrulaması
+    for (ex.params, 0..) |k, i| {
+        if (k != .str) continue;
+        const ok = try self.newTemp();
+        try self.qbeCall(.{ .name = ok, .ty = .w }, "$nox_host_utf8_ok", &.{
+            .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "%d{d}", .{i}) },
+            .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "%n{d}", .{i}) },
+        });
+        const bad_l = try self.newLabel("host_utf8_bad");
+        const next_l = try self.newLabel("host_utf8_ok");
+        try self.qbeJnz(ok, next_l, bad_l);
+        try self.qbeLabel(bad_l);
+        try emitLeave(self);
+        try self.qbeRet(ERR_UTF8_RET);
+        try self.qbeLabel(next_l);
+    }
+    // 1b) handle ve değer handle'ları geçerli mi
+    var handle_objs: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (ex.params, 0..) |k, i| {
+        try handle_objs.append(self.allocator, "");
+        if (k == .handle) {
+            const obj = try self.newTemp();
+            try self.qbeCall(.{ .name = obj, .ty = .l }, "$nox_host_handle_obj", &.{
+                .{ .ty = .l, .text = "%ctx" },
+                .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}) },
+            });
+            const isnull = try self.newTemp();
+            try self.qbeOp2Imm(isnull, .w, "ceql", obj, 0);
+            const bad_l = try self.newLabel("host_handle_bad");
+            const next_l = try self.newLabel("host_handle_ok");
+            try self.qbeJnz(isnull, bad_l, next_l);
+            try self.qbeLabel(bad_l);
+            try emitLeave(self);
+            try self.qbeRet(ERR_INVALID_HANDLE_RET);
+            try self.qbeLabel(next_l);
+            handle_objs.items[i] = obj;
+        } else if (k == .value) {
+            const ok = try self.newTemp();
+            try self.qbeCall(.{ .name = ok, .ty = .w }, "$nox_host_value_check", &.{
+                .{ .ty = .l, .text = "%ctx" },
+                .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "%a{d}", .{i}) },
+            });
+            const bad_l = try self.newLabel("host_value_bad");
+            const next_l = try self.newLabel("host_value_ok");
+            try self.qbeJnz(ok, next_l, bad_l);
+            try self.qbeLabel(bad_l);
+            try emitLeave(self);
+            try self.qbeRet(ERR_INVALID_HANDLE_RET);
+            try self.qbeLabel(next_l);
+        }
+    }
+    // 2) argüman bloğu + değerleri yaz
+    const argv = try self.newTemp();
+    try self.qbeCall(.{ .name = argv, .ty = .l }, "$nox_host_async_args", &.{
+        .{ .ty = .l, .text = "%ctx" },
+        .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{ex.params.len}) },
+    });
+    {
+        const isnull = try self.newTemp();
+        try self.qbeOp2Imm(isnull, .w, "ceql", argv, 0);
+        const bad_l = try self.newLabel("host_async_nomem");
+        const next_l = try self.newLabel("host_async_mem_ok");
+        try self.qbeJnz(isnull, bad_l, next_l);
+        try self.qbeLabel(bad_l);
+        try emitLeave(self);
+        try self.qbeRet("2");
+        try self.qbeLabel(next_l);
+    }
+    var owned_strs: std.ArrayListUnmanaged([]const u8) = .empty;
+    var owned_objs: std.ArrayListUnmanaged([]const u8) = .empty;
+    var owned_vals: std.ArrayListUnmanaged([]const u8) = .empty;
+    for (ex.params, 0..) |k, i| {
+        const addr = try self.newTemp();
+        try self.qbeOp2Imm(addr, .l, "add", argv, @as(i64, @intCast(i)) * 8);
+        const a = try std.fmt.allocPrint(self.allocator, "%a{d}", .{i});
+        switch (k) {
+            .int => try self.qbeStore(.l, a, addr),
+            .float => try self.qbeStore(.d, a, addr),
+            .bool => {
+                const masked = try self.newTemp();
+                try self.qbeOp2Imm(masked, .w, "and", a, 255);
+                const norm = try self.newTemp();
+                try self.qbeOp2Imm(norm, .w, "cnew", masked, 0);
+                try self.qbeStore(.w, norm, addr);
+            },
+            .str, .bytes => {
+                const s = try self.newTemp();
+                try self.qbeCall(.{ .name = s, .ty = .l }, "$nox_host_str_new", &.{
+                    .{ .ty = .l, .text = rt },
+                    .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "%d{d}", .{i}) },
+                    .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "%n{d}", .{i}) },
+                });
+                try owned_strs.append(self.allocator, s);
+                try self.qbeStore(.l, s, addr);
+            },
+            .handle => {
+                try self.qbeCall(null, "$nox_host_obj_retain", &.{.{ .ty = .l, .text = handle_objs.items[i] }});
+                try owned_objs.append(self.allocator, handle_objs.items[i]);
+                try self.qbeStore(.l, handle_objs.items[i], addr);
+            },
+            .value => {
+                const d = try self.newTemp();
+                try self.qbeCall(.{ .name = d, .ty = .l }, "$nox_host_value_dup", &.{ .{ .ty = .l, .text = "%ctx" }, .{ .ty = .l, .text = a } });
+                try owned_vals.append(self.allocator, d);
+                try self.qbeStore(.l, d, addr);
+            },
+            .none => return error.Unsupported,
+        }
+    }
+    // 3) işçiye ver
+    const st = try self.newTemp();
+    try self.qbeCall(.{ .name = st, .ty = .w }, "$nox_host_async_submit", &.{
+        .{ .ty = .l, .text = "%ctx" },
+        .{ .ty = .l, .text = thunk_sym },
+        .{ .ty = .l, .text = argv },
+        .{ .ty = .l, .text = try std.fmt.allocPrint(self.allocator, "{d}", .{ex.params.len}) },
+        .{ .ty = .l, .text = "%on_done" },
+        .{ .ty = .l, .text = "%ud" },
+        .{ .ty = .l, .text = "%out_task" },
+    });
+    const fail_l = try self.newLabel("host_async_fail");
+    const ok_l = try self.newLabel("host_async_ok");
+    try self.qbeJnz(st, fail_l, ok_l);
+    try self.qbeLabel(fail_l);
+    for (owned_strs.items) |s| try self.qbeCall(null, "$nox_str_release", &.{ .{ .ty = .l, .text = rt }, .{ .ty = .l, .text = s } });
+    for (owned_objs.items) |o| try self.qbeCall(null, "$nox_host_obj_release", &.{ .{ .ty = .l, .text = rt }, .{ .ty = .l, .text = o } });
+    for (owned_vals.items) |v| try self.qbeCall(null, "$nox_host_value_drop", &.{ .{ .ty = .l, .text = "%ctx" }, .{ .ty = .l, .text = v } });
+    try self.qbeCall(null, "$nox_host_async_free_args", &.{.{ .ty = .l, .text = argv }});
+    try emitLeave(self);
+    try self.qbeRet(st);
+    try self.qbeLabel(ok_l);
+    try emitLeave(self);
+    try self.qbeRet("0");
     try self.qbeFuncEnd();
 }
 

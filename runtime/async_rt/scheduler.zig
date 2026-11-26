@@ -261,6 +261,10 @@ pub const Scheduler = struct {
     /// (`undefined` GÜVENLİDİR) — SADECE ADRESİ bir kimlik olarak kullanılır.
     wake_sentinel: Fiber = undefined,
     wake_ctx: io_reactor.WaitCtx = undefined,
+    /// UR-011 (Host ABI görevleri): `run()` döngüsüne bağlanan host kancası — `what`: 0 = her turun başı (fiber dilimleri arası; yeni görev enjeksiyonu), 1 = reaktörde BLOKLAMADAN önce, 2 = bloklamadan sonra.
+    /// Host, 1'de bağlam kilidini bırakır, 2'de geri alır (böylece görevler beklerken host çağrıları ilerler). `null` (varsayılan) = davranış DEĞİŞMEZ.
+    host_hook: ?*const fn (?*anyopaque, u8) callconv(.c) void = null,
+    host_hook_ctx: ?*anyopaque = null,
 
     pub fn init(allocator: std.mem.Allocator) !Scheduler {
         // Faz F.0.7 (bkz. plan dosyası "Kritik düzeltme #3"in çözümü):
@@ -349,6 +353,20 @@ pub const Scheduler = struct {
         const fd = self.wake_read_fd orelse return;
         self.wake_ctx = .{ .fiber = &self.wake_sentinel };
         self.reactor.register(fd, .read, &self.wake_ctx) catch {};
+    }
+
+    /// UR-011: havuzsuz bir zamanlayıcıyı BAŞKA iş parçacıklarından uyandırılabilir yapar (self-pipe + reaktör kaydı): host iş parçacığı yeni görev/iptal bildirdiğinde `wakeFromForeign`.
+    pub fn enableWake(self: *Scheduler) !void {
+        if (self.wake_read_fd != null) return;
+        const fds = try self_pipe.makeSelfPipe();
+        self.wake_read_fd = fds[0];
+        self.wake_write_fd = fds[1];
+        self.armWakeFd();
+    }
+
+    /// Reaktörde bloke olmuş zamanlayıcıyı uyandırır (herhangi bir iş parçacığından; `enableWake` çağrılmışsa).
+    pub fn wakeFromForeign(self: *Scheduler) void {
+        if (self.wake_write_fd) |fd| self_pipe.signalWakeFd(fd);
     }
 
     /// Havuzdan bir yığın alır (varsa); yoksa genel ayırıcıdan taze tahsis eder.
@@ -440,7 +458,7 @@ pub const Scheduler = struct {
         // (F.2'nin capability sistemi GERÇEK bir WorkerPool'u freestanding'de
         // İMKANSIZ kıldığından) `is_foreign` HER ZAMAN `false` olurdu, bu
         // YÜZDEN çağrıyı TAMAMEN atlamak DAVRANIŞI DEĞİŞTİRMEZ.
-        const is_foreign = if (comptime is_freestanding) false else self.pool_live_count != null and thread_spawn.currentId() != self.owner_tid;
+        const is_foreign = if (comptime is_freestanding) false else (self.pool_live_count != null or self.host_hook != null) and thread_spawn.currentId() != self.owner_tid;
         // Sayaç, listeden ÖNCE artar (gözlemci hiçbir zaman gerçek sayıdan az görmez); bkz. `asap.RuntimeState.pool_ready_total`.
         if (self.pool_ready_total) |rt_total| _ = rt_total.fetchAdd(1, .acq_rel);
         self.ready_lock.lock();
@@ -778,6 +796,7 @@ pub const Scheduler = struct {
             // buraya DÖNEN HER yol (G/Ç-poll SONRASI, çalma/deadlock-
             // kontrolü BAŞARISIZ OLDUĞUNDA) DA kapsanır.
             self.stwParticipate();
+            if (self.host_hook) |hk| hk(self.host_hook_ctx, 0);
             // Faz MN.4/5: `ready` ARTIK BİRDEN FAZLA iş parçacığı TARAFINDAN
             // (yerel `run` döngüsü BURADA pop eder, YABANCI worker'lar
             // `markReady` İLE append eder) dokunulabilir — okuma (uzunluk
@@ -880,7 +899,9 @@ pub const Scheduler = struct {
                 // davranış, SIFIR değişiklik.
                 if (self.live_count == 0) return;
                 if (self.waiting_on_io > 0) {
+                    if (self.host_hook) |hk| hk(self.host_hook_ctx, 1);
                     _ = self.reactor.poll(self) catch @panic("kqueue poll failed");
+                    if (self.host_hook) |hk| hk(self.host_hook_ctx, 2);
                     continue;
                 }
                 if (comptime host_async) {

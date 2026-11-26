@@ -3799,9 +3799,27 @@ fn collectHostExports(a: std.mem.Allocator, user_module: ast.Module, st: *checke
         }
         if (!is_export) continue;
         const sig = st.functions.get(fd.name) orelse continue;
-        if (fd.is_async or fd.type_params.len > 0) {
-            printErr("--host-abi: '@export def {s}' cannot be async or generic\n", .{fd.name});
+        if (fd.type_params.len > 0) {
+            printErr("--host-abi: '@export def {s}' cannot be generic\n", .{fd.name});
             return error.BuildFailed;
+        }
+        // UR-011: `@export async def` → C başlatma sarmalayıcısı (`nox_host_async_start_<modül>_<ad>`); Nox tarafında sentezlenen `nox_host_astart_<ad>` (Task dönen, senkron) çağrılır.
+        if (fd.is_async) {
+            const start_name = try std.fmt.allocPrint(a, "nox_host_astart_{s}", .{fd.name});
+            const asig = st.functions.get(start_name) orelse {
+                printErr("--host-abi: '@export async def {s}': the async start adapter could not be generated\n", .{fd.name});
+                return error.BuildFailed;
+            };
+            const akinds = try a.alloc(codegen.HostKind, asig.params.len);
+            for (asig.params, 0..) |pt, i| {
+                const orig = fd.params[i].type_expr;
+                akinds[i] = if (host_adapt.isContainerish(orig)) .value else hostKindOf(pt, false) orelse {
+                    printErr("--host-abi: '@export async def {s}': parameter {d} has type '{s}' which cannot cross the host ABI\n", .{ fd.name, i + 1, tc_types.toAlloc(a, pt) catch "?" });
+                    return error.BuildFailed;
+                };
+            }
+            try list.append(a, .{ .name = start_name, .params = akinds, .ret = .none, .export_name = host_adapt.exportNameOf(fd.name), .is_async = true });
+            continue;
         }
         // UR-008: konteyner/Optional imzalı işlevler için sentezlenen adaptör çağrılır (parametreler `NoxHostValue` = int, dönüş `int`), sembol adı kullanıcı işlevinindir.
         if (st.functions.get(try host_adapt.adapterName(a, fd.name))) |asig| {
@@ -4095,6 +4113,7 @@ fn writeExportMetadataJson(a: std.mem.Allocator, w: *std.Io.Writer, user_module:
         } else try w.writeAll("null");
         try w.writeAll(", \"thread_policy\": ");
         try writeJsonString(w, policy);
+        try w.print(", \"is_async\": {s}", .{if (fd.is_async) "true" else "false"});
         const line: u32 = if (fd.line != 0) fd.line else st.line;
         try w.print(", \"span\": {{\"file\": ", .{});
         try writeJsonString(w, path_arg);

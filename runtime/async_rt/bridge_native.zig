@@ -127,6 +127,12 @@ pub fn schedulerReady() bool {
     return GSchedulerSlot.value != null;
 }
 
+/// UR-011: çağıran iş parçacığının zamanlayıcısı (host görev işçisi `nox_async_init`ten SONRA kancayı bağlamak için); `null` = başlatılmamış.
+pub fn hostScheduler() ?*scheduler_mod.Scheduler {
+    if (GSchedulerSlot.value) |*s| return s;
+    return null;
+}
+
 pub fn currentFiber() ?*fiber_mod.Fiber {
     if (GSchedulerSlot.value) |*s| return s.current;
     return null;

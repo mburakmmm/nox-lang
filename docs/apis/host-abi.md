@@ -125,6 +125,35 @@ typedef struct NoxHostCallbackOps {
 - **Values.** `NOX_HOST_VALUE_EXTERNAL_REF` (`nox_host_value_external_ref` / `nox_host_value_get_external_ref`) carries a ref inside containers (`retain` on creation, `release` when the value is released).
 - A `HostObject` returned from an `@export` function gives the host a **new** reference (the host releases it itself).
 
+## Async tasks (ABI v3, UR-011)
+
+`@export async def foo(a: int, ...) -> T` (also async *instance methods* of exported classes) becomes a **task** API instead of a blocking call. For every such function `--host-abi` generates
+
+```c
+NoxHostStatus nox_host_async_start_<module>_foo(NoxHostContext *ctx, <params...>,
+                                                NoxHostTaskCallback on_done, void *user_data,
+                                                NoxHostTask *out_task, NoxHostError **err);
+void on_done(void *user_data, NoxHostContext *ctx, NoxHostTask task, NoxHostStatus final_status);
+NoxHostStatus nox_host_task_take_result(NoxHostContext *ctx, NoxHostTask task, NoxHostValue *out_val, NoxHostError **out_err);
+NoxHostStatus nox_host_task_cancel(NoxHostContext *ctx, NoxHostTask task);
+NoxHostStatus nox_host_task_release(NoxHostContext *ctx, NoxHostTask task);
+```
+
+- **Start** copies/duplicates the arguments (strings are copied, `NoxHostValue` containers are duplicated, class handles are retained by the task), so the host may release its own handles immediately. A start failure is a plain status
+  (`NOX_HOST_ERR_UTF8`, `_INVALID_HANDLE`, `_INVAL` for a NULL `out_task`/`on_done`, `_STATE`, `_NOMEM`; `*err` is set to `NULL`). Keep `NoxHostExternalRef` arguments alive until the task is done.
+- **Completion.** `on_done` runs exactly once per started task (not after `nox_host_task_release`), on the context's worker thread, with the context lock released: the callback may call `take_result`, `nox_host_value_*`
+  and any `nox_host_export_*`. `final_status` is `NOX_HOST_OK`, `ERR_EXCEPTION`, `ERR_HOST_EXCEPTION`, `ERR_CANCELLED`, or `ERR_STATE` (deadlock, below). From a Python host: `loop.call_soon_threadsafe(...)` inside `on_done`.
+- **Result.** `take_result` returns the final status and hands over the result once (a second call is `NOX_HOST_ERR_STATE`). The result is always a `NoxHostValue` (`int`, `str`, containers, `NOX_HOST_VALUE_HANDLE` for classes,
+  `NOX_HOST_VALUE_EXTERNAL_REF`); a `None` return gives `*out_val == 0`. For exception statuses `*out_err` holds the error (release it with `nox_host_error_release`); a cancelled task has no error object.
+- **Cancel** is cooperative: the task gets `CancelledError` at its next `await` (a Nox task that never awaits cannot be interrupted). Cancelling before the worker started the task cancels it as soon as it starts. `nox_host_task_cancel` never waits for the context lock.
+- **Release** cancels a still-running task and silences its `on_done`; for a finished task it frees an untaken result/error.
+- **Threading.** Each context lazily starts one worker thread that runs a private Nox scheduler (all tasks of a context share it, so `Channel`s etc. work between them). The context lock is held while Nox code runs and *released while
+  the scheduler waits* (I/O, timers) and during callbacks, so synchronous calls and other tasks progress while tasks sleep. CPU-bound task code keeps the lock: use one context per thread for parallel work. The worker exits when no task is left.
+- **Deadlock containment.** If every task is blocked forever (e.g. an unfed `Channel.recv`), the runtime does **not** abort the process: the tasks finish with `NOX_HOST_ERR_STATE` and a `RuntimeError("deadlock in async task")`; the
+  context then rejects new tasks with `NOX_HOST_ERR_STATE` (its scheduler is abandoned; a Debug build reports the abandoned fibers as leaks). Create a new context to continue.
+- **Destroying a context** cancels running tasks and waits for the worker; tasks reach their next `await` first.
+- Module top-level code still runs synchronously inside `nox_host_module_init_*` (no `spawn`/`await` there). WASM/freestanding targets do not support tasks.
+
 ## Lifecycle
 
 1. `nox_host_context_create` — a context owns one isolated Nox runtime.
@@ -151,5 +180,5 @@ Types are spelled canonically as written in Nox source: `tuple[int, str]`, `list
 ## Known limits
 
 - Out-of-memory and fixed-width integer overflow traps terminate the process; they cannot be turned into a recoverable error (Nox has no unwind tables).
-- `async def` exports, generics and host-provided allocators are not supported yet (v3 work in progress: UR-011 … UR-013).
+- Generics and host-provided allocators are not supported yet (v3 work in progress: UR-012, UR-013). Async tasks: see above for the cooperative-cancel and single-lock limits.
 - The static archive form cannot hide the runtime's symbols.

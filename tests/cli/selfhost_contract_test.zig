@@ -158,9 +158,8 @@ test "ck-diff check: Nox denetleyicisi kapsam-ici vakalarda Zig ile ayni tanilar
     const io = std.testing.io;
     if (!have(io, "zig-out/bin/noxc-nightly")) return error.SkipZigTest;
     const r = try run(&.{
-        "zig-out/bin/noxc-nightly",                                   "ck-diff", "check",
-        "tests/golden/typecheck_cases/err_break_outside_loop.nox",    "tests/golden/typecheck_cases/err_undefined_variable.nox",
-        "tests/golden/typecheck_cases/err_arg_count_mismatch.nox",
+        "zig-out/bin/noxc-nightly",                                "ck-diff",                                                 "check",
+        "tests/golden/typecheck_cases/err_break_outside_loop.nox", "tests/golden/typecheck_cases/err_undefined_variable.nox", "tests/golden/typecheck_cases/err_arg_count_mismatch.nox",
     });
     defer std.testing.allocator.free(r.stdout);
     defer std.testing.allocator.free(r.stderr);
@@ -168,4 +167,3 @@ test "ck-diff check: Nox denetleyicisi kapsam-ici vakalarda Zig ile ayni tanilar
     try std.testing.expect(std.mem.indexOf(u8, r.stdout, "ck-diff: OK check") != null);
     try std.testing.expect(std.mem.indexOf(u8, r.stdout, "unsupported=0") != null);
 }
-

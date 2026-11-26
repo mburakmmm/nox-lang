@@ -293,3 +293,30 @@ test "expand --json (UR-010) reports HostObject as external_ref" {
     }
     try std.testing.expect(found_pass and found_all);
 }
+
+test "expand --json (UR-011) reports is_async for functions and methods" {
+    if (builtin.os.tag == .windows) return;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const r = try run(gpa, io, &.{ "zig-out/bin/noxc", "expand", "--json", "--module", "tk", "tests/compat/host_abi/tasks.nox" });
+    defer gpa.free(r.stdout);
+    defer gpa.free(r.stderr);
+    try std.testing.expectEqual(@as(u8, 0), exitCode(r));
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, r.stdout, .{});
+    defer parsed.deinit();
+    var saw_async_fn = false;
+    var saw_sync_fn = false;
+    var saw_async_method = false;
+    for (parsed.value.object.get("exports").?.array.items) |e| {
+        const o = e.object;
+        const name = o.get("name").?.string;
+        if (std.mem.eql(u8, name, "add_later")) saw_async_fn = o.get("is_async").?.bool;
+        if (std.mem.eql(u8, name, "sync_add")) saw_sync_fn = !o.get("is_async").?.bool;
+        if (std.mem.eql(u8, name, "Worker")) {
+            for (o.get("methods").?.array.items) |m| {
+                if (std.mem.eql(u8, m.object.get("name").?.string, "later")) saw_async_method = m.object.get("is_async").?.bool;
+            }
+        }
+    }
+    try std.testing.expect(saw_async_fn and saw_sync_fn and saw_async_method);
+}

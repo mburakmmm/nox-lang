@@ -472,7 +472,7 @@ pub fn planClasses(a: std.mem.Allocator, module: ast.Module) !Plans {
                 } else if (std.mem.startsWith(u8, m.name, "_")) continue; // özel yöntem: dışa açılmaz
             } else if (std.mem.startsWith(u8, prop_name, "_")) continue;
             if (m.type_params.len > 0) return .{ .err = try std.fmt.allocPrint(a, "--host-abi: '@export class {s}': method '{s}' cannot be generic\n", .{ cd.name, m.name }) };
-            if (m.is_async) return .{ .err = try std.fmt.allocPrint(a, "--host-abi: '@export class {s}': async method '{s}' cannot be exported yet\n", .{ cd.name, m.name }) };
+            if (m.is_async and kind != .instance and kind != .dunder) return .{ .err = try std.fmt.allocPrint(a, "--host-abi: '@export class {s}': async '{s}' methods are not supported (only plain instance methods can be async)\n", .{ cd.name, m.name }) };
             const c_name = switch (kind) {
                 .property_get => try std.fmt.allocPrint(a, "{s}_get_{s}", .{ cd.name, prop_name }),
                 .property_set => try std.fmt.allocPrint(a, "{s}_set_{s}", .{ cd.name, prop_name }),
@@ -547,7 +547,14 @@ pub fn synthesizeClasses(a: std.mem.Allocator, module: ast.Module) !Result {
                 .property_get => try std.fmt.allocPrint(a, "obj.{s}", .{mp.name}),
                 .property_set => unreachable,
             };
-            if (std.mem.eql(u8, rt_text, "None")) {
+            if (mp.fd.is_async) {
+                // asenkron örnek yöntemi: sarmalayıcı da `async def` (UR-011 bunu görev olarak dışa açar)
+                if (std.mem.eql(u8, rt_text, "None")) {
+                    try out.appendSlice(a, try std.fmt.allocPrint(a, "@export\nasync def {s}{s}({s}) -> None:\n    t: Task[None] = spawn {s}\n    await t\n\n", .{ class_wrapper_prefix, mp.c_name, head.items, call }));
+                } else {
+                    try out.appendSlice(a, try std.fmt.allocPrint(a, "@export\nasync def {s}{s}({s}) -> {s}:\n    t: Task[{s}] = spawn {s}\n    return await t\n\n", .{ class_wrapper_prefix, mp.c_name, head.items, rt_text, rt_text, call }));
+                }
+            } else if (std.mem.eql(u8, rt_text, "None")) {
                 try out.appendSlice(a, try std.fmt.allocPrint(a, "@export\ndef {s}{s}({s}) -> None:\n    {s}\n\n", .{ class_wrapper_prefix, mp.c_name, head.items, call }));
             } else {
                 try out.appendSlice(a, try std.fmt.allocPrint(a, "@export\ndef {s}{s}({s}) -> {s}:\n    return {s}\n\n", .{ class_wrapper_prefix, mp.c_name, head.items, rt_text, call }));
@@ -567,6 +574,60 @@ fn fail(a: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !Result {
     return .{ .err = try std.fmt.allocPrint(a, fmt, args) };
 }
 
+const AsyncOut = union(enum) { ok, err: []const u8 };
+
+/// UR-011: `@export async def f(...) -> R` için iki Nox işlevi sentezler:
+///   `async def nox_host_atask_f(a0: P0, ...) -> int`: parametreleri (konteyner/HostObject: `NoxHostValue`/belirteç → Nox değeri) çevirir, `spawn f(...)` ile çalıştırır, `await` eder, iptali iç göreve iletir ve sonucu
+///   bir `NoxHostValue` handle'ına çevirir (None → 0);
+///   `def nox_host_astart_f(a0: P0, ...) -> Task[int]`: `spawn nox_host_atask_f(...)` (C sarmalayıcı bunu işçi iş parçacığında çağırır).
+fn synthAsync(a: std.mem.Allocator, s: *Synth, cls: *const ClassSet, fd: ast.FuncDef, adapters: *std.ArrayListUnmanaged(u8)) !AsyncOut {
+    var head: std.ArrayListUnmanaged(u8) = .empty; // a0: P0, a1: P1 ...
+    var pass: std.ArrayListUnmanaged(u8) = .empty; // a0, a1 ...
+    var conv: std.ArrayListUnmanaged(u8) = .empty; // dönüşüm satırları
+    var call_args: std.ArrayListUnmanaged(u8) = .empty; // v0, v1 ...
+    for (fd.params, 0..) |prm, i| {
+        if (i > 0) {
+            try head.appendSlice(a, ", ");
+            try pass.appendSlice(a, ", ");
+            try call_args.appendSlice(a, ", ");
+        }
+        try pass.appendSlice(a, try std.fmt.allocPrint(a, "a{d}", .{i}));
+        try call_args.appendSlice(a, try std.fmt.allocPrint(a, "v{d}", .{i}));
+        if (isContainerish(prm.type_expr)) {
+            if (!validElem(prm.type_expr, false, cls)) return .{ .err = try std.fmt.allocPrint(a, "--host-abi: '@export async def {s}': parameter '{s}' has a container/Optional type with unsupported elements\n", .{ fd.name, prm.name }) };
+            const t = (try textOf(a, prm.type_expr)).?;
+            try head.appendSlice(a, try std.fmt.allocPrint(a, "a{d}: int", .{i}));
+            try conv.appendSlice(a, try std.fmt.allocPrint(a, "    v{d}: {s} = {s}(a{d})\n    nox_hv_release(a{d})\n", .{ i, t, try s.inName(prm.type_expr), i, i }));
+        } else if (isHostObjectType(prm.type_expr)) {
+            const t = (try textOf(a, prm.type_expr)).?;
+            try head.appendSlice(a, try std.fmt.allocPrint(a, "a{d}: int", .{i}));
+            try conv.appendSlice(a, try std.fmt.allocPrint(a, "    v{d}: {s} = {s}(a{d})\n", .{ i, t, t, i }));
+        } else {
+            const t = (try textOf(a, prm.type_expr)) orelse return .{ .err = try std.fmt.allocPrint(a, "--host-abi: '@export async def {s}': parameter '{s}' has a type that cannot cross the host ABI\n", .{ fd.name, prm.name }) };
+            try head.appendSlice(a, try std.fmt.allocPrint(a, "a{d}: {s}", .{ i, t }));
+            try conv.appendSlice(a, try std.fmt.allocPrint(a, "    v{d}: {s} = a{d}\n", .{ i, t, i }));
+        }
+    }
+    const ret_none = fd.return_type == .simple and std.mem.eql(u8, fd.return_type.simple, "None");
+    var rt_text: []const u8 = "None";
+    var out_fn: []const u8 = "";
+    if (!ret_none) {
+        if (isContainerish(fd.return_type) and !validElem(fd.return_type, false, cls)) return .{ .err = try std.fmt.allocPrint(a, "--host-abi: '@export async def {s}': return type is a container/Optional with unsupported elements\n", .{fd.name}) };
+        rt_text = (try textOf(a, fd.return_type)) orelse return .{ .err = try std.fmt.allocPrint(a, "--host-abi: '@export async def {s}': return type cannot cross the host ABI\n", .{fd.name}) };
+        out_fn = try s.outName(fd.return_type);
+    }
+    var body: std.ArrayListUnmanaged(u8) = .empty;
+    try body.appendSlice(a, try std.fmt.allocPrint(a, "async def nox_host_atask_{s}({s}) -> int:\n{s}    t: Task[{s}] = spawn {s}({s})\n    try:\n", .{ fd.name, head.items, conv.items, rt_text, fd.name, call_args.items }));
+    if (ret_none) {
+        try body.appendSlice(a, "        await t\n    except CancelledError:\n        t.cancel()\n        raise CancelledError(\"cancelled\")\n    return 0\n\n");
+    } else {
+        try body.appendSlice(a, try std.fmt.allocPrint(a, "        r: {s} = await t\n    except CancelledError:\n        t.cancel()\n        raise CancelledError(\"cancelled\")\n    return {s}(r)\n\n", .{ rt_text, out_fn }));
+    }
+    try body.appendSlice(a, try std.fmt.allocPrint(a, "def nox_host_astart_{s}({s}) -> Task[int]:\n    return spawn nox_host_atask_{s}({s})\n\n", .{ fd.name, head.items, fd.name, pass.items }));
+    try adapters.appendSlice(a, body.items);
+    return .ok;
+}
+
 pub fn synthesize(a: std.mem.Allocator, module: ast.Module) !Result {
     var cls = try collectClassSet(a, module);
     var s: Synth = .{ .a = a, .classes = &cls };
@@ -575,7 +636,14 @@ pub fn synthesize(a: std.mem.Allocator, module: ast.Module) !Result {
     for (module.body) |stmt| {
         if (stmt.kind != .func_def) continue;
         const fd = stmt.kind.func_def;
-        if (!isExport(fd) or fd.is_async or fd.type_params.len > 0) continue;
+        if (!isExport(fd) or fd.type_params.len > 0) continue;
+        if (fd.is_async) {
+            switch (try synthAsync(a, &s, &cls, fd, &adapters)) {
+                .ok => any = true,
+                .err => |m| return .{ .err = m },
+            }
+            continue;
+        }
         var needs = isContainerish(fd.return_type) or isHostObjectType(fd.return_type);
         for (fd.params) |prm| needs = needs or isContainerish(prm.type_expr) or isHostObjectType(prm.type_expr);
         if (!needs) continue;

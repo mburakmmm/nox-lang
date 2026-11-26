@@ -2556,7 +2556,8 @@ fn emitDispatchTableRegistration(self: *Codegen) CodegenError!void {
 }
 
 pub fn genMain(self: *Codegen, stmts: []const ast.Stmt, use_async: bool, wants_multicore_pool: bool, pin_single_worker: bool) CodegenError!void {
-    if (use_async) {
+    // UR-011: `--host-abi` modülleri `@export async def` içerebilir: görevler host işçisinin zamanlayıcısında (`runtime/host.zig`) çalışır, üst düzey kod yine `nox_lib_init` içinde SENKRON çalışır (orada `spawn`/`await` yok).
+    if (use_async and !(self.lib_split and self.host_abi != null)) {
         if (self.lib_split) return error.Unsupported; // `--selfhost-obj` modülleri async/spawn kullanamaz (üst düzey kod fiber değil, `nox_lib_init` içinde senkron çalışır)
         return self.genMainAsync(stmts, wants_multicore_pool, pin_single_worker);
     }

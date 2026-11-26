@@ -15,6 +15,12 @@ const abi_ptr = @import("abi_ptr.zig");
 const abi_layout = @import("abi_layout");
 const SpinLock = @import("async_rt/spinlock.zig").SpinLock;
 const arc = @import("alloc/arc.zig");
+const builtin = @import("builtin");
+/// UR-011: görev işçisi yalnızca iş parçacıklı yerel hedeflerde vardır (wasm/freestanding'de `nox_host_async_*` ERR_STATE döner).
+const threaded = !(builtin.cpu.arch.isWasm() or builtin.os.tag == .freestanding or builtin.os.tag == .other);
+const bridge = if (threaded) @import("async_rt/bridge_native.zig") else struct {};
+const sched_mod = if (threaded) @import("async_rt/scheduler.zig") else struct {};
+const thread_spawn = @import("async_rt/thread_spawn.zig");
 
 /// v3 (UR-009..UR-014): v1/v2 ana makineleriyle geriye uyumlu EKLEMELER; `nox_host_context_create` 1..3 kabul eder (UR-014'te donduruldu).
 pub const ABI_VERSION: u32 = 3;
@@ -29,6 +35,8 @@ pub const ERR_STATE: i32 = 6;
 pub const ERR_INVALID_HANDLE: i32 = 7;
 /// UR-010: bir host geri çağrısı (Python) istisna fırlattı; `nox_host_error_host_token` ile özgün istisna jetonu alınır.
 pub const ERR_HOST_EXCEPTION: i32 = 8;
+/// UR-011: asenkron görev iptal edildi (`CancelledError`).
+pub const ERR_CANCELLED: i32 = 9;
 
 const CTX_MAGIC: u32 = 0x4e58_4843; // "NXHC"
 const ERR_MAGIC: u32 = 0x4e58_4845; // "NXHE"
@@ -64,6 +72,42 @@ const Context = struct {
     call_err_msg: []u8 = &.{},
     /// Yok edilirken geri çağrılar kilit AÇILMADAN yapılır (kilit tutulmuyor).
     closing: bool = false,
+    /// UR-011: asenkron görevler. `tmu` yaprak kilittir (içinde başka kilit alınmaz; sıra: lock → tmu). `tasks` tablosu ve `queue` onunla korunur; `live` yalnızca işçi tarafından (lock altında) kullanılır.
+    tmu: SpinLock = .{},
+    tasks: std.ArrayListUnmanaged(TaskRec) = .empty,
+    free_tasks: std.ArrayListUnmanaged(u32) = .empty,
+    queue: std.ArrayListUnmanaged(u32) = .empty,
+    live: std.ArrayListUnmanaged(u32) = .empty,
+    worker_running: bool = false,
+    worker: ?thread_spawn.Thread = null,
+    shutdown: std.atomic.Value(bool) = .init(false),
+    /// İşçinin zamanlayıcısı (uyandırma için; yalnızca `worker_running` iken ve `tmu` altında geçerli).
+    sched: ?*anyopaque = null,
+    /// Çıkmaz (deadlock) sonrası zamanlayıcı bozulmuş sayılır: yeni görev başlatılamaz.
+    async_dead: bool = false,
+};
+
+pub const ThunkFn = *const fn (rt: ?*anyopaque, argv: ?[*]u64) callconv(.c) ?*anyopaque;
+pub const TaskCallback = *const fn (user_data: ?*anyopaque, ctx: ?*anyopaque, task: u64, final_status: i32) callconv(.c) void;
+
+const TaskState = enum(u8) { free, queued, running, done };
+
+const TaskRec = struct {
+    gen: u16 = 1,
+    state: TaskState = .free,
+    thunk: ?ThunkFn = null,
+    argv: ?[*]u64 = null,
+    on_done: ?TaskCallback = null,
+    user_data: ?*anyopaque = null,
+    /// Çalışan Nox `Task` işaretçisi (yalnızca `running` iken geçerli).
+    task_ptr: ?*anyopaque = null,
+    cancel_req: bool = false,
+    released: bool = false,
+    done_called: bool = false,
+    taken: bool = false,
+    status: i32 = OK,
+    value: u64 = 0,
+    err: ?*HostError = null,
 };
 
 const VSlot = struct { node: ?*Node, gen: u16 };
@@ -75,7 +119,7 @@ pub const Span = extern struct { data: ?[*]const u8, len: usize };
 pub const Buffer = extern struct { data: ?[*]u8, len: usize };
 
 /// `ctx`: hatayı üreten bağlam — `nox_host_error_release` istisna nesnesini (ARC) bağlam kilidi ALTINDA bırakır; hata, bağlam yok edilmeden ÖNCE bırakılmalıdır (belgelenmiş).
-const HostError = struct { magic: u32, ctx: *Context, rt: ?*anyopaque, exception: ?*anyopaque, line: i64, host_token: u64 = 0 };
+const HostError = struct { magic: u32, ctx: *Context, rt: ?*anyopaque, exception: ?*anyopaque, line: i64, host_token: u64 = 0, synth_class: []const u8 = "", synth_msg: []const u8 = "" };
 
 pub export fn nox_host_abi_version() u32 {
     return ABI_VERSION;
@@ -101,6 +145,7 @@ pub export fn nox_host_context_create(config: ?*const Config, out: ?*?*anyopaque
 
 pub export fn nox_host_context_destroy(ctx_ptr: ?*anyopaque) void {
     const ctx = ctxFrom(ctx_ptr) orelse return;
+    shutdownAsync(ctx); // UR-011: çalışan görevleri iptal et, işçiyi bekle (kilit tutulmaz)
     const rt = ctx.rt;
     ctx.closing = true;
     // Açık kalan handle'ların nesneleri çalışma zamanı kapanmadan ÖNCE bırakılır (sızıntı/sarkan başvuru yok).
@@ -240,6 +285,10 @@ pub export fn nox_host_error_class_name(err_ptr: ?*anyopaque, out: ?*Span) i32 {
     const o = out orelse return ERR_INVAL;
     o.* = .{ .data = null, .len = 0 };
     const e = errFrom(err_ptr) orelse return ERR_INVAL;
+    if (e.exception == null and e.synth_class.len != 0) { // UR-011: çalışma zamanının ürettiği hata (ör. çıkmaz)
+        o.* = .{ .data = e.synth_class.ptr, .len = e.synth_class.len };
+        return OK;
+    }
     const obj = e.exception orelse return ERR_STATE;
     const tag: *const i64 = @ptrCast(@alignCast(obj));
     const f = dispatch_registry.classNameFn() orelse return ERR_STATE;
@@ -253,6 +302,10 @@ pub export fn nox_host_error_message(err_ptr: ?*anyopaque, out: ?*Span) i32 {
     const o = out orelse return ERR_INVAL;
     o.* = .{ .data = null, .len = 0 };
     const e = errFrom(err_ptr) orelse return ERR_INVAL;
+    if (e.exception == null and e.synth_msg.len != 0) {
+        o.* = .{ .data = e.synth_msg.ptr, .len = e.synth_msg.len };
+        return OK;
+    }
     const obj = e.exception orelse return ERR_STATE;
     const base: [*]const u8 = @ptrCast(obj);
     // `Exception` kalıtıma katılır (ValueError vb. türer): etiketten sonra 8 baytlık vtable yuvası, `message` ilk alan (bkz. `abi_layout.VTABLE_PTR_SIZE`).
@@ -964,6 +1017,460 @@ pub export fn nox_hx_new_ref(rt: ?*anyopaque, ref: i64) i64 {
     var out: u64 = 0;
     if (coreExternalValue(ctx, @bitCast(ref), &out) != OK) return 0;
     return @bitCast(out);
+}
+
+// ---- UR-011 (ABI v3): `@export async def` görevleri — başlat / iptal / sonuç al / bırak ----
+// Tasarım (kararlar, docs/apis/host-abi.md "Async tasks"): bağlam başına TEK bir işçi OS iş parçacığı (ilk `start`ta açılır, görev kalmayınca kapanır) KENDİ Nox zamanlayıcısını (`nox_async_init`, iş parçacığı-yerel) sürer.
+// İşçi bağlam kilidini yalnızca Nox kodu çalışırken tutar; zamanlayıcı reaktörde (G/Ç/zamanlayıcı) beklerken, `on_done` geri çağrısı ve host geri çağrıları sırasında AÇIKTIR. `cancel`/`take_result`/`release`
+// bağlam kilidini beklemez (yaprak kilit `tmu`). `on_done`, görev başına en fazla ve (görev `release` edilmedikçe) en az bir kez çağrılır. İptal kooperatiftir: görev bir sonraki `await`inde `CancelledError` alır.
+
+fn taskTag(ctx: *Context) u64 {
+    return ctxTag(ctx) ^ 0x3C3C;
+}
+
+fn taskHandle(ctx: *Context, idx: u32, gen: u16) u64 {
+    return (taskTag(ctx) << 48) | (@as(u64, gen) << 32) | (@as(u64, idx) + 1);
+}
+
+/// `tmu` ELDE iken çağrılır.
+fn taskRecOf(ctx: *Context, h: u64) ?*TaskRec {
+    if (h == 0 or (h >> 48) != taskTag(ctx)) return null;
+    const idx1: u32 = @truncate(h);
+    if (idx1 == 0 or idx1 > ctx.tasks.items.len) return null;
+    const rec = &ctx.tasks.items[idx1 - 1];
+    if (rec.state == .free or rec.gen != @as(u16, @truncate(h >> 32))) return null;
+    return rec;
+}
+
+fn taskIndexOf(ctx: *Context, rec: *TaskRec) u32 {
+    return @intCast((@intFromPtr(rec) - @intFromPtr(ctx.tasks.items.ptr)) / @sizeOf(TaskRec));
+}
+
+/// `tmu` ELDE: kaydı serbest bırakır (nesil artar; eski handle bir daha geçerli olmaz).
+fn taskRecFree(ctx: *Context, rec: *TaskRec) void {
+    const idx = taskIndexOf(ctx, rec);
+    const gen = rec.gen +% 1;
+    rec.* = .{ .gen = if (gen == 0) 1 else gen };
+    ctx.free_tasks.append(std.heap.page_allocator, idx) catch {};
+}
+
+/// Kilitsiz hata bırakma (kilit ELDE ya da bağlam yok ediliyor).
+fn errDrop(e: *HostError) void {
+    e.magic = 0;
+    releaseException(e.rt, e.exception);
+    std.heap.page_allocator.destroy(e);
+}
+
+fn newSynthError(ctx: *Context, class: []const u8, msg: []const u8) ?*HostError {
+    const e = std.heap.page_allocator.create(HostError) catch return null;
+    e.* = .{ .magic = ERR_MAGIC, .ctx = ctx, .rt = ctx.rt, .exception = null, .line = 0, .synth_class = class, .synth_msg = msg };
+    return e;
+}
+
+/// `--host-abi` başlatma sarmalayıcısı (kilit ELDE): argüman bloğu (`n` sözcük; `argv[-1]` = n) ayırır.
+pub export fn nox_host_async_args(ctx_ptr: ?*anyopaque, n: i64) ?[*]u64 {
+    _ = ctx_ptr;
+    const count: usize = @intCast(n);
+    const mem = std.heap.page_allocator.alloc(u64, count + 1) catch return null;
+    mem[0] = count;
+    return mem.ptr + 1;
+}
+
+pub export fn nox_host_async_free_args(argv: ?[*]u64) void {
+    const p = argv orelse return;
+    const base = p - 1;
+    std.heap.page_allocator.free(base[0 .. base[0] + 1]);
+}
+
+/// Değer handle'ı geçerli mi (kilit ELDE)? 1/0.
+pub export fn nox_host_value_check(ctx_ptr: ?*anyopaque, h: u64) i32 {
+    const ctx = ctxFrom(ctx_ptr) orelse return 0;
+    return if (nodeOf(ctx, h) != null) 1 else 0;
+}
+
+/// Aynı düğüme YENİ bir handle (görevin kendi sahipliği; kilit ELDE). 0 = geçersiz/bellek yok.
+pub export fn nox_host_value_dup(ctx_ptr: ?*anyopaque, h: u64) u64 {
+    const ctx = ctxFrom(ctx_ptr) orelse return 0;
+    const n = nodeOf(ctx, h) orelse return 0;
+    nodeRetain(n);
+    return valueNew(ctx, n);
+}
+
+pub export fn nox_host_value_drop(ctx_ptr: ?*anyopaque, h: u64) void {
+    const ctx = ctxFrom(ctx_ptr) orelse return;
+    _ = valueRelease(ctx, h);
+}
+
+pub export fn nox_host_obj_retain(obj: ?*anyopaque) void {
+    arc.nox_rc_retain(obj);
+}
+
+pub export fn nox_host_obj_release(rt: ?*anyopaque, obj: ?*anyopaque) void {
+    releaseObject(rt, obj);
+}
+
+pub export fn nox_host_clear_err(err: ?*?*anyopaque) void {
+    if (err) |e| e.* = null;
+}
+
+/// Başlatma isteğini kuyruğa alır (bağlam kilidi ELDE: sarmalayıcıdan). Başarıda `*out_task` doludur ve `thunk`/`argv` sahipliği işçiye geçer; hatada çağıran temizler.
+pub export fn nox_host_async_submit(ctx_ptr: ?*anyopaque, thunk: ?ThunkFn, argv: ?[*]u64, argc: i64, on_done: ?TaskCallback, user_data: ?*anyopaque, out_task: ?*u64) i32 {
+    _ = argc;
+    if (comptime !threaded) return ERR_STATE;
+    const ctx = ctxFrom(ctx_ptr) orelse return ERR_INVAL;
+    const o = out_task orelse return ERR_INVAL;
+    o.* = 0;
+    if (thunk == null or on_done == null) return ERR_INVAL;
+    if (ctx.async_dead or ctx.shutdown.load(.acquire)) return ERR_STATE;
+    ctx.tmu.lock();
+    var idx: u32 = undefined;
+    if (ctx.free_tasks.pop()) |i| {
+        idx = i;
+    } else {
+        ctx.tasks.append(std.heap.page_allocator, .{}) catch {
+            ctx.tmu.unlock();
+            return ERR_NOMEM;
+        };
+        idx = @intCast(ctx.tasks.items.len - 1);
+    }
+    const rec = &ctx.tasks.items[idx];
+    const gen = rec.gen;
+    rec.* = .{ .gen = gen, .state = .queued, .thunk = thunk, .argv = argv, .on_done = on_done, .user_data = user_data };
+    ctx.queue.append(std.heap.page_allocator, idx) catch {
+        taskRecFree(ctx, rec);
+        ctx.tmu.unlock();
+        return ERR_NOMEM;
+    };
+    const need_worker = !ctx.worker_running;
+    if (need_worker) ctx.worker_running = true;
+    if (!need_worker) wakeWorkerLocked(ctx);
+    ctx.tmu.unlock();
+    if (need_worker) {
+        if (ctx.worker) |t| t.join(); // önceki işçi çıkış yolunda (kilidimiz yüzünden zaten bitti)
+        ctx.worker = thread_spawn.spawn(workerMain, .{ctx}) catch {
+            ctx.tmu.lock();
+            ctx.worker = null;
+            ctx.worker_running = false;
+            _ = ctx.queue.pop();
+            taskRecFree(ctx, &ctx.tasks.items[idx]);
+            ctx.tmu.unlock();
+            return ERR_NOMEM;
+        };
+    }
+    o.* = taskHandle(ctx, idx, gen);
+    return OK;
+}
+
+/// `tmu` ELDE: reaktörde bekleyen işçiyi uyandırır.
+fn wakeWorkerLocked(ctx: *Context) void {
+    if (comptime !threaded) return;
+    if (ctx.sched) |p| {
+        const sch: *sched_mod.Scheduler = @ptrCast(@alignCast(p));
+        sch.wakeFromForeign();
+    }
+}
+
+fn workerMain(ctx: *Context) void {
+    if (comptime !threaded) return;
+    ctx.lock.lock();
+    if (ctx.rt) |rt| asap.handOverArcOwner(@ptrCast(@alignCast(rt)));
+    bridge.nox_async_init(ctx.rt);
+    const sch = bridge.hostScheduler().?;
+    sch.host_hook = hostHook;
+    sch.host_hook_ctx = ctx;
+    sch.enableWake() catch {}; // Windows: uyandırma borusu yok; yeni görev/iptal reaktörden çıkışta fark edilir
+    ctx.tmu.lock();
+    ctx.sched = sch;
+    ctx.tmu.unlock();
+    var dead = false;
+    while (true) {
+        drainQueue(ctx);
+        finalizeDone(ctx);
+        if (ctx.live.items.len == 0) {
+            ctx.tmu.lock();
+            if (ctx.queue.items.len == 0 or ctx.shutdown.load(.acquire)) {
+                ctx.worker_running = false;
+                ctx.sched = null;
+                ctx.tmu.unlock();
+                break;
+            }
+            ctx.tmu.unlock();
+            continue;
+        }
+        sch.run() catch {
+            failAllDeadlocked(ctx);
+            dead = true;
+        };
+        if (dead) {
+            ctx.tmu.lock();
+            ctx.async_dead = true;
+            ctx.worker_running = false;
+            ctx.sched = null;
+            ctx.tmu.unlock();
+            break;
+        }
+    }
+    sch.host_hook = null;
+    bridge.nox_async_deinit(ctx.rt);
+    ctx.lock.unlock();
+}
+
+fn hostHook(p: ?*anyopaque, what: u8) callconv(.c) void {
+    const ctx: *Context = @ptrCast(@alignCast(p.?));
+    switch (what) {
+        0 => {
+            if (ctx.shutdown.load(.acquire)) cancelAllLive(ctx);
+            drainQueue(ctx);
+            finalizeDone(ctx);
+        },
+        1 => ctx.lock.unlock(),
+        else => {
+            ctx.lock.lock();
+            if (ctx.rt) |rt| asap.handOverArcOwner(@ptrCast(@alignCast(rt)));
+        },
+    }
+}
+
+fn cancelAllLive(ctx: *Context) void {
+    if (comptime !threaded) return;
+    for (ctx.live.items) |idx| {
+        const rec = &ctx.tasks.items[idx];
+        if (rec.task_ptr) |t| bridge.nox_task_cancel(t);
+    }
+}
+
+/// İşçi (kilit ELDE): kuyruktaki görevleri zamanlayıcıya verir.
+fn drainQueue(ctx: *Context) void {
+    if (comptime !threaded) return;
+    while (true) {
+        if (ctx.shutdown.load(.acquire)) return;
+        ctx.tmu.lock();
+        if (ctx.queue.items.len == 0) {
+            ctx.tmu.unlock();
+            return;
+        }
+        const idx = ctx.queue.orderedRemove(0);
+        const rec = &ctx.tasks.items[idx];
+        const thunk = rec.thunk.?;
+        const argv = rec.argv;
+        ctx.tmu.unlock();
+        const task = thunk(ctx.rt, argv);
+        // thunk argüman bloğunu serbest bıraktı.
+        ctx.tmu.lock();
+        const r2 = &ctx.tasks.items[idx];
+        r2.argv = null;
+        r2.thunk = null;
+        if (errors_handle.nox_exception_pending(ctx.rt) != 0 or task == null) {
+            ctx.tmu.unlock();
+            completeWithPending(ctx, idx, ERR_EXCEPTION);
+            continue;
+        }
+        r2.task_ptr = task;
+        r2.state = .running;
+        const cancel = r2.cancel_req or r2.released;
+        ctx.tmu.unlock();
+        ctx.live.append(std.heap.page_allocator, idx) catch {};
+        if (cancel) bridge.nox_task_cancel(task);
+    }
+}
+
+/// Bekleyen Nox istisnasından (varsa) kaydı tamamlar; yoksa `fallback` durumu ve sentetik hata.
+fn completeWithPending(ctx: *Context, idx: u32, fallback: i32) void {
+    var errp: ?*anyopaque = null;
+    var st = nox_host_capture(ctx, &errp);
+    var err: ?*HostError = if (errp) |p| @ptrCast(@alignCast(p)) else null;
+    if (st == OK) {
+        st = fallback;
+        err = newSynthError(ctx, "RuntimeError", "async task could not be started");
+    }
+    if (err) |e| if (e.exception != null) if (classNameOf(e.rt, e.exception)) |nm| if (std.mem.eql(u8, nm, "CancelledError")) {
+        errDrop(e);
+        err = null;
+        st = ERR_CANCELLED;
+    };
+    finishRec(ctx, idx, st, 0, err);
+}
+
+/// İşçi (kilit ELDE): kaydı `done` yapar; sahibi `release` ettiyse kaynakları bırakır; değilse `on_done` çağrılır (kilit AÇIK).
+fn finishRec(ctx: *Context, idx: u32, status: i32, value: u64, err: ?*HostError) void {
+    ctx.tmu.lock();
+    const rec = &ctx.tasks.items[idx];
+    rec.state = .done;
+    rec.task_ptr = null;
+    rec.status = status;
+    rec.value = value;
+    rec.err = err;
+    const gen = rec.gen;
+    const released = rec.released;
+    const cb = rec.on_done;
+    const ud = rec.user_data;
+    var call = !released and !rec.done_called and cb != null and !ctx.shutdown.load(.acquire);
+    if (call) rec.done_called = true;
+    if (released) {
+        const v = rec.value;
+        const e = rec.err;
+        taskRecFree(ctx, rec);
+        ctx.tmu.unlock();
+        if (v != 0) _ = valueRelease(ctx, v);
+        if (e) |x| errDrop(x);
+        call = false;
+    } else ctx.tmu.unlock();
+    if (call) {
+        ctx.lock.unlock();
+        cb.?(ud, ctx, taskHandle(ctx, idx, gen), status);
+        ctx.lock.lock();
+        if (ctx.rt) |rt| asap.handOverArcOwner(@ptrCast(@alignCast(rt)));
+    }
+}
+
+/// İşçi (kilit ELDE): bitmiş görevlerin sonucunu/istisnasını toplar.
+fn finalizeDone(ctx: *Context) void {
+    if (comptime !threaded) return;
+    var i: usize = 0;
+    while (i < ctx.live.items.len) {
+        const idx = ctx.live.items[i];
+        ctx.tmu.lock();
+        const task = ctx.tasks.items[idx].task_ptr;
+        ctx.tmu.unlock();
+        if (task == null or bridge.nox_task_is_done(task) == 0) {
+            i += 1;
+            continue;
+        }
+        _ = ctx.live.swapRemove(i);
+        ctx.tmu.lock();
+        ctx.tasks.items[idx].task_ptr = null; // iptal artık Nox Task'ına dokunmaz
+        ctx.tmu.unlock();
+        const payload = bridge.nox_async_await(ctx.rt, task);
+        if (errors_handle.nox_exception_pending(ctx.rt) != 0) {
+            bridge.nox_async_destroy_task(ctx.rt, task);
+            completeWithPending(ctx, idx, ERR_EXCEPTION);
+        } else {
+            bridge.nox_async_destroy_task(ctx.rt, task);
+            finishRec(ctx, idx, OK, @bitCast(payload), null);
+        }
+    }
+}
+
+/// `run()` çıkmaz bildirdi: çalışan tüm görevler RuntimeError("deadlock in async task") ile biter (süreç ölmez).
+fn failAllDeadlocked(ctx: *Context) void {
+    while (ctx.live.items.len > 0) {
+        const idx = ctx.live.swapRemove(ctx.live.items.len - 1);
+        ctx.tmu.lock();
+        ctx.tasks.items[idx].task_ptr = null;
+        ctx.tmu.unlock();
+        finishRec(ctx, idx, ERR_STATE, 0, newSynthError(ctx, "RuntimeError", "deadlock in async task"));
+    }
+}
+
+/// Görev iptali: kooperatif (görevin bir sonraki `await`inde `CancelledError`). Başlamamış görev başlar başlamaz iptal edilir. Bitmiş görevde etkisizdir (OK).
+pub export fn nox_host_task_cancel(ctx_ptr: ?*anyopaque, task: u64) i32 {
+    const ctx = ctxFrom(ctx_ptr) orelse return ERR_INVAL;
+    ctx.tmu.lock();
+    defer ctx.tmu.unlock();
+    const rec = taskRecOf(ctx, task) orelse return ERR_INVALID_HANDLE;
+    switch (rec.state) {
+        .queued => rec.cancel_req = true,
+        .running => {
+            rec.cancel_req = true;
+            if (comptime threaded) {
+                if (rec.task_ptr) |t| bridge.nox_task_cancel(t);
+                wakeWorkerLocked(ctx);
+            }
+        },
+        else => {},
+    }
+    return OK;
+}
+
+/// Bitmiş görevin sonucunu devreder: dönüş = nihai durum (OK / ERR_EXCEPTION / ERR_HOST_EXCEPTION / ERR_CANCELLED / ERR_STATE: çıkmaz). `*out_val` sonuç değeri (None/`None` dönüş için 0; host `nox_host_value_release` ile bırakır),
+/// `*out_err` istisna ayrıntısıdır (`nox_host_error_release`). Görev bitmediyse ya da sonuç zaten alındıysa NOX_HOST_ERR_STATE (bu iki durum nihai durumdan `nox_host_task_status` ile ayrılabilir değildir; `on_done` sonrası çağırın).
+pub export fn nox_host_task_take_result(ctx_ptr: ?*anyopaque, task: u64, out_val: ?*u64, out_err: ?*?*anyopaque) i32 {
+    if (out_val) |o| o.* = 0;
+    if (out_err) |o| o.* = null;
+    const ctx = ctxFrom(ctx_ptr) orelse return ERR_INVAL;
+    ctx.tmu.lock();
+    const rec = taskRecOf(ctx, task) orelse {
+        ctx.tmu.unlock();
+        return ERR_INVALID_HANDLE;
+    };
+    if (rec.state != .done or rec.taken) {
+        ctx.tmu.unlock();
+        return ERR_STATE;
+    }
+    rec.taken = true;
+    const st = rec.status;
+    const v = rec.value;
+    const e = rec.err;
+    rec.value = 0;
+    rec.err = null;
+    ctx.tmu.unlock();
+    if (out_val) |o| o.* = v else if (v != 0) {
+        ctx.lock.lock();
+        _ = valueRelease(ctx, v);
+        ctx.lock.unlock();
+    }
+    if (e) |x| {
+        if (out_err) |o| {
+            o.* = x;
+        } else {
+            ctx.lock.lock();
+            errDrop(x);
+            ctx.lock.unlock();
+        }
+    }
+    return st;
+}
+
+/// Görev kaydını bırakır. Çalışan görev iptal edilir ve artık `on_done` ÇAĞRILMAZ (host ilgilenmiyor); sonuç/hata alınmadıysa bırakılır.
+pub export fn nox_host_task_release(ctx_ptr: ?*anyopaque, task: u64) i32 {
+    const ctx = ctxFrom(ctx_ptr) orelse return ERR_INVAL;
+    ctx.tmu.lock();
+    const rec = taskRecOf(ctx, task) orelse {
+        ctx.tmu.unlock();
+        return ERR_INVALID_HANDLE;
+    };
+    if (rec.state == .done) {
+        const v = rec.value;
+        const e = rec.err;
+        taskRecFree(ctx, rec);
+        ctx.tmu.unlock();
+        if (v != 0 or e != null) {
+            ctx.lock.lock();
+            if (v != 0) _ = valueRelease(ctx, v);
+            if (e) |x| errDrop(x);
+            ctx.lock.unlock();
+        }
+        return OK;
+    }
+    rec.released = true;
+    rec.cancel_req = true;
+    if (comptime threaded) {
+        if (rec.state == .running) if (rec.task_ptr) |t| bridge.nox_task_cancel(t);
+        wakeWorkerLocked(ctx);
+    }
+    ctx.tmu.unlock();
+    return OK;
+}
+
+/// Bağlam yok edilirken: çalışan görevleri iptal eder, işçiyi bekler (görevler bir sonraki `await`lerinde biter), kayıtların kaynaklarını bırakır.
+fn shutdownAsync(ctx: *Context) void {
+    if (comptime !threaded) return;
+    ctx.shutdown.store(true, .release);
+    ctx.tmu.lock();
+    wakeWorkerLocked(ctx);
+    const t = ctx.worker;
+    ctx.worker = null;
+    ctx.tmu.unlock();
+    if (t) |th| th.join();
+    for (ctx.tasks.items) |*rec| {
+        if (rec.state == .free) continue;
+        if (rec.argv) |a| nox_host_async_free_args(a);
+        if (rec.err) |e| errDrop(e);
+    }
+    ctx.tasks.deinit(std.heap.page_allocator);
+    ctx.free_tasks.deinit(std.heap.page_allocator);
+    ctx.queue.deinit(std.heap.page_allocator);
+    ctx.live.deinit(std.heap.page_allocator);
 }
 
 // ---- UR-009 (ABI v3): sınıf örneği tutamaçları + kapsayıcı içi sınıf değerleri ----

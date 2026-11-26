@@ -11,6 +11,16 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.91]
+
+NoxPy UR-011 (Host ABI v3 taslağı): `@export async def` görev API'si — `nox_host_async_start_<modül>_<ad>`, `NoxHostTask`, `NoxHostTaskCallback`, `nox_host_task_cancel/take_result/release`, `NOX_HOST_ERR_CANCELLED`; `expand --json` `is_async`. Sürüm patch: yalnızca EKLEME. Ayrıntı: spec §3.525, `docs/apis/host-abi.md`.
+
+- `runtime/host.zig`: bağlam başına tembel işçi iş parçacığı (kendi iş parçacığı-yerel Nox zamanlayıcısı; görev kalmayınca kapanır), görev tablosu (nesil denetimli handle), `on_done` en çok/en az bir kez (kilit AÇIK, işçi iş parçacığından), kooperatif iptal (`nox_task_cancel`), çıkmaz → `ERR_STATE` + `RuntimeError("deadlock in async task")` (süreç ölmez; bağlam yeni görev almaz), bağlam yok edilirken iptal + bekleme. Kilit: Nox kodu çalışırken tutulur; zamanlayıcı reaktörde beklerken ve geri çağrılarda açılır.
+- `runtime/async_rt/scheduler.zig`: `host_hook` (tur başı/bloklama öncesi/sonrası; varsayılan `null` = davranış değişmez), `enableWake`/`wakeFromForeign` (havuzsuz zamanlayıcıyı başka iş parçacığından uyandırma). `registration.zig`: `--host-abi` modülleri artık async işlev içerebilir (üst düzey kod yine senkron).
+- `compiler/host_adapt.zig`: `@export async def` için `nox_host_atask_<ad>` (spawn+await+iptal iletimi+sonuç → `NoxHostValue`) ve `nox_host_astart_<ad>` (→ `Task[int]`) sentezi; async örnek yöntemleri sınıf sarmalayıcısıyla. `codegen_qbe/host_abi.zig`: başlatma sarmalayıcısı + işçi thunk'ı.
+- Karar (belirtimde yoktu): sonuç her zaman `NoxHostValue`; tüm görevler bağlam başına TEK zamanlayıcıyı paylaşır; `release` çalışan görevi iptal eder ve `on_done`u susturur; ikinci `take_result` `ERR_STATE`. Sınır: wasm/freestanding'de görev yok.
+- Test: `tests/compat/host_abi/tasks.nox` + `tasks_host.c` (sonuç/str/None/list, istisna, eşzamanlılık + kilidin açık olması, iptal, release, sınıf async yöntemi, hatalı kullanım, çalışırken yok etme, çıkmaz), `expand_json_test.zig`.
+
 ## [2.2.90]
 
 NoxPy UR-010 (Host ABI v3 taslağı): host nesneleri ve yeniden-girişli geri çağrılar — `NoxHostExternalRef`, `NoxHostCallbackOps`, `NOX_HOST_ERR_HOST_EXCEPTION`, `nox_host_error_host_token`, `NOX_HOST_VALUE_EXTERNAL_REF`; yeni stdlib modülü `nox.host`. Sürüm patch: ABI yalnızca EKLENDİ (v1/v2/v3-taslağı ana makineler etkilenmez). Ayrıntı: spec §3.524, `docs/apis/host-abi.md`, `docs/stdlib/host.md`.

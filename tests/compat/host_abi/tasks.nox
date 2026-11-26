@@ -1,0 +1,56 @@
+# UR-011: `@export async def` — görev başlatma, tamamlanma geri çağrısı, iptal, istisna, çıkmaz (deadlock) koruması.
+from nox.time import sleep_ms
+
+@export
+async def add_later(a: int, b: int, ms: int) -> int:
+    sleep_ms(ms)
+    return a + b
+
+@export
+async def shout(s: str, ms: int) -> str:
+    sleep_ms(ms)
+    return s + "!"
+
+@export
+async def boom(ms: int) -> int:
+    sleep_ms(ms)
+    raise ValueError("async boom")
+
+@export
+async def nothing(ms: int) -> None:
+    sleep_ms(ms)
+
+@export
+async def sums(xs: list[int], ms: int) -> list[int]:
+    sleep_ms(ms)
+    out: list[int] = []
+    t: int = 0
+    for x in xs:
+        t = t + x
+        out.append(t)
+    return out
+
+@export
+async def stuck() -> int:
+    ch: Channel[int] = Channel[int](0)
+    return await ch.recv()
+
+@export
+async def slow(ms: int) -> int:
+    sleep_ms(ms)
+    return 1
+
+@export
+def sync_add(a: int, b: int) -> int:
+    return a + b
+
+@export
+class Worker:
+    n: int
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    async def later(self, by: int, ms: int) -> int:
+        sleep_ms(ms)
+        return self.n + by
