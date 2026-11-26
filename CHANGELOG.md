@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.96]
+
+Selfhost Aşama 3.6 dilim A: `tuple[...]`, tuple literali/indeksleme/`len`, `ternary` (`a if c else b`), `list_comp`/`dict_comp` ve `slice` (`obj[lo:hi:step]`) Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.529, `project/noxc-nightly-selfhost-plani-2026-11.md`.
+
+- `selfhost/typecheck.nox.in`: `instantiate_tuple_class`/`mangle_name`/`check_tuple_lit`/tuple `check_index`+`check_len`, `check_ternary`, `check_comp_clauses`/`restore_comp_scope`/`check_list_comp`/`check_dict_comp` + `comp_depth` ile kavrama içi `lambda` reddi, `check_slice` (`list`/`str`, `0`/`-0` adım reddi; `bytes` için `slice#bytes` kapsam dışı). Depo korpusunda kapsam dışı 478 → 449 (`type_expr_generic#tuple`, `check_expr_expected#1`, `check_expr_inner#18` kapandı).
+- `scripts/ck_gen.py --tuple` (`scripts/ck_regress.sh` 14 kipe çıktı), `tests/fixtures/ck_edge/tuple/` (35 kenar-durum dosyası), `scripts/ck_mutants_tuple.py` (46 mutant: 41 yakalandı, 5 eşdeğer/ayrıştırıcı-ötesi belgelendi).
+
 ## [2.2.95]
 
 Host ABI UR-011 duzeltmesi: cikmaz (deadlock) bildiriminde `async_dead` bayragi, gorevler bitirilip on_done cagrilmadan ONCE kuruluyor (runtime/host.zig). aarch64 CI'da host on_done sonrasi hemen yeni gorev baslatip ERR_STATE yerine OK aliyordu (v2.2.93 CI kirmizisi). Runtime ABI manifesti yenilendi.

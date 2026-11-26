@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False):
         self.rnd = rnd
+        self.use_tuple = use_tuple
         self.use_closure = use_closure
         self.use_inherit = use_inherit
         self.use_import = use_import
@@ -866,8 +867,99 @@ class Gen:
         else:
             self.lines += body
 
+    def gen_tuple(self):
+        """tuple[...], tuple_lit, t[k], len(t), ternary, list_comp, dict_comp, slice (Aşama 3.6 dilim A)."""
+        r = self.rnd
+        clean = r.random() < 0.40
+        self.lines += [
+            "class A:", "    v: int", "    def __init__(self, v: int) -> None:", "        self.v = v", "",
+            "class B(A):", "    w: int", "    def __init__(self, v: int, w: int) -> None:", "        super().__init__(v)", "        self.w = w", "",
+            "def p_none() -> None:", "    pass", "",
+            "def apply(f: (int) -> int, x: int) -> int:", "    return f(x)", "",
+            "xs: list[int] = [1, 2, 3]", 'ws: list[str] = ["a", "b"]', 'd: dict[str, int] = {"a": 1}',
+            's: str = "abc"', "n: int = 1", "c: bool = True", "o: int | None = None",
+            "t2: tuple[int, str] = (1, \"x\")", "t1: tuple[int] = (7,)",
+            "ta: A = A(1)", "tb: B = B(1, 2)", "",
+        ]
+        good = [
+            "p0: tuple[int, str] = (3, \"q\")",
+            "p1: tuple[float, A] = (1, tb)",
+            "p2: tuple[tuple[int, str], bool] = ((1, \"a\"), True)",
+            "x0: int = t2[0]",
+            "x1: str = t2[-1]",
+            "x2: int = t2.f0",
+            "x3: int = len(t2)",
+            "q0: int = 10 if c else 20",
+            "q1: list[int] = [] if c else [1]",
+            "q2: list[int] | None = [] if c else [1]",
+            "q3: u8 = 1 if c else 2",
+            "lc0: list[int] = [i * 2 for i in range(4) if i > 0]",
+            "lc1: list[int] = [x + y for x in xs for y in range(2) if x != y]",
+            "lc2: list[str] = [ch for ch in s]",
+            "lc3: list[int] = [len(k) for k in d]",
+            "lc4: list[list[int]] = [[] for _i in range(2)]",
+            "lc5: list[list[int]] | None = [[] for _i in range(2)]",
+            "dc0: dict[str, int] = {w: len(w) for w in ws}",
+            "dc1: dict[str, list[int]] = {w: [] for w in ws}",
+            "dc2: dict[str, list[int]] | None = {w: [] for w in ws}",
+            "sl0: list[int] = xs[1:3]",
+            "sl1: list[int] = xs[::-1]",
+            "sl2: str = s[:2]",
+            "sl3: str = s[::2]",
+            "sh: int = [z for z in range(3)][0]\nz_out: int = len(ws)",
+            "sh2: list[int] = [n for n in range(2)]\nn_chk: int = n + 1",
+            "sh3: list[str] = [x for x in range(2) for x in ws]",
+        ]
+        bad = [
+            "eb0: tuple[] = (1,)",
+            "et0: tuple[int] = ()",
+            "et1: tuple[int, None] = (1, None)",
+            "et2: tuple[int, int] = (1, p_none())",
+            "et3: tuple[int, str] = (1, 2)",
+            "et4: tuple[int, int] = (1,)",
+            "ei0: int = t2[5]",
+            "ei1: int = t2[-3]",
+            "ei2: int = t2[n]",
+            "ei3: int = t2[\"a\"]",
+            "el0: str = len(t2)",
+            "qt0: int = 1 if 5 else 2",
+            "qt1: int = 1 if c else \"a\"",
+            "qt2: int = 1 if c else 1.5",
+            "qt3: None = None if c else None",
+            "qt4: u8 = 1 if c else 300",
+            "qt5: (int) -> int = apply if c else apply",
+            "lcb0: list[int] = [i for i in range(3) if i]",
+            "lcb1: list[int] = [p_none() for i in range(2)]",
+            "lcb2: list[int] = [v_miss for v_miss in range(2)]\nuse_miss: int = v_miss",
+            "lcb3: list[int] = [apply(lambda v: v, x) for x in xs]",
+            "dcb0: dict[list[int], int] = {[1]: 1 for _k in range(1)}",
+            "dcb1: dict[str, int | None] = {w: o for w in ws}",
+            "dcb2: dict[str, None] = {w: p_none() for w in ws}",
+            "slb0: list[int] = xs[\"a\":]",
+            "slb1: list[int] = xs[:1.5]",
+            "slb2: list[int] = xs[::\"1\"]",
+            "slb3: list[int] = xs[::0]",
+            "slb4: list[int] = xs[::-0]",
+            "slb5: int = n[1:2]",
+            "slb6: list[int] = o[1:2]",
+            "slb7: dict[str, int] = d[1:2]",
+        ]
+        in_fn = r.random() < 0.7
+        ind = "    " if in_fn else ""
+        if in_fn:
+            self.lines.append("def main_t() -> None:")
+        for _ in range(r.randint(2, 5)):
+            pick = r.choice(good) if clean or r.random() < 0.65 else r.choice(bad)
+            for ln in pick.split("\n"):
+                self.lines.append(ind + ln)
+        if in_fn and r.random() < 0.5:
+            self.lines.append("main_t()")
+
     def program(self):
         r = self.rnd
+        if self.use_tuple:
+            self.gen_tuple()
+            return "\n".join(self.lines) + "\n"
         if self.use_closure:
             self.gen_closure()
             return "\n".join(self.lines) + "\n"
@@ -943,11 +1035,12 @@ def main():
     ap.add_argument("--import", dest="use_import", action="store_true")
     ap.add_argument("--inherit", dest="use_inherit", action="store_true")
     ap.add_argument("--closure", dest="use_closure", action="store_true")
+    ap.add_argument("--tuple", dest="use_tuple", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

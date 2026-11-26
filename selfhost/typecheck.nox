@@ -8,7 +8,7 @@
 from ast_schema import Ast, at, dump_module, mk_fail, put
 from ast_schema import build_sp_idx, loaded_ast
 from parser import pk, pkx, pky, parse_ast, parse_body, sref_eq, sref_len, sref_byte, utf8_bytes
-from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, cls_set_base, lcg, sym_intern, sym_intern_list, ty_format, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed, ty_mk, ty_list, ty_dict, ty_optional, ty_class, cls_register
+from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, cls_set_base, lcg, sym_intern, sym_intern_list, ty_format, ty_mangle, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed, ty_mk, ty_list, ty_dict, ty_optional, ty_class, cls_register
 
 # ---- (k1, k2) -> değer tablosu: açık adresleme, ekleme sırası korunur, silme = ölü işareti (yeniden `put` canlandırır) ----
 class Map2:
@@ -155,6 +155,11 @@ class Ck:
     cls_base: list[int]
     cls_regd: list[int]
     cls_chk: list[int]
+    # 3.6a: tuple sınıfı eleman tipleri (cls_sym ile 1:1; -1 = normal sınıf) + comprehension derinliği
+    tup_s: list[int]
+    tup_n: list[int]
+    tup_e: list[int]
+    comp_depth: int
 
     def __init__(self, tt: TT) -> None:
         self.tt = tt
@@ -207,6 +212,10 @@ class Ck:
         self.cls_base = []
         self.cls_regd = []
         self.cls_chk = []
+        self.tup_s = []
+        self.tup_n = []
+        self.tup_e = []
+        self.comp_depth = 0
 
 # ---- Scope (Zig `Scope`) ----
 def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
@@ -570,7 +579,12 @@ def type_expr_generic(ck: Ck, a: Ast, g: int) -> int:
     gargs: int = sl_at(a, g, 2)
     n: int = pky(gargs)
     if sref_eq(a, gn, "tuple"):
-        raise unsup(ck, "type_expr_generic#tuple")
+        if n == 0:
+            fail2(ck, "UnknownType", "'tuple' takes at least one type argument")
+        ts: list[int] = []
+        for ti in range(n):
+            ts.append(type_expr_to_type(ck, a, stmt_at(a, gargs, ti)))
+        return instantiate_tuple_class(ck, ts)
     if sref_eq(a, gn, "ptr"):
         if n != 1:
             mp(ck, "'ptr' takes exactly one type argument")
@@ -722,8 +736,18 @@ def check_expr_inner(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
         return check_spawn(ck, a, fx, a.n[e + 1])
     if tag == 15:
         return check_generic_construct(ck, a, fx, a.n[e + 1])
+    if tag == 18:
+        return check_slice(ck, a, fx, a.n[e + 1])
     if tag == 19:
         return check_lambda(ck, a, fx, e, -1)
+    if tag == 20:
+        return check_tuple_lit(ck, a, fx, e, -1)
+    if tag == 16:
+        return check_ternary(ck, a, fx, a.n[e + 1], -1)
+    if tag == 21:
+        return check_list_comp(ck, a, fx, a.n[e + 1], -1)
+    if tag == 22:
+        return check_dict_comp(ck, a, fx, a.n[e + 1], -1)
     raise unsup(ck, "check_expr_inner#" + str(tag))
 
 # `spawn f(...)`: yalnızca üst-düzey `async def` çağrısı (iç içe async/`obj.metod` sarmalayıcısı kapsam dışı) -> `Task[T]`.
@@ -899,7 +923,136 @@ def require_not_optional(ck: Ck, t: int, what: str) -> None:
         mp(ck, "' — narrow it first with 'if ... != None:'")
         raise mk_fail(ck, "OptionalNotNarrowed")
 
-# `obj[i]`: dict[K]→V, str[int]→str, list[int]→T (sınıf `__getitem__`/tuple indeksi kapsam dışı).
+# `checkTupleLit`: `(a, b, ...)` -> sentezlenmiş `tuple__...` sınıfı; beklenen tip varsa elemanlara iletilir.
+def check_tuple_lit(ck: Ck, a: Ast, fx: Fx, e: int, expected: int) -> int:
+    n: int = a.n[e + 2]
+    if n == 0:
+        fail2(ck, "TypeMismatch", "an empty tuple is not supported")
+    es: int = -1
+    if expected >= 0:
+        eci: int = class_idx_of_type(ck, expected)
+        if is_tuple_cls(ck, eci) and ck.tup_n[eci] == n:
+            es = ck.tup_s[eci]
+    st: int = a.n[e + 1]
+    ts: list[int] = []
+    for i in range(n):
+        exp_el: int = -1
+        if es >= 0:
+            exp_el = ck.tup_e[es + i]
+        et: int = check_expr_expected(ck, a, fx, a.l[st + i], exp_el)
+        if et == 4:
+            fail2(ck, "TypeMismatch", "a tuple element must produce a value")
+        if es >= 0 and ty_assignable(ck.tt, exp_el, et):
+            ts.append(exp_el)
+        else:
+            ts.append(et)
+    return instantiate_tuple_class(ck, ts)
+
+# `checkTernary`: `a if cond else b` (koşul bool, dallar aynı tipte ve desteklenen türde).
+def check_ternary(ck: Ck, a: Ast, fx: Fx, t: int, expected: int) -> int:
+    ct: int = check_expr(ck, a, fx, a.n[t + 0])
+    if ct != 2:
+        fail2(ck, "TypeMismatch", "the condition of a ternary expression must be a bool")
+    then_t: int = check_expr_expected(ck, a, fx, a.n[t + 1], expected)
+    else_t: int = check_expr_expected(ck, a, fx, a.n[t + 2], expected)
+    tg: int = ck.tt.tag[then_t]
+    if then_t != 0 and then_t != 1 and then_t != 2 and then_t != 3 and tg != 16 and tg != 5 and tg != 13 and tg != 6:
+        fail2(ck, "TypeMismatch", "the type of the ternary expression's branches is not supported (it must be int/float/bool/str/list/dict/class)")
+    if then_t != else_t:
+        fail2(ck, "TypeMismatch", "both branches of a ternary expression MUST have the SAME type (to mix int and float, convert a branch explicitly)")
+    return then_t
+
+def check_comp_clauses(ck: Ck, a: Ast, fx: Fx, clauses: int, sv_sym: list[int], sv_prior: list[int]) -> None:
+    for i in range(pky(clauses)):
+        cl: int = stmt_at(a, clauses, i)
+        ctag: int = a.n[cl]
+        cpay: int = a.n[cl + 1]
+        if ctag == 0:
+            elem_t: int = check_for_iterable(ck, a, fx, a.n[cpay + 2])
+            vn: int = pk(a.n[cpay + 0], a.n[cpay + 0 + 1])
+            vsym: int = sym_of(ck, a, vn)
+            sv_sym.append(vsym)
+            sv_prior.append(sc_lookup_local(ck, fx.scope, vsym))
+            sc_declare(ck, fx.scope, vsym, elem_t)
+        elif ctag == 1:
+            it: int = check_expr(ck, a, fx, cpay)
+            if it != 2:
+                fail2(ck, "TypeMismatch", "the comprehension 'if' condition must be a bool")
+
+def restore_comp_scope(ck: Ck, fx: Fx, sv_sym: list[int], sv_prior: list[int]) -> None:
+    i: int = len(sv_sym)
+    while i > 0:
+        i = i - 1
+        if sv_prior[i] >= 0:
+            sc_declare(ck, fx.scope, sv_sym[i], sv_prior[i])
+        else:
+            m2_remove(ck.vars, fx.scope, sv_sym[i])
+
+def check_list_comp(ck: Ck, a: Ast, fx: Fx, lc: int, elem_expected: int) -> int:
+    sv_sym: list[int] = []
+    sv_prior: list[int] = []
+    ck.comp_depth = ck.comp_depth + 1
+    elem_t: int = -1
+    try:
+        check_comp_clauses(ck, a, fx, sl_at(a, lc, 1), sv_sym, sv_prior)
+        elem_t = check_expr_expected(ck, a, fx, a.n[lc + 0], elem_expected)
+    finally:
+        ck.comp_depth = ck.comp_depth - 1
+    restore_comp_scope(ck, fx, sv_sym, sv_prior)
+    if elem_t == 4:
+        fail2(ck, "TypeMismatch", "the comprehension element must produce a value")
+    return ty_list(ck.tt, elem_t)
+
+def check_dict_comp(ck: Ck, a: Ast, fx: Fx, dc: int, val_expected: int) -> int:
+    sv_sym: list[int] = []
+    sv_prior: list[int] = []
+    ck.comp_depth = ck.comp_depth + 1
+    key_t: int = -1
+    val_t: int = -1
+    try:
+        check_comp_clauses(ck, a, fx, sl_at(a, dc, 2), sv_sym, sv_prior)
+        key_t = check_expr(ck, a, fx, a.n[dc + 0])
+        val_t = check_expr_expected(ck, a, fx, a.n[dc + 1], val_expected)
+    finally:
+        ck.comp_depth = ck.comp_depth - 1
+    restore_comp_scope(ck, fx, sv_sym, sv_prior)
+    if not dict_key_ok(ck, key_t):
+        fail2(ck, "TypeMismatch", "the 'dict' key type can only be int/float/bool/str/bytes")
+    if not dict_value_ok(ck, val_t):
+        fail2(ck, "TypeMismatch", "the 'dict' value type can only be int/float/bool/str/bytes/class/list/dict")
+    return ty_dict(ck.tt, key_t, val_t)
+
+# `obj[lo:hi:step]` (list/str; bytes için `slice#bytes` kapsam dışı).
+def check_slice(ck: Ck, a: Ast, fx: Fx, sl: int) -> int:
+    obj_t: int = check_expr(ck, a, fx, a.n[sl + 0])
+    require_not_optional(ck, obj_t, "[:]")
+    tt: TT = ck.tt
+    if tt.tag[obj_t] == 18:
+        raise unsup(ck, "slice#bytes")
+    if tt.tag[obj_t] != 5 and obj_t != 3:
+        fail2(ck, "TypeMismatch", "slicing ('[a:b]') only works on list/str/bytes")
+    lo: int = a.n[sl + 1]
+    if lo >= 0:
+        if check_expr(ck, a, fx, lo) != 0:
+            fail2(ck, "TypeMismatch", "slice bounds/step must be 'int'")
+    hi: int = a.n[sl + 2]
+    if hi >= 0:
+        if check_expr(ck, a, fx, hi) != 0:
+            fail2(ck, "TypeMismatch", "slice bounds/step must be 'int'")
+    step: int = a.n[sl + 3]
+    if step >= 0:
+        if check_expr(ck, a, fx, step) != 0:
+            fail2(ck, "TypeMismatch", "slice bounds/step must be 'int'")
+        stag: int = a.n[step]
+        if stag == 0 and a.n[step + 1] == 0:
+            fail2(ck, "TypeMismatch", "the slice step cannot be zero")
+        if stag == 6:
+            up: int = a.n[step + 1]
+            if a.n[up + 0] == 0 and a.n[a.n[up + 1]] == 0 and a.n[a.n[up + 1] + 1] == 0:
+                fail2(ck, "TypeMismatch", "the slice step cannot be zero")
+    return obj_t
+
+# `obj[i]`: dict[K]→V, str[int]→str, list[int]→T, tuple[k]→Tk (sınıf `__getitem__` kapsam dışı).
 def check_index(ck: Ck, a: Ast, fx: Fx, ip: int) -> int:
     obj_t: int = check_expr(ck, a, fx, a.n[ip + 0])
     require_not_optional(ck, obj_t, "[]")
@@ -907,6 +1060,30 @@ def check_index(ck: Ck, a: Ast, fx: Fx, ip: int) -> int:
     if has_dunder(ck, obj_t, "__getitem__"):
         raise unsup(ck, "check_index#dunder")
     ie: int = a.n[ip + 1]
+    tci: int = class_idx_of_type(ck, obj_t)
+    if is_tuple_cls(ck, tci):
+        itag: int = a.n[ie]
+        k: int = 0
+        if itag == 0:
+            k = a.n[ie + 1]
+        elif itag == 6:
+            up: int = a.n[ie + 1]
+            if a.n[up + 0] == 0 and a.n[a.n[up + 1]] == 0:
+                k = 0 - a.n[a.n[up + 1] + 1]
+            else:
+                fail2(ck, "TypeMismatch", "a tuple index must be a constant int literal")
+        else:
+            fail2(ck, "TypeMismatch", "a tuple index must be a constant int literal")
+        tn: int = ck.tup_n[tci]
+        ki: int = k
+        if ki < 0:
+            ki = ki + tn
+        if ki < 0 or ki >= tn:
+            mp(ck, "tuple index out of range (the tuple has ")
+            mp_int(ck, tn)
+            mp(ck, " elements)")
+            raise mk_fail(ck, "TypeMismatch")
+        return ck.tup_e[ck.tup_s[tci] + ki]
     if tt.tag[obj_t] == 13:
         idx_t: int = check_expr(ck, a, fx, ie)
         if idx_t != tt.xa[obj_t]:
@@ -1176,15 +1353,21 @@ def check_expr_expected(ck: Ck, a: Ast, fx: Fx, e: int, expected_in: int) -> int
     tag: int = a.n[e]
     tt: TT = ck.tt
     expected: int = expected_in
-    if tag == 19:
-        return check_lambda(ck, a, fx, e, expected_in)
-    if tag == 21 or tag == 22 or tag == 20 or tag == 16:
-        raise unsup(ck, "check_expr_expected#1")
     # `y: list[str] | None = []`: Optional'ın taşıdığı list/dict beklenen tip olur
-    if expected >= 0 and tt.tag[expected] == 15 and (tag == 11 or tag == 12):
+    if expected >= 0 and tt.tag[expected] == 15 and (tag == 11 or tag == 12 or tag == 21 or tag == 22):
         inner: int = tt.xa[expected]
         if tt.tag[inner] == 5 or tt.tag[inner] == 13:
             expected = inner
+    if tag == 21 and expected >= 0 and tt.tag[expected] == 5:
+        return check_list_comp(ck, a, fx, a.n[e + 1], tt.xa[expected])
+    if tag == 22 and expected >= 0 and tt.tag[expected] == 13:
+        return check_dict_comp(ck, a, fx, a.n[e + 1], tt.xb[expected])
+    if tag == 19:
+        return check_lambda(ck, a, fx, e, expected_in)
+    if tag == 20:
+        return check_tuple_lit(ck, a, fx, e, expected)
+    if tag == 16:
+        return check_ternary(ck, a, fx, a.n[e + 1], expected)
     if tag == 11 and expected >= 0 and tt.tag[expected] == 5:
         n: int = a.n[e + 2]
         el: int = tt.xa[expected]
@@ -1306,7 +1489,7 @@ def check_print(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
                 raise unsup(ck, "check_print#dunder")
     return 4
 
-# `len(x)`: str/list/dict (sınıf `__len__`/tuple kapsam dışı).
+# `len(x)`: str/list/dict/tuple (sınıf `__len__` kapsam dışı).
 def check_len(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
     args: int = sl_at(a, c, 1)
     if pky(args) != 1:
@@ -1314,6 +1497,8 @@ def check_len(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
         raise mk_fail(ck, "ArgumentCountMismatch")
     t: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
     g: int = ck.tt.tag[t]
+    if is_tuple_cls(ck, class_idx_of_type(ck, t)):
+        return 0
     if has_dunder(ck, t, "__len__"):
         raise unsup(ck, "check_len#dunder")
     if t != 3 and g != 5 and g != 13:
@@ -1950,6 +2135,8 @@ def check_lambda(ck: Ck, a: Ast, fx: Fx, e: int, expected: int) -> int:
         mp_int(ck, tt.xc[expected])
         mp(ck, " parameters")
         raise mk_fail(ck, "ArgumentCountMismatch")
+    if ck.comp_depth > 0:
+        fail2(ck, "TypeMismatch", "'lambda' is not supported inside a comprehension — assign it to a variable first")
     inner: int = sc_new(ck, fx.scope, True)
     for i in range(pky(lps)):
         sc_declare(ck, inner, sym_of(ck, a, pk(a.l[pkx(lps) + i * 2], a.l[pkx(lps) + i * 2 + 1])), tt.fp[tt.xa[expected] + i])
@@ -2362,10 +2549,10 @@ def qualified_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
         return -1
     return resolve_mangled_call(ck, a, fx, c, join_syms(ck, segs, n, 95), 1, mod, segs[n - 1])
 
-# `hasDunder`: sınıfta o adlı METOD var mı (varsa yeniden yazım gerekir: kapsam dışı).
+# `hasDunder`: sınıfta o adlı METOD var mı (sentezlenen tuple sınıfı dunder taşımaz; varsa yeniden yazım gerekir: kapsam dışı).
 def has_dunder(ck: Ck, t: int, name: str) -> bool:
     ci: int = class_idx_of_type(ck, t)
-    if ci < 0:
+    if ci < 0 or is_tuple_cls(ck, ci):
         return False
     return m2_get(ck.cls_meths, ci, sym_lit(ck, name)) >= 0
 
@@ -2379,6 +2566,53 @@ def new_sig(ck: Ck, tys: list[int], names: list[int], ret: int) -> int:
         ck.fpar.append(tys[q])
         ck.fpnm.append(names[q])
     return idx
+
+def is_tuple_cls(ck: Ck, ci: int) -> bool:
+    return ci >= 0 and ck.tup_s[ci] >= 0
+
+def mangle_name(ck: Ck, base: str, elems: list[int]) -> int:
+    tt: TT = ck.tt
+    bs: list[int] = []
+    for i in range(len(base)):
+        bs.append(ord(base[i]))
+    bs.append(95)
+    bs.append(95)
+    for j in range(len(elems)):
+        if j > 0:
+            bs.append(95)
+        tt.out = []
+        ty_mangle(tt, elems[j])
+        for k in range(len(tt.out)):
+            bs.append(tt.out[k])
+    return sym_intern_list(tt, bs, 0, len(bs))
+
+# `instantiateTupleClass`: `tuple[T1, ..., Tn]` -> `tuple__T1_...` sentezlenmiş sınıfı (`f0..f{n-1}` alanları + `__init__`).
+def instantiate_tuple_class(ck: Ck, elems: list[int]) -> int:
+    sym: int = mangle_name(ck, "tuple", elems)
+    if class_idx(ck, sym) >= 0:
+        return ty_class(ck.tt, sym)
+    ci: int = len(ck.cls_sym)
+    ck.cls_sym.append(sym)
+    ck.cls_node.append(-1)
+    ck.cls_init.append(-1)
+    ck.cls_base.append(-1)
+    ck.cls_regd.append(2)
+    ck.cls_chk.append(1)
+    ck.tup_s.append(len(ck.tup_e))
+    ck.tup_n.append(len(elems))
+    m2_put(ck.cls_map, 0, sym, ci)
+    cls_register(ck.tt, sym)
+    ptys: list[int] = []
+    pnms: list[int] = []
+    for i in range(len(elems)):
+        et: int = elems[i]
+        fsym: int = sym_lit(ck, "f" + str(i))
+        m2_put(ck.cls_fields, ci, fsym, et)
+        ptys.append(et)
+        pnms.append(fsym)
+        ck.tup_e.append(et)
+    ck.cls_init[ci] = new_sig(ck, ptys, pnms, 4)
+    return ty_class(ck.tt, sym)
 
 # `collectClassNames`: ad kaydı + kapsam dışı sınıf özellikleri (kalıtım/dekoratör/sabit/jenerik/enum/mixin)
 def collect_class_names(ck: Ck, a: Ast, body: int) -> None:
@@ -2413,6 +2647,8 @@ def collect_class_names(ck: Ck, a: Ast, body: int) -> None:
         ck.cls_base.append(-1)
         ck.cls_regd.append(0)
         ck.cls_chk.append(0)
+        ck.tup_s.append(-1)
+        ck.tup_n.append(0)
         m2_put(ck.cls_map, 0, sym, idx)
         cls_register(ck.tt, sym)
 
