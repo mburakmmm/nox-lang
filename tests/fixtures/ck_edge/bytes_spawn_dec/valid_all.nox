@@ -1,0 +1,77 @@
+def __nox_bytes_len(b: bytes) -> int:
+    return 0
+def __nox_bytes_repr(b: bytes) -> str:
+    return "b''"
+def __nox_bytes_index(b: bytes, i: int) -> int:
+    return 0
+def __nox_bytes_slice(b: bytes, lo: int, hi: int) -> bytes:
+    return b""
+def __nox_bytes_contains_byte(b: bytes, v: int) -> bool:
+    return False
+def __nox_bytes_ints(b: bytes) -> list[int]:
+    return []
+def __nox_bytes_new_ints(xs: list[int]) -> bytes:
+    return b""
+def __nox_bytes_new(xs: list[u8]) -> bytes:
+    return b""
+def __nox_bytes_decode(b: bytes) -> str:
+    return ""
+def __nox_bytes_hex(b: bytes) -> str:
+    return ""
+def __nox_bytes_to_list(b: bytes) -> list[int]:
+    return []
+def __nox_str_encode(s: str) -> bytes:
+    return b""
+def __nox_str_strip(s: str, ch: str) -> str:
+    return s
+
+extern def ext_b(b: bytes) -> bytes from "c"
+
+b0: bytes = b"abc"
+b1: bytes = bytes()
+b2: bytes = bytes(b0)
+b3: bytes = bytes([65, 66])
+b4: bytes = bytes([u8(65)])
+b5: bytes = "hi".encode()
+s0: str = "xabx".strip("x")
+n0: int = len(b0)
+r0: str = repr(b0)
+print(b0)
+i0: int = b0[0]
+b6: bytes = b0[0:2]
+b7: bytes = b0 + b1
+c0: bool = b0 < b1
+c1: bool = 65 in b0
+c2: bool = b1 in b0
+s1: str = b0.decode("UTF-8")
+s2: str = b0.hex()
+l0: list[int] = b0.to_list()
+d0: dict[bytes, bytes] = {b0: b1}
+tot: int = 0
+for bt in b0:
+    tot = tot + bt
+
+class Box:
+    v: int
+    def __init__(self, v: int) -> None:
+        self.v = v
+
+async def worker(xs: list[int]) -> int:
+    return len(xs)
+
+xs: list[int] = [1, 2]
+t: Task[int] = spawn worker(xs)
+w: int = await t
+xs.append(3)
+
+@route("/ok", 1, True, ["a"])
+@capability.requires("clock")
+def ok_dec(x: int) -> int:
+    return x + 1
+
+r1: int = ok_dec(1)
+c_cnt: int = __nox_reflect_decorator_count()
+c_nm: str = __nox_reflect_decorator_name(0)
+c_ak: int = __nox_reflect_decorator_arg_kind(0, 0)
+c_cc: int = __nox_reflect_class_count()
+c_pc: int = __nox_reflect_decorator_param_count(0)

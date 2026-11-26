@@ -11,6 +11,17 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.102] - 2026-11-26
+
+### Değiştirilenler / Eklenenler
+- **Selfhost typechecker (`selfhost/typecheck.nox.in`, `selfhost/typecheck.nox` — 8.547 satır) tam `bytes` (+ `str#prelude`), `spawn#shared_arg` ve üst-düzey fonksiyon dekoratörleri:**
+  - **Tam `bytes` ve `str#prelude`:** `simple_type` (`bytes` → tag `18`), `dict_key_ok`/`dict_value_ok`, `ffi_safe_type`, `check_slice` (`__nox_bytes_slice`, adım/sınır doğrulama), `check_index` (`__nox_bytes_index`), `check_binary` (`<`/`<=`/`>`/`>=`, `int in bytes` → `__nox_bytes_contains_byte`, `bytes in bytes`), `check_len` (`__nox_bytes_len`), `repr(b)` (`__nox_bytes_repr`), `bytes()`/`bytes(b)`/`bytes(list[int|u8])` kurucusu, `for x in b:` (`__nox_bytes_ints`), `check_bytes_method` (`decode`/`hex`/`to_list`) ve `check_str_method` içinde `__nox_str_*` prelude yönlendirmesi (`s.encode()`, `s.strip("x")` vb.) eklendi; `type#bytes`, `slice#bytes`, `check_call#bytes` ve `str#prelude` kapıları kaldırıldı.
+  - **`spawn` paylaşılan argüman ve mutasyon analizleri (`SpawnSharedMutation`):** `collect_spawn_targets_stmts`, `MutGraph` + worklist BFS (`compute_mutates_graph`, `method_is_final`), Gauss-Seidel fixpoint `compute_return_alias_effects`, `check_no_spawn_shared_mutation` / `check_transitive_spawn_shared_expr` ve `IntListMap` / `SpawnFlow` tabanlı `check_no_post_spawn_caller_mutation` (`if`/`elif`/`else`, döngü fixpoint + kalıcı kilit, `break`/`continue`, `await` çoklu-sahip düşürme, `return`-alias takibi) eklendi; `spawn#shared_arg` kapısı kaldırıldı.
+  - **Üst-düzey fonksiyon dekoratörleri (`register_func#2`) + `@capability.requires` + `__nox_reflect_*`:** `parse_decorator_args`, `register_decorators`, `register_capability_decorator`, `check_capability_call` (`arch_x86_64` hosted reddi) ve `check_reflect_builtin` (`__nox_reflect_*` metadata yerleşikleri) eklendi; `register_func#2` kapıları kaldırıldı.
+- **Doğrulama ve korpus:**
+  - `scripts/ck_gen.py --bytes-spawn-dec` (3.000 dosya: `files=3000 unsupported=0 accepted=188 rejected=2812 diagnostics=3584 skipped_parse=0`), `tests/fixtures/ck_edge/bytes_spawn_dec/*.nox` (22 dosya: `unsupported=0 accepted=1 rejected=21 diagnostics=16 skipped_parse=0`), `scripts/ck_mutants_bytes_spawn_dec.py` (**27/27 yakalandı, 0 yaşayan**).
+  - `scripts/ck_regress.sh` 19 kip + depo (`files=1667 unsupported=286 accepted=515 rejected=866 diagnostics=2003 skipped_parse=56`) ve `ck-diff checkm` (`files=347 unsupported=110 accepted=70 rejected=167 diagnostics=147 skipped=0`, `303 type#bytes` → `0`) yeşil geçti.
+
 ## [2.2.101] - 2026-11-26
 
 ### Değiştirilenler / Eklenenler

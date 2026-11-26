@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False, use_bytes_spawn_dec=False):
         self.rnd = rnd
+        self.use_bytes_spawn_dec = use_bytes_spawn_dec
         self.use_sig = use_sig
         self.use_prelude_proto = use_prelude_proto
         self.use_generic_fn = use_generic_fn
@@ -1487,8 +1488,137 @@ class Gen:
         if in_fn and r.random() < 0.5:
             self.lines.append("main_sig()")
 
+    def gen_bytes_spawn_dec(self):
+        """bytes (+ str#prelude), spawn#shared_arg / post-spawn caller mutation, top-level func decorators + @capability.requires + __nox_reflect_*."""
+        r = self.rnd
+        clean = r.random() < 0.45
+        self.lines += [
+            "def __nox_bytes_len(b: bytes) -> int:", "    return 0",
+            "def __nox_bytes_repr(b: bytes) -> str:", '    return "b\'\'"',
+            "def __nox_bytes_index(b: bytes, i: int) -> int:", "    return 0",
+            "def __nox_bytes_slice(b: bytes, lo: int, hi: int) -> bytes:", '    return b""',
+            "def __nox_bytes_contains_byte(b: bytes, v: int) -> bool:", "    return False",
+            "def __nox_bytes_ints(b: bytes) -> list[int]:", "    return []",
+            "def __nox_bytes_new_ints(xs: list[int]) -> bytes:", '    return b""',
+            "def __nox_bytes_new(xs: list[u8]) -> bytes:", '    return b""',
+            "def __nox_bytes_decode(b: bytes) -> str:", '    return ""',
+            "def __nox_bytes_hex(b: bytes) -> str:", '    return ""',
+            "def __nox_bytes_to_list(b: bytes) -> list[int]:", "    return []",
+            "def __nox_str_encode(s: str) -> bytes:", '    return b""',
+            "def __nox_str_strip(s: str, ch: str) -> str:", "    return s",
+            "",
+            "class Box:",
+            "    v: int",
+            "    def __init__(self, v: int) -> None:",
+            "        self.v = v",
+            "",
+            "async def worker_list(xs: list[int]) -> int:",
+            "    return len(xs)",
+            "",
+            "async def worker_box(b: Box) -> int:",
+            "    return b.v",
+            "",
+            "def fresh_list() -> list[int]:",
+            "    return [1, 2]",
+            "",
+            "def id_list(xs: list[int]) -> list[int]:",
+            "    return xs",
+            "",
+            "def wrap_list(xs: list[int]) -> list[int]:",
+            "    return id_list(xs)",
+            "",
+            '@route("/ok", 1, True, ["a", "b"])',
+            "def decorated_ok(x: int) -> int:",
+            "    return x + 1",
+            "",
+            '@capability.requires("clock")',
+            "def cap_clock() -> int:",
+            "    return 1",
+            "",
+            '@capability.requires("arch_x86_64")',
+            "def cap_arch() -> int:",
+            "    return 1",
+            "",
+            "extern def ext_bytes(b: bytes) -> bytes from \"c\"",
+            "",
+        ]
+        good = [
+            'b0: bytes = b"hi"',
+            "b1: bytes = bytes()",
+            "b2: bytes = bytes(b0)",
+            "b3: bytes = bytes([65, 66])",
+            "b4: bytes = bytes([u8(65)])",
+            'b5: bytes = "abc".encode()',
+            's0: str = "xabx".strip("x")',
+            "n0: int = len(b0)",
+            "r0: str = repr(b0)",
+            "print(b0)",
+            "i0: int = b0[0]",
+            "b6: bytes = b0[0:1]",
+            "b7: bytes = b0 + b1",
+            "c0: bool = b0 < b1",
+            "c1: bool = 65 in b0",
+            "c2: bool = b1 in b0",
+            's1: str = b0.decode("UTF-8")',
+            "s2: str = b0.hex()",
+            "l0: list[int] = b0.to_list()",
+            "d0: dict[bytes, bytes] = {b0: b1}",
+            "tot: int = 0\nfor bt in b0:\n    tot = tot + bt",
+            "xs: list[int] = [1, 2]\nt: Task[int] = spawn worker_list(xs)\nw: int = await t\nxs.append(3)",
+            "xs2: list[int] = fresh_list()\nt2: Task[int] = spawn worker_list(xs2)\nw2: int = await t2\nxs2[0] = 9",
+            "d_ok: int = decorated_ok(cap_clock())",
+            "rc0: int = __nox_reflect_decorator_count()\nrc1: str = __nox_reflect_decorator_name(0)\nrc2: str = __nox_reflect_decorator_arg(0, 0)\nrc3: str = __nox_reflect_decorator_arg_list_item(0, 3, 0)",
+            "rc4: int = __nox_reflect_class_count()\nrc5: str = __nox_reflect_class_name(0)\nrc6: int = __nox_reflect_decorator_param_count(0)",
+        ]
+        bad = [
+            'eb0: bytes = bytes("abc")',
+            "eb1: bytes = bytes(1)",
+            "eb2: bytes = bytes(b\"a\", b\"b\")",
+            'eb3: int = b"hi"["x"]',
+            'eb4: bytes = b"hi"[::2]',
+            'eb5: bytes = b"hi"["a":]',
+            'eb6: bool = "a" in b"hi"',
+            'eb7: str = b"hi".decode("latin1")',
+            'eb8: str = b"hi".hex(1)',
+            'eb9: int = b"hi".nope()',
+            "xs_err: list[int] = [1, 2]\nt_err: Task[int] = spawn worker_list(xs_err)\nxs_err.append(3)",
+            "xs_al: list[int] = [1, 2]\nys_al: list[int] = wrap_list(xs_al)\nt_al: Task[int] = spawn worker_list(xs_al)\nys_al[0] = 9",
+            "xs_mo: list[int] = [1, 2]\nt_m1: Task[int] = spawn worker_list(xs_mo)\nt_m2: Task[int] = spawn worker_list(xs_mo)\nw_m1: int = await t_m1\nxs_mo.append(4)",
+            "bx_err: Box = Box(1)\nt_bx: Task[int] = spawn worker_box(bx_err)\nbx_err.v = 2",
+            "xs_lp: list[int] = [1, 2]\nfor _i in range(2):\n    t_lp: Task[int] = spawn worker_list(xs_lp)\nxs_lp[0] = 5",
+            "c_arch: int = cap_arch()",
+            "er0: int = __nox_reflect_decorator_count(1)",
+            'er1: str = __nox_reflect_decorator_name("x")',
+            'er2: str = __nox_reflect_decorator_arg(0, "x")',
+            'er3: int = __nox_reflect_class_name(0)',
+            'er4: int = __nox_reflect_decorator_param_count("x")',
+        ]
+        if not clean and r.random() < 0.25:
+            bad_defs = [
+                '@bad(1.5)\ndef bad_d0() -> None:\n    pass',
+                '@bad([1])\ndef bad_d1() -> None:\n    pass',
+                '@capability.requires()\ndef bad_c0() -> None:\n    pass',
+                '@capability.requires(1)\ndef bad_c1() -> None:\n    pass',
+                '@capability.requires("bogus")\ndef bad_c2() -> None:\n    pass',
+            ]
+            self.lines.append(r.choice(bad_defs))
+        in_fn = r.random() < 0.55
+        ind = "    " if in_fn else ""
+        if in_fn:
+            self.lines.append("def main_bsd() -> None:")
+        k = r.randint(2, 4)
+        picks = r.sample(good, k=min(k, len(good))) if clean else [r.choice(good) if r.random() < 0.5 else r.choice(bad) for _ in range(k)]
+        for pick in picks:
+            for ln in pick.split("\n"):
+                self.lines.append(ind + ln)
+        if in_fn and r.random() < 0.5:
+            self.lines.append("main_bsd()")
+
     def program(self):
         r = self.rnd
+        if self.use_bytes_spawn_dec:
+            self.gen_bytes_spawn_dec()
+            return "\n".join(self.lines) + "\n"
         if self.use_sig:
             self.gen_sig()
             return "\n".join(self.lines) + "\n"
@@ -1584,11 +1714,12 @@ def main():
     ap.add_argument("--generic-fn", dest="use_generic_fn", action="store_true")
     ap.add_argument("--prelude-proto", dest="use_prelude_proto", action="store_true")
     ap.add_argument("--sig", dest="use_sig", action="store_true")
+    ap.add_argument("--bytes-spawn-dec", dest="use_bytes_spawn_dec", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig, args.use_bytes_spawn_dec).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

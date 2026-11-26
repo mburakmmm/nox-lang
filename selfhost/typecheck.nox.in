@@ -182,6 +182,16 @@ class Ck:
     # imza özellikleri: varsayılan/variadik/kw_only/pos_only (`FuncSig.decl`, `in_spawn_operand`)
     fdecl: list[int]
     in_spawn_op: bool
+    # spawn paylaşım/mutasyon analizi + fonksiyon dekoratör yetenekleri
+    strict_spawn_shared: bool
+    has_any_spawn: bool
+    spawn_targets: Map2
+    mutates_params: Map2
+    rae_kind: Map2
+    rae_ps: Map2
+    rae_pn: Map2
+    rae_pool: list[int]
+    cap_fns: Map2
 
     def __init__(self, tt: TT) -> None:
         self.tt = tt
@@ -258,6 +268,15 @@ class Ck:
         self.lam_cnt = 0
         self.fdecl = []
         self.in_spawn_op = False
+        self.strict_spawn_shared = False
+        self.has_any_spawn = False
+        self.spawn_targets = Map2()
+        self.mutates_params = Map2()
+        self.rae_kind = Map2()
+        self.rae_ps = Map2()
+        self.rae_pn = Map2()
+        self.rae_pool = []
+        self.cap_fns = Map2()
 
 # ---- Scope (Zig `Scope`) ----
 def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
@@ -577,8 +596,7 @@ def simple_type(ck: Ck, a: Ast, v: int) -> int:
     if sref_eq(a, v, "None"):
         return 4
     if sref_eq(a, v, "bytes"):
-        # v2.2.77: yerleşik `bytes` (bayt tabanlı işlemler/yeniden yazımlar) Nox denetleyicisinde HENÜZ yok → kapsam dışı
-        raise unsup(ck, "type#bytes")
+        return ty_mk(tt, 18, 0, 0)
     if sref_eq(a, v, "ptr"):
         return 5
     if sref_eq(a, v, "u8"):
@@ -681,11 +699,10 @@ def type_expr_generic(ck: Ck, a: Ast, g: int) -> int:
             raise mk_fail(ck, "UnknownType")
         kt: int = type_expr_to_type(ck, a, stmt_at(a, gargs, 0))
         vt: int = type_expr_to_type(ck, a, stmt_at(a, gargs, 1))
-        if kt != 0 and kt != 2 and kt != 3 and kt != 1:
+        if not dict_key_ok(ck, kt):
             mp(ck, "the 'dict' key type can only be int/float/bool/str/bytes")
             raise mk_fail(ck, "UnknownType")
-        vg: int = tt.tag[vt]
-        if vt != 0 and vt != 1 and vt != 2 and vt != 3 and vg != 6 and vg != 5 and vg != 13:
+        if not dict_value_ok(ck, vt):
             mp(ck, "the 'dict' value type can only be int/float/bool/str/bytes/class/list/dict")
             raise mk_fail(ck, "UnknownType")
         return ty_dict(tt, kt, vt)
@@ -822,11 +839,6 @@ def check_spawn(ck: Ck, a: Ast, fx: Fx, opd: int) -> int:
         check_args_sig(ck, a, fx, c, sid, sym)
     finally:
         ck.in_spawn_op = False
-    # list/dict/class argümanları paylaşılır: Zig'in spawn-paylaşım/mutasyon analizleri (SpawnSharedMutation ...) henüz taşınmadı
-    for pi in range(ck.fpn[sid]):
-        pg: int = ck.tt.tag[ck.fpar[ck.fps[sid] + pi]]
-        if pg == 5 or pg == 6 or pg == 13:
-            raise unsup(ck, "spawn#shared_arg")
     return ty_mk(ck.tt, 7, ck.fret[sid], 0)
 
 # `checkGenericConstruct`: `Channel[T](kapasite)`, `ThreadChannel[T](kapasite)`, `TaskLocal[T]()`; `ptr[T](adres)` (lowlevel) ve kullanıcı jenerikleri/nitelikli adlar kapsam dışı.
@@ -972,11 +984,11 @@ def check_list_lit(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
     return ty_list(ck.tt, first)
 
 def dict_key_ok(ck: Ck, t: int) -> bool:
-    return t == 0 or t == 2 or t == 3 or t == 1
+    return t == 0 or t == 2 or t == 3 or t == 1 or ck.tt.tag[t] == 18
 
 def dict_value_ok(ck: Ck, t: int) -> bool:
     g: int = ck.tt.tag[t]
-    return t == 0 or t == 1 or t == 2 or t == 3 or g == 6 or g == 5 or g == 13
+    return t == 0 or t == 1 or t == 2 or t == 3 or g == 18 or g == 6 or g == 5 or g == 13
 
 def check_dict_lit(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
     n: int = a.n[e + 2]
@@ -1112,13 +1124,25 @@ def check_dict_comp(ck: Ck, a: Ast, fx: Fx, dc: int, val_expected: int) -> int:
         fail2(ck, "TypeMismatch", "the 'dict' value type can only be int/float/bool/str/bytes/class/list/dict")
     return ty_dict(ck.tt, key_t, val_t)
 
-# `obj[lo:hi:step]` (list/str; bytes için `slice#bytes` kapsam dışı).
+# `obj[lo:hi:step]` (list/str/bytes).
 def check_slice(ck: Ck, a: Ast, fx: Fx, sl: int) -> int:
     obj_t: int = check_expr(ck, a, fx, a.n[sl + {{O:Slice.obj}}])
     require_not_optional(ck, obj_t, "[:]")
     tt: TT = ck.tt
     if tt.tag[obj_t] == 18:
-        raise unsup(ck, "slice#bytes")
+        if a.n[sl + {{O:Slice.step}}] >= 0:
+            fail2(ck, "TypeMismatch", "bytes slices do not support a step")
+        blo: int = a.n[sl + {{O:Slice.lo}}]
+        if blo >= 0:
+            if check_expr(ck, a, fx, blo) != 0:
+                fail2(ck, "TypeMismatch", "slice bounds/step must be 'int'")
+        bhi: int = a.n[sl + {{O:Slice.hi}}]
+        if bhi >= 0:
+            if check_expr(ck, a, fx, bhi) != 0:
+                fail2(ck, "TypeMismatch", "slice bounds/step must be 'int'")
+        lo_e: int = blo if blo >= 0 else mk_Expr_int_lit(a, 0)
+        hi_e: int = bhi if bhi >= 0 else mk_Expr_int_lit(a, 9223372036854775807)
+        return check_expr(ck, a, fx, mk_ident_call(a, "__nox_bytes_slice", [a.n[sl + {{O:Slice.obj}}], lo_e, hi_e]))
     if tt.tag[obj_t] != 5 and obj_t != 3:
         fail2(ck, "TypeMismatch", "slicing ('[a:b]') only works on list/str/bytes")
     lo: int = a.n[sl + {{O:Slice.lo}}]
@@ -1186,6 +1210,11 @@ def check_index(ck: Ck, a: Ast, fx: Fx, ip: int) -> int:
             mp(ck, "a str index must be an int")
             raise mk_fail(ck, "TypeMismatch")
         return 3
+    if tt.tag[obj_t] == 18:
+        bit: int = check_expr(ck, a, fx, ie)
+        if bit != 0:
+            fail2(ck, "TypeMismatch", "a bytes index must be an int")
+        return check_expr(ck, a, fx, mk_ident_call(a, "__nox_bytes_index", [a.n[ip + {{O:Index.obj}}], ie]))
     lt: int = check_expr(ck, a, fx, ie)
     if lt != 0:
         mp(ck, "a list index must be an int")
@@ -1320,7 +1349,7 @@ def check_binary(ck: Ck, a: Ast, fx: Fx, b: int) -> int:
         mp(ck, "the compared types do not match")
         raise mk_fail(ck, "TypeMismatch")
     if op == {{E:BinaryOp.lt}} or op == {{E:BinaryOp.le}} or op == {{E:BinaryOp.gt}} or op == {{E:BinaryOp.ge}}:
-        if l == 3 and r == 3:
+        if (l == 3 and r == 3) or (tt.tag[l] == 18 and tt.tag[r] == 18):
             return 2
         if not is_numeric_t(ck, l) or not is_numeric_t(ck, r):
             mp(ck, "ordering comparisons only work on numeric types or between two strs")
@@ -1353,6 +1382,14 @@ def check_binary(ck: Ck, a: Ast, fx: Fx, b: int) -> int:
             if l != 3:
                 mp(ck, "only a str can be searched for inside a str with 'in'")
                 raise mk_fail(ck, "TypeMismatch")
+            return 2
+        if tt.tag[r] == 18:
+            if l == 0:
+                rt_b: int = check_expr(ck, a, fx, mk_ident_call(a, "__nox_bytes_contains_byte", [a.n[b + {{O:Binary.right}}], a.n[b + {{O:Binary.left}}]]))
+                if rt_b != 2:
+                    fail2(ck, "TypeMismatch", "internal: __nox_bytes_contains_byte must return bool")
+            elif tt.tag[l] != 18:
+                fail2(ck, "TypeMismatch", "only a bytes value or an int (0..255) can be searched for inside bytes with 'in'")
             return 2
         mp(ck, "'in'/'not in' can only be used on list, dict, str and bytes")
         raise mk_fail(ck, "TypeMismatch")
@@ -1600,6 +1637,8 @@ def check_len(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
         return 0
     if has_dunder(ck, t, "__len__"):
         raise unsup(ck, "check_len#dunder")
+    if g == 18:
+        return check_expr(ck, a, fx, mk_ident_call(a, "__nox_bytes_len", [stmt_at(a, args, 0)]))
     if t != 3 and g != 5 and g != 13:
         mp(ck, "'len' only works on str/list/dict/bytes/tuple (define `__len__` for classes)")
         raise mk_fail(ck, "TypeMismatch")
@@ -1842,6 +1881,9 @@ def check_builtin_call(ck: Ck, a: Ast, fx: Fx, c: int, cv: int) -> int:
             raise mk_fail(ck, "ArgumentCountMismatch")
         check_expr(ck, a, fx, stmt_at(a, args, 0))
         return 0
+    rbt: int = check_reflect_builtin(ck, a, fx, c, cv)
+    if rbt >= 0:
+        return rbt
     if sref_eq(a, cv, "super"):
         mp(ck, "'super()' can only be used in the 'super().method(...)' or 'super().__init__(...)' form, directly as the receiver of a method call")
         raise mk_fail(ck, "TypeMismatch")
@@ -1852,11 +1894,27 @@ def check_builtin_call(ck: Ck, a: Ast, fx: Fx, c: int, cv: int) -> int:
         if tt.tag[rt] == 14 or rt == 4:
             mp(ck, "'repr' does not work on function/None values")
             raise mk_fail(ck, "TypeMismatch")
+        if tt.tag[rt] == 18:
+            return check_expr(ck, a, fx, mk_ident_call(a, "__nox_bytes_repr", [stmt_at(a, args, 0)]))
         return 3
     if sref_eq(a, cv, "bytes"):
         bsym: int = sym_of(ck, a, cv)
         if m2_get(ck.fmap, 0, bsym) < 0 and class_idx(ck, bsym) < 0:
-            raise unsup(ck, "check_call#bytes")
+            if n == 0:
+                return ty_mk(tt, 18, 0, 0)
+            if n != 1:
+                fail2(ck, "ArgumentCountMismatch", "'bytes' takes 0 or 1 argument")
+            a0_b: int = stmt_at(a, args, 0)
+            at_b: int = check_expr(ck, a, fx, a0_b)
+            if tt.tag[at_b] == 18:
+                return at_b
+            if tt.tag[at_b] == 5 and tt.xa[at_b] == 0:
+                return check_expr(ck, a, fx, mk_ident_call(a, "__nox_bytes_new_ints", [a0_b]))
+            if tt.tag[at_b] == 5 and tt.tag[tt.xa[at_b]] == 16:
+                return check_expr(ck, a, fx, mk_ident_call(a, "__nox_bytes_new", [a0_b]))
+            if at_b == 3:
+                fail2(ck, "TypeMismatch", "'bytes' cannot take a str: use s.encode()")
+            fail2(ck, "TypeMismatch", "'bytes' takes a list[int]/list[u8] or a bytes value")
         return -1
     if sref_eq(a, cv, "str"):
         if n != 1:
@@ -1942,9 +2000,108 @@ def sref_starts_with(a: Ast, sr: int, pfx: str) -> bool:
             return False
     return True
 
+# `__nox_reflect_*` metadata yerleşikleri (Zig `checkReflectMetaIntrinsic` + inline dallar). -1: değil.
+def check_reflect_builtin(ck: Ck, a: Ast, fx: Fx, c: int, cv: int) -> int:
+    args: int = sl_at(a, c, {{O:Call.args}})
+    n: int = pky(args)
+    tt: TT = ck.tt
+    if sref_eq(a, cv, "__nox_reflect_decorator_count"):
+        if n != 0:
+            fail2(ck, "ArgumentCountMismatch", "'__nox_reflect_decorator_count' takes no arguments")
+        return 0
+    if sref_eq(a, cv, "__nox_reflect_decorator_target_name") or sref_eq(a, cv, "__nox_reflect_decorator_name") or sref_eq(a, cv, "__nox_reflect_decorator_arg_count") or sref_eq(a, cv, "__nox_reflect_decorator_is_handler") or sref_eq(a, cv, "__nox_reflect_decorator_handler"):
+        if n != 1:
+            mp(ck, "'")
+            mp_sref(ck, a, cv)
+            mp(ck, "' takes exactly 1 argument (i: int)")
+            raise mk_fail(ck, "ArgumentCountMismatch")
+        if check_expr(ck, a, fx, stmt_at(a, args, 0)) != 0:
+            mp(ck, "the argument of '")
+            mp_sref(ck, a, cv)
+            mp(ck, "' must be an int")
+            raise mk_fail(ck, "TypeMismatch")
+        if sref_eq(a, cv, "__nox_reflect_decorator_arg_count"):
+            return 0
+        if sref_eq(a, cv, "__nox_reflect_decorator_is_handler"):
+            return 2
+        if sref_eq(a, cv, "__nox_reflect_decorator_handler"):
+            ctx_s: int = sym_lit(ck, "Context")
+            ctx_e: int = m2_get(ck.fimp, 0, ctx_s)
+            if ctx_e >= 0:
+                ctx_s = ck.fimp.vv[ctx_e]
+            hr_s: int = sym_lit(ck, "HttpResponse")
+            hr_e: int = m2_get(ck.fimp, 0, hr_s)
+            if hr_e >= 0:
+                hr_s = ck.fimp.vv[hr_e]
+            ty_func_begin(tt)
+            ty_func_param(tt, ty_class(tt, ctx_s))
+            return ty_func_end(tt, ty_class(tt, hr_s))
+        return 3
+    if sref_eq(a, cv, "__nox_reflect_decorator_arg") or sref_eq(a, cv, "__nox_reflect_decorator_arg_kind") or sref_eq(a, cv, "__nox_reflect_decorator_arg_int") or sref_eq(a, cv, "__nox_reflect_decorator_arg_bool") or sref_eq(a, cv, "__nox_reflect_decorator_arg_list_len"):
+        if n != 2:
+            mp(ck, "'")
+            mp_sref(ck, a, cv)
+            mp(ck, "' takes exactly 2 arguments (i: int, j: int)")
+            raise mk_fail(ck, "ArgumentCountMismatch")
+        if check_expr(ck, a, fx, stmt_at(a, args, 0)) != 0:
+            mp(ck, "argument 1 (i) of '")
+            mp_sref(ck, a, cv)
+            mp(ck, "' must be an int")
+            raise mk_fail(ck, "TypeMismatch")
+        if check_expr(ck, a, fx, stmt_at(a, args, 1)) != 0:
+            mp(ck, "argument 2 (j) of '")
+            mp_sref(ck, a, cv)
+            mp(ck, "' must be an int")
+            raise mk_fail(ck, "TypeMismatch")
+        if sref_eq(a, cv, "__nox_reflect_decorator_arg"):
+            return 3
+        if sref_eq(a, cv, "__nox_reflect_decorator_arg_bool"):
+            return 2
+        return 0
+    if sref_eq(a, cv, "__nox_reflect_decorator_arg_list_item"):
+        if n != 3:
+            fail2(ck, "ArgumentCountMismatch", "'__nox_reflect_decorator_arg_list_item' takes exactly 3 arguments (i: int, j: int, k: int)")
+        if check_expr(ck, a, fx, stmt_at(a, args, 0)) != 0:
+            fail2(ck, "TypeMismatch", "argument 1 (i) of '__nox_reflect_decorator_arg_list_item' must be an int")
+        if check_expr(ck, a, fx, stmt_at(a, args, 1)) != 0:
+            fail2(ck, "TypeMismatch", "argument 2 (j) of '__nox_reflect_decorator_arg_list_item' must be an int")
+        if check_expr(ck, a, fx, stmt_at(a, args, 2)) != 0:
+            fail2(ck, "TypeMismatch", "argument 3 (k) of '__nox_reflect_decorator_arg_list_item' must be an int")
+        return 3
+    m_argc: int = -1
+    m_ret: int = 0
+    if sref_eq(a, cv, "__nox_reflect_class_count"):
+        m_argc = 0
+    elif sref_eq(a, cv, "__nox_reflect_decorator_param_count") or sref_eq(a, cv, "__nox_reflect_decorator_kind") or sref_eq(a, cv, "__nox_reflect_class_init_param_count"):
+        m_argc = 1
+    elif sref_eq(a, cv, "__nox_reflect_decorator_return_type") or sref_eq(a, cv, "__nox_reflect_decorator_owner") or sref_eq(a, cv, "__nox_reflect_class_name"):
+        m_argc = 1
+        m_ret = 3
+    elif sref_eq(a, cv, "__nox_reflect_decorator_param_name") or sref_eq(a, cv, "__nox_reflect_decorator_param_type") or sref_eq(a, cv, "__nox_reflect_class_init_param_name") or sref_eq(a, cv, "__nox_reflect_class_init_param_type"):
+        m_argc = 2
+        m_ret = 3
+    if m_argc >= 0:
+        if n != m_argc:
+            mp(ck, "'")
+            mp_sref(ck, a, cv)
+            mp(ck, "' takes exactly ")
+            mp_int(ck, m_argc)
+            mp(ck, " arguments")
+            raise mk_fail(ck, "ArgumentCountMismatch")
+        for mi in range(n):
+            if check_expr(ck, a, fx, stmt_at(a, args, mi)) != 0:
+                mp(ck, "'")
+                mp_sref(ck, a, cv)
+                mp(ck, "' argument ")
+                mp_int(ck, mi + 1)
+                mp(ck, " must be an int")
+                raise mk_fail(ck, "TypeMismatch")
+        return m_ret
+    return -1
+
 # Zig'de ayrı yolu olan (ptr/lowlevel ailesi, dahili `__nox_*` kapıları) ama bu dilimde taşınmayan ad: kapsam dışı etiketi; "" = yok.
 def call_gap_label(ck: Ck, a: Ast, cv: int, fi: int, gfi: int, ci: int) -> str:
-    if sref_eq(a, cv, "__nox_bind_method") or sref_eq(a, cv, "__nox_match_check") or sref_eq(a, cv, "__nox_payload") or sref_eq(a, cv, "__nox_match_unreachable") or sref_eq(a, cv, "__nox_cell_of") or sref_eq(a, cv, "__nox_get") or sref_eq(a, cv, "__nox_for_iter") or sref_starts_with(a, cv, "__nox_reflect_"):
+    if sref_eq(a, cv, "__nox_bind_method") or sref_eq(a, cv, "__nox_match_check") or sref_eq(a, cv, "__nox_payload") or sref_eq(a, cv, "__nox_match_unreachable") or sref_eq(a, cv, "__nox_cell_of") or sref_eq(a, cv, "__nox_get") or sref_eq(a, cv, "__nox_for_iter"):
         return "check_call#internal"
     # `adopt(p)`: beklenen-tip bağlamı (`checkExprExpected` dalı) taşınmadı
     if sref_eq(a, cv, "adopt"):
@@ -2094,6 +2251,7 @@ def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
         mp(ck, "' is not a function and cannot be called")
         raise mk_fail(ck, "TypeMismatch")
     if gfi >= 0:
+        check_capability_call(ck, sym)
         return instantiate_generic_func(ck, a, fx, ck.gfn.vv[gfi], sym, sl_at(a, c, {{O:Call.args}}), [], False)
     if fi < 0 and ci < 0:
         # `from X.Y import foo [as bar]` ile bağlanan çıplak çağrı (yerel tanım her zaman öncelikli)
@@ -2111,6 +2269,7 @@ def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
     if fi >= 0:
         sid: int = ck.fmap.vv[fi]
         check_args_sig(ck, a, fx, c, sid, sym)
+        check_capability_call(ck, sym)
         return ck.fret[sid]
     isid: int = ck.cls_init[ci]
     if isid < 0:
@@ -2510,6 +2669,9 @@ def check_for_iterable(ck: Ck, a: Ast, fx: Fx, it: int) -> int:
         return tt.xa[t]
     if t == 3:
         return 3
+    if g == 18:
+        check_expr(ck, a, fx, mk_ident_call(a, "__nox_bytes_ints", [it]))
+        return 0
     if g == 13:
         return tt.xa[t]
     mp(ck, "'for' cannot iterate over this expression (it must be a list/str/dict/range or a class with `__iter__`)")
@@ -2695,6 +2857,7 @@ def is_variable_in_scope(ck: Ck, fx: Fx, sym: int) -> bool:
 def resolve_mangled_call(ck: Ck, a: Ast, fx: Fx, c: int, ms: int, nf_kind: int, s1: int, s2: int) -> int:
     gfe: int = m2_get(ck.gfn, 0, ms)
     if gfe >= 0:
+        check_capability_call(ck, ms)
         return instantiate_generic_func(ck, a, fx, ck.gfn.vv[gfe], ms, sl_at(a, c, {{O:Call.args}}), [], False)
     fe: int = m2_get(ck.fmap, 0, ms)
     if fe >= 0:
@@ -2705,6 +2868,7 @@ def resolve_mangled_call(ck: Ck, a: Ast, fx: Fx, c: int, ms: int, nf_kind: int, 
             raise mk_fail(ck, "TypeMismatch")
         sid: int = ck.fmap.vv[fe]
         check_args_sig(ck, a, fx, c, sid, ms)
+        check_capability_call(ck, ms)
         return ck.fret[sid]
     ci: int = class_idx(ck, ms)
     if ci >= 0:
@@ -5025,8 +5189,52 @@ def check_thread_channel_method(ck: Ck, a: Ast, fx: Fx, c: int, attr: int, obj_t
     fail_attr(ck, a, attr, "UndefinedMethod", "ThreadChannel has no method '", "' (only send/recv)")
     return 4
 
-# `str` metodları (Zig `checkStrMethod`): çekirdek imza tablosu; `__nox_str_<m>` prelude işlevi tanımlıysa yönlendirme (kapsam dışı).
-def check_str_method(ck: Ck, a: Ast, fx: Fx, c: int, attr: int) -> int:
+def sref_eq_ascii_ci(a: Ast, v: int, s: str) -> bool:
+    if sref_len(v) != len(s):
+        return False
+    for i in range(len(s)):
+        cb: int = sref_byte(a, v, i)
+        sb: int = ord(s[i])
+        if cb >= 65 and cb <= 90:
+            cb = cb + 32
+        if sb >= 65 and sb <= 90:
+            sb = sb + 32
+        if cb != sb:
+            return False
+    return True
+
+def is_core_str_method(a: Ast, m: int) -> bool:
+    for nm in ["upper", "lower", "casefold", "strip", "lstrip", "rstrip", "split", "join", "replace", "startswith", "endswith", "find", "index", "count", "isdigit", "isalpha", "isalnum", "isspace", "isupper", "islower", "isdecimal", "isnumeric", "ljust", "rjust", "center", "zfill"]:
+        if sref_eq(a, m, nm):
+            return True
+    return False
+
+def check_bytes_method(ck: Ck, a: Ast, fx: Fx, c: int, obj: int, attr: int) -> int:
+    is_dec: bool = sref_eq(a, attr, "decode")
+    is_hex: bool = sref_eq(a, attr, "hex")
+    is_tol: bool = sref_eq(a, attr, "to_list")
+    if not is_dec and not is_hex and not is_tol:
+        fail_attr(ck, a, attr, "UndefinedMethod", "bytes has no method '", "' (decode/hex/to_list)")
+    args: int = sl_at(a, c, {{O:Call.args}})
+    n: int = pky(args)
+    if is_dec and n == 1:
+        a0: int = stmt_at(a, args, 0)
+        ok_enc: bool = False
+        if a.n[a0] == {{T:Expr.string_lit}}:
+            enc: int = pk(a.n[a0 + 1], a.n[a0 + 2])
+            ok_enc = sref_eq_ascii_ci(a, enc, "utf-8") or sref_eq_ascii_ci(a, enc, "utf8")
+        if not ok_enc:
+            fail2(ck, "TypeMismatch", "bytes.decode only supports the UTF-8 encoding")
+    elif n != 0:
+        mp(ck, "bytes.")
+        mp_sref(ck, a, attr)
+        mp(ck, " takes no arguments")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    fn: str = "__nox_bytes_decode" if is_dec else ("__nox_bytes_hex" if is_hex else "__nox_bytes_to_list")
+    return check_expr(ck, a, fx, mk_ident_call(a, fn, [obj]))
+
+# `str` metodları (Zig `checkStrMethod`): çekirdek imza tablosu; `__nox_str_<m>` prelude işlevine yönlendirme.
+def check_str_method(ck: Ck, a: Ast, fx: Fx, c: int, obj: int, attr: int) -> int:
     tt: TT = ck.tt
     n: int = arg_n(a, c)
     pxs: list[int] = []
@@ -5035,8 +5243,18 @@ def check_str_method(ck: Ck, a: Ast, fx: Fx, c: int, attr: int) -> int:
         pxs.append(ord(pfx[i]))
     for j in range(sref_len(attr)):
         pxs.append(sref_byte(a, attr, j))
-    if m2_get(ck.fmap, 0, sym_intern_list(tt, pxs, 0, len(pxs))) >= 0:
-        raise unsup(ck, "str#prelude")
+    pre_sym: int = sym_intern_list(tt, pxs, 0, len(pxs))
+    takes_extra: bool = (sref_eq(a, attr, "strip") or sref_eq(a, attr, "lstrip") or sref_eq(a, attr, "rstrip")) and n > 0
+    core_has: bool = (not sref_eq(a, attr, "split")) and (not sref_eq(a, attr, "join"))
+    if (m2_get(ck.fmap, 0, pre_sym) >= 0 or m2_get(ck.gfn, 0, pre_sym) >= 0) and core_has and (takes_extra or not is_core_str_method(a, attr)):
+        cargs: int = sl_at(a, c, {{O:Call.args}})
+        new_args: list[int] = [obj]
+        for ai in range(n):
+            new_args.append(stmt_at(a, cargs, ai))
+        pre_sr: int = ast_str_sym(ck, a, pre_sym)
+        ce: int = mk_Expr_identifier(a, pkx(pre_sr), pky(pre_sr))
+        nsl: int = list_put_slice(a, new_args)
+        return check_expr(ck, a, fx, mk_Expr_call(a, mk_Call(a, ce, pkx(nsl), pky(nsl), 0, 0, 0, 0, 0, 0)))
     np: int = -1
     p0: int = 3
     p1: int = 3
@@ -5176,7 +5394,9 @@ def check_method_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
     if g == 10:
         return check_thread_channel_method(ck, a, fx, c, attr, obj_t)
     if g == 3:
-        return check_str_method(ck, a, fx, c, attr)
+        return check_str_method(ck, a, fx, c, obj, attr)
+    if g == 18:
+        return check_bytes_method(ck, a, fx, c, obj, attr)
     if g != 6:
         mp(ck, "a method call is only valid on class instances")
         raise mk_fail(ck, "TypeMismatch")
@@ -5416,7 +5636,7 @@ def sref_eq_ref(a: Ast, u: int, v: int) -> bool:
 def ffi_safe_type(ck: Ck, t: int) -> bool:
     tt: TT = ck.tt
     g: int = tt.tag[t]
-    if t <= 5 or g == 16 or g == 17:
+    if t <= 5 or g == 16 or g == 17 or g == 18:
         return True
     if g == 13:
         return tt.xa[t] == 3 and tt.xb[t] == 3
@@ -5556,11 +5776,114 @@ def stmts_have_yield(a: Ast, body: int) -> bool:
                 return True
     return False
 
+def cap_from_name(a: Ast, v: int) -> int:
+    if sref_eq(a, v, "filesystem"):
+        return 0
+    if sref_eq(a, v, "network"):
+        return 1
+    if sref_eq(a, v, "clock"):
+        return 2
+    if sref_eq(a, v, "entropy"):
+        return 3
+    if sref_eq(a, v, "threads"):
+        return 4
+    if sref_eq(a, v, "process"):
+        return 5
+    if sref_eq(a, v, "shared_memory"):
+        return 6
+    if sref_eq(a, v, "libc_math"):
+        return 7
+    if sref_eq(a, v, "arch_x86_64"):
+        return 8
+    if sref_eq(a, v, "dynamic_code"):
+        return 9
+    return -1
+
+def parse_decorator_args(ck: Ck, a: Ast, dec: int, target_sym: int) -> None:
+    dnm: int = pk(a.n[dec + {{O:Decorator.name}}], a.n[dec + {{O:Decorator.name}} + 1])
+    dargs: int = sl_at(a, dec, {{O:Decorator.args}})
+    for i in range(pky(dargs)):
+        ae: int = stmt_at(a, dargs, i)
+        atg: int = a.n[ae]
+        if atg == {{T:Expr.string_lit}} or atg == {{T:Expr.int_lit}} or atg == {{T:Expr.bool_lit}}:
+            pass
+        elif atg == {{T:Expr.list_lit}}:
+            items: int = sl_at(a, ae, 1)
+            for k in range(pky(items)):
+                if a.n[stmt_at(a, items, k)] != {{T:Expr.string_lit}}:
+                    mp(ck, "decorator '@")
+                    mp_sref(ck, a, dnm)
+                    mp(ck, "' argument ")
+                    mp_int(ck, i + 1)
+                    mp(ck, ": a list can only contain string literals (target: ")
+                    mp_sym(ck, target_sym)
+                    mp(ck, ")")
+                    raise mk_fail(ck, "TypeMismatch")
+        else:
+            mp(ck, "decorator '@")
+            mp_sref(ck, a, dnm)
+            mp(ck, "' argument ")
+            mp_int(ck, i + 1)
+            mp(ck, " can only be a string/int/bool literal or a list of strings (target: ")
+            mp_sym(ck, target_sym)
+            mp(ck, ")")
+            raise mk_fail(ck, "TypeMismatch")
+
+def register_capability_decorator(ck: Ck, a: Ast, fn_sym: int, dargs: int) -> None:
+    if pky(dargs) == 0:
+        mp(ck, "'@capability.requires' expects at least one capability name (function: ")
+        mp_sym(ck, fn_sym)
+        mp(ck, ")")
+        raise mk_fail(ck, "TypeMismatch")
+    mask: int = 0
+    for i in range(pky(dargs)):
+        ae: int = stmt_at(a, dargs, i)
+        sv: int = pk(a.n[ae + 1], a.n[ae + 2])
+        cid: int = cap_from_name(a, sv)
+        if cid < 0:
+            mp(ck, "'@capability.requires(\"")
+            mp_sref(ck, a, sv)
+            mp(ck, "\")': unknown capability name (function: ")
+            mp_sym(ck, fn_sym)
+            mp(ck, ")")
+            raise mk_fail(ck, "TypeMismatch")
+        mask = mask | (1 << cid)
+    m2_put(ck.cap_fns, 0, fn_sym, mask)
+
+def register_decorators(ck: Ck, a: Ast, fd: int, fn_sym: int) -> None:
+    decs: int = sl_at(a, fd, {{O:FuncDef.decorators}})
+    for i in range(pky(decs)):
+        dec: int = a.l[pkx(decs) + i]
+        parse_decorator_args(ck, a, dec, fn_sym)
+        dnm: int = pk(a.n[dec + {{O:Decorator.name}}], a.n[dec + {{O:Decorator.name}} + 1])
+        if sref_eq(a, dnm, "capability.requires"):
+            dargs: int = sl_at(a, dec, {{O:Decorator.args}})
+            for k in range(pky(dargs)):
+                if a.n[stmt_at(a, dargs, k)] != {{T:Expr.string_lit}}:
+                    mp(ck, "argument ")
+                    mp_int(ck, k + 1)
+                    mp(ck, " of '@capability.requires' must be a string LITERAL (function: ")
+                    mp_sym(ck, fn_sym)
+                    mp(ck, ")")
+                    raise mk_fail(ck, "TypeMismatch")
+            register_capability_decorator(ck, a, fn_sym, dargs)
+
+def check_capability_call(ck: Ck, fn_sym: int) -> None:
+    ce: int = m2_get(ck.cap_fns, 0, fn_sym)
+    if ce < 0:
+        return
+    mask: int = ck.cap_fns.vv[ce]
+    if (mask & (1 << 8)) != 0:
+        mp(ck, "the call to '")
+        mp_sym(ck, fn_sym)
+        mp(ck, "' was rejected in the 'hosted' profile (required capability: 'arch_x86_64' — this profile does not provide it)")
+        raise mk_fail(ck, "CapabilityNotGranted")
+
 def register_func(ck: Ck, a: Ast, fd: int) -> None:
     nm: int = pk(a.n[fd + {{O:FuncDef.name}}], a.n[fd + {{O:FuncDef.name}} + 1])
     ps: int = sl_at(a, fd, {{O:FuncDef.params}})
-    if pky(sl_at(a, fd, {{O:FuncDef.decorators}})) > 0 or pky(sl_at(a, fd, {{O:FuncDef.nonlocals}})) > 0:
-        raise unsup(ck, "register_func#2")
+    if pky(sl_at(a, fd, {{O:FuncDef.nonlocals}})) > 0:
+        raise unsup(ck, "nonlocal")
     if stmts_have_yield(a, sl_at(a, fd, {{O:FuncDef.body}})):
         raise unsup(ck, "register_func#generator")
     validate_param_defaults(ck, a, nm, ps, 0, pky(sl_at(a, fd, {{O:FuncDef.type_params}})) > 0)
@@ -5582,8 +5905,6 @@ def register_func(ck: Ck, a: Ast, fd: int) -> None:
     for pi_p in range(pky(ps)):
         collect_protocol_names(ck, a, a.n[stmt_at(a, ps, pi_p) + {{O:Param.type_expr}}], eff_syms, eff_srefs)
     if len(eff_syms) > 0:
-        if a.n[fd + {{O:FuncDef.is_async}}] != 0:
-            raise unsup(ck, "register_func#2")
         reg_fd: int = fd
         if len(eff_syms) > pky(ftps):
             tps_st: int = len(a.l)
@@ -5615,6 +5936,1449 @@ def register_func(ck: Ck, a: Ast, fd: int) -> None:
     sid_f: int = new_sig(ck, tys, pnames, ret)
     ck.fdecl[sid_f] = ps
     m2_put(ck.fmap, 0, sym, sid_f)
+    if pky(sl_at(a, fd, {{O:FuncDef.decorators}})) > 0:
+        register_decorators(ck, a, fd, sym)
+
+# ---- `spawn` paylaşılan argüman ve mutasyon analizleri (`SpawnSharedMutation`) ----
+def is_mutating_container_method(a: Ast, attr: int) -> bool:
+    for nm in ["append", "pop", "sort", "insert", "extend", "reverse", "remove", "clear", "update", "setdefault"]:
+        if sref_eq(a, attr, nm):
+            return True
+    return False
+
+def is_known_safe_builtin_callee(a: Ast, v: int) -> bool:
+    for nm in ["len", "print", "str", "int", "float", "bool", "super", "wasm_call", "ptr_from_int", "ptr_to_int", "ptr_add", "ptr_read_int", "ptr_read_float", "ptr_read_bool", "ptr_write_int", "ptr_write_float", "ptr_write_bool", "detach", "ptr_offset", "ptr_of", "ffi_box", "ptr_read", "ptr_write", "ptr_read_volatile", "ptr_write_volatile", "memory_fence", "compiler_fence", "__nox_str_chars"]:
+        if sref_eq(a, v, nm):
+            return True
+    return sref_starts_with(a, v, "__nox_reflect_")
+
+def is_shared_type(ck: Ck, t: int) -> bool:
+    g: int = ck.tt.tag[t]
+    return g == 5 or g == 13 or g == 6
+
+def param_index_by_name(ck: Ck, a: Ast, ps: int, name_sym: int) -> int:
+    for i in range(pky(ps)):
+        p: int = stmt_at(a, ps, i)
+        if sym_of(ck, a, pk(a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1])) == name_sym:
+            return i
+    return -1
+
+def kwarg_decl_index(ck: Ck, a: Ast, fn_sym: int, kw_sr: int) -> int:
+    fe: int = m2_get(ck.fmap, 0, fn_sym)
+    if fe < 0:
+        return -1
+    sid: int = ck.fmap.vv[fe]
+    ps: int = ck.fdecl[sid]
+    if ps < 0:
+        return -1
+    return param_index_by_name(ck, a, ps, sym_of(ck, a, kw_sr))
+
+def method_is_final(ck: Ck, a: Ast, cls_sym: int, meth_sym: int) -> bool:
+    for oi in range(len(ck.cls_sym)):
+        other: int = ck.cls_sym[oi]
+        if other == cls_sym:
+            continue
+        if not is_subclass(ck.tt, other, cls_sym):
+            continue
+        cd: int = ck.cls_node[oi]
+        if cd < 0:
+            continue
+        ms: int = sl_at(a, cd, {{O:ClassDef.methods}})
+        for mi in range(pky(ms)):
+            m: int = a.l[pkx(ms) + mi]
+            if sym_of(ck, a, pk(a.n[m + {{O:FuncDef.name}}], a.n[m + {{O:FuncDef.name}} + 1])) == meth_sym:
+                return False
+    return True
+
+def collect_spawn_targets_expr(ck: Ck, a: Ast, e: int) -> None:
+    tag: int = a.n[e]
+    if tag <= {{T:Expr.identifier}}:
+        return
+    if tag == {{T:Expr.unary}}:
+        collect_spawn_targets_expr(ck, a, a.n[a.n[e + 1] + {{O:Unary.operand}}])
+        return
+    if tag == {{T:Expr.kwarg}}:
+        collect_spawn_targets_expr(ck, a, a.n[a.n[e + 1] + {{O:Kwarg.value}}])
+        return
+    if tag == {{T:Expr.ternary}}:
+        tp: int = a.n[e + 1]
+        collect_spawn_targets_expr(ck, a, a.n[tp + {{O:Ternary.cond}}])
+        collect_spawn_targets_expr(ck, a, a.n[tp + {{O:Ternary.then_expr}}])
+        collect_spawn_targets_expr(ck, a, a.n[tp + {{O:Ternary.else_expr}}])
+        return
+    if tag == {{T:Expr.binary}}:
+        bp: int = a.n[e + 1]
+        collect_spawn_targets_expr(ck, a, a.n[bp + {{O:Binary.left}}])
+        collect_spawn_targets_expr(ck, a, a.n[bp + {{O:Binary.right}}])
+        return
+    if tag == {{T:Expr.call}}:
+        cp: int = a.n[e + 1]
+        collect_spawn_targets_expr(ck, a, a.n[cp + {{O:Call.callee}}])
+        cargs: int = sl_at(a, cp, {{O:Call.args}})
+        for i in range(pky(cargs)):
+            collect_spawn_targets_expr(ck, a, stmt_at(a, cargs, i))
+        return
+    if tag == {{T:Expr.attribute}}:
+        collect_spawn_targets_expr(ck, a, a.n[a.n[e + 1] + {{O:Attribute.obj}}])
+        return
+    if tag == {{T:Expr.list_comp}}:
+        lc: int = a.n[e + 1]
+        collect_spawn_targets_expr(ck, a, a.n[lc + {{O:ListComp.elem}}])
+        cls_s: int = sl_at(a, lc, {{O:ListComp.clauses}})
+        for ci in range(pky(cls_s)):
+            cl: int = a.l[pkx(cls_s) + ci]
+            if a.n[cl] == {{T:CompClause.for_clause}}:
+                collect_spawn_targets_expr(ck, a, a.n[a.n[cl + 1] + {{O:CompForClause.iterable}}])
+            else:
+                collect_spawn_targets_expr(ck, a, a.n[cl + 1])
+        return
+    if tag == {{T:Expr.dict_comp}}:
+        dc: int = a.n[e + 1]
+        collect_spawn_targets_expr(ck, a, a.n[dc + {{O:DictComp.key}}])
+        collect_spawn_targets_expr(ck, a, a.n[dc + {{O:DictComp.value}}])
+        dcls: int = sl_at(a, dc, {{O:DictComp.clauses}})
+        for di in range(pky(dcls)):
+            dcl: int = a.l[pkx(dcls) + di]
+            if a.n[dcl] == {{T:CompClause.for_clause}}:
+                collect_spawn_targets_expr(ck, a, a.n[a.n[dcl + 1] + {{O:CompForClause.iterable}}])
+            else:
+                collect_spawn_targets_expr(ck, a, a.n[dcl + 1])
+        return
+    if tag == {{T:Expr.lambda}}:
+        collect_spawn_targets_expr(ck, a, a.n[a.n[e + 1] + {{O:Lambda.body}}])
+        return
+    if tag == {{T:Expr.slice}}:
+        sl: int = a.n[e + 1]
+        collect_spawn_targets_expr(ck, a, a.n[sl + {{O:Slice.obj}}])
+        if a.n[sl + {{O:Slice.lo}}] >= 0:
+            collect_spawn_targets_expr(ck, a, a.n[sl + {{O:Slice.lo}}])
+        if a.n[sl + {{O:Slice.hi}}] >= 0:
+            collect_spawn_targets_expr(ck, a, a.n[sl + {{O:Slice.hi}}])
+        if a.n[sl + {{O:Slice.step}}] >= 0:
+            collect_spawn_targets_expr(ck, a, a.n[sl + {{O:Slice.step}}])
+        return
+    if tag == {{T:Expr.index}}:
+        ix: int = a.n[e + 1]
+        collect_spawn_targets_expr(ck, a, a.n[ix + {{O:Index.obj}}])
+        collect_spawn_targets_expr(ck, a, a.n[ix + {{O:Index.index}}])
+        return
+    if tag == {{T:Expr.list_lit}} or tag == {{T:Expr.tuple_lit}}:
+        el: int = sl_at(a, e, 1)
+        for li in range(pky(el)):
+            collect_spawn_targets_expr(ck, a, stmt_at(a, el, li))
+        return
+    if tag == {{T:Expr.dict_lit}}:
+        dl: int = sl_at(a, e, 1)
+        for pi in range(pky(dl)):
+            dp: int = a.l[pkx(dl) + pi]
+            collect_spawn_targets_expr(ck, a, a.n[dp + {{O:DictPair.key}}])
+            collect_spawn_targets_expr(ck, a, a.n[dp + {{O:DictPair.value}}])
+        return
+    if tag == {{T:Expr.await_expr}}:
+        collect_spawn_targets_expr(ck, a, a.n[e + 1])
+        return
+    if tag == {{T:Expr.generic_construct}}:
+        gc: int = a.n[e + 1]
+        gargs: int = sl_at(a, gc, {{O:GenericConstruct.args}})
+        for gi in range(pky(gargs)):
+            collect_spawn_targets_expr(ck, a, stmt_at(a, gargs, gi))
+        return
+    if tag == {{T:Expr.spawn_expr}}:
+        ck.has_any_spawn = True
+        opd: int = a.n[e + 1]
+        if a.n[opd] == {{T:Expr.call}}:
+            sc: int = a.n[opd + 1]
+            cal: int = a.n[sc + {{O:Call.callee}}]
+            if a.n[cal] == {{T:Expr.identifier}}:
+                m2_put(ck.spawn_targets, 0, sym_of(ck, a, pk(a.n[cal + 1], a.n[cal + 2])), 1)
+            sargs: int = sl_at(a, sc, {{O:Call.args}})
+            for si in range(pky(sargs)):
+                collect_spawn_targets_expr(ck, a, stmt_at(a, sargs, si))
+
+def collect_spawn_targets_stmts(ck: Ck, a: Ast, s: int) -> None:
+    for i in range(pky(s)):
+        st: int = stmt_at(a, s, i)
+        kn: int = a.n[st + {{O:Stmt.kind}}]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == {{T:StmtKind.expr_stmt}} or tag == {{T:StmtKind.raise_stmt}} or tag == {{T:StmtKind.del_stmt}}:
+            collect_spawn_targets_expr(ck, a, pay)
+        elif tag == {{T:StmtKind.var_decl}}:
+            collect_spawn_targets_expr(ck, a, a.n[pay + {{O:VarDecl.value}}])
+        elif tag == {{T:StmtKind.assign}}:
+            collect_spawn_targets_expr(ck, a, a.n[pay + {{O:Assign.target}}])
+            collect_spawn_targets_expr(ck, a, a.n[pay + {{O:Assign.value}}])
+        elif tag == {{T:StmtKind.if_stmt}}:
+            collect_spawn_targets_expr(ck, a, a.n[pay + {{O:IfStmt.cond}}])
+            collect_spawn_targets_stmts(ck, a, sl_at(a, pay, {{O:IfStmt.then_body}}))
+            ecs: int = sl_at(a, pay, {{O:IfStmt.elif_clauses}})
+            for ei in range(pky(ecs)):
+                ec: int = a.l[pkx(ecs) + ei]
+                collect_spawn_targets_expr(ck, a, a.n[ec + {{O:ElifClause.cond}}])
+                collect_spawn_targets_stmts(ck, a, sl_at(a, ec, {{O:ElifClause.body}}))
+            if a.n[pay + {{O:IfStmt.else_body}}] != {{NONE}}:
+                collect_spawn_targets_stmts(ck, a, sl_at(a, pay, {{O:IfStmt.else_body}}))
+        elif tag == {{T:StmtKind.while_stmt}}:
+            collect_spawn_targets_expr(ck, a, a.n[pay + {{O:WhileStmt.cond}}])
+            collect_spawn_targets_stmts(ck, a, sl_at(a, pay, {{O:WhileStmt.body}}))
+        elif tag == {{T:StmtKind.for_stmt}}:
+            collect_spawn_targets_expr(ck, a, a.n[pay + {{O:ForStmt.iterable}}])
+            collect_spawn_targets_stmts(ck, a, sl_at(a, pay, {{O:ForStmt.body}}))
+        elif tag == {{T:StmtKind.func_def}}:
+            collect_spawn_targets_stmts(ck, a, sl_at(a, pay, {{O:FuncDef.body}}))
+        elif tag == {{T:StmtKind.class_def}}:
+            ms: int = sl_at(a, pay, {{O:ClassDef.methods}})
+            for mi in range(pky(ms)):
+                m: int = a.l[pkx(ms) + mi]
+                collect_spawn_targets_stmts(ck, a, sl_at(a, m, {{O:FuncDef.body}}))
+        elif tag == {{T:StmtKind.return_stmt}}:
+            if pay >= 0:
+                collect_spawn_targets_expr(ck, a, pay)
+        elif tag == {{T:StmtKind.try_stmt}}:
+            collect_spawn_targets_stmts(ck, a, sl_at(a, pay, {{O:TryStmt.try_body}}))
+            txs: int = sl_at(a, pay, {{O:TryStmt.except_clauses}})
+            for ti in range(pky(txs)):
+                collect_spawn_targets_stmts(ck, a, sl_at(a, a.l[pkx(txs) + ti], {{O:ExceptClause.body}}))
+            if a.n[pay + {{O:TryStmt.finally_body}}] != {{NONE}}:
+                collect_spawn_targets_stmts(ck, a, sl_at(a, pay, {{O:TryStmt.finally_body}}))
+        elif tag == {{T:StmtKind.lowlevel_stmt}}:
+            collect_spawn_targets_stmts(ck, a, sl_at(a, pay, {{O:LowLevelStmt.body}}))
+        elif tag == {{T:StmtKind.with_stmt}}:
+            collect_spawn_targets_expr(ck, a, a.n[pay + {{O:WithStmt.ctx_expr}}])
+            collect_spawn_targets_stmts(ck, a, sl_at(a, pay, {{O:WithStmt.body}}))
+        elif tag == {{T:StmtKind.defer_stmt}}:
+            dc: int = a.n[pay + {{O:DeferStmt.call}}]
+            collect_spawn_targets_expr(ck, a, a.n[dc + {{O:Call.callee}}])
+            dargs: int = sl_at(a, dc, {{O:Call.args}})
+            for di in range(pky(dargs)):
+                collect_spawn_targets_expr(ck, a, stmt_at(a, dargs, di))
+
+def resolve_expr_shared_type(ck: Ck, a: Ast, expr: int, sh_sym: list[int], sh_ty: list[int], out_root: list[int]) -> int:
+    tag: int = a.n[expr]
+    if tag == {{T:Expr.identifier}}:
+        nm: int = sym_of(ck, a, pk(a.n[expr + 1], a.n[expr + 2]))
+        for i in range(len(sh_sym)):
+            if sh_sym[i] == nm:
+                out_root[0] = nm
+                return sh_ty[i]
+        return -1
+    if tag == {{T:Expr.attribute}}:
+        at: int = a.n[expr + 1]
+        pty: int = resolve_expr_shared_type(ck, a, a.n[at + {{O:Attribute.obj}}], sh_sym, sh_ty, out_root)
+        if pty < 0 or ck.tt.tag[pty] != 6:
+            return -1
+        ci: int = class_idx_of_type(ck, pty)
+        if ci < 0:
+            return -1
+        asym: int = sym_of(ck, a, pk(a.n[at + {{O:Attribute.attr}}], a.n[at + {{O:Attribute.attr}} + 1]))
+        fe: int = m2_get(ck.cls_fields, ci, asym)
+        if fe < 0:
+            return -1
+        return ck.cls_fields.vv[fe]
+    return -1
+
+class MutGraph:
+    seed_fn: list[int]
+    seed_idx: list[int]
+    head: Map2
+    edge_fn: list[int]
+    edge_idx: list[int]
+    edge_next: list[int]
+
+    def __init__(self) -> None:
+        self.seed_fn = []
+        self.seed_idx = []
+        self.head = Map2()
+        self.edge_fn = []
+        self.edge_idx = []
+        self.edge_next = []
+
+def mg_add_seed(ck: Ck, a: Ast, mg: MutGraph, fname_sym: int, ps: int, root_sym: int) -> None:
+    idx: int = param_index_by_name(ck, a, ps, root_sym)
+    if idx < 0:
+        return
+    mg.seed_fn.append(fname_sym)
+    mg.seed_idx.append(idx)
+
+def mg_add_edge(ck: Ck, a: Ast, mg: MutGraph, target_fn: int, target_idx: int, fname_sym: int, ps: int, root_sym: int) -> None:
+    idx: int = param_index_by_name(ck, a, ps, root_sym)
+    if idx < 0:
+        return
+    he: int = m2_get(mg.head, target_fn, target_idx)
+    prev: int = mg.head.vv[he] if he >= 0 else -1
+    nid: int = len(mg.edge_fn)
+    mg.edge_fn.append(fname_sym)
+    mg.edge_idx.append(idx)
+    mg.edge_next.append(prev)
+    m2_put(mg.head, target_fn, target_idx, nid)
+
+def scan_mutates_graph_expr(ck: Ck, a: Ast, mg: MutGraph, fname_sym: int, ps: int, expr: int, sh_sym: list[int], sh_ty: list[int]) -> None:
+    tag: int = a.n[expr]
+    if tag <= {{T:Expr.identifier}}:
+        return
+    if tag == {{T:Expr.unary}}:
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[a.n[expr + 1] + {{O:Unary.operand}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.kwarg}}:
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[a.n[expr + 1] + {{O:Kwarg.value}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.ternary}}:
+        tp: int = a.n[expr + 1]
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[tp + {{O:Ternary.cond}}], sh_sym, sh_ty)
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[tp + {{O:Ternary.then_expr}}], sh_sym, sh_ty)
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[tp + {{O:Ternary.else_expr}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.binary}}:
+        bp: int = a.n[expr + 1]
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[bp + {{O:Binary.left}}], sh_sym, sh_ty)
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[bp + {{O:Binary.right}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.call}}:
+        cp: int = a.n[expr + 1]
+        cal: int = a.n[cp + {{O:Call.callee}}]
+        cal_free: bool = False
+        cal_safe: bool = False
+        cal_sym: int = -1
+        if a.n[cal] == {{T:Expr.identifier}}:
+            cv: int = pk(a.n[cal + 1], a.n[cal + 2])
+            cal_sym = sym_of(ck, a, cv)
+            cal_free = m2_get(ck.fmap, 0, cal_sym) >= 0
+            cal_safe = is_known_safe_builtin_callee(a, cv)
+        mown_sym: int = -1
+        if a.n[cal] == {{T:Expr.attribute}}:
+            at: int = a.n[cal + 1]
+            out_r: list[int] = [-1]
+            rty: int = resolve_expr_shared_type(ck, a, a.n[at + {{O:Attribute.obj}}], sh_sym, sh_ty, out_r)
+            if rty >= 0 and ck.tt.tag[rty] == 6:
+                msym: int = sym_of(ck, a, pk(a.n[at + {{O:Attribute.attr}}], a.n[at + {{O:Attribute.attr}} + 1]))
+                csym: int = ck.tt.xa[rty]
+                if method_is_final(ck, a, csym, msym):
+                    ci: int = class_idx(ck, csym)
+                    if ci >= 0 and m2_get(ck.cls_meths, ci, msym) >= 0:
+                        mown_sym = join_syms(ck, [csym, msym], 2, 95)
+        cargs: int = sl_at(a, cp, {{O:Call.args}})
+        for i in range(pky(cargs)):
+            ae: int = stmt_at(a, cargs, i)
+            av: int = a.n[a.n[ae + 1] + {{O:Kwarg.value}}] if a.n[ae] == {{T:Expr.kwarg}} else ae
+            aidx: int = i
+            idx_unk: bool = False
+            if a.n[ae] == {{T:Expr.kwarg}}:
+                if cal_free:
+                    ki: int = kwarg_decl_index(ck, a, cal_sym, pk(a.n[a.n[ae + 1] + {{O:Kwarg.name}}], a.n[a.n[ae + 1] + {{O:Kwarg.name}} + 1]))
+                    if ki >= 0:
+                        aidx = ki
+                    else:
+                        idx_unk = True
+                else:
+                    idx_unk = True
+            out_r2: list[int] = [-1]
+            rty2: int = resolve_expr_shared_type(ck, a, av, sh_sym, sh_ty, out_r2)
+            if rty2 >= 0 and is_shared_type(ck, rty2):
+                if idx_unk:
+                    if not cal_safe:
+                        mg_add_seed(ck, a, mg, fname_sym, ps, out_r2[0])
+                elif cal_free:
+                    mg_add_edge(ck, a, mg, cal_sym, aidx, fname_sym, ps, out_r2[0])
+                elif mown_sym >= 0:
+                    mg_add_edge(ck, a, mg, mown_sym, aidx + 1, fname_sym, ps, out_r2[0])
+                elif not cal_safe:
+                    mg_add_seed(ck, a, mg, fname_sym, ps, out_r2[0])
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, ae, sh_sym, sh_ty)
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, cal, sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.attribute}}:
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[a.n[expr + 1] + {{O:Attribute.obj}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.list_comp}}:
+        lc: int = a.n[expr + 1]
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[lc + {{O:ListComp.elem}}], sh_sym, sh_ty)
+        cls_s: int = sl_at(a, lc, {{O:ListComp.clauses}})
+        for ci2 in range(pky(cls_s)):
+            cl: int = a.l[pkx(cls_s) + ci2]
+            if a.n[cl] == {{T:CompClause.for_clause}}:
+                scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[a.n[cl + 1] + {{O:CompForClause.iterable}}], sh_sym, sh_ty)
+            else:
+                scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[cl + 1], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.dict_comp}}:
+        dc: int = a.n[expr + 1]
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[dc + {{O:DictComp.key}}], sh_sym, sh_ty)
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[dc + {{O:DictComp.value}}], sh_sym, sh_ty)
+        dcls: int = sl_at(a, dc, {{O:DictComp.clauses}})
+        for di2 in range(pky(dcls)):
+            dcl: int = a.l[pkx(dcls) + di2]
+            if a.n[dcl] == {{T:CompClause.for_clause}}:
+                scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[a.n[dcl + 1] + {{O:CompForClause.iterable}}], sh_sym, sh_ty)
+            else:
+                scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[dcl + 1], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.lambda}}:
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[a.n[expr + 1] + {{O:Lambda.body}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.slice}}:
+        sl: int = a.n[expr + 1]
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[sl + {{O:Slice.obj}}], sh_sym, sh_ty)
+        if a.n[sl + {{O:Slice.lo}}] >= 0:
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[sl + {{O:Slice.lo}}], sh_sym, sh_ty)
+        if a.n[sl + {{O:Slice.hi}}] >= 0:
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[sl + {{O:Slice.hi}}], sh_sym, sh_ty)
+        if a.n[sl + {{O:Slice.step}}] >= 0:
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[sl + {{O:Slice.step}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.index}}:
+        ix: int = a.n[expr + 1]
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[ix + {{O:Index.obj}}], sh_sym, sh_ty)
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[ix + {{O:Index.index}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.list_lit}} or tag == {{T:Expr.tuple_lit}}:
+        el: int = sl_at(a, expr, 1)
+        for li in range(pky(el)):
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, stmt_at(a, el, li), sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.dict_lit}}:
+        dl: int = sl_at(a, expr, 1)
+        for pi in range(pky(dl)):
+            dp: int = a.l[pkx(dl) + pi]
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[dp + {{O:DictPair.key}}], sh_sym, sh_ty)
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[dp + {{O:DictPair.value}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.await_expr}} or tag == {{T:Expr.spawn_expr}}:
+        scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[expr + 1], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.generic_construct}}:
+        gc: int = a.n[expr + 1]
+        gargs: int = sl_at(a, gc, {{O:GenericConstruct.args}})
+        for gi in range(pky(gargs)):
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, stmt_at(a, gargs, gi), sh_sym, sh_ty)
+
+def scan_mutates_graph_stmts(ck: Ck, a: Ast, mg: MutGraph, fname_sym: int, ps: int, stmts: int, sh_sym: list[int], sh_ty: list[int]) -> None:
+    for i in range(pky(stmts)):
+        st: int = stmt_at(a, stmts, i)
+        kn: int = a.n[st + {{O:Stmt.kind}}]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == {{T:StmtKind.assign}}:
+            atg: int = a.n[pay + {{O:Assign.target}}]
+            out_r: list[int] = [-1]
+            if a.n[atg] == {{T:Expr.index}}:
+                rty: int = resolve_expr_shared_type(ck, a, a.n[a.n[atg + 1] + {{O:Index.obj}}], sh_sym, sh_ty, out_r)
+                if rty >= 0 and (ck.tt.tag[rty] == 5 or ck.tt.tag[rty] == 13):
+                    mg_add_seed(ck, a, mg, fname_sym, ps, out_r[0])
+            elif a.n[atg] == {{T:Expr.attribute}}:
+                rty2: int = resolve_expr_shared_type(ck, a, a.n[a.n[atg + 1] + {{O:Attribute.obj}}], sh_sym, sh_ty, out_r)
+                if rty2 >= 0 and ck.tt.tag[rty2] == 6:
+                    mg_add_seed(ck, a, mg, fname_sym, ps, out_r[0])
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[pay + {{O:Assign.value}}], sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.expr_stmt}}:
+            if a.n[pay] == {{T:Expr.call}}:
+                cp: int = a.n[pay + 1]
+                cal: int = a.n[cp + {{O:Call.callee}}]
+                if a.n[cal] == {{T:Expr.attribute}}:
+                    at: int = a.n[cal + 1]
+                    if is_mutating_container_method(a, pk(a.n[at + {{O:Attribute.attr}}], a.n[at + {{O:Attribute.attr}} + 1])):
+                        out_r3: list[int] = [-1]
+                        rty3: int = resolve_expr_shared_type(ck, a, a.n[at + {{O:Attribute.obj}}], sh_sym, sh_ty, out_r3)
+                        if rty3 >= 0 and (ck.tt.tag[rty3] == 5 or ck.tt.tag[rty3] == 13):
+                            mg_add_seed(ck, a, mg, fname_sym, ps, out_r3[0])
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, pay, sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.var_decl}}:
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[pay + {{O:VarDecl.value}}], sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.return_stmt}}:
+            if pay >= 0:
+                scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, pay, sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.raise_stmt}} or tag == {{T:StmtKind.del_stmt}}:
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, pay, sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.if_stmt}}:
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[pay + {{O:IfStmt.cond}}], sh_sym, sh_ty)
+            scan_mutates_graph_stmts(ck, a, mg, fname_sym, ps, sl_at(a, pay, {{O:IfStmt.then_body}}), sh_sym, sh_ty)
+            ecs: int = sl_at(a, pay, {{O:IfStmt.elif_clauses}})
+            for ei in range(pky(ecs)):
+                ec: int = a.l[pkx(ecs) + ei]
+                scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[ec + {{O:ElifClause.cond}}], sh_sym, sh_ty)
+                scan_mutates_graph_stmts(ck, a, mg, fname_sym, ps, sl_at(a, ec, {{O:ElifClause.body}}), sh_sym, sh_ty)
+            if a.n[pay + {{O:IfStmt.else_body}}] != {{NONE}}:
+                scan_mutates_graph_stmts(ck, a, mg, fname_sym, ps, sl_at(a, pay, {{O:IfStmt.else_body}}), sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.while_stmt}}:
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[pay + {{O:WhileStmt.cond}}], sh_sym, sh_ty)
+            scan_mutates_graph_stmts(ck, a, mg, fname_sym, ps, sl_at(a, pay, {{O:WhileStmt.body}}), sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.for_stmt}}:
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[pay + {{O:ForStmt.iterable}}], sh_sym, sh_ty)
+            scan_mutates_graph_stmts(ck, a, mg, fname_sym, ps, sl_at(a, pay, {{O:ForStmt.body}}), sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.try_stmt}}:
+            scan_mutates_graph_stmts(ck, a, mg, fname_sym, ps, sl_at(a, pay, {{O:TryStmt.try_body}}), sh_sym, sh_ty)
+            txs: int = sl_at(a, pay, {{O:TryStmt.except_clauses}})
+            for ti in range(pky(txs)):
+                scan_mutates_graph_stmts(ck, a, mg, fname_sym, ps, sl_at(a, a.l[pkx(txs) + ti], {{O:ExceptClause.body}}), sh_sym, sh_ty)
+            if a.n[pay + {{O:TryStmt.finally_body}}] != {{NONE}}:
+                scan_mutates_graph_stmts(ck, a, mg, fname_sym, ps, sl_at(a, pay, {{O:TryStmt.finally_body}}), sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.with_stmt}}:
+            scan_mutates_graph_expr(ck, a, mg, fname_sym, ps, a.n[pay + {{O:WithStmt.ctx_expr}}], sh_sym, sh_ty)
+            scan_mutates_graph_stmts(ck, a, mg, fname_sym, ps, sl_at(a, pay, {{O:WithStmt.body}}), sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.lowlevel_stmt}}:
+            scan_mutates_graph_stmts(ck, a, mg, fname_sym, ps, sl_at(a, pay, {{O:LowLevelStmt.body}}), sh_sym, sh_ty)
+
+def scan_mutates_graph_func(ck: Ck, a: Ast, mg: MutGraph, fname_sym: int, ps: int, fbody: int) -> None:
+    sh_sym: list[int] = []
+    sh_ty: list[int] = []
+    is_tpl: bool = m2_get(ck.gfn, 0, fname_sym) >= 0
+    for i in range(pky(ps)):
+        p: int = stmt_at(a, ps, i)
+        pte_m: int = a.n[p + {{O:Param.type_expr}}]
+        if is_tpl and mentions_protocol(ck, a, pte_m):
+            continue
+        pt: int = -1
+        try:
+            pt = type_expr_to_type(ck, a, pte_m)
+        except CkUnsupported:
+            continue
+        except CkErr:
+            continue
+        if is_shared_type(ck, pt):
+            sh_sym.append(sym_of(ck, a, pk(a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1])))
+            sh_ty.append(pt)
+    if len(sh_sym) == 0:
+        return
+    scan_mutates_graph_stmts(ck, a, mg, fname_sym, ps, fbody, sh_sym, sh_ty)
+
+def compute_mutates_graph(ck: Ck, a: Ast, body: int) -> None:
+    if not ck.has_any_spawn:
+        return
+    mg: MutGraph = MutGraph()
+    for i in range(pky(body)):
+        st: int = stmt_at(a, body, i)
+        kn: int = a.n[st + {{O:Stmt.kind}}]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == {{T:StmtKind.func_def}}:
+            fn_sym: int = sym_of(ck, a, pk(a.n[pay + {{O:FuncDef.name}}], a.n[pay + {{O:FuncDef.name}} + 1]))
+            scan_mutates_graph_func(ck, a, mg, fn_sym, sl_at(a, pay, {{O:FuncDef.params}}), sl_at(a, pay, {{O:FuncDef.body}}))
+        elif tag == {{T:StmtKind.class_def}}:
+            csym: int = sym_of(ck, a, pk(a.n[pay + {{O:ClassDef.name}}], a.n[pay + {{O:ClassDef.name}} + 1]))
+            ms: int = sl_at(a, pay, {{O:ClassDef.methods}})
+            for mi in range(pky(ms)):
+                m: int = a.l[pkx(ms) + mi]
+                msym: int = sym_of(ck, a, pk(a.n[m + {{O:FuncDef.name}}], a.n[m + {{O:FuncDef.name}} + 1]))
+                scan_mutates_graph_func(ck, a, mg, join_syms(ck, [csym, msym], 2, 95), sl_at(a, m, {{O:FuncDef.params}}), sl_at(a, m, {{O:FuncDef.body}}))
+    wl_fn: list[int] = []
+    wl_idx: list[int] = []
+    for si in range(len(mg.seed_fn)):
+        sf: int = mg.seed_fn[si]
+        sx: int = mg.seed_idx[si]
+        if m2_get(ck.mutates_params, sf, sx) < 0:
+            m2_put(ck.mutates_params, sf, sx, 1)
+            wl_fn.append(sf)
+            wl_idx.append(sx)
+    while len(wl_fn) > 0:
+        kf: int = wl_fn.pop()
+        kx: int = wl_idx.pop()
+        he: int = m2_get(mg.head, kf, kx)
+        if he < 0:
+            continue
+        eid: int = mg.head.vv[he]
+        while eid >= 0:
+            df: int = mg.edge_fn[eid]
+            dx: int = mg.edge_idx[eid]
+            if m2_get(ck.mutates_params, df, dx) < 0:
+                m2_put(ck.mutates_params, df, dx, 1)
+                wl_fn.append(df)
+                wl_idx.append(dx)
+            eid = mg.edge_next[eid]
+
+def scan_returns_for_alias_effect(ck: Ck, a: Ast, stmts: int, ps: int, alias_indices: list[int], unk: list[bool]) -> None:
+    for i in range(pky(stmts)):
+        st: int = stmt_at(a, stmts, i)
+        kn: int = a.n[st + {{O:Stmt.kind}}]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == {{T:StmtKind.return_stmt}}:
+            if pay >= 0:
+                et: int = a.n[pay]
+                if et == {{T:Expr.identifier}}:
+                    idx: int = param_index_by_name(ck, a, ps, sym_of(ck, a, pk(a.n[pay + 1], a.n[pay + 2])))
+                    if idx >= 0:
+                        if idx not in alias_indices:
+                            alias_indices.append(idx)
+                    else:
+                        unk[0] = True
+                elif et == {{T:Expr.list_lit}} or et == {{T:Expr.dict_lit}}:
+                    pass
+                elif et == {{T:Expr.call}}:
+                    cp: int = a.n[pay + 1]
+                    cal: int = a.n[cp + {{O:Call.callee}}]
+                    if a.n[cal] == {{T:Expr.identifier}}:
+                        csym: int = sym_of(ck, a, pk(a.n[cal + 1], a.n[cal + 2]))
+                        if class_idx(ck, csym) >= 0:
+                            continue
+                        re: int = m2_get(ck.rae_kind, 0, csym)
+                        if re >= 0:
+                            rk: int = ck.rae_kind.vv[re]
+                            if rk == 0:
+                                continue
+                            if rk == 1:
+                                cargs: int = sl_at(a, cp, {{O:Call.args}})
+                                rps: int = ck.rae_ps.vv[m2_get(ck.rae_ps, 0, csym)]
+                                rpn: int = ck.rae_pn.vv[m2_get(ck.rae_pn, 0, csym)]
+                                for ri in range(rpn):
+                                    cidx: int = ck.rae_pool[rps + ri]
+                                    if cidx < pky(cargs):
+                                        ca: int = stmt_at(a, cargs, cidx)
+                                        if a.n[ca] == {{T:Expr.identifier}}:
+                                            my_idx: int = param_index_by_name(ck, a, ps, sym_of(ck, a, pk(a.n[ca + 1], a.n[ca + 2])))
+                                            if my_idx >= 0:
+                                                if my_idx not in alias_indices:
+                                                    alias_indices.append(my_idx)
+                                                continue
+                                    unk[0] = True
+                                continue
+                    unk[0] = True
+                else:
+                    unk[0] = True
+        elif tag == {{T:StmtKind.if_stmt}}:
+            scan_returns_for_alias_effect(ck, a, sl_at(a, pay, {{O:IfStmt.then_body}}), ps, alias_indices, unk)
+            ecs: int = sl_at(a, pay, {{O:IfStmt.elif_clauses}})
+            for ei in range(pky(ecs)):
+                scan_returns_for_alias_effect(ck, a, sl_at(a, a.l[pkx(ecs) + ei], {{O:ElifClause.body}}), ps, alias_indices, unk)
+            if a.n[pay + {{O:IfStmt.else_body}}] != {{NONE}}:
+                scan_returns_for_alias_effect(ck, a, sl_at(a, pay, {{O:IfStmt.else_body}}), ps, alias_indices, unk)
+        elif tag == {{T:StmtKind.while_stmt}}:
+            scan_returns_for_alias_effect(ck, a, sl_at(a, pay, {{O:WhileStmt.body}}), ps, alias_indices, unk)
+        elif tag == {{T:StmtKind.for_stmt}}:
+            scan_returns_for_alias_effect(ck, a, sl_at(a, pay, {{O:ForStmt.body}}), ps, alias_indices, unk)
+        elif tag == {{T:StmtKind.try_stmt}} or tag == {{T:StmtKind.with_stmt}}:
+            unk[0] = True
+
+def compute_return_alias_effects(ck: Ck, a: Ast, body: int) -> None:
+    if not ck.has_any_spawn:
+        return
+    iters: int = 0
+    while True:
+        iters = iters + 1
+        changed: bool = False
+        for i in range(pky(body)):
+            st: int = stmt_at(a, body, i)
+            kn: int = a.n[st + {{O:Stmt.kind}}]
+            if a.n[kn] != {{T:StmtKind.func_def}}:
+                continue
+            fd: int = a.n[kn + 1]
+            fn_sym: int = sym_of(ck, a, pk(a.n[fd + {{O:FuncDef.name}}], a.n[fd + {{O:FuncDef.name}} + 1]))
+            if pky(sl_at(a, fd, {{O:FuncDef.type_params}})) != 0 or m2_get(ck.gfn, 0, fn_sym) >= 0:
+                continue
+            alias_indices: list[int] = []
+            unk: list[bool] = [False]
+            scan_returns_for_alias_effect(ck, a, sl_at(a, fd, {{O:FuncDef.body}}), sl_at(a, fd, {{O:FuncDef.params}}), alias_indices, unk)
+            nk: int = 2 if unk[0] else (0 if len(alias_indices) == 0 else 1)
+            pe: int = m2_get(ck.rae_kind, 0, fn_sym)
+            if pe < 0:
+                changed = True
+            else:
+                pk_old: int = ck.rae_kind.vv[pe]
+                if pk_old != nk:
+                    changed = True
+                elif nk == 1:
+                    ops: int = ck.rae_ps.vv[m2_get(ck.rae_ps, 0, fn_sym)]
+                    opn: int = ck.rae_pn.vv[m2_get(ck.rae_pn, 0, fn_sym)]
+                    if opn != len(alias_indices):
+                        changed = True
+                    else:
+                        for xi in range(len(alias_indices)):
+                            found_x: bool = False
+                            for yi in range(opn):
+                                if ck.rae_pool[ops + yi] == alias_indices[xi]:
+                                    found_x = True
+                                    break
+                            if not found_x:
+                                changed = True
+                                break
+            m2_put(ck.rae_kind, 0, fn_sym, nk)
+            if nk == 1:
+                st_p: int = len(ck.rae_pool)
+                for ai in alias_indices:
+                    ck.rae_pool.append(ai)
+                m2_put(ck.rae_ps, 0, fn_sym, st_p)
+                m2_put(ck.rae_pn, 0, fn_sym, len(alias_indices))
+        if not changed or iters >= 64:
+            return
+
+def fail_spawn_shared(ck: Ck, fd_sym: int, root_sym: int, trans: bool, via_method: bool, via_sym: int) -> None:
+    mp(ck, "since function '")
+    mp_sym(ck, fd_sym)
+    mp(ck, "' is a 'spawn' target, its shared parameter '")
+    mp_sym(ck, root_sym)
+    if not trans:
+        mp(ck, "' cannot be mutated here (unsynchronised mutation across concurrent workers causes a data race) — make a local copy first")
+    elif via_method:
+        mp(ck, "' cannot be mutated transitively here through the method '")
+        mp_sym(ck, via_sym)
+        mp(ck, "' (unsynchronised mutation across concurrent workers causes a data race) — make a local copy first")
+    else:
+        mp(ck, "' cannot be mutated transitively here through '")
+        mp_sym(ck, via_sym)
+        mp(ck, "' (unsynchronised mutation across concurrent workers causes a data race) — make a local copy first")
+    raise mk_fail(ck, "SpawnSharedMutation")
+
+def check_transitive_spawn_shared_expr(ck: Ck, a: Ast, fd_sym: int, expr: int, sh_sym: list[int], sh_ty: list[int]) -> None:
+    tag: int = a.n[expr]
+    if tag <= {{T:Expr.identifier}}:
+        return
+    if tag == {{T:Expr.unary}}:
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[a.n[expr + 1] + {{O:Unary.operand}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.kwarg}}:
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[a.n[expr + 1] + {{O:Kwarg.value}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.ternary}}:
+        tp: int = a.n[expr + 1]
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[tp + {{O:Ternary.cond}}], sh_sym, sh_ty)
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[tp + {{O:Ternary.then_expr}}], sh_sym, sh_ty)
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[tp + {{O:Ternary.else_expr}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.binary}}:
+        bp: int = a.n[expr + 1]
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[bp + {{O:Binary.left}}], sh_sym, sh_ty)
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[bp + {{O:Binary.right}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.call}}:
+        cp: int = a.n[expr + 1]
+        cal: int = a.n[cp + {{O:Call.callee}}]
+        cal_free: bool = False
+        cal_sym: int = -1
+        if a.n[cal] == {{T:Expr.identifier}}:
+            cal_sym = sym_of(ck, a, pk(a.n[cal + 1], a.n[cal + 2]))
+            cal_free = m2_get(ck.fmap, 0, cal_sym) >= 0
+        mown_sym: int = -1
+        m_msg_sym: int = -1
+        if a.n[cal] == {{T:Expr.attribute}}:
+            at: int = a.n[cal + 1]
+            out_r: list[int] = [-1]
+            rty: int = resolve_expr_shared_type(ck, a, a.n[at + {{O:Attribute.obj}}], sh_sym, sh_ty, out_r)
+            if rty >= 0 and ck.tt.tag[rty] == 6:
+                msym: int = sym_of(ck, a, pk(a.n[at + {{O:Attribute.attr}}], a.n[at + {{O:Attribute.attr}} + 1]))
+                csym: int = ck.tt.xa[rty]
+                if method_is_final(ck, a, csym, msym):
+                    ci: int = class_idx(ck, csym)
+                    if ci >= 0 and m2_get(ck.cls_meths, ci, msym) >= 0:
+                        mown_sym = join_syms(ck, [csym, msym], 2, 95)
+                        m_msg_sym = msym
+        cargs: int = sl_at(a, cp, {{O:Call.args}})
+        for i in range(pky(cargs)):
+            ae: int = stmt_at(a, cargs, i)
+            av: int = a.n[a.n[ae + 1] + {{O:Kwarg.value}}] if a.n[ae] == {{T:Expr.kwarg}} else ae
+            idx: int = i
+            skip_kw: bool = False
+            if a.n[ae] == {{T:Expr.kwarg}}:
+                if cal_free:
+                    ki: int = kwarg_decl_index(ck, a, cal_sym, pk(a.n[a.n[ae + 1] + {{O:Kwarg.name}}], a.n[a.n[ae + 1] + {{O:Kwarg.name}} + 1]))
+                    if ki >= 0:
+                        idx = ki
+                    else:
+                        skip_kw = True
+                else:
+                    skip_kw = True
+            if skip_kw:
+                check_transitive_spawn_shared_expr(ck, a, fd_sym, av, sh_sym, sh_ty)
+                continue
+            if cal_free:
+                out_r2: list[int] = [-1]
+                rty2: int = resolve_expr_shared_type(ck, a, av, sh_sym, sh_ty, out_r2)
+                if rty2 >= 0 and is_shared_type(ck, rty2):
+                    if m2_get(ck.mutates_params, cal_sym, idx) >= 0:
+                        fail_spawn_shared(ck, fd_sym, out_r2[0], True, False, cal_sym)
+            elif mown_sym >= 0:
+                out_r3: list[int] = [-1]
+                rty3: int = resolve_expr_shared_type(ck, a, ae, sh_sym, sh_ty, out_r3)
+                if rty3 >= 0 and is_shared_type(ck, rty3):
+                    if m2_get(ck.mutates_params, mown_sym, idx + 1) >= 0:
+                        fail_spawn_shared(ck, fd_sym, out_r3[0], True, True, m_msg_sym)
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, ae, sh_sym, sh_ty)
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, cal, sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.attribute}}:
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[a.n[expr + 1] + {{O:Attribute.obj}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.list_comp}}:
+        lc: int = a.n[expr + 1]
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[lc + {{O:ListComp.elem}}], sh_sym, sh_ty)
+        cls_s: int = sl_at(a, lc, {{O:ListComp.clauses}})
+        for ci2 in range(pky(cls_s)):
+            cl: int = a.l[pkx(cls_s) + ci2]
+            if a.n[cl] == {{T:CompClause.for_clause}}:
+                check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[a.n[cl + 1] + {{O:CompForClause.iterable}}], sh_sym, sh_ty)
+            else:
+                check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[cl + 1], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.dict_comp}}:
+        dc: int = a.n[expr + 1]
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[dc + {{O:DictComp.key}}], sh_sym, sh_ty)
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[dc + {{O:DictComp.value}}], sh_sym, sh_ty)
+        dcls: int = sl_at(a, dc, {{O:DictComp.clauses}})
+        for di2 in range(pky(dcls)):
+            dcl: int = a.l[pkx(dcls) + di2]
+            if a.n[dcl] == {{T:CompClause.for_clause}}:
+                check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[a.n[dcl + 1] + {{O:CompForClause.iterable}}], sh_sym, sh_ty)
+            else:
+                check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[dcl + 1], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.lambda}}:
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[a.n[expr + 1] + {{O:Lambda.body}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.slice}}:
+        sl: int = a.n[expr + 1]
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[sl + {{O:Slice.obj}}], sh_sym, sh_ty)
+        if a.n[sl + {{O:Slice.lo}}] >= 0:
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[sl + {{O:Slice.lo}}], sh_sym, sh_ty)
+        if a.n[sl + {{O:Slice.hi}}] >= 0:
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[sl + {{O:Slice.hi}}], sh_sym, sh_ty)
+        if a.n[sl + {{O:Slice.step}}] >= 0:
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[sl + {{O:Slice.step}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.index}}:
+        ix: int = a.n[expr + 1]
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[ix + {{O:Index.obj}}], sh_sym, sh_ty)
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[ix + {{O:Index.index}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.list_lit}} or tag == {{T:Expr.tuple_lit}}:
+        el: int = sl_at(a, expr, 1)
+        for li in range(pky(el)):
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, stmt_at(a, el, li), sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.dict_lit}}:
+        dl: int = sl_at(a, expr, 1)
+        for pi in range(pky(dl)):
+            dp: int = a.l[pkx(dl) + pi]
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[dp + {{O:DictPair.key}}], sh_sym, sh_ty)
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[dp + {{O:DictPair.value}}], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.await_expr}} or tag == {{T:Expr.spawn_expr}}:
+        check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[expr + 1], sh_sym, sh_ty)
+        return
+    if tag == {{T:Expr.generic_construct}}:
+        gc: int = a.n[expr + 1]
+        gargs: int = sl_at(a, gc, {{O:GenericConstruct.args}})
+        for gi in range(pky(gargs)):
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, stmt_at(a, gargs, gi), sh_sym, sh_ty)
+
+def check_no_spawn_shared_mutation(ck: Ck, a: Ast, fd_sym: int, stmts: int, sh_sym: list[int], sh_ty: list[int]) -> None:
+    for i in range(pky(stmts)):
+        st: int = stmt_at(a, stmts, i)
+        ck.cur_line = a.n[st + {{O:Stmt.line}}]
+        ck.cur_span = a.n[st + {{O:Stmt.span}}]
+        kn: int = a.n[st + {{O:Stmt.kind}}]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == {{T:StmtKind.assign}}:
+            atg: int = a.n[pay + {{O:Assign.target}}]
+            out_r: list[int] = [-1]
+            if a.n[atg] == {{T:Expr.index}}:
+                rty: int = resolve_expr_shared_type(ck, a, a.n[a.n[atg + 1] + {{O:Index.obj}}], sh_sym, sh_ty, out_r)
+                if rty >= 0 and (ck.tt.tag[rty] == 5 or ck.tt.tag[rty] == 13):
+                    fail_spawn_shared(ck, fd_sym, out_r[0], False, False, -1)
+            elif a.n[atg] == {{T:Expr.attribute}}:
+                rty2: int = resolve_expr_shared_type(ck, a, a.n[a.n[atg + 1] + {{O:Attribute.obj}}], sh_sym, sh_ty, out_r)
+                if rty2 >= 0 and ck.tt.tag[rty2] == 6:
+                    fail_spawn_shared(ck, fd_sym, out_r[0], False, False, -1)
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[pay + {{O:Assign.value}}], sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.var_decl}}:
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, a.n[pay + {{O:VarDecl.value}}], sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.return_stmt}}:
+            if pay >= 0:
+                check_transitive_spawn_shared_expr(ck, a, fd_sym, pay, sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.raise_stmt}}:
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, pay, sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.expr_stmt}}:
+            if a.n[pay] == {{T:Expr.call}}:
+                cp: int = a.n[pay + 1]
+                cal: int = a.n[cp + {{O:Call.callee}}]
+                if a.n[cal] == {{T:Expr.attribute}}:
+                    at: int = a.n[cal + 1]
+                    if is_mutating_container_method(a, pk(a.n[at + {{O:Attribute.attr}}], a.n[at + {{O:Attribute.attr}} + 1])):
+                        out_r3: list[int] = [-1]
+                        rty3: int = resolve_expr_shared_type(ck, a, a.n[at + {{O:Attribute.obj}}], sh_sym, sh_ty, out_r3)
+                        if rty3 >= 0 and (ck.tt.tag[rty3] == 5 or ck.tt.tag[rty3] == 13):
+                            fail_spawn_shared(ck, fd_sym, out_r3[0], False, False, -1)
+            check_transitive_spawn_shared_expr(ck, a, fd_sym, pay, sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.if_stmt}}:
+            check_no_spawn_shared_mutation(ck, a, fd_sym, sl_at(a, pay, {{O:IfStmt.then_body}}), sh_sym, sh_ty)
+            ecs: int = sl_at(a, pay, {{O:IfStmt.elif_clauses}})
+            for ei in range(pky(ecs)):
+                check_no_spawn_shared_mutation(ck, a, fd_sym, sl_at(a, a.l[pkx(ecs) + ei], {{O:ElifClause.body}}), sh_sym, sh_ty)
+            if a.n[pay + {{O:IfStmt.else_body}}] != {{NONE}}:
+                check_no_spawn_shared_mutation(ck, a, fd_sym, sl_at(a, pay, {{O:IfStmt.else_body}}), sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.while_stmt}}:
+            check_no_spawn_shared_mutation(ck, a, fd_sym, sl_at(a, pay, {{O:WhileStmt.body}}), sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.for_stmt}}:
+            check_no_spawn_shared_mutation(ck, a, fd_sym, sl_at(a, pay, {{O:ForStmt.body}}), sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.try_stmt}}:
+            check_no_spawn_shared_mutation(ck, a, fd_sym, sl_at(a, pay, {{O:TryStmt.try_body}}), sh_sym, sh_ty)
+            txs: int = sl_at(a, pay, {{O:TryStmt.except_clauses}})
+            for ti in range(pky(txs)):
+                check_no_spawn_shared_mutation(ck, a, fd_sym, sl_at(a, a.l[pkx(txs) + ti], {{O:ExceptClause.body}}), sh_sym, sh_ty)
+            if a.n[pay + {{O:TryStmt.finally_body}}] != {{NONE}}:
+                check_no_spawn_shared_mutation(ck, a, fd_sym, sl_at(a, pay, {{O:TryStmt.finally_body}}), sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.with_stmt}}:
+            check_no_spawn_shared_mutation(ck, a, fd_sym, sl_at(a, pay, {{O:WithStmt.body}}), sh_sym, sh_ty)
+        elif tag == {{T:StmtKind.lowlevel_stmt}}:
+            check_no_spawn_shared_mutation(ck, a, fd_sym, sl_at(a, pay, {{O:LowLevelStmt.body}}), sh_sym, sh_ty)
+
+class IntListMap:
+    keys: list[int]
+    starts: list[int]
+    lens: list[int]
+    pool: list[int]
+
+    def __init__(self) -> None:
+        self.keys = []
+        self.starts = []
+        self.lens = []
+        self.pool = []
+
+def ilm_clone(m: IntListMap) -> IntListMap:
+    out: IntListMap = IntListMap()
+    for k in m.keys:
+        out.keys.append(k)
+    for s in m.starts:
+        out.starts.append(s)
+    for l in m.lens:
+        out.lens.append(l)
+    for p in m.pool:
+        out.pool.append(p)
+    return out
+
+def ilm_idx(m: IntListMap, k: int) -> int:
+    for i in range(len(m.keys)):
+        if m.keys[i] == k:
+            return i
+    return -1
+
+def ilm_set_one(m: IntListMap, k: int, v: int) -> None:
+    st: int = len(m.pool)
+    m.pool.append(v)
+    idx: int = ilm_idx(m, k)
+    if idx >= 0:
+        m.starts[idx] = st
+        m.lens[idx] = 1
+    else:
+        m.keys.append(k)
+        m.starts.append(st)
+        m.lens.append(1)
+
+def ilm_set_slice(m: IntListMap, k: int, vs: list[int]) -> None:
+    st: int = len(m.pool)
+    for v in vs:
+        m.pool.append(v)
+    idx: int = ilm_idx(m, k)
+    if idx >= 0:
+        m.starts[idx] = st
+        m.lens[idx] = len(vs)
+    else:
+        m.keys.append(k)
+        m.starts.append(st)
+        m.lens.append(len(vs))
+
+def ilm_add_unique(m: IntListMap, k: int, v: int) -> None:
+    idx: int = ilm_idx(m, k)
+    if idx < 0:
+        ilm_set_one(m, k, v)
+        return
+    st: int = m.starts[idx]
+    ln: int = m.lens[idx]
+    for i in range(ln):
+        if m.pool[st + i] == v:
+            return
+    nst: int = len(m.pool)
+    for i2 in range(ln):
+        m.pool.append(m.pool[st + i2])
+    m.pool.append(v)
+    m.starts[idx] = nst
+    m.lens[idx] = ln + 1
+
+def ilm_remove_key(m: IntListMap, k: int) -> None:
+    idx: int = ilm_idx(m, k)
+    if idx < 0:
+        return
+    last: int = len(m.keys) - 1
+    if idx != last:
+        m.keys[idx] = m.keys[last]
+        m.starts[idx] = m.starts[last]
+        m.lens[idx] = m.lens[last]
+    m.keys.pop()
+    m.starts.pop()
+    m.lens.pop()
+
+def ilm_merge_from(dst: IntListMap, src: IntListMap) -> bool:
+    changed: bool = False
+    for si in range(len(src.keys)):
+        k: int = src.keys[si]
+        sst: int = src.starts[si]
+        sln: int = src.lens[si]
+        di: int = ilm_idx(dst, k)
+        if di < 0:
+            nst: int = len(dst.pool)
+            for j in range(sln):
+                dst.pool.append(src.pool[sst + j])
+            dst.keys.append(k)
+            dst.starts.append(nst)
+            dst.lens.append(sln)
+            changed = True
+        else:
+            dst_s: int = dst.starts[di]
+            dst_n: int = dst.lens[di]
+            adds: list[int] = []
+            for j2 in range(sln):
+                sv: int = src.pool[sst + j2]
+                found: bool = False
+                for q in range(dst_n):
+                    if dst.pool[dst_s + q] == sv:
+                        found = True
+                        break
+                if not found:
+                    for a2 in adds:
+                        if a2 == sv:
+                            found = True
+                            break
+                if not found:
+                    adds.append(sv)
+            if len(adds) > 0:
+                nst2: int = len(dst.pool)
+                for q2 in range(dst_n):
+                    dst.pool.append(dst.pool[dst_s + q2])
+                for a3 in adds:
+                    dst.pool.append(a3)
+                dst.starts[di] = nst2
+                dst.lens[di] = dst_n + len(adds)
+                changed = True
+    return changed
+
+class SpawnFlow:
+    pt: IntListMap
+    ro: IntListMap
+    tk: IntListMap
+    locked: list[int]
+
+    def __init__(self) -> None:
+        self.pt = IntListMap()
+        self.ro = IntListMap()
+        self.tk = IntListMap()
+        self.locked = []
+
+def sf_clone(sf: SpawnFlow) -> SpawnFlow:
+    out: SpawnFlow = SpawnFlow()
+    out.pt = ilm_clone(sf.pt)
+    out.ro = ilm_clone(sf.ro)
+    out.tk = ilm_clone(sf.tk)
+    for l in sf.locked:
+        out.locked.append(l)
+    return out
+
+def sf_merge_from(dst: SpawnFlow, src: SpawnFlow) -> bool:
+    c0: bool = ilm_merge_from(dst.pt, src.pt)
+    c1: bool = ilm_merge_from(dst.ro, src.ro)
+    c2: bool = ilm_merge_from(dst.tk, src.tk)
+    c3: bool = False
+    for l in src.locked:
+        if l not in dst.locked:
+            dst.locked.append(l)
+            c3 = True
+    return c0 or c1 or c2 or c3
+
+def sf_is_resource_owned(sf: SpawnFlow, var_sym: int) -> bool:
+    pi: int = ilm_idx(sf.pt, var_sym)
+    if pi < 0:
+        return False
+    pst: int = sf.pt.starts[pi]
+    pln: int = sf.pt.lens[pi]
+    for i in range(pln):
+        ri: int = ilm_idx(sf.ro, sf.pt.pool[pst + i])
+        if ri >= 0 and sf.ro.lens[ri] > 0:
+            return True
+    return False
+
+def fail_post_spawn_mut(ck: Ck, var_sym: int) -> None:
+    mp(ck, "'")
+    mp_sym(ck, var_sym)
+    mp(ck, "' cannot be mutated here after being passed as a shared argument to a 'spawn' call and before it is awaited (unsynchronised mutation across concurrent workers causes a data race) — 'await' first or use a local copy")
+    raise mk_fail(ck, "SpawnSharedMutation")
+
+def check_direct_shared_mutation_stmt(ck: Ck, a: Ast, st: int, sf: SpawnFlow) -> None:
+    kn: int = a.n[st + {{O:Stmt.kind}}]
+    tag: int = a.n[kn]
+    pay: int = a.n[kn + 1]
+    if tag == {{T:StmtKind.assign}}:
+        atg: int = a.n[pay + {{O:Assign.target}}]
+        obj: int = -1
+        if a.n[atg] == {{T:Expr.index}}:
+            obj = a.n[a.n[atg + 1] + {{O:Index.obj}}]
+        elif a.n[atg] == {{T:Expr.attribute}}:
+            obj = a.n[a.n[atg + 1] + {{O:Attribute.obj}}]
+        if obj >= 0 and a.n[obj] == {{T:Expr.identifier}}:
+            vsym: int = sym_of(ck, a, pk(a.n[obj + 1], a.n[obj + 2]))
+            if sf_is_resource_owned(sf, vsym):
+                fail_post_spawn_mut(ck, vsym)
+    elif tag == {{T:StmtKind.expr_stmt}} and a.n[pay] == {{T:Expr.call}}:
+        cp: int = a.n[pay + 1]
+        cal: int = a.n[cp + {{O:Call.callee}}]
+        if a.n[cal] == {{T:Expr.attribute}}:
+            at: int = a.n[cal + 1]
+            aobj: int = a.n[at + {{O:Attribute.obj}}]
+            if a.n[aobj] == {{T:Expr.identifier}} and is_mutating_container_method(a, pk(a.n[at + {{O:Attribute.attr}}], a.n[at + {{O:Attribute.attr}} + 1])):
+                vsym2: int = sym_of(ck, a, pk(a.n[aobj + 1], a.n[aobj + 2]))
+                if sf_is_resource_owned(sf, vsym2):
+                    fail_post_spawn_mut(ck, vsym2)
+
+def remove_awaited_task_sharing(ck: Ck, a: Ast, expr: int, sf: SpawnFlow) -> None:
+    tag: int = a.n[expr]
+    if tag <= {{T:Expr.identifier}}:
+        return
+    if tag == {{T:Expr.await_expr}}:
+        op: int = a.n[expr + 1]
+        if a.n[op] == {{T:Expr.identifier}}:
+            tsym: int = sym_of(ck, a, pk(a.n[op + 1], a.n[op + 2]))
+            ti: int = ilm_idx(sf.tk, tsym)
+            if ti >= 0:
+                tst: int = sf.tk.starts[ti]
+                tln: int = sf.tk.lens[ti]
+                rm_keys: list[int] = []
+                for ri in range(len(sf.ro.keys)):
+                    rk: int = sf.ro.keys[ri]
+                    if rk in sf.locked:
+                        continue
+                    rst: int = sf.ro.starts[ri]
+                    rln: int = sf.ro.lens[ri]
+                    rem: list[int] = []
+                    for oi in range(rln):
+                        oid: int = sf.ro.pool[rst + oi]
+                        still: bool = True
+                        for ai in range(tln):
+                            if oid == sf.tk.pool[tst + ai]:
+                                still = False
+                                break
+                        if still:
+                            rem.append(oid)
+                    if len(rem) == 0:
+                        rm_keys.append(rk)
+                    elif len(rem) != rln:
+                        nst: int = len(sf.ro.pool)
+                        for x in rem:
+                            sf.ro.pool.append(x)
+                        sf.ro.starts[ri] = nst
+                        sf.ro.lens[ri] = len(rem)
+                for rk2 in rm_keys:
+                    ilm_remove_key(sf.ro, rk2)
+        remove_awaited_task_sharing(ck, a, op, sf)
+        return
+    if tag == {{T:Expr.unary}}:
+        remove_awaited_task_sharing(ck, a, a.n[a.n[expr + 1] + {{O:Unary.operand}}], sf)
+        return
+    if tag == {{T:Expr.kwarg}}:
+        remove_awaited_task_sharing(ck, a, a.n[a.n[expr + 1] + {{O:Kwarg.value}}], sf)
+        return
+    if tag == {{T:Expr.ternary}}:
+        tp: int = a.n[expr + 1]
+        remove_awaited_task_sharing(ck, a, a.n[tp + {{O:Ternary.cond}}], sf)
+        remove_awaited_task_sharing(ck, a, a.n[tp + {{O:Ternary.then_expr}}], sf)
+        remove_awaited_task_sharing(ck, a, a.n[tp + {{O:Ternary.else_expr}}], sf)
+        return
+    if tag == {{T:Expr.binary}}:
+        bp: int = a.n[expr + 1]
+        remove_awaited_task_sharing(ck, a, a.n[bp + {{O:Binary.left}}], sf)
+        remove_awaited_task_sharing(ck, a, a.n[bp + {{O:Binary.right}}], sf)
+        return
+    if tag == {{T:Expr.call}}:
+        cp: int = a.n[expr + 1]
+        remove_awaited_task_sharing(ck, a, a.n[cp + {{O:Call.callee}}], sf)
+        cargs: int = sl_at(a, cp, {{O:Call.args}})
+        for i in range(pky(cargs)):
+            remove_awaited_task_sharing(ck, a, stmt_at(a, cargs, i), sf)
+        return
+    if tag == {{T:Expr.attribute}}:
+        remove_awaited_task_sharing(ck, a, a.n[a.n[expr + 1] + {{O:Attribute.obj}}], sf)
+        return
+    if tag == {{T:Expr.list_comp}}:
+        lc: int = a.n[expr + 1]
+        remove_awaited_task_sharing(ck, a, a.n[lc + {{O:ListComp.elem}}], sf)
+        cls_s: int = sl_at(a, lc, {{O:ListComp.clauses}})
+        for ci2 in range(pky(cls_s)):
+            cl: int = a.l[pkx(cls_s) + ci2]
+            if a.n[cl] == {{T:CompClause.for_clause}}:
+                remove_awaited_task_sharing(ck, a, a.n[a.n[cl + 1] + {{O:CompForClause.iterable}}], sf)
+            else:
+                remove_awaited_task_sharing(ck, a, a.n[cl + 1], sf)
+        return
+    if tag == {{T:Expr.dict_comp}}:
+        dc: int = a.n[expr + 1]
+        remove_awaited_task_sharing(ck, a, a.n[dc + {{O:DictComp.key}}], sf)
+        remove_awaited_task_sharing(ck, a, a.n[dc + {{O:DictComp.value}}], sf)
+        dcls: int = sl_at(a, dc, {{O:DictComp.clauses}})
+        for di2 in range(pky(dcls)):
+            dcl: int = a.l[pkx(dcls) + di2]
+            if a.n[dcl] == {{T:CompClause.for_clause}}:
+                remove_awaited_task_sharing(ck, a, a.n[a.n[dcl + 1] + {{O:CompForClause.iterable}}], sf)
+            else:
+                remove_awaited_task_sharing(ck, a, a.n[dcl + 1], sf)
+        return
+    if tag == {{T:Expr.lambda}}:
+        remove_awaited_task_sharing(ck, a, a.n[a.n[expr + 1] + {{O:Lambda.body}}], sf)
+        return
+    if tag == {{T:Expr.slice}}:
+        sl: int = a.n[expr + 1]
+        remove_awaited_task_sharing(ck, a, a.n[sl + {{O:Slice.obj}}], sf)
+        if a.n[sl + {{O:Slice.lo}}] >= 0:
+            remove_awaited_task_sharing(ck, a, a.n[sl + {{O:Slice.lo}}], sf)
+        if a.n[sl + {{O:Slice.hi}}] >= 0:
+            remove_awaited_task_sharing(ck, a, a.n[sl + {{O:Slice.hi}}], sf)
+        if a.n[sl + {{O:Slice.step}}] >= 0:
+            remove_awaited_task_sharing(ck, a, a.n[sl + {{O:Slice.step}}], sf)
+        return
+    if tag == {{T:Expr.index}}:
+        ix: int = a.n[expr + 1]
+        remove_awaited_task_sharing(ck, a, a.n[ix + {{O:Index.obj}}], sf)
+        remove_awaited_task_sharing(ck, a, a.n[ix + {{O:Index.index}}], sf)
+        return
+    if tag == {{T:Expr.list_lit}} or tag == {{T:Expr.tuple_lit}}:
+        el: int = sl_at(a, expr, 1)
+        for li in range(pky(el)):
+            remove_awaited_task_sharing(ck, a, stmt_at(a, el, li), sf)
+        return
+    if tag == {{T:Expr.dict_lit}}:
+        dl: int = sl_at(a, expr, 1)
+        for pi in range(pky(dl)):
+            dp: int = a.l[pkx(dl) + pi]
+            remove_awaited_task_sharing(ck, a, a.n[dp + {{O:DictPair.key}}], sf)
+            remove_awaited_task_sharing(ck, a, a.n[dp + {{O:DictPair.value}}], sf)
+        return
+    if tag == {{T:Expr.spawn_expr}}:
+        remove_awaited_task_sharing(ck, a, a.n[expr + 1], sf)
+        return
+    if tag == {{T:Expr.generic_construct}}:
+        gc: int = a.n[expr + 1]
+        gargs: int = sl_at(a, gc, {{O:GenericConstruct.args}})
+        for gi in range(pky(gargs)):
+            remove_awaited_task_sharing(ck, a, stmt_at(a, gargs, gi), sf)
+
+def update_points_to_for_target(ck: Ck, a: Ast, sf: SpawnFlow, target_sym: int, target_ty: int, rhs: int, stmt_id: int) -> None:
+    if not is_shared_type(ck, target_ty):
+        return
+    rtag: int = a.n[rhs]
+    if rtag == {{T:Expr.list_lit}} or rtag == {{T:Expr.dict_lit}}:
+        ilm_set_one(sf.pt, target_sym, stmt_id)
+        return
+    if rtag == {{T:Expr.call}}:
+        cp: int = a.n[rhs + 1]
+        cal: int = a.n[cp + {{O:Call.callee}}]
+        if a.n[cal] == {{T:Expr.identifier}}:
+            csym: int = sym_of(ck, a, pk(a.n[cal + 1], a.n[cal + 2]))
+            re: int = m2_get(ck.rae_kind, 0, csym)
+            if re >= 0:
+                rk: int = ck.rae_kind.vv[re]
+                if rk == 0:
+                    ilm_set_one(sf.pt, target_sym, stmt_id)
+                elif rk == 1:
+                    cargs: int = sl_at(a, cp, {{O:Call.args}})
+                    rps: int = ck.rae_ps.vv[m2_get(ck.rae_ps, 0, csym)]
+                    rpn: int = ck.rae_pn.vv[m2_get(ck.rae_pn, 0, csym)]
+                    collected: list[int] = []
+                    fe: int = m2_get(ck.fmap, 0, csym)
+                    fdecl_ps: int = ck.fdecl[ck.fmap.vv[fe]] if fe >= 0 else -1
+                    for ri in range(rpn):
+                        cidx: int = ck.rae_pool[rps + ri]
+                        aexpr: int = -1
+                        if cidx < pky(cargs):
+                            ce0: int = stmt_at(a, cargs, cidx)
+                            if a.n[ce0] != {{T:Expr.kwarg}}:
+                                aexpr = ce0
+                        if aexpr < 0 and fdecl_ps >= 0 and cidx < pky(fdecl_ps):
+                            dp: int = stmt_at(a, fdecl_ps, cidx)
+                            pnm_sym: int = sym_of(ck, a, pk(a.n[dp + {{O:Param.name}}], a.n[dp + {{O:Param.name}} + 1]))
+                            for ki in range(pky(cargs)):
+                                ke: int = stmt_at(a, cargs, ki)
+                                if a.n[ke] == {{T:Expr.kwarg}}:
+                                    kp: int = a.n[ke + 1]
+                                    if sym_of(ck, a, pk(a.n[kp + {{O:Kwarg.name}}], a.n[kp + {{O:Kwarg.name}} + 1])) == pnm_sym:
+                                        aexpr = a.n[kp + {{O:Kwarg.value}}]
+                                        break
+                        if aexpr >= 0 and a.n[aexpr] == {{T:Expr.identifier}}:
+                            src_sym: int = sym_of(ck, a, pk(a.n[aexpr + 1], a.n[aexpr + 2]))
+                            si: int = ilm_idx(sf.pt, src_sym)
+                            if si >= 0:
+                                sst: int = sf.pt.starts[si]
+                                sln: int = sf.pt.lens[si]
+                                for j in range(sln):
+                                    sid: int = sf.pt.pool[sst + j]
+                                    if sid not in collected:
+                                        collected.append(sid)
+                    if len(collected) > 0:
+                        ilm_set_slice(sf.pt, target_sym, collected)
+            else:
+                ilm_set_one(sf.pt, target_sym, stmt_id)
+        return
+    if rtag == {{T:Expr.identifier}}:
+        src_sym2: int = sym_of(ck, a, pk(a.n[rhs + 1], a.n[rhs + 2]))
+        si2: int = ilm_idx(sf.pt, src_sym2)
+        if si2 >= 0:
+            sst2: int = sf.pt.starts[si2]
+            sln2: int = sf.pt.lens[si2]
+            copied: list[int] = []
+            for j2 in range(sln2):
+                copied.append(sf.pt.pool[sst2 + j2])
+            ilm_set_slice(sf.pt, target_sym, copied)
+
+def lock_recurrent_loop_ownership(pre: SpawnFlow, sf: SpawnFlow) -> None:
+    for ri in range(len(sf.ro.keys)):
+        rk: int = sf.ro.keys[ri]
+        rst: int = sf.ro.starts[ri]
+        rln: int = sf.ro.lens[ri]
+        pi: int = ilm_idx(pre.ro, rk)
+        pst: int = pre.ro.starts[pi] if pi >= 0 else 0
+        pln: int = pre.ro.lens[pi] if pi >= 0 else 0
+        for j in range(rln):
+            id_v: int = sf.ro.pool[rst + j]
+            was_pre: bool = False
+            for k in range(pln):
+                if pre.ro.pool[pst + k] == id_v:
+                    was_pre = True
+                    break
+            if not was_pre:
+                if rk not in sf.locked:
+                    sf.locked.append(rk)
+                break
+
+def force_conservative_state(ck: Ck, known: Map2, sf: SpawnFlow) -> None:
+    for e in range(len(known.k1)):
+        if known.dead[e] != 0:
+            continue
+        if is_shared_type(ck, known.vv[e]):
+            pi: int = ilm_idx(sf.pt, known.k2[e])
+            if pi >= 0:
+                pst: int = sf.pt.starts[pi]
+                pln: int = sf.pt.lens[pi]
+                for i in range(pln):
+                    ilm_add_unique(sf.ro, sf.pt.pool[pst + i], -999)
+
+def iterate_loop_to_fixpoint(ck: Ck, a: Ast, body: int, known: Map2, sf: SpawnFlow, jumps: list[SpawnFlow]) -> None:
+    pre_loop: SpawnFlow = sf_clone(sf)
+    iters: int = 0
+    while True:
+        iters = iters + 1
+        jmark: int = len(jumps)
+        bstate: SpawnFlow = sf_clone(sf)
+        walk_post_spawn_caller_mutation(ck, a, body, known, bstate, jumps)
+        changed: bool = sf_merge_from(sf, bstate)
+        for ji in range(jmark, len(jumps)):
+            if sf_merge_from(sf, jumps[ji]):
+                changed = True
+        while len(jumps) > jmark:
+            jumps.pop()
+        if not changed:
+            lock_recurrent_loop_ownership(pre_loop, sf)
+            return
+        if iters >= 64:
+            force_conservative_state(ck, known, sf)
+            return
+
+def walk_post_spawn_caller_mutation(ck: Ck, a: Ast, stmts: int, known: Map2, sf: SpawnFlow, jumps: list[SpawnFlow]) -> None:
+    for i in range(pky(stmts)):
+        st: int = stmt_at(a, stmts, i)
+        ck.cur_line = a.n[st + {{O:Stmt.line}}]
+        ck.cur_span = a.n[st + {{O:Stmt.span}}]
+        check_direct_shared_mutation_stmt(ck, a, st, sf)
+        kn: int = a.n[st + {{O:Stmt.kind}}]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == {{T:StmtKind.var_decl}}:
+            vsym: int = sym_of(ck, a, pk(a.n[pay + {{O:VarDecl.name}}], a.n[pay + {{O:VarDecl.name}} + 1]))
+            vt: int = 4
+            try:
+                vt = type_expr_to_type(ck, a, a.n[pay + {{O:VarDecl.type_expr}}])
+            except CkUnsupported:
+                vt = 4
+            except CkErr:
+                vt = 4
+            m2_put(known, 0, vsym, vt)
+            update_points_to_for_target(ck, a, sf, vsym, vt, a.n[pay + {{O:VarDecl.value}}], st)
+        elif tag == {{T:StmtKind.assign}}:
+            atg: int = a.n[pay + {{O:Assign.target}}]
+            if a.n[atg] == {{T:Expr.identifier}}:
+                asym: int = sym_of(ck, a, pk(a.n[atg + 1], a.n[atg + 2]))
+                ke: int = m2_get(known, 0, asym)
+                if ke >= 0:
+                    update_points_to_for_target(ck, a, sf, asym, known.vv[ke], a.n[pay + {{O:Assign.value}}], st)
+        sv: int = -1
+        decl_sym: int = -1
+        if tag == {{T:StmtKind.var_decl}}:
+            sv = a.n[pay + {{O:VarDecl.value}}]
+            decl_sym = sym_of(ck, a, pk(a.n[pay + {{O:VarDecl.name}}], a.n[pay + {{O:VarDecl.name}} + 1]))
+        elif tag == {{T:StmtKind.assign}}:
+            sv = a.n[pay + {{O:Assign.value}}]
+        elif tag == {{T:StmtKind.expr_stmt}}:
+            sv = pay
+        if sv >= 0 and a.n[sv] == {{T:Expr.spawn_expr}}:
+            sop: int = a.n[sv + 1]
+            if a.n[sop] == {{T:Expr.call}}:
+                cp: int = a.n[sop + 1]
+                cargs: int = sl_at(a, cp, {{O:Call.args}})
+                any_shared: bool = False
+                for ai in range(pky(cargs)):
+                    ae: int = stmt_at(a, cargs, ai)
+                    arg: int = a.n[a.n[ae + 1] + {{O:Kwarg.value}}] if a.n[ae] == {{T:Expr.kwarg}} else ae
+                    if a.n[arg] == {{T:Expr.identifier}}:
+                        arg_sym: int = sym_of(ck, a, pk(a.n[arg + 1], a.n[arg + 2]))
+                        ke2: int = m2_get(known, 0, arg_sym)
+                        if ke2 >= 0 and is_shared_type(ck, known.vv[ke2]):
+                            any_shared = True
+                            pi: int = ilm_idx(sf.pt, arg_sym)
+                            if pi >= 0:
+                                pst: int = sf.pt.starts[pi]
+                                pln: int = sf.pt.lens[pi]
+                                for j in range(pln):
+                                    ilm_add_unique(sf.ro, sf.pt.pool[pst + j], sv)
+                if decl_sym >= 0 and any_shared:
+                    ilm_add_unique(sf.tk, decl_sym, sv)
+        if tag == {{T:StmtKind.var_decl}}:
+            remove_awaited_task_sharing(ck, a, a.n[pay + {{O:VarDecl.value}}], sf)
+        elif tag == {{T:StmtKind.assign}}:
+            remove_awaited_task_sharing(ck, a, a.n[pay + {{O:Assign.value}}], sf)
+        elif tag == {{T:StmtKind.expr_stmt}} or tag == {{T:StmtKind.raise_stmt}}:
+            remove_awaited_task_sharing(ck, a, pay, sf)
+        elif tag == {{T:StmtKind.return_stmt}}:
+            if pay >= 0:
+                remove_awaited_task_sharing(ck, a, pay, sf)
+        if tag == {{T:StmtKind.if_stmt}}:
+            then_sf: SpawnFlow = sf_clone(sf)
+            walk_post_spawn_caller_mutation(ck, a, sl_at(a, pay, {{O:IfStmt.then_body}}), known, then_sf, jumps)
+            ecs: int = sl_at(a, pay, {{O:IfStmt.elif_clauses}})
+            for ei in range(pky(ecs)):
+                ec_sf: SpawnFlow = sf_clone(sf)
+                walk_post_spawn_caller_mutation(ck, a, sl_at(a, a.l[pkx(ecs) + ei], {{O:ElifClause.body}}), known, ec_sf, jumps)
+                sf_merge_from(then_sf, ec_sf)
+            if a.n[pay + {{O:IfStmt.else_body}}] != {{NONE}}:
+                else_sf: SpawnFlow = sf_clone(sf)
+                walk_post_spawn_caller_mutation(ck, a, sl_at(a, pay, {{O:IfStmt.else_body}}), known, else_sf, jumps)
+                sf_merge_from(then_sf, else_sf)
+            else:
+                sf_merge_from(then_sf, sf)
+            sf.pt = then_sf.pt
+            sf.ro = then_sf.ro
+            sf.tk = then_sf.tk
+            sf.locked = then_sf.locked
+        elif tag == {{T:StmtKind.while_stmt}}:
+            iterate_loop_to_fixpoint(ck, a, sl_at(a, pay, {{O:WhileStmt.body}}), known, sf, jumps)
+        elif tag == {{T:StmtKind.for_stmt}}:
+            iterate_loop_to_fixpoint(ck, a, sl_at(a, pay, {{O:ForStmt.body}}), known, sf, jumps)
+        elif tag == {{T:StmtKind.break_stmt}} or tag == {{T:StmtKind.continue_stmt}}:
+            jumps.append(sf_clone(sf))
+
+def check_no_post_spawn_caller_mutation(ck: Ck, a: Ast, stmts: int, ps: int) -> None:
+    known: Map2 = Map2()
+    sf: SpawnFlow = SpawnFlow()
+    if ps >= 0:
+        for i in range(pky(ps)):
+            p: int = stmt_at(a, ps, i)
+            psym: int = sym_of(ck, a, pk(a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1]))
+            pt: int = type_expr_to_type(ck, a, a.n[p + {{O:Param.type_expr}}])
+            m2_put(known, 0, psym, pt)
+            if is_shared_type(ck, pt):
+                ilm_set_one(sf.pt, psym, p)
+    jumps: list[SpawnFlow] = []
+    walk_post_spawn_caller_mutation(ck, a, stmts, known, sf, jumps)
 
 # `checkFunctionBody`
 def check_function_body(ck: Ck, a: Ast, fd: int) -> None:
@@ -5633,13 +7397,25 @@ def check_function_body(ck: Ck, a: Ast, fd: int) -> None:
             raise mk_fail(ck, "UndefinedVariable")
     scope: int = sc_new(ck, -1, False)
     ps: int = sl_at(a, fd, {{O:FuncDef.params}})
+    fd_sym: int = sym_of(ck, a, pk(a.n[fd + {{O:FuncDef.name}}], a.n[fd + {{O:FuncDef.name}} + 1]))
+    is_spawn_target: bool = m2_get(ck.spawn_targets, 0, fd_sym) >= 0
+    sh_sym: list[int] = []
+    sh_ty: list[int] = []
     for i in range(pky(ps)):
         p: int = stmt_at(a, ps, i)
         pt: int = type_expr_to_type(ck, a, a.n[p + {{O:Param.type_expr}}])
-        sc_declare(ck, scope, sym_of(ck, a, pk(a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1])), pt)
+        psym_b: int = sym_of(ck, a, pk(a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1]))
+        sc_declare(ck, scope, psym_b, pt)
+        if is_spawn_target and is_shared_type(ck, pt):
+            sh_sym.append(psym_b)
+            sh_ty.append(pt)
+    body: int = sl_at(a, fd, {{O:FuncDef.body}})
+    if ck.strict_spawn_shared and len(sh_sym) > 0:
+        check_no_spawn_shared_mutation(ck, a, fd_sym, body, sh_sym, sh_ty)
+    if ck.strict_spawn_shared:
+        check_no_post_spawn_caller_mutation(ck, a, body, ps)
     ret: int = type_expr_to_type(ck, a, a.n[fd + {{O:FuncDef.return_type}}])
     fx: Fx = Fx(scope, ret, a.n[fd + {{O:FuncDef.is_async}}] != 0)
-    body: int = sl_at(a, fd, {{O:FuncDef.body}})
     check_block(ck, a, fx, body)
     if ret != 4 and not always_returns(a, body):
         mp(ck, "function '")
@@ -6543,6 +8319,9 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
         check_pending_inst(ck, a)
         resolve_reexport(ck, a, body)
         collect_module_globals(ck, a, body)
+        collect_spawn_targets_stmts(ck, a, body)
+        compute_mutates_graph(ck, a, body)
+        compute_return_alias_effects(ck, a, body)
     except CkUnsupported:
         return 2
     except CkErr:
@@ -6569,6 +8348,14 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
                     ensure_class_checked(ck, a, class_idx(ck, csym_b))
             else:
                 check_stmt(ck, a, top, st3)
+        except CkUnsupported:
+            return 2
+        except CkErr:
+            ck.depth = 0
+            record_diag(ck, a)
+    if ck.has_any_spawn:
+        try:
+            check_no_post_spawn_caller_mutation(ck, a, body, -1)
         except CkUnsupported:
             return 2
         except CkErr:

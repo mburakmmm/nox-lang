@@ -26,7 +26,7 @@ check_out() {
 }
 
 seed=200
-for mode in "" --async --methods --builtins --recv --try --construct --ptr --extern --spawn --import --inherit --closure --tuple --generic-cls --generic-fn --prelude-proto --sig; do
+for mode in "" --async --methods --builtins --recv --try --construct --ptr --extern --spawn --import --inherit --closure --tuple --generic-cls --generic-fn --prelude-proto --sig --bytes-spawn-dec; do
   seed=$((seed + 1))
   name=$(printf '%s' "$mode" | tr -d '-')
   [ -z "$name" ] && name=base

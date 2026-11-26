@@ -45,7 +45,14 @@ Döngü (her dilim):
 - `qrun` bildirimi hep "exit 0" der; gerçek sonuç `cikis=` satırı.
 - Zig'in test-fast'i `error: '...' failed` satırları basar; `failed command:` satırları tek başına hata değildir (stderr basan testler).
 
-## 4. DURUM (2026-11-26, v2.2.101 sonrası)
+## 4. DURUM (2026-11-26, v2.2.102 sonrası)
+
+- **Son sürüm:** `v2.2.102` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **8.547 satır**) tam `bytes` (+ `str#prelude`), `spawn#shared_arg` (`MutGraph`, `compute_return_alias_effects`, `SpawnFlow`) ve üst-düzey fonksiyon dekoratörleri (`register_func#2`, `@capability.requires`, `__nox_reflect_*`).
+- **Doğrulama:** `ck_gen.py --bytes-spawn-dec` (`files=3000 unsupported=0 accepted=188 rejected=2812 diagnostics=3584`), `ck_edge/bytes_spawn_dec` (`22` dosya, `unsupported=0`), `ck_mutants_bytes_spawn_dec.py` (`27/27 yakalandı, 0 yaşayan`), `ck_regress.sh` `19` kip + depo yeşil.
+- **Depo `ck-diff check` (`v2.2.102`):** `files=1667 unsupported=286 accepted=515 rejected=866 diagnostics=2003 skipped_parse=56` (`spawn#shared_arg`=0, `register_func#2`=0, `type#bytes`=0; kalan üst engeller: `48 check_call#intrinsic`, `33 class#consts`, `31 check_binary#1`, `22 register_func#generator`, `20 nonlocal`, `19 extern#decorators`, `15 class#decorators`, `11 class#bases`, `10 check_stmt#1`, `10 check_binary#2`, `9 elem_grow`, `8 check_stmt#2`, `8 toplevel#2`).
+- **`ck-diff checkm` (`tests/golden/typecheck_cases/*.nox`, `v2.2.102`):** `files=347 unsupported=110 accepted=70 rejected=167 diagnostics=147 skipped=0` (`303 type#bytes` → `0`; kalan üst engeller: `17 class#consts`, `16 extern#decorators`, `12 check_call#intrinsic`, `9 check_binary#1`, `8 check_stmt#2`, `8 class#decorators`, `6 register_func#generator`, `5 class#bases`, `5 toplevel#2`, `4 check_stmt#1`, `4 class#method_features`, `3 elem_grow`, `3 nonlocal`).
+
+### Önceki (v2.2.101 sonrası)
 
 - **Son sürüm:** `v2.2.101` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **6.760 satır**) imza özellikleri (`default`, `*args`, `**kwargs`, `kw_only`, `pos_only`, anahtar-sözcük argümanları, `*xs`/`**d` açılımı, `spawn` kapsamı) + `Expr.bytes_lit` / `__nox_bytes_repr` + `scripts/ck_mutate.py` izole `$TMPDIR/ck_mutate_cache` ve çıkış kodu `3` düzeltmesi.
 - **Doğrulama:** `ck_gen.py --sig` (`files=2785 unsupported=0 accepted=1274 rejected=1511`), `ck_edge/sig` (`20` dosya, `unsupported=0`), `ck_mutants_sig.py` (`23/23 yakalandı, 0 yaşayan`), `ck_regress.sh` `18` kip + depo yeşil.
