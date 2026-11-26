@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False):
         self.rnd = rnd
+        self.use_inherit = use_inherit
         self.use_import = use_import
         self.use_spawn = use_spawn
         self.use_extern = use_extern
@@ -671,8 +672,157 @@ class Gen:
         else:
             self.lines += lines + ["def inner() -> None:"] + ["    " + i for i in imps] + ["    pass"] + body
 
+    def gen_inherit(self):
+        """tekli kalıtım: ileri/geri taban, döngü, bilinmeyen taban, alan yinelemesi, override imza eşleşmesi, `__init__` devralma, `super()` çağrıları, alt sınıf atanabilirliği, çıkarsanan alanların türetilene kopyalanması.
+        `clean` programlarda yapısal hata yoktur (derin yollar test edilir); diğerlerinde hatalar enjekte edilir."""
+        r = self.rnd
+        clean = r.random() < 0.6
+        n = r.randint(2, 4)
+        names = [f"C{i}" for i in range(n)]
+        order = names[:]
+        r.shuffle(order)
+        bases = {}
+        for i, nm in enumerate(names):
+            k = r.random()
+            if i > 0 and k < 0.7:
+                bases[nm] = names[r.randrange(0, i)]
+            elif not clean and k < 0.76:
+                bases[nm] = r.choice(names)
+            elif not clean and k < 0.82:
+                bases[nm] = "Zed"
+        tys = ["int", "str", "float", "bool"]
+        sigs = [("m0", [], "int"), ("m1", ["int"], "int"), ("m2", ["str"], "str")]
+        argl = {"int": "1", "str": '"s"', "float": "1.5", "bool": "True"}
+        meta = {}
+        blocks = {}
+
+        def chain(nm):
+            out, seen = [], set()
+            while nm in names and nm not in seen:
+                seen.add(nm)
+                out.append(nm)
+                nm = bases.get(nm)
+            return out
+
+        def init_params(nm):
+            for c in chain(nm):
+                if meta[c][2]:
+                    return meta[c][3]
+            return []
+
+        def meths_of(nm):
+            d = {}
+            for c in reversed(chain(nm)):
+                for m in meta[c][4]:
+                    d[m[0]] = m
+            return d
+
+        def fields_of(nm):
+            d = {}
+            for c in reversed(chain(nm)):
+                d.update(meta[c][0])
+                d.update(meta[c][1])
+            return d
+
+        for i, nm in enumerate(names):
+            sfx = str(i) if clean else ""
+            fields = {}
+            for fn in r.sample(["a", "b", "c"], k=r.randint(0, 2)):
+                fields[fn + sfx] = r.choice(tys)
+            inferred = {}
+            if r.random() < 0.5:
+                inferred[r.choice(["x", "y", "a"]) + sfx] = r.choice(tys)
+            has_init = r.random() < 0.7
+            iparams = [r.choice(tys) for _ in range(r.randint(0, 2))]
+            meths = []
+            for m in sigs:
+                if r.random() < 0.5:
+                    if not clean and r.random() < 0.15:
+                        m = (m[0], m[1], r.choice(["int", "str"]))
+                    meths.append(m)
+            meta[nm] = (fields, inferred, has_init, iparams, meths)
+            lines = [f"class {nm}" + (f"({bases[nm]})" if nm in bases else "") + ":"]
+            for fn, ft in fields.items():
+                lines.append(f"    {fn}: {ft}")
+            if has_init:
+                ps = ", ".join(["self"] + [f"p{j}: {t}" for j, t in enumerate(iparams)])
+                lines.append(f"    def __init__({ps}) -> None:")
+                body = []
+                if nm in bases and r.random() < 0.6:
+                    if clean:
+                        bp = init_params(bases[nm]) if bases[nm] in meta else []
+                        args = ", ".join(argl[t] for t in bp)
+                    else:
+                        args = ", ".join(r.choice(["1", '"s"', "1.5"]) for _ in range(r.randint(0, 2)))
+                    body.append(f"super().__init__({args})")
+                for fn, ft in fields.items():
+                    if clean or r.random() < 0.85:
+                        body.append(f"self.{fn} = {argl[ft]}")
+                for fn, ft in inferred.items():
+                    body.append(f"self.{fn} = {argl[ft]}")
+                lines += ["        " + b for b in body] or ["        pass"]
+            for mn, mp_, mr in meths:
+                ps = ", ".join(["self"] + [f"q{j}: {t}" for j, t in enumerate(mp_)])
+                lines.append(f"    def {mn}({ps}) -> {mr}:")
+                rv = {"int": "1", "str": '"s"'}[mr]
+                if nm in bases and r.random() < 0.3:
+                    inh = meths_of(bases[nm]) if (clean and bases[nm] in meta) else {}
+                    if clean and inh:
+                        sm = r.choice(list(inh.values()))
+                        sa = ", ".join(argl[t] for t in sm[1])
+                        lines.append(f"        v: {sm[2]} = super().{sm[0]}({sa})")
+                        lines.append(f"        return {rv}")
+                    elif not clean:
+                        sm = r.choice(sigs + [("zz", [], "int")])
+                        sa = ", ".join(r.choice(["1", '"s"']) for _ in range(len(sm[1]) + (1 if r.random() < 0.1 else 0)))
+                        lines.append(f"        return super().{sm[0]}({sa})")
+                    else:
+                        lines.append(f"        return {rv}")
+                else:
+                    lines.append(f"        return {rv}")
+            if not clean and r.random() < 0.08:
+                lines += ["    def bare(self) -> int:", "        return super().m0()"]
+            if len(lines) == 1:
+                lines.append("    pass")
+            blocks[nm] = lines
+        for nm in order:
+            self.lines += blocks[nm] + [""]
+        stmts = []
+        for _ in range(r.randint(1, 5)):
+            a_, b_ = r.choice(names), r.choice(names)
+            k = r.choice(["ctor", "assign", "meth", "field", "wrong", "super"])
+            cargs = lambda c: ", ".join(argl[t] for t in init_params(c)) if clean or r.random() < 0.8 else ", ".join(r.choice(list(argl.values())) for _ in range(r.randint(0, 2)))
+            if k == "ctor":
+                stmts.append(f"o{len(stmts)}: {a_} = {a_}({cargs(a_)})")
+            elif k == "assign":
+                if clean and a_ not in chain(b_):
+                    a_ = b_
+                stmts.append(f"o{len(stmts)}: {a_} = {b_}({cargs(b_)})")
+            elif k == "meth":
+                ms = meths_of(a_)
+                if ms and (clean or r.random() < 0.8):
+                    m = r.choice(list(ms.values()))
+                    stmts += [f"v{len(stmts)}: {a_} = {a_}({cargs(a_)})", f"w{len(stmts)}: {m[2]} = v{len(stmts)}.{m[0]}({', '.join(argl[t] for t in m[1])})"]
+                elif not clean:
+                    stmts += [f"v{len(stmts)}: {a_} = {a_}({cargs(a_)})", f"w{len(stmts)}: int = v{len(stmts)}.zz()"]
+            elif k == "field":
+                fs = fields_of(a_)
+                if fs and (clean or r.random() < 0.8):
+                    fn = r.choice(list(fs))
+                    stmts += [f"v{len(stmts)}: {a_} = {a_}({cargs(a_)})", f"w{len(stmts)}: {fs[fn]} = v{len(stmts)}.{fn}"]
+                elif not clean:
+                    stmts += [f"v{len(stmts)}: {a_} = {a_}({cargs(a_)})", f"w{len(stmts)}: int = v{len(stmts)}.nofield"]
+            elif k == "wrong" and not clean:
+                stmts.append(f"o{len(stmts)}: int = {a_}({cargs(a_)})")
+            elif k == "super" and not clean:
+                stmts.append("z = super().m0()")
+        self.lines += stmts
+
     def program(self):
         r = self.rnd
+        if self.use_inherit:
+            self.gen_inherit()
+            return "\n".join(self.lines) + "\n"
         if self.use_import:
             self.gen_import()
             return "\n".join(self.lines) + "\n"
@@ -740,11 +890,12 @@ def main():
     ap.add_argument("--extern", dest="use_extern", action="store_true")
     ap.add_argument("--spawn", dest="use_spawn", action="store_true")
     ap.add_argument("--import", dest="use_import", action="store_true")
+    ap.add_argument("--inherit", dest="use_inherit", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

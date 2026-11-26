@@ -11,6 +11,13 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.88]
+
+Selfhost Aşama 3.4b-A: tekli sınıf kalıtımı Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.522, `project/noxc-nightly-selfhost-plani-2026-11.md`.
+
+- `selfhost/typecheck.nox.in`: `class D(B)` (yerel/from-import taban, ileri taban, döngü hatası, bilinmeyen taban, alan/metot/`__init__` devralma, override imza eşleşmesi, `super().metod/__init__`, çıkarsanan alanların türetilene kopyalanması, alt sınıf atanabilirliği). Kapsam dışı: açık taban çağrısı `Taban.metod(self)`, çoklu taban/mixin, sınıf sabitleri/dekoratör/jenerik, ≥2 atanmamış alan. Depo korpusunda kapsam dışı 548 → 469 (Zig ile tüm tanılamalar eşit).
+- `scripts/ck_gen.py --inherit` (ck_regress.sh'a eklendi), `tests/fixtures/ck_edge/inherit/`, `scripts/ck_mutants_inherit.py`; `scripts/ck_mutate.py`: koşu öncesi diskte yedek (`selfhost/.ck_mutate_backup`) ve yarım kalan koşuda otomatik geri yükleme.
+
 ## [2.2.87]
 
 Selfhost Aşama 3.12 dilim B: `import` / `from … import` / modül-nitelikli çağrı ve tip Nox tip denetleyicisinde (`noxc-nightly` içinde; normal `noxc` etkilenmez). Ayrıntı: spec §3.521, `project/noxc-nightly-selfhost-plani-2026-11.md`.

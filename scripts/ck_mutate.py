@@ -16,6 +16,7 @@ import sys
 print = functools.partial(builtins.print, flush=True)  # noqa: A001 (arka planda anlık günlük)
 
 SRC = "selfhost/typecheck.nox.in"
+BACKUP = "selfhost/.ck_mutate_backup"  # betik/makine ölürse bir sonraki çalıştırma kaynağı buradan geri yükler (silinmeli: commit'e girmez)
 BIN = "./zig-out/bin/noxc-nightly"
 
 
@@ -59,7 +60,13 @@ def main():
         names = set(only[0].split(","))
         mutants = [m for m in mutants if m["ad"] in names]
     files = corpus_files(args[1:], repo)
+    import os
+    if os.path.exists(BACKUP):
+        print("önceki yarım kalmış koşunun yedeği geri yükleniyor")
+        open(SRC, "w", encoding="utf-8").write(open(BACKUP, encoding="utf-8").read())
+        os.remove(BACKUP)
     orig = open(SRC, encoding="utf-8").read()
+    open(BACKUP, "w", encoding="utf-8").write(orig)
     caught, survived = [], []
     base_ok, base_sig = run_diff(files)
     if not base_ok:
@@ -87,6 +94,8 @@ def main():
                 caught.append(m["ad"])
     finally:
         open(SRC, "w", encoding="utf-8").write(orig)
+        if os.path.exists(BACKUP):
+            os.remove(BACKUP)
         ok, tail = build()
         print("kaynak geri yüklendi; nightly yeniden derlendi:", "tamam" if ok else "HATA " + tail)
     print(f"özet: yakalanan={len(caught)} yaşayan={len(survived)}")

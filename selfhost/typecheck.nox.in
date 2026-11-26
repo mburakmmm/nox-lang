@@ -6,7 +6,7 @@
 {{FROM_AST}}
 from ast_schema import build_sp_idx, loaded_ast
 from parser import pk, pkx, pky, parse_ast, parse_body, sref_eq, sref_len, sref_byte, utf8_bytes
-from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, lcg, sym_intern, sym_intern_list, ty_format, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed, ty_mk, ty_list, ty_dict, ty_optional, ty_class, cls_register
+from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, cls_set_base, lcg, sym_intern, sym_intern_list, ty_format, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed, ty_mk, ty_list, ty_dict, ty_optional, ty_class, cls_register
 
 # ---- (k1, k2) -> değer tablosu: açık adresleme, ekleme sırası korunur, silme = ölü işareti (yeniden `put` canlandırır) ----
 class Map2:
@@ -149,6 +149,10 @@ class Ck:
     alp: list[int]
     fimp: Map2
     forig: Map2
+    # 3.4b: tekli kalıtım — çözülmüş taban sembolü (-1 yok), imza kaydı durumu (0/1 işleniyor/2 tamam), gövde denetlendi bayrağı
+    cls_base: list[int]
+    cls_regd: list[int]
+    cls_chk: list[int]
 
     def __init__(self, tt: TT) -> None:
         self.tt = tt
@@ -198,6 +202,9 @@ class Ck:
         self.alp = []
         self.fimp = Map2()
         self.forig = Map2()
+        self.cls_base = []
+        self.cls_regd = []
+        self.cls_chk = []
 
 # ---- Scope (Zig `Scope`) ----
 def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
@@ -2285,8 +2292,6 @@ def collect_class_names(ck: Ck, a: Ast, body: int) -> None:
             raise mk_fail(ck, "DuplicateDefinition")
         if pky(sl_at(a, cd, {{O:ClassDef.type_params}})) > 0:
             raise unsup(ck, "class#generic")
-        if a.n[cd + {{O:ClassDef.base}}] != {{NONE}}:
-            raise unsup(ck, "class#base")
         if pky(sl_at(a, cd, {{O:ClassDef.extra_bases}})) > 0 or pky(sl_at(a, cd, {{O:ClassDef.base_args}})) > 0 or pky(sl_at(a, cd, {{O:ClassDef.mixins}})) > 0:
             raise unsup(ck, "class#bases")
         if pky(sl_at(a, cd, {{O:ClassDef.decorators}})) > 0:
@@ -2299,10 +2304,91 @@ def collect_class_names(ck: Ck, a: Ast, body: int) -> None:
         ck.cls_sym.append(sym)
         ck.cls_node.append(cd)
         ck.cls_init.append(-1)
+        ck.cls_base.append(-1)
+        ck.cls_regd.append(0)
+        ck.cls_chk.append(0)
         m2_put(ck.cls_map, 0, sym, idx)
         cls_register(ck.tt, sym)
 
-# `registerClassSignatures` (tekli, kalıtımsız sınıf)
+# `mixin_flatten.run` (tekli taban yolu): sınıflar metin sırasıyla gezilir, taban (yerel ya da `from`-import) önce; ziyaret halindeki sınıfa dönülürse döngü hatası. Çoklu taban/mixin kapsam dışı.
+def resolve_cls_pass(ck: Ck, cn: list[int], nsym: int) -> int:
+    for j in range(len(cn) - 1, -1, -1):
+        if cn[j] == nsym:
+            return j
+    fe: int = m2_get(ck.fimp, 0, nsym)
+    if fe >= 0:
+        q: int = ck.fimp.vv[fe]
+        for j2 in range(len(cn) - 1, -1, -1):
+            if cn[j2] == q:
+                return j2
+    return -1
+
+def flatten_cls(ck: Ck, cn: list[int], cb: list[int], cl: list[int], done: Map2, vis: Map2, i: int) -> None:
+    nm: int = cn[i]
+    if m2_get(done, 0, nm) >= 0:
+        return
+    if m2_get(vis, 0, nm) >= 0:
+        last: int = len(cn) - 1
+        while cn[last] != nm:
+            last = last - 1
+        ck.cur_line = cl[last]
+        mp(ck, "class '")
+        mp_sym(ck, nm)
+        mp(ck, "': cyclic base classes")
+        raise mk_fail(ck, "TypeMismatch")
+    m2_put(vis, 0, nm, 1)
+    if cb[i] >= 0:
+        j: int = resolve_cls_pass(ck, cn, cb[i])
+        if j >= 0:
+            flatten_cls(ck, cn, cb, cl, done, vis, j)
+    m2_remove(vis, 0, nm)
+    m2_put(done, 0, nm, 1)
+
+def check_base_cycles(ck: Ck, a: Ast, body: int) -> None:
+    cn: list[int] = []
+    cb: list[int] = []
+    cl: list[int] = []
+    any_base: bool = False
+    for i in range(pky(body)):
+        st: int = stmt_at(a, body, i)
+        kn: int = a.n[st + {{O:Stmt.kind}}]
+        if a.n[kn] != {{T:StmtKind.class_def}}:
+            continue
+        cd: int = a.n[kn + 1]
+        if pky(sl_at(a, cd, {{O:ClassDef.extra_bases}})) > 0 or pky(sl_at(a, cd, {{O:ClassDef.mixins}})) > 0:
+            raise unsup(ck, "class#bases")
+        cn.append(sym_of(ck, a, pk(a.n[cd + {{O:ClassDef.name}}], a.n[cd + {{O:ClassDef.name}} + 1])))
+        cl.append(a.n[st + {{O:Stmt.line}}])
+        if a.n[cd + {{O:ClassDef.base}}] != {{NONE}}:
+            cb.append(sym_of(ck, a, pk(a.n[cd + {{O:ClassDef.base}}], a.n[cd + {{O:ClassDef.base}} + 1])))
+            any_base = True
+        else:
+            cb.append(-1)
+    if not any_base:
+        return
+    done: Map2 = Map2()
+    vis: Map2 = Map2()
+    for k in range(len(cn)):
+        flatten_cls(ck, cn, cb, cl, done, vis, k)
+
+# `ensureClassSignatureRegistered`: taban (yerel sınıfsa) önce kaydedilir; döngüsel kalıtım hatası.
+def ensure_class_sig(ck: Ck, a: Ast, idx: int) -> None:
+    if ck.cls_regd[idx] == 2:
+        return
+    if ck.cls_regd[idx] == 1:
+        mp(ck, "cyclic inheritance between classes detected: ")
+        mp_sym(ck, ck.cls_sym[idx])
+        raise mk_fail(ck, "TypeMismatch")
+    ck.cls_regd[idx] = 1
+    cd: int = ck.cls_node[idx]
+    if a.n[cd + {{O:ClassDef.base}}] != {{NONE}}:
+        bi: int = class_idx(ck, sym_of(ck, a, pk(a.n[cd + {{O:ClassDef.base}}], a.n[cd + {{O:ClassDef.base}} + 1])))
+        if bi >= 0:
+            ensure_class_sig(ck, a, bi)
+    register_class_sigs(ck, a, idx)
+    ck.cls_regd[idx] = 2
+
+# `registerClassSignatures` (tekli kalıtım; sabitler/dekoratörler/çoklu taban/jenerik kapsam dışı)
 def register_class_sigs(ck: Ck, a: Ast, idx: int) -> None:
     cd: int = ck.cls_node[idx]
     csym: int = ck.cls_sym[idx]
@@ -2321,6 +2407,30 @@ def register_class_sigs(ck: Ck, a: Ast, idx: int) -> None:
             mp_sref(ck, a, mn)
             mp(ck, "' function for every class) — rename the method")
             raise mk_fail(ck, "DuplicateDefinition")
+    has_base: bool = a.n[cd + {{O:ClassDef.base}}] != {{NONE}}
+    if has_base:
+        # taban adı: yerel sınıf yoksa `from X import Base` geri düşüşü; sonra taban alanları/metodları/`__init__` imzası kopyalanır
+        bsym: int = sym_of(ck, a, pk(a.n[cd + {{O:ClassDef.base}}], a.n[cd + {{O:ClassDef.base}} + 1]))
+        if class_idx(ck, bsym) < 0:
+            bfe: int = m2_get(ck.fimp, 0, bsym)
+            if bfe >= 0:
+                bsym = ck.fimp.vv[bfe]
+        bi: int = class_idx(ck, bsym)
+        if bi < 0:
+            mp(ck, "class '")
+            mp_sym(ck, csym)
+            mp(ck, "' has an unknown base class: ")
+            mp_sym(ck, bsym)
+            raise mk_fail(ck, "UndefinedClass")
+        ck.cls_base[idx] = bsym
+        cls_set_base(ck.tt, csym, bsym)
+        for e in range(len(ck.cls_fields.k1)):
+            if ck.cls_fields.k1[e] == bi and ck.cls_fields.dead[e] == 0:
+                m2_put(ck.cls_fields, idx, ck.cls_fields.k2[e], ck.cls_fields.vv[e])
+        for e2 in range(len(ck.cls_meths.k1)):
+            if ck.cls_meths.k1[e2] == bi and ck.cls_meths.dead[e2] == 0:
+                m2_put(ck.cls_meths, idx, ck.cls_meths.k2[e2], ck.cls_meths.vv[e2])
+        ck.cls_init[idx] = ck.cls_init[bi]
     fs: int = sl_at(a, cd, {{O:ClassDef.fields}})
     for j in range(pky(fs)):
         f: int = stmt_at(a, fs, j)
@@ -2330,7 +2440,10 @@ def register_class_sigs(ck: Ck, a: Ast, idx: int) -> None:
             mp_sym(ck, csym)
             mp(ck, "': field '")
             mp_sym(ck, fsym)
-            mp(ck, "' is already declared")
+            if has_base:
+                mp(ck, "' is already declared (perhaps in a base class)")
+            else:
+                mp(ck, "' is already declared")
             raise mk_fail(ck, "DuplicateDefinition")
         ft: int = type_expr_to_type(ck, a, a.n[f + {{O:FieldDecl.type_expr}}])
         m2_put(ck.cls_fields, idx, fsym, ft)
@@ -2389,9 +2502,42 @@ def register_class_sigs(ck: Ck, a: Ast, idx: int) -> None:
         if sref_eq(a, mname, "__init__"):
             ck.cls_init[idx] = sid
         else:
-            m2_put(ck.cls_meths, idx, sym_of(ck, a, mname), sid)
+            msym: int = sym_of(ck, a, mname)
+            ie: int = m2_get(ck.cls_meths, idx, msym)
+            if ie >= 0 and not sig_eq_ignoring_self(ck, ck.cls_meths.vv[ie], sid):
+                mp(ck, "method '")
+                mp_sym(ck, csym)
+                mp(ck, ".")
+                mp_sref(ck, a, mname)
+                mp(ck, "' does not match the signature in the base class (an override requires an exact signature match)")
+                raise mk_fail(ck, "TypeMismatch")
+            m2_put(ck.cls_meths, idx, msym, sid)
 
-# `ensureClassBodyChecked` + `checkClassBody` (tekli, kalıtımsız)
+# `funcSigEqlIgnoringSelf`: parametre tipleri (self hariç) ve dönüş tipi TypeId eşitliği (hash-consing ⇒ `types.eql`).
+def sig_eq_ignoring_self(ck: Ck, s1: int, s2: int) -> bool:
+    if ck.fpn[s1] != ck.fpn[s2]:
+        return False
+    for i in range(ck.fpn[s1]):
+        if ck.fpar[ck.fps[s1] + i] != ck.fpar[ck.fps[s2] + i]:
+            return False
+    return ck.fret[s1] == ck.fret[s2]
+
+# `ensureClassBodyChecked`: taban gövdesi önce denetlenir, çıkarsanan alanlar türetilene (yoksa) kopyalanır.
+def ensure_class_checked(ck: Ck, a: Ast, idx: int) -> None:
+    if ck.cls_chk[idx] != 0:
+        return
+    ck.cls_chk[idx] = 1
+    bsym: int = ck.cls_base[idx]
+    if bsym >= 0:
+        bi: int = class_idx(ck, bsym)
+        if bi >= 0:
+            ensure_class_checked(ck, a, bi)
+            for e in range(len(ck.cls_fields.k1)):
+                if ck.cls_fields.k1[e] == bi and ck.cls_fields.dead[e] == 0 and m2_get(ck.cls_fields, idx, ck.cls_fields.k2[e]) < 0:
+                    m2_put(ck.cls_fields, idx, ck.cls_fields.k2[e], ck.cls_fields.vv[e])
+    check_class(ck, a, idx)
+
+# `checkClassBody` (tekli kalıtım)
 def check_class(ck: Ck, a: Ast, idx: int) -> None:
     cd: int = ck.cls_node[idx]
     ms: int = sl_at(a, cd, {{O:ClassDef.methods}})
@@ -2949,6 +3095,36 @@ def check_str_method(ck: Ck, a: Ast, fx: Fx, c: int, attr: int) -> int:
             raise mk_fail(ck, "TypeMismatch")
     return ret
 
+# `super().metod(...)` / `super().__init__(...)` (Zig `checkCall` `.attribute` kolu, `isSuperCallExpr`)
+def check_super_call(ck: Ck, a: Ast, fx: Fx, c: int, attr: int) -> int:
+    if fx.self_cls < 0:
+        fail2(ck, "TypeMismatch", "'super()' can only be used inside a method body")
+    bsym: int = ck.cls_base[fx.self_cls]
+    if bsym < 0:
+        mp(ck, "class '")
+        mp_sym(ck, ck.cls_sym[fx.self_cls])
+        mp(ck, "' has no base class, so 'super()' cannot be used")
+        raise mk_fail(ck, "TypeMismatch")
+    bi: int = class_idx(ck, bsym)
+    asym: int = sym_of(ck, a, attr)
+    if sref_eq(a, attr, "__init__"):
+        isid: int = ck.cls_init[bi]
+        if isid < 0:
+            isid = ck.sig_empty
+        check_args_sig(ck, a, fx, c, isid, asym)
+        return 4
+    me: int = m2_get(ck.cls_meths, bi, asym)
+    if me >= 0:
+        sid: int = ck.cls_meths.vv[me]
+        check_args_sig(ck, a, fx, c, sid, asym)
+        return ck.fret[sid]
+    mp(ck, "base class '")
+    mp_sym(ck, bsym)
+    mp(ck, "' has no method '")
+    mp_sref(ck, a, attr)
+    mp(ck, "'")
+    raise mk_fail(ck, "UndefinedMethod")
+
 # `obj.metod(...)` (sınıf örneği + list/dict/str/Task/Channel/TaskLocal/ThreadHandle/ThreadChannel yerleşikleri)
 def check_method_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
     at: int = a.n[callee + 1]
@@ -2957,11 +3133,20 @@ def check_method_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
     qc: int = qualified_call(ck, a, fx, c, callee)
     if qc >= 0:
         return qc
+    # `Taban.metod(self, ...)` Zig'de `mixin_flatten` ön geçişiyle `super().metod(...)`e yeniden yazılır: kapsam dışı
+    if fx.self_cls >= 0 and a.n[obj] == {{T:Expr.identifier}}:
+        ecd: int = ck.cls_node[fx.self_cls]
+        if a.n[ecd + {{O:ClassDef.base}}] != {{NONE}} and sym_of(ck, a, pk(a.n[obj + 1], a.n[obj + 2])) == sym_of(ck, a, pk(a.n[ecd + {{O:ClassDef.base}}], a.n[ecd + {{O:ClassDef.base}} + 1])):
+            eargs: int = sl_at(a, c, {{O:Call.args}})
+            if pky(eargs) >= 1:
+                e0: int = stmt_at(a, eargs, 0)
+                if a.n[e0] == {{T:Expr.identifier}} and sref_eq(a, pk(a.n[e0 + 1], a.n[e0 + 2]), "self"):
+                    raise unsup(ck, "class#explicit_base_call")
     if a.n[obj] == {{T:Expr.call}}:
         oc: int = a.n[obj + 1]
         ocal: int = a.n[oc + {{O:Call.callee}}]
-        if a.n[ocal] == {{T:Expr.identifier}} and sref_eq(a, pk(a.n[ocal + 1], a.n[ocal + 2]), "super"):
-            raise unsup(ck, "check_method_call#super")
+        if a.n[ocal] == {{T:Expr.identifier}} and sref_eq(a, pk(a.n[ocal + 1], a.n[ocal + 2]), "super") and pky(sl_at(a, oc, {{O:Call.args}})) == 0:
+            return check_super_call(ck, a, fx, c, attr)
     obj_t: int = check_expr(ck, a, fx, obj)
     require_not_optional_sref(ck, obj_t, a, attr)
     tt: TT = ck.tt
@@ -3494,6 +3679,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
     try:
         ck.sig_empty = new_sig(ck, [], [], 4)
         collect_imports(ck, a, body)
+        check_base_cycles(ck, a, body)
         collect_class_names(ck, a, body)
         resolve_reexport(ck, a, body)
         # registerSignatures
@@ -3507,7 +3693,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
             elif a.n[kn2] == {{T:StmtKind.extern_def}}:
                 register_extern(ck, a, a.n[kn2 + 1])
             elif a.n[kn2] == {{T:StmtKind.class_def}}:
-                register_class_sigs(ck, a, class_idx(ck, sym_of(ck, a, pk(a.n[a.n[kn2 + 1] + {{O:ClassDef.name}}], a.n[a.n[kn2 + 1] + {{O:ClassDef.name}} + 1]))))
+                ensure_class_sig(ck, a, class_idx(ck, sym_of(ck, a, pk(a.n[a.n[kn2 + 1] + {{O:ClassDef.name}}], a.n[a.n[kn2 + 1] + {{O:ClassDef.name}} + 1]))))
         resolve_reexport(ck, a, body)
         collect_module_globals(ck, a, body)
     except CkUnsupported:
@@ -3529,7 +3715,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
             elif a.n[kn3] == {{T:StmtKind.extern_def}} or a.n[kn3] == {{T:StmtKind.import_stmt}} or a.n[kn3] == {{T:StmtKind.from_import_stmt}}:
                 pass
             elif a.n[kn3] == {{T:StmtKind.class_def}}:
-                check_class(ck, a, class_idx(ck, sym_of(ck, a, pk(a.n[a.n[kn3 + 1] + {{O:ClassDef.name}}], a.n[a.n[kn3 + 1] + {{O:ClassDef.name}} + 1]))))
+                ensure_class_checked(ck, a, class_idx(ck, sym_of(ck, a, pk(a.n[a.n[kn3 + 1] + {{O:ClassDef.name}}], a.n[a.n[kn3 + 1] + {{O:ClassDef.name}} + 1]))))
             else:
                 check_stmt(ck, a, top, st3)
         except CkUnsupported:

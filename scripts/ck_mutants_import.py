@@ -48,7 +48,7 @@ MUTANTS = [
     ("ident_unsup_drop", '    if m2_get(ck.fimp, 0, sym) >= 0:\n        raise unsup(ck, "check_identifier#fromimport")', '    if False:\n        raise unsup(ck, "check_identifier#fromimport")'),
     ("try_fallback_drop", "            if cfe >= 0 and class_idx(ck, ck.fimp.vv[cfe]) >= 0:\n                csym = ck.fimp.vv[cfe]", "            if False:\n                csym = ck.fimp.vv[cfe]"),
     ("spawn_fallback_drop", "        if sfe >= 0 and m2_get(ck.fmap, 0, ck.fimp.vv[sfe]) >= 0:\n            sym = ck.fimp.vv[sfe]", "        if False:\n            sym = ck.fimp.vv[sfe]"),
-    ("order_imports_after_classes", "        collect_imports(ck, a, body)\n        collect_class_names(ck, a, body)\n        resolve_reexport(ck, a, body)", "        collect_class_names(ck, a, body)\n        collect_imports(ck, a, body)\n        resolve_reexport(ck, a, body)"),
+    ("order_imports_after_classes", "        collect_imports(ck, a, body)\n        check_base_cycles(ck, a, body)\n        collect_class_names(ck, a, body)\n        resolve_reexport(ck, a, body)", "        check_base_cycles(ck, a, body)\n        collect_class_names(ck, a, body)\n        collect_imports(ck, a, body)\n        resolve_reexport(ck, a, body)"),
     ("reexp_second_drop", "        resolve_reexport(ck, a, body)\n        collect_module_globals(ck, a, body)", "        collect_module_globals(ck, a, body)"),
     ("reexp_first_drop", "        collect_class_names(ck, a, body)\n        resolve_reexport(ck, a, body)", "        collect_class_names(ck, a, body)"),
 ]
