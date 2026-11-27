@@ -45,7 +45,14 @@ Döngü (her dilim):
 - `qrun` bildirimi hep "exit 0" der; gerçek sonuç `cikis=` satırı.
 - Zig'in test-fast'i `error: '...' failed` satırları basar; `failed command:` satırları tek başına hata değildir (stderr basan testler).
 
-## 4. DURUM (2026-11-26, v2.2.102 sonrası)
+## 4. DURUM (2026-11-27, v2.2.103 sonrası)
+
+- **Son sürüm:** `v2.2.103` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **9.753 satır**) `class#consts` (`class_attr_promote_run`, `receiver_class_name`), `extern#decorators` (`@ffi.escape`/`noescape`/`callback`/`errors`/`@capability.requires`) ve `check_call#intrinsic` (`nox.http.serve*` 12 varyant + `nox.thread.start`/`pool_run`) + `h3_server.zig` GOAWAY kapanış yarışı düzeltmesi (§8).
+- **Doğrulama:** `ck_gen.py --bytes-spawn-dec` (`files=3000 unsupported=0 accepted=1362 rejected=1638`), `ck_gen.py --consts-ffi-intr` (`files=3000 unsupported=0 accepted=1818 rejected=1182 diagnostics=1136`), `ck_edge/consts_ffi_intr` (`23` dosya, `unsupported=0 accepted=4 rejected=19`), `ck_mutants_consts_ffi_intr.py` (`27/27 yakalandı, 0 yaşayan`), `ck_regress.sh` `20` kip + depo yeşil.
+- **Depo `ck-diff check` (`v2.2.103`):** `files=1689 unsupported=212 accepted=535 rejected=942 diagnostics=2078 skipped_parse=56` (`class#consts`=0, `extern#decorators`=0, `check_call#intrinsic`=0; kalan üst engeller: `31 check_binary#1`, `23 class#enum`, `22 register_func#generator`, `20 nonlocal`, `15 class#decorators`, `11 class#bases`, `10 check_stmt#1`, `10 check_binary#2`, `9 elem_grow`, `8 check_stmt#2`, `8 toplevel#2`, `8 class#method_features`).
+- **`ck-diff checkm` (`tests/golden/typecheck_cases/*.nox`, `v2.2.103`):** `files=347 unsupported=76 accepted=76 rejected=195 diagnostics=165 skipped=0` (`class#consts`=0, `extern#decorators`=0, `check_call#intrinsic`=0; kalan üst engeller: `10 class#enum`, `9 check_binary#1`, `8 check_stmt#2`, `8 class#decorators`, `6 register_func#generator`, `5 class#bases`, `5 toplevel#2`, `4 check_stmt#1`, `4 class#method_features`, `3 elem_grow`, `3 nonlocal`).
+
+### Önceki (v2.2.102 sonrası)
 
 - **Son sürüm:** `v2.2.102` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **8.547 satır**) tam `bytes` (+ `str#prelude`), `spawn#shared_arg` (`MutGraph`, `compute_return_alias_effects`, `SpawnFlow`) ve üst-düzey fonksiyon dekoratörleri (`register_func#2`, `@capability.requires`, `__nox_reflect_*`).
 - **Doğrulama:** `ck_gen.py --bytes-spawn-dec` (`files=3000 unsupported=0 accepted=188 rejected=2812 diagnostics=3584`), `ck_edge/bytes_spawn_dec` (`22` dosya, `unsupported=0`), `ck_mutants_bytes_spawn_dec.py` (`27/27 yakalandı, 0 yaşayan`), `ck_regress.sh` `19` kip + depo yeşil.
@@ -110,3 +117,8 @@ Normalde §0 yalnız `selfhost/typecheck.nox.in` ve `scripts/ck_*` dosyalarını
    - `decodeBytes` / `decode_bytes` artık ham `\r\n` kaynak satır sonlarını (`decodeEscapes`/`normalizeCrlf` ile aynı şekilde) `\n` yapar; açık `\r\n` kaçışları (`b"a\r\nb"`) olduğu gibi korunur. `bytes_type.nox` ve `ok2.nox` üzerindeki `fmt(CRLF x) != fmt(x)` ihlalleri kapandı; `fmt_properties.py` hem `noxc` hem `noxc-nightly`'de `ok=1589, skip=56` (0 ihlal) ve `frontend_diff.py --component parser|fmt` eşit geçti; `parser.zig` altına yeni Zig birim testi eklendi.
 3. **[scripts/ck_regress.sh](../../scripts/ck_regress.sh) — `| head -1` çıkış kodu kaybı düzeltmesi (P1):**
    - Her kip ve `repo` çalıştırması artık boru kullanmadan `check_out()` yardımcısından geçer; gerçek çıkış kodu korunur ve çok gruplu `xargs` dahil tüm çıktı satırlarının `^ck-diff: OK` ile başladığı doğrulanır.
+
+### v2.2.103 — Kullanıcı onayıyla `runtime/stdlib_shims/h3_server.zig` düzeltmesi
+
+4. **[runtime/stdlib_shims/h3_server.zig](../../runtime/stdlib_shims/h3_server.zig) — HTTP/3 zarif kapanış GOAWAY yarışı (CI Linux x86-64 ReleaseFast flaky testi):**
+   - `allQuiet()` ve `loopOnce()` (`any_out`) içinde `cs.ours_buf` bekleyen çerçeve kontrolü eklendi; `run()` kapanışında `cs.close(.no_error)` (`CONNECTION_CLOSE`) öncesi sınırlı 50 ms'lik GOAWAY iletim penceresi (`std.Io.Clock.Timestamp`) eklendi. `zig build runtime-test -Druntime-test-filter=h3_server` Debug, ReleaseFast ve 10× ReleaseFast stres koşusunda 10/10 yeşil geçti.

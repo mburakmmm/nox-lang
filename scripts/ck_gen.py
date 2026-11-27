@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False, use_bytes_spawn_dec=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False, use_bytes_spawn_dec=False, use_consts_ffi_intr=False):
         self.rnd = rnd
+        self.use_consts_ffi_intr = use_consts_ffi_intr
         self.use_bytes_spawn_dec = use_bytes_spawn_dec
         self.use_sig = use_sig
         self.use_prelude_proto = use_prelude_proto
@@ -1543,8 +1544,6 @@ class Gen:
             "",
         ]
         good = [
-            'b0: bytes = b"hi"',
-            "b1: bytes = bytes()",
             "b2: bytes = bytes(b0)",
             "b3: bytes = bytes([65, 66])",
             "b4: bytes = bytes([u8(65)])",
@@ -1606,6 +1605,8 @@ class Gen:
         ind = "    " if in_fn else ""
         if in_fn:
             self.lines.append("def main_bsd() -> None:")
+        self.lines.append(ind + 'b0: bytes = b"hi"')
+        self.lines.append(ind + "b1: bytes = bytes()")
         k = r.randint(2, 4)
         picks = r.sample(good, k=min(k, len(good))) if clean else [r.choice(good) if r.random() < 0.5 else r.choice(bad) for _ in range(k)]
         for pick in picks:
@@ -1614,8 +1615,198 @@ class Gen:
         if in_fn and r.random() < 0.5:
             self.lines.append("main_bsd()")
 
+    def gen_consts_ffi_intr(self):
+        r = self.rnd
+        clean = r.random() < 0.55
+        self.lines = [
+            "import nox.http",
+            "import nox.websocket",
+            "import nox.thread",
+            "",
+            "class nox_http_HttpRequest:",
+            "    path: str",
+            "    def __init__(self, path: str) -> None:",
+            "        self.path = path",
+            "",
+            "class nox_http_HttpResponse:",
+            "    status: int",
+            "    def __init__(self, status: int) -> None:",
+            "        self.status = status",
+            "",
+            "class nox_websocket_WebSocketServerConn:",
+            "    id: int",
+            "    def __init__(self, id: int) -> None:",
+            "        self.id = id",
+            "",
+            "class nox_ffi_Callback[F]:",
+            "    fn: F",
+            "    box: ptr",
+            "    def __init__(self, fn: F, box: ptr) -> None:",
+            "        self.fn = fn",
+            "        self.box = box",
+            "",
+            "class ErrX:",
+            "    msg: str",
+            "    def __init__(self, msg: str) -> None:",
+            "        self.msg = msg",
+            "",
+            "class BaseCfg:",
+            "    MAX: int = 10",
+            "    RATE: float = 1.5",
+            "    OK: bool = True",
+            '    TAG: str = "v1"',
+            "    NEG: int = -3",
+            "    PROM: int = 1",
+            "    val: int",
+            "    def __init__(self, val: int) -> None:",
+            "        self.val = val",
+            "    def get_max(self) -> int:",
+            "        return self.MAX",
+            "",
+            "class SubCfg(BaseCfg):",
+            "    SUB: int = 2",
+            "    def __init__(self, val: int) -> None:",
+            "        self.val = val",
+            "",
+            "def cb_sync(x: int) -> int:",
+            "    return x + 1",
+            "",
+            "def cb_bad_arity(x: int, y: int) -> int:",
+            "    return x + y",
+            "",
+            "async def cb_async(x: int) -> int:",
+            "    return x",
+            "",
+            "def err_msg(code: int) -> str:",
+            '    return "err"',
+            "",
+            "def http_ok(req: nox_http_HttpRequest) -> nox_http_HttpResponse:",
+            "    return nox_http_HttpResponse(200)",
+            "",
+            "def http_factory() -> (nox_http_HttpRequest) -> nox_http_HttpResponse:",
+            "    return http_ok",
+            "",
+            "def ws_ok(conn: nox_websocket_WebSocketServerConn) -> None:",
+            "    pass",
+            "",
+            "async def th_worker(x: int) -> int:",
+            "    return x + 1",
+            "",
+            "def th_sync(x: int) -> int:",
+            "    return x",
+            "",
+            "async def th_bad_task(t: Task[int]) -> int:",
+            "    return 0",
+            "",
+            "async def pool_worker() -> None:",
+            "    pass",
+            "",
+            '@ffi.escape("a")',
+            '@ffi.noescape("b")',
+            'extern def c_esc(a: str, b: str) -> int from "c"',
+            "",
+            '@ffi.callback("cb", "ud")',
+            'extern def c_cb(n: int, cb: (int, ptr) -> int, ud: ptr) -> int from "c"',
+            "",
+            '@ffi.callback("cb", "ud", ud_index=0)',
+            'extern def c_cb0(cb: (ptr, int) -> int, ud: ptr) -> int from "c"',
+            "",
+            '@ffi.errors(raises=ErrX, ok=0, message="err_msg")',
+            'extern def c_ok(x: int) -> int from "c"',
+            "",
+            '@ffi.errors(raises=ErrX, ok_min=0)',
+            'extern def c_min(x: int) -> int from "c"',
+            "",
+            '@ffi.errors(raises=ErrX, null_is_error=True)',
+            'extern def c_ptr(x: int) -> ptr from "c"',
+            "",
+            '@capability.requires("clock")',
+            'extern def c_cap() -> int from "c"',
+            "",
+        ]
+        good = [
+            "m_c: int = BaseCfg.MAX",
+            "r_c: float = BaseCfg.RATE",
+            "o_c: bool = BaseCfg.OK",
+            "t_c: str = BaseCfg.TAG",
+            "n_c: int = BaseCfg.NEG",
+            "s_c: int = SubCfg.MAX",
+            "s_c2: int = SubCfg.SUB",
+            "BaseCfg.PROM = 99",
+            "bc0: BaseCfg = BaseCfg(1)\nbc_m: int = bc0.MAX",
+            "sc0: SubCfg = SubCfg(1)\nsc_m: int = sc0.MAX",
+            "r_esc: int = c_esc(\"a\", \"b\")",
+            "r_cb1: int = c_cb(1, cb_sync)",
+            "r_cb2: int = c_cb(1, None)",
+            "r_cb3: int = c_cb0(cb_sync)",
+            "r_ok: int = c_ok(1)",
+            "r_min: int = c_min(1)",
+            "r_ptr: ptr = c_ptr(1)",
+            "r_cap: int = c_cap()",
+            "if False:\n    nox.http.serve(8080, http_ok)",
+            "if False:\n    nox.http.serve(8080, http_ok, 16)",
+            "if False:\n    nox.http.serve_fd(3, http_ok)",
+            "if False:\n    nox.http.serve_multicore(8080, http_ok, 4, 64)",
+            "if False:\n    nox.http.serve_multicore(8080, http_factory, 4)",
+            'if False:\n    nox.http.serve_tls(8443, http_ok, "c.pem", "k.pem")',
+            "if False:\n    nox.http.serve_ws(8080, http_ok, ws_ok)",
+            'if False:\n    nox.http.serve_multicore_ws_tls(8443, http_factory, 2, ws_ok, "c.pem", "k.pem", 32)',
+            "if False:\n    th0: ThreadHandle[int] = nox.thread.start(th_worker, 5)",
+            "if False:\n    nox.thread.pool_run(4, pool_worker)",
+        ]
+        bad = [
+            "SubCfg.PROM = 5",
+            "bc_bad: BaseCfg = BaseCfg(1)\nbc_bad.MAX = 2",
+            "BaseCfg.NOPE = 1",
+            "er_cb0: int = c_cb(1, cb_bad_arity)",
+            "er_cb1: int = c_cb(1, cb_async)",
+            "er_cb2: int = c_cb(1, c_cap)",
+            "er_cb3: int = c_cb(1, lambda z: z)",
+            "er_cb4: int = c_cb(1, cb_sync, c_ptr(0))",
+            "if False:\n    nox.http.serve(8080, ws_ok)",
+            "if False:\n    nox.http.serve(\"8080\", http_ok)",
+            "if False:\n    nox.http.serve_multicore(8080, lambda req: nox_http_HttpResponse(200), 2)",
+            "if False:\n    mc_lim: int = 8\n    nox.http.serve_multicore(8080, http_ok, 2, mc_lim)",
+            "if False:\n    nox.http.serve_ws(8080, http_ok, http_ok)",
+            "if False:\n    nox.http.serve_tls(8443, http_ok, 123, \"k.pem\")",
+            "if False:\n    nox.thread.start(th_sync, 1)",
+            'if False:\n    nox.thread.start(th_worker, "bad")',
+            "if False:\n    nox.thread.pool_run(4, th_worker)",
+            'if False:\n    nox.thread.pool_run("4", pool_worker)',
+        ]
+        if not clean and r.random() < 0.3:
+            bad_defs = [
+                "class BadK0:\n    K: int = 1 + 2",
+                'class BadK1:\n    K: int = "x"',
+                "class BadK2:\n    K: list[int] = [1]",
+                "class BadK3:\n    K: int = 1\n    K: int = 2",
+                "class BadK4:\n    K: int = 1\n    K: int",
+                '@ffi.nope("a")\nextern def bad_ed0(a: str) -> int from "c"',
+                '@ffi.escape("z")\nextern def bad_ed1(a: str) -> int from "c"',
+                '@ffi.escape("a")\n@ffi.noescape("a")\nextern def bad_ed2(a: str) -> int from "c"',
+                '@ffi.errors(raises=ErrX, ok=0)\n@ffi.callback("cb", "ud")\nextern def bad_ed3(cb: (int, ptr) -> int, ud: ptr) -> int from "c"',
+                '@ffi.errors(raises=ErrX)\nextern def bad_ed4(x: int) -> int from "c"',
+                '@ffi.errors(ok=0)\nextern def bad_ed5(x: int) -> int from "c"',
+                '@ffi.callback("cb", "ud")\nextern def bad_ed6(cb: int, ud: ptr) -> int from "c"',
+            ]
+            self.lines.append(r.choice(bad_defs))
+        in_fn = r.random() < 0.5
+        ind = "    " if in_fn else ""
+        if in_fn:
+            self.lines.append("def main_cfi() -> None:")
+        k = r.randint(2, 4)
+        picks = r.sample(good, k=min(k, len(good))) if clean else [r.choice(good) if r.random() < 0.5 else r.choice(bad) for _ in range(k)]
+        for pick in picks:
+            for ln in pick.split("\n"):
+                self.lines.append(ind + ln)
+        if in_fn and r.random() < 0.5:
+            self.lines.append("main_cfi()")
+
     def program(self):
         r = self.rnd
+        if self.use_consts_ffi_intr:
+            self.gen_consts_ffi_intr()
+            return "\n".join(self.lines) + "\n"
         if self.use_bytes_spawn_dec:
             self.gen_bytes_spawn_dec()
             return "\n".join(self.lines) + "\n"
@@ -1715,11 +1906,12 @@ def main():
     ap.add_argument("--prelude-proto", dest="use_prelude_proto", action="store_true")
     ap.add_argument("--sig", dest="use_sig", action="store_true")
     ap.add_argument("--bytes-spawn-dec", dest="use_bytes_spawn_dec", action="store_true")
+    ap.add_argument("--consts-ffi-intr", dest="use_consts_ffi_intr", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig, args.use_bytes_spawn_dec).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig, args.use_bytes_spawn_dec, args.use_consts_ffi_intr).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

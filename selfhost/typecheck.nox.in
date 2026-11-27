@@ -192,6 +192,25 @@ class Ck:
     rae_pn: Map2
     rae_pool: list[int]
     cap_fns: Map2
+    # class#consts (sınıf sabitleri ve terfi eden sınıf öznitelikleri)
+    cls_consts_ty: Map2
+    cls_consts_owner: Map2
+    cls_consts_prom: Map2
+    skip_vdecl: Map2
+    # extern#decorators (@ffi.escape/@ffi.noescape/@ffi.callback/@ffi.errors/@capability.requires)
+    ext_fns: Map2
+    ffi_cb_cls: Map2
+    ext_cb_idx: Map2
+    ext_cb_ctx: Map2
+    ext_cb_ty: Map2
+    ext_cb_ud: Map2
+    ext_err_raises: Map2
+    ext_err_kind: Map2
+    ext_err_thresh: Map2
+    ext_err_errno: Map2
+    ext_err_msg: Map2
+    ext_err_node: Map2
+    ext_err_checked: Map2
 
     def __init__(self, tt: TT) -> None:
         self.tt = tt
@@ -277,6 +296,23 @@ class Ck:
         self.rae_pn = Map2()
         self.rae_pool = []
         self.cap_fns = Map2()
+        self.cls_consts_ty = Map2()
+        self.cls_consts_owner = Map2()
+        self.cls_consts_prom = Map2()
+        self.skip_vdecl = Map2()
+        self.ext_fns = Map2()
+        self.ffi_cb_cls = Map2()
+        self.ext_cb_idx = Map2()
+        self.ext_cb_ctx = Map2()
+        self.ext_cb_ty = Map2()
+        self.ext_cb_ud = Map2()
+        self.ext_err_raises = Map2()
+        self.ext_err_kind = Map2()
+        self.ext_err_thresh = Map2()
+        self.ext_err_errno = Map2()
+        self.ext_err_msg = Map2()
+        self.ext_err_node = Map2()
+        self.ext_err_checked = Map2()
 
 # ---- Scope (Zig `Scope`) ----
 def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
@@ -2268,7 +2304,12 @@ def check_call(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
         raise mk_fail(ck, "TypeMismatch")
     if fi >= 0:
         sid: int = ck.fmap.vv[fi]
-        check_args_sig(ck, a, fx, c, sid, sym)
+        if m2_get(ck.ext_err_kind, 0, sym) >= 0:
+            check_extern_errors_call(ck, a, sym)
+        if m2_get(ck.ext_cb_idx, 0, sym) >= 0:
+            check_extern_callback_args(ck, a, fx, sid, c, sym)
+        else:
+            check_args_sig(ck, a, fx, c, sid, sym)
         check_capability_call(ck, sym)
         return ck.fret[sid]
     isid: int = ck.cls_init[ci]
@@ -2305,7 +2346,7 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
         return
     if tag == {{T:StmtKind.var_decl}}:
         nm: int = pk(a.n[pay + {{O:VarDecl.name}}], a.n[pay + {{O:VarDecl.name}} + 1])
-        if sref_len(nm) >= 10 and sref_byte(a, nm, 0) == 95 and sref_byte(a, nm, 1) == 95 and sref_byte(a, nm, 2) == 110:
+        if a.n[pay + {{O:VarDecl.class_attr}}] < 0 and sref_len(nm) >= 10 and sref_byte(a, nm, 0) == 95 and sref_byte(a, nm, 1) == 95 and sref_byte(a, nm, 2) == 110:
             raise unsup(ck, "check_stmt#1")
         if a.n[pay + {{O:VarDecl.infer_assign}}] != 0:
             raise unsup(ck, "check_stmt#2")
@@ -2906,6 +2947,331 @@ def is_intrinsic_call(ck: Ck, segs: list[int]) -> bool:
         return segs[2] == sym_lit(ck, "start") or segs[2] == sym_lit(ck, "pool_run")
     return False
 
+def is_thread_transfer_safe_type(ck: Ck, t: int) -> bool:
+    g: int = ck.tt.tag[t]
+    return g != 9 and g != 14 and g != 15
+
+def is_http_handler_factory(ck: Ck, nsym: int) -> bool:
+    if m2_get(ck.afn, 0, nsym) >= 0:
+        return False
+    fi: int = m2_get(ck.fmap, 0, nsym)
+    if fi < 0:
+        return False
+    sid: int = ck.fmap.vv[fi]
+    if ck.fpn[sid] != 0:
+        return False
+    rt: int = ck.fret[sid]
+    tt: TT = ck.tt
+    if tt.tag[rt] != 14 or tt.xc[rt] != 1:
+        return False
+    p0: int = tt.fp[tt.xa[rt]]
+    r0: int = tt.xb[rt]
+    return tt.tag[p0] == 6 and tt.xa[p0] == sym_lit(ck, "nox_http_HttpRequest") and tt.tag[r0] == 6 and tt.xa[r0] == sym_lit(ck, "nox_http_HttpResponse")
+
+def validate_named_http_handler(ck: Ck, fn_label: str, hsym: int) -> None:
+    if m2_get(ck.afn, 0, hsym) >= 0:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'handle' ('")
+        mp_sym(ck, hsym)
+        mp(ck, "') CANNOT be an 'async def' (the connection handler already runs synchronously in its own fiber)")
+        raise mk_fail(ck, "TypeMismatch")
+    fi: int = m2_get(ck.fmap, 0, hsym)
+    if fi < 0:
+        mp(ck, "undefined function: ")
+        mp_sym(ck, hsym)
+        raise mk_fail(ck, "UndefinedFunction")
+    sid: int = ck.fmap.vv[fi]
+    if ck.fpn[sid] != 1:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'handle' must take EXACTLY one parameter (an HttpRequest)")
+        raise mk_fail(ck, "TypeMismatch")
+    p0: int = ck.fpar[ck.fps[sid]]
+    if ck.tt.tag[p0] != 6 or ck.tt.xa[p0] != sym_lit(ck, "nox_http_HttpRequest"):
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': the parameter of 'handle' must be 'HttpRequest'")
+        raise mk_fail(ck, "TypeMismatch")
+    r0: int = ck.fret[sid]
+    if ck.tt.tag[r0] != 6 or ck.tt.xa[r0] != sym_lit(ck, "nox_http_HttpResponse"):
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'handle' must return an 'HttpResponse'")
+        raise mk_fail(ck, "TypeMismatch")
+
+def validate_http_handler(ck: Ck, a: Ast, fx: Fx, fn_label: str, he: int, allow_closure: bool) -> None:
+    if a.n[he] == {{T:Expr.identifier}}:
+        hsym: int = sym_of(ck, a, pk(a.n[he + 1], a.n[he + 2]))
+        if sc_lookup(ck, fx.scope, hsym) < 0:
+            if not allow_closure and is_http_handler_factory(ck, hsym):
+                return
+            validate_named_http_handler(ck, fn_label, hsym)
+            return
+    if not allow_closure:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'handle' must be a plain function name (a closure handler is NOT supported in this variant: in the default build the multicore workers use a SEPARATE RuntimeState, so a closure from the main runtime cannot be passed to them; pass a FACTORY instead: a top-level function with no parameters that returns the handler closure, called once per worker)")
+        raise mk_fail(ck, "NotCallable")
+    t: int = check_expr(ck, a, fx, he)
+    tt: TT = ck.tt
+    if tt.tag[t] != 14:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'handle' must be a function name or a closure of type '(HttpRequest) -> HttpResponse'")
+        raise mk_fail(ck, "NotCallable")
+    if tt.xc[t] != 1:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'handle' must take EXACTLY one parameter (an HttpRequest)")
+        raise mk_fail(ck, "TypeMismatch")
+    p0: int = tt.fp[tt.xa[t]]
+    if tt.tag[p0] != 6 or tt.xa[p0] != sym_lit(ck, "nox_http_HttpRequest"):
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': the parameter of 'handle' must be 'HttpRequest'")
+        raise mk_fail(ck, "TypeMismatch")
+    r0: int = tt.xb[t]
+    if tt.tag[r0] != 6 or tt.xa[r0] != sym_lit(ck, "nox_http_HttpResponse"):
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'handle' must return an 'HttpResponse'")
+        raise mk_fail(ck, "TypeMismatch")
+
+def validate_ws_handler(ck: Ck, a: Ast, fn_label: str, he: int) -> None:
+    if a.n[he] != {{T:Expr.identifier}}:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'ws_handle' must be a plain function name (methods/lambdas are not supported yet)")
+        raise mk_fail(ck, "NotCallable")
+    hsym: int = sym_of(ck, a, pk(a.n[he + 1], a.n[he + 2]))
+    if m2_get(ck.afn, 0, hsym) >= 0:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'ws_handle' ('")
+        mp_sym(ck, hsym)
+        mp(ck, "') CANNOT be an 'async def' (the WS session already runs synchronously in its own fiber)")
+        raise mk_fail(ck, "TypeMismatch")
+    fi: int = m2_get(ck.fmap, 0, hsym)
+    if fi < 0:
+        mp(ck, "undefined function: ")
+        mp_sym(ck, hsym)
+        raise mk_fail(ck, "UndefinedFunction")
+    sid: int = ck.fmap.vv[fi]
+    if ck.fpn[sid] != 1:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'ws_handle' must take EXACTLY one parameter (a WebSocketServerConn)")
+        raise mk_fail(ck, "TypeMismatch")
+    p0: int = ck.fpar[ck.fps[sid]]
+    if ck.tt.tag[p0] != 6 or ck.tt.xa[p0] != sym_lit(ck, "nox_websocket_WebSocketServerConn"):
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': the parameter of 'ws_handle' must be 'WebSocketServerConn'")
+        raise mk_fail(ck, "TypeMismatch")
+    if ck.fret[sid] != 4:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'ws_handle' must return 'None'")
+        raise mk_fail(ck, "TypeMismatch")
+
+def check_http_serve_base(ck: Ck, a: Ast, fx: Fx, c: int, fn_label: str, first_arg: str, is_multicore: bool) -> int:
+    cargs: int = sl_at(a, c, {{O:Call.args}})
+    nargs: int = pky(cargs)
+    if not is_multicore:
+        if nargs != 2 and nargs != 3:
+            mp(ck, "'")
+            mp(ck, fn_label)
+            mp(ck, "' takes 2 or 3 arguments: (")
+            mp(ck, first_arg)
+            mp(ck, ", handle[, max_connections])")
+            raise mk_fail(ck, "ArgumentCountMismatch")
+        if check_expr(ck, a, fx, stmt_at(a, cargs, 0)) != 0:
+            mp(ck, "'")
+            mp(ck, fn_label)
+            mp(ck, "': '")
+            mp(ck, first_arg)
+            mp(ck, "' must be an 'int'")
+            raise mk_fail(ck, "TypeMismatch")
+        if nargs == 3 and check_expr(ck, a, fx, stmt_at(a, cargs, 2)) != 0:
+            mp(ck, "'")
+            mp(ck, fn_label)
+            mp(ck, "': 'max_connections' must be an 'int'")
+            raise mk_fail(ck, "TypeMismatch")
+        validate_http_handler(ck, a, fx, fn_label, stmt_at(a, cargs, 1), True)
+        return 4
+    if nargs != 3 and nargs != 4:
+        mp(ck, "'nox.http.serve_multicore' takes 3 or 4 arguments: (port, handle, num_threads[, max_connections])")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    if check_expr(ck, a, fx, stmt_at(a, cargs, 0)) != 0:
+        mp(ck, "'nox.http.serve_multicore': 'port' must be an 'int'")
+        raise mk_fail(ck, "TypeMismatch")
+    if check_expr(ck, a, fx, stmt_at(a, cargs, 2)) != 0:
+        mp(ck, "'nox.http.serve_multicore': 'num_threads' must be an 'int'")
+        raise mk_fail(ck, "TypeMismatch")
+    if nargs == 4 and a.n[stmt_at(a, cargs, 3)] != {{T:Expr.int_lit}}:
+        mp(ck, "'nox.http.serve_multicore': 'max_connections' must be a constant integer (not a VARIABLE/expression — it is embedded in ALL worker functions at compile time)")
+        raise mk_fail(ck, "TypeMismatch")
+    validate_http_handler(ck, a, fx, "nox.http.serve_multicore", stmt_at(a, cargs, 1), False)
+    return 4
+
+def check_http_serve_generic(ck: Ck, a: Ast, fx: Fx, c: int, name: str, is_multicore: bool, want_ws: bool, want_tls: bool) -> int:
+    fn_label: str = "nox.http." + name
+    nxt: int = 2
+    nt_idx: int = -1
+    if is_multicore:
+        nt_idx = nxt
+        nxt = nxt + 1
+    ws_idx: int = -1
+    if want_ws:
+        ws_idx = nxt
+        nxt = nxt + 1
+    cert_idx: int = -1
+    key_idx: int = -1
+    if want_tls:
+        cert_idx = nxt
+        key_idx = nxt + 1
+        nxt = nxt + 2
+    min_args: int = nxt
+    max_args: int = nxt + 1
+    cargs: int = sl_at(a, c, {{O:Call.args}})
+    nargs: int = pky(cargs)
+    if nargs != min_args and nargs != max_args:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "' takes ")
+        mp_int(ck, min_args)
+        mp(ck, " or ")
+        mp_int(ck, max_args)
+        mp(ck, " arguments")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    if check_expr(ck, a, fx, stmt_at(a, cargs, 0)) != 0:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': '")
+        mp(ck, "port" if is_multicore else "port/fd")
+        mp(ck, "' must be an 'int'")
+        raise mk_fail(ck, "TypeMismatch")
+    if nt_idx >= 0 and check_expr(ck, a, fx, stmt_at(a, cargs, nt_idx)) != 0:
+        mp(ck, "'")
+        mp(ck, fn_label)
+        mp(ck, "': 'num_threads' must be an 'int'")
+        raise mk_fail(ck, "TypeMismatch")
+    if nargs == max_args:
+        max_e: int = stmt_at(a, cargs, max_args - 1)
+        if is_multicore:
+            if a.n[max_e] != {{T:Expr.int_lit}}:
+                mp(ck, "'")
+                mp(ck, fn_label)
+                mp(ck, "': 'max_connections' must be a constant integer (it is embedded in the worker functions at compile time)")
+                raise mk_fail(ck, "TypeMismatch")
+        elif check_expr(ck, a, fx, max_e) != 0:
+            mp(ck, "'")
+            mp(ck, fn_label)
+            mp(ck, "': 'max_connections' must be an 'int'")
+            raise mk_fail(ck, "TypeMismatch")
+    if cert_idx >= 0:
+        if check_expr(ck, a, fx, stmt_at(a, cargs, cert_idx)) != 3:
+            mp(ck, "'")
+            mp(ck, fn_label)
+            mp(ck, "': 'cert_path' must be a 'str'")
+            raise mk_fail(ck, "TypeMismatch")
+        if check_expr(ck, a, fx, stmt_at(a, cargs, key_idx)) != 3:
+            mp(ck, "'")
+            mp(ck, fn_label)
+            mp(ck, "': 'key_path' must be a 'str'")
+            raise mk_fail(ck, "TypeMismatch")
+    validate_http_handler(ck, a, fx, fn_label, stmt_at(a, cargs, 1), not is_multicore)
+    if ws_idx >= 0:
+        validate_ws_handler(ck, a, fn_label, stmt_at(a, cargs, ws_idx))
+    return 4
+
+def check_thread_start(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
+    cargs: int = sl_at(a, c, {{O:Call.args}})
+    if pky(cargs) != 2:
+        mp(ck, "'nox.thread.start' takes exactly 2 arguments: (entry, arg)")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    e0: int = stmt_at(a, cargs, 0)
+    if a.n[e0] != {{T:Expr.identifier}}:
+        mp(ck, "'nox.thread.start': 'entry' must be a plain function name (methods/lambdas are not supported yet)")
+        raise mk_fail(ck, "NotCallable")
+    esym: int = sym_of(ck, a, pk(a.n[e0 + 1], a.n[e0 + 2]))
+    fi: int = m2_get(ck.fmap, 0, esym)
+    if fi < 0:
+        mp(ck, "undefined function: ")
+        mp_sym(ck, esym)
+        raise mk_fail(ck, "UndefinedFunction")
+    if m2_get(ck.afn, 0, esym) < 0:
+        mp(ck, "'nox.thread.start': 'entry' ('")
+        mp_sym(ck, esym)
+        mp(ck, "') MUST be an 'async def' (it runs as the single top-level task of its own independent thread)")
+        raise mk_fail(ck, "TypeMismatch")
+    sid: int = ck.fmap.vv[fi]
+    if ck.fpn[sid] != 1:
+        mp(ck, "'nox.thread.start': 'entry' must take EXACTLY one parameter")
+        raise mk_fail(ck, "TypeMismatch")
+    p0: int = ck.fpar[ck.fps[sid]]
+    if not is_thread_transfer_safe_type(ck, p0):
+        mp(ck, "'nox.thread.start': the parameter type of 'entry' is not safe across threads (only int/float/bool/str/None/ptr, and additionally task/channel/list/class/dict on hosted targets)")
+        raise mk_fail(ck, "TypeMismatch")
+    if not is_thread_transfer_safe_type(ck, ck.fret[sid]):
+        mp(ck, "'nox.thread.start': the return type of 'entry' is not safe across threads (only int/float/bool/str/None/ptr, and additionally task/channel/list/class/dict on hosted targets)")
+        raise mk_fail(ck, "TypeMismatch")
+    arg_t: int = check_expr(ck, a, fx, stmt_at(a, cargs, 1))
+    if not assignable_or_coerce(ck, a, p0, arg_t):
+        mp(ck, "'nox.thread.start': the type of 'arg' does not match the parameter type of 'entry'")
+        raise mk_fail(ck, "TypeMismatch")
+    return ty_mk(ck.tt, 9, ck.fret[sid], 0)
+
+def check_thread_pool_run(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
+    cargs: int = sl_at(a, c, {{O:Call.args}})
+    if pky(cargs) != 2:
+        mp(ck, "'nox.thread.pool_run' takes exactly 2 arguments: (num_workers, entry)")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    if check_expr(ck, a, fx, stmt_at(a, cargs, 0)) != 0:
+        mp(ck, "'nox.thread.pool_run': 'num_workers' must be an int")
+        raise mk_fail(ck, "TypeMismatch")
+    e1: int = stmt_at(a, cargs, 1)
+    if a.n[e1] != {{T:Expr.identifier}}:
+        mp(ck, "'nox.thread.pool_run': 'entry' must be a plain function name (methods/lambdas are not supported yet)")
+        raise mk_fail(ck, "NotCallable")
+    esym: int = sym_of(ck, a, pk(a.n[e1 + 1], a.n[e1 + 2]))
+    fi: int = m2_get(ck.fmap, 0, esym)
+    if fi < 0:
+        mp(ck, "undefined function: ")
+        mp_sym(ck, esym)
+        raise mk_fail(ck, "UndefinedFunction")
+    if m2_get(ck.afn, 0, esym) < 0:
+        mp(ck, "'nox.thread.pool_run': 'entry' ('")
+        mp_sym(ck, esym)
+        mp(ck, "') MUST be an 'async def' (it runs as the single top-level task of the pool's single driver worker)")
+        raise mk_fail(ck, "TypeMismatch")
+    sid: int = ck.fmap.vv[fi]
+    if ck.fpn[sid] != 0:
+        mp(ck, "'nox.thread.pool_run': 'entry' must take ZERO parameters")
+        raise mk_fail(ck, "TypeMismatch")
+    if ck.fret[sid] != 4:
+        mp(ck, "'nox.thread.pool_run': 'entry' must not return anything (-> None)")
+        raise mk_fail(ck, "TypeMismatch")
+    return 4
+
+def check_intrinsic_call(ck: Ck, a: Ast, fx: Fx, c: int, segs: list[int]) -> int:
+    if segs[1] == sym_lit(ck, "thread"):
+        if segs[2] == sym_lit(ck, "start"):
+            return check_thread_start(ck, a, fx, c)
+        return check_thread_pool_run(ck, a, fx, c)
+    nm: str = sym_to_str(ck, segs[2])
+    if nm == "serve":
+        return check_http_serve_base(ck, a, fx, c, "nox.http.serve", "port", False)
+    if nm == "serve_fd":
+        return check_http_serve_base(ck, a, fx, c, "nox.http.serve_fd", "fd", False)
+    if nm == "serve_multicore":
+        return check_http_serve_base(ck, a, fx, c, "nox.http.serve_multicore", "port", True)
+    is_mc: bool = nm == "serve_multicore_tls" or nm == "serve_multicore_ws" or nm == "serve_multicore_ws_tls"
+    want_ws: bool = nm == "serve_ws" or nm == "serve_ws_tls" or nm == "serve_fd_ws" or nm == "serve_fd_ws_tls" or nm == "serve_multicore_ws" or nm == "serve_multicore_ws_tls"
+    want_tls: bool = nm == "serve_tls" or nm == "serve_ws_tls" or nm == "serve_fd_tls" or nm == "serve_fd_ws_tls" or nm == "serve_multicore_tls" or nm == "serve_multicore_ws_tls"
+    return check_http_serve_generic(ck, a, fx, c, nm, is_mc, want_ws, want_tls)
+
 # Zig `tryResolveQualifiedCall` (öncesinde `matchIntrinsicKind`): modül-nitelikli çağrı `mod.f(...)`. -1: uygulanmaz (normal metod çağrısı çözümlemesine devam).
 def qualified_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
     if len(ck.imod.k1) == 0:
@@ -2915,7 +3281,7 @@ def qualified_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int:
         return -1
     segs: list[int] = subst_alias(ck, raw)
     if is_intrinsic_call(ck, segs):
-        raise unsup(ck, "check_call#intrinsic")
+        return check_intrinsic_call(ck, a, fx, c, segs)
     if is_variable_in_scope(ck, fx, raw[0]):
         return -1
     n: int = len(segs)
@@ -3519,6 +3885,9 @@ def instantiate_generic_class(ck: Ck, a: Ast, gcd: int, bound: list[int]) -> int
     m2_put(ck.cls_map, 0, mangled_sym, ci)
     cls_register(ck.tt, mangled_sym)
     ensure_class_sig(ck, a, ci)
+    if gsym == sym_lit(ck, "nox_ffi_Callback") and len(bound) == 1 and ck.tt.tag[bound[0]] == 14:
+        if m2_get(ck.cls_fields, ci, sym_lit(ck, "fn")) >= 0 and m2_get(ck.cls_fields, ci, sym_lit(ck, "box")) >= 0:
+            m2_put(ck.ffi_cb_cls, 0, mangled_sym, bound[0])
     for gmi in range(len(def_gms)):
         gm: int = def_gms[gmi]
         gmn: int = pk(a.n[gm + {{O:FuncDef.name}}], a.n[gm + {{O:FuncDef.name}} + 1])
@@ -4109,8 +4478,6 @@ def collect_class_names(ck: Ck, a: Ast, body: int) -> None:
             raise unsup(ck, "class#bases")
         if pky(sl_at(a, cd, {{O:ClassDef.decorators}})) > 0:
             raise unsup(ck, "class#decorators")
-        if pky(sl_at(a, cd, {{O:ClassDef.consts}})) > 0:
-            raise unsup(ck, "class#consts")
         if pky(sl_at(a, cd, {{O:ClassDef.enum_variants}})) > 0:
             raise unsup(ck, "class#enum")
         if pky(sl_at(a, cd, {{O:ClassDef.type_params}})) > 0:
@@ -4275,7 +4642,97 @@ def register_class_sigs(ck: Ck, a: Ast, idx: int) -> None:
             if ck.cls_meths.k1[e2] == bi and ck.cls_meths.dead[e2] == 0:
                 m2_put(ck.cls_meths, idx, ck.cls_meths.k2[e2], ck.cls_meths.vv[e2])
         ck.cls_init[idx] = ck.cls_init[bi]
+        for e3 in range(len(ck.cls_consts_ty.k1)):
+            if ck.cls_consts_ty.k1[e3] == bi and ck.cls_consts_ty.dead[e3] == 0:
+                ks_b: int = ck.cls_consts_ty.k2[e3]
+                m2_put(ck.cls_consts_ty, idx, ks_b, ck.cls_consts_ty.vv[e3])
+                oe_b: int = m2_get(ck.cls_consts_owner, bi, ks_b)
+                if oe_b >= 0:
+                    m2_put(ck.cls_consts_owner, idx, ks_b, ck.cls_consts_owner.vv[oe_b])
+                pe_b: int = m2_get(ck.cls_consts_prom, bi, ks_b)
+                if pe_b >= 0:
+                    m2_put(ck.cls_consts_prom, idx, ks_b, ck.cls_consts_prom.vv[pe_b])
+    kds: int = sl_at(a, cd, {{O:ClassDef.consts}})
     fs: int = sl_at(a, cd, {{O:ClassDef.fields}})
+    saved_line_k: int = ck.cur_line
+    for ki in range(pky(kds)):
+        kd: int = stmt_at(a, kds, ki)
+        kline: int = a.n[kd + {{O:ConstDecl.line}}]
+        if kline != 0:
+            ck.cur_line = kline
+        knm: int = pk(a.n[kd + {{O:ConstDecl.name}}], a.n[kd + {{O:ConstDecl.name}} + 1])
+        ksym: int = sym_of(ck, a, knm)
+        k_decl: int = type_expr_to_type(ck, a, a.n[kd + {{O:ConstDecl.type_expr}}])
+        kval: int = a.n[kd + {{O:ConstDecl.value}}]
+        kvt: int = a.n[kval]
+        lit_t: int = -1
+        if kvt == {{T:Expr.int_lit}}:
+            lit_t = 0
+        elif kvt == {{T:Expr.float_lit}}:
+            lit_t = 1
+        elif kvt == {{T:Expr.bool_lit}}:
+            lit_t = 2
+        elif kvt == {{T:Expr.string_lit}}:
+            lit_t = 3
+        elif kvt == {{T:Expr.unary}}:
+            kup: int = a.n[kval + 1]
+            if a.n[kup + {{O:Unary.op}}] == {{E:UnaryOp.neg}}:
+                kuop: int = a.n[a.n[kup + {{O:Unary.operand}}]]
+                if kuop == {{T:Expr.int_lit}}:
+                    lit_t = 0
+                elif kuop == {{T:Expr.float_lit}}:
+                    lit_t = 1
+        if lit_t < 0:
+            mp(ck, "class '")
+            mp_sym(ck, csym)
+            mp(ck, "': the value of constant '")
+            mp_sref(ck, a, knm)
+            mp(ck, "' must be a constant literal (int/float/bool/str)")
+            raise mk_fail(ck, "TypeMismatch")
+        if not ty_assignable(ck.tt, k_decl, lit_t):
+            mp(ck, "class '")
+            mp_sym(ck, csym)
+            mp(ck, "': the value of constant '")
+            mp_sref(ck, a, knm)
+            mp(ck, "' does not match its declared type")
+            raise mk_fail(ck, "TypeMismatch")
+        if k_decl != 0 and k_decl != 1 and k_decl != 2 and k_decl != 3:
+            mp(ck, "class '")
+            mp_sym(ck, csym)
+            mp(ck, "': constant '")
+            mp_sref(ck, a, knm)
+            mp(ck, "' must be int, float, bool or str")
+            raise mk_fail(ck, "TypeMismatch")
+        same_k: int = 0
+        for ki2 in range(pky(kds)):
+            kd2: int = stmt_at(a, kds, ki2)
+            knm2: int = pk(a.n[kd2 + {{O:ConstDecl.name}}], a.n[kd2 + {{O:ConstDecl.name}} + 1])
+            if sref_eq_ref(a, knm2, knm):
+                same_k = same_k + 1
+        if same_k > 1:
+            mp(ck, "class '")
+            mp_sym(ck, csym)
+            mp(ck, "': constant '")
+            mp_sref(ck, a, knm)
+            mp(ck, "' is declared twice")
+            raise mk_fail(ck, "DuplicateDefinition")
+        for fj in range(pky(fs)):
+            fd_k: int = stmt_at(a, fs, fj)
+            fnm_k: int = pk(a.n[fd_k + {{O:FieldDecl.name}}], a.n[fd_k + {{O:FieldDecl.name}} + 1])
+            if sref_eq_ref(a, fnm_k, knm):
+                mp(ck, "class '")
+                mp_sym(ck, csym)
+                mp(ck, "': '")
+                mp_sref(ck, a, knm)
+                mp(ck, "' is both a field and a constant")
+                raise mk_fail(ck, "DuplicateDefinition")
+        kown: int = csym
+        if a.n[kd + {{O:ConstDecl.owner}}] != {{NONE}}:
+            kown = sym_of(ck, a, pk(a.n[kd + {{O:ConstDecl.owner}}], a.n[kd + {{O:ConstDecl.owner}} + 1]))
+        m2_put(ck.cls_consts_ty, idx, ksym, k_decl)
+        m2_put(ck.cls_consts_owner, idx, ksym, kown)
+        m2_put(ck.cls_consts_prom, idx, ksym, a.n[kd + {{O:ConstDecl.promoted}}])
+    ck.cur_line = saved_line_k
     for j in range(pky(fs)):
         f: int = stmt_at(a, fs, j)
         fsym: int = sym_of(ck, a, pk(a.n[f + {{O:FieldDecl.name}}], a.n[f + {{O:FieldDecl.name}} + 1]))
@@ -4442,9 +4899,42 @@ def check_method_body(ck: Ck, a: Ast, idx: int, m: int, is_init: bool) -> None:
         raise mk_fail(ck, "MissingReturn")
 
 # `checkAttribute`: örnek alanı okuması (sınıf sabiti/property/enum kapsam dışı)
+def receiver_class_name(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
+    if a.n[e] == {{T:Expr.attribute}}:
+        raw: list[int] = []
+        if not flatten_dotted(ck, a, e, raw) or len(raw) < 2:
+            return -1
+        if sc_lookup(ck, fx.scope, raw[0]) >= 0 or m2_get(ck.globs, 0, raw[0]) >= 0:
+            return -1
+        segs: list[int] = subst_alias(ck, raw)
+        mod: int = join_syms(ck, segs, len(segs) - 1, 46)
+        if m2_get(ck.imod, 0, mod) < 0:
+            return -1
+        mangled: int = join_syms(ck, segs, len(segs), 95)
+        return class_idx(ck, mangled)
+    if a.n[e] != {{T:Expr.identifier}}:
+        return -1
+    nm: int = sym_of(ck, a, pk(a.n[e + 1], a.n[e + 2]))
+    if sc_lookup(ck, fx.scope, nm) >= 0 or m2_get(ck.globs, 0, nm) >= 0:
+        return -1
+    ci: int = class_idx(ck, nm)
+    if ci >= 0:
+        return ci
+    fe: int = m2_get(ck.fimp, 0, nm)
+    if fe >= 0:
+        return class_idx(ck, ck.fimp.vv[fe])
+    return -1
+
 def check_attribute(ck: Ck, a: Ast, fx: Fx, at: int) -> int:
-    obj_t: int = check_expr(ck, a, fx, a.n[at + {{O:Attribute.obj}}])
+    obj: int = a.n[at + {{O:Attribute.obj}}]
     attr: int = pk(a.n[at + {{O:Attribute.attr}}], a.n[at + {{O:Attribute.attr}} + 1])
+    asym: int = sym_of(ck, a, attr)
+    rc: int = receiver_class_name(ck, a, fx, obj)
+    if rc >= 0:
+        ce: int = m2_get(ck.cls_consts_ty, rc, asym)
+        if ce >= 0:
+            return ck.cls_consts_ty.vv[ce]
+    obj_t: int = check_expr(ck, a, fx, obj)
     require_not_optional_sref(ck, obj_t, a, attr)
     if ck.tt.tag[obj_t] != 6:
         mp(ck, "'.")
@@ -4456,10 +4946,12 @@ def check_attribute(ck: Ck, a: Ast, fx: Fx, at: int) -> int:
         mp(ck, "unknown class: ")
         mp_sym(ck, ck.tt.xa[obj_t])
         raise mk_fail(ck, "UndefinedClass")
-    asym: int = sym_of(ck, a, attr)
     fe: int = m2_get(ck.cls_fields, ci, asym)
     if fe >= 0:
         return ck.cls_fields.vv[fe]
+    ce2: int = m2_get(ck.cls_consts_ty, ci, asym)
+    if ce2 >= 0:
+        return ck.cls_consts_ty.vv[ce2]
     # `nesne.metod` değer olarak (bağlı metod: Zig `bound_method_fixup` ile yeniden yazılır) kapsam dışı
     if m2_get(ck.cls_meths, ci, asym) >= 0:
         raise unsup(ck, "attr#bound_method")
@@ -5435,17 +5927,43 @@ def check_assign_attr(ck: Ck, a: Ast, fx: Fx, asg: int, tg: int) -> None:
     attr: int = pk(a.n[at + {{O:Attribute.attr}}], a.n[at + {{O:Attribute.attr}} + 1])
     asym: int = sym_of(ck, a, attr)
     tt: TT = ck.tt
-    # `Sınıf.ad = v`: sınıf adı gölgelenmemişse sınıf özniteliği ataması (bu dilimde sabitsiz: her zaman hata)
-    if a.n[obj] == {{T:Expr.identifier}}:
-        osym: int = sym_of(ck, a, pk(a.n[obj + 1], a.n[obj + 2]))
-        oci: int = class_idx(ck, osym)
-        if oci >= 0 and sc_lookup(ck, fx.scope, osym) < 0 and m2_get(ck.globs, 0, osym) < 0:
-            mp(ck, "'")
-            mp_sym(ck, osym)
-            mp(ck, ".")
-            mp_sref(ck, a, attr)
-            mp(ck, "' cannot be assigned: it is not a class attribute (class attributes are declared in the class body as 'NAME: T = literal')")
-            raise mk_fail(ck, "TypeMismatch")
+    # `Sınıf.ad = v`: sınıf adı gölgelenmemişse sınıf özniteliği ataması
+    oci: int = receiver_class_name(ck, a, fx, obj)
+    if oci >= 0:
+        osym: int = ck.cls_sym[oci]
+        ce: int = m2_get(ck.cls_consts_ty, oci, asym)
+        pe: int = m2_get(ck.cls_consts_prom, oci, asym)
+        if ce >= 0 and pe >= 0 and ck.cls_consts_prom.vv[pe] != 0:
+            kown: int = ck.cls_consts_owner.vv[m2_get(ck.cls_consts_owner, oci, asym)]
+            if kown != osym:
+                mp(ck, "'")
+                mp_sym(ck, osym)
+                mp(ck, ".")
+                mp_sref(ck, a, attr)
+                mp(ck, "' is declared in class '")
+                mp_sym(ck, kown)
+                mp(ck, "': assign it as '")
+                mp_sym(ck, kown)
+                mp(ck, ".")
+                mp_sref(ck, a, attr)
+                mp(ck, "' (a subclass has no copy of a class attribute)")
+                raise mk_fail(ck, "TypeMismatch")
+            kty: int = ck.cls_consts_ty.vv[ce]
+            kvt: int = check_expr_expected(ck, a, fx, a.n[asg + {{O:Assign.value}}], kty)
+            if not assignable_or_coerce(ck, a, kty, kvt):
+                mp(ck, "type mismatch for '")
+                mp_sym(ck, osym)
+                mp(ck, ".")
+                mp_sref(ck, a, attr)
+                mp(ck, "'")
+                raise mk_fail(ck, "TypeMismatch")
+            return
+        mp(ck, "'")
+        mp_sym(ck, osym)
+        mp(ck, ".")
+        mp_sref(ck, a, attr)
+        mp(ck, "' cannot be assigned: it is not a class attribute (class attributes are declared in the class body as 'NAME: T = literal')")
+        raise mk_fail(ck, "TypeMismatch")
     obj_t: int = check_expr(ck, a, fx, obj)
     require_not_optional_sref(ck, obj_t, a, attr)
     if tt.tag[obj_t] != 6:
@@ -5503,6 +6021,22 @@ def check_assign_attr(ck: Ck, a: Ast, fx: Fx, asg: int, tg: int) -> None:
             raise mk_fail(ck, "TypeMismatch")
         m2_remove(ck.cls_unas, ci, asym)
     else:
+        ce_i: int = m2_get(ck.cls_consts_ty, ci, asym)
+        if ce_i >= 0:
+            kown_i: int = ck.cls_consts_owner.vv[m2_get(ck.cls_consts_owner, ci, asym)]
+            mp(ck, "'")
+            if is_self:
+                mp(ck, "self")
+            else:
+                mp_sym(ck, ck.cls_sym[ci])
+            mp(ck, ".")
+            mp_sref(ck, a, attr)
+            mp(ck, "' is a class attribute and cannot be assigned through an instance: assign it as '")
+            mp_sym(ck, kown_i)
+            mp(ck, ".")
+            mp_sref(ck, a, attr)
+            mp(ck, " = ...' (instances have no copy of a class attribute)")
+            raise mk_fail(ck, "TypeMismatch")
         if not (is_self and fx.is_init):
             mp(ck, "in class '")
             mp_sym(ck, ck.cls_sym[ci])
@@ -5650,6 +6184,481 @@ def ffi_safe_type(ck: Ck, t: int) -> bool:
         return rg == 0 or rg == 1 or rg == 2 or rg == 5 or rg == 4 or tt.tag[rg] == 16
     return False
 
+def is_ffi_safe_cb_type(ck: Ck, ft: int) -> bool:
+    tt: TT = ck.tt
+    if tt.tag[ft] != 14:
+        return False
+    base: int = tt.xa[ft]
+    for i in range(tt.xc[ft]):
+        p: int = tt.fp[base + i]
+        pg: int = tt.tag[p]
+        if p != 0 and p != 1 and p != 2 and p != 5 and pg != 16:
+            return False
+    r: int = tt.xb[ft]
+    rg: int = tt.tag[r]
+    return r == 0 or r == 1 or r == 2 or r == 5 or r == 4 or rg == 16
+
+def scalar_type_eql(ck: Ck, ta: int, tb: int) -> bool:
+    if ta == tb:
+        return True
+    tt: TT = ck.tt
+    ga: int = tt.tag[ta]
+    gb: int = tt.tag[tb]
+    if ga != gb:
+        return False
+    if ga == 16 or ga == 17:
+        return tt.xa[ta] == tt.xa[tb]
+    return False
+
+def check_extern_errors_call(ck: Ck, a: Ast, sym: int) -> None:
+    if m2_get(ck.ext_err_checked, 0, sym) >= 0:
+        return
+    m2_put(ck.ext_err_checked, 0, sym, 1)
+    ee: int = m2_get(ck.ext_err_errno, 0, sym)
+    if ee >= 0 and ck.ext_err_errno.vv[ee] != 0:
+        if m2_get(ck.imod, 0, sym_lit(ck, "nox.ffi")) < 0:
+            mp(ck, "'")
+            mp_sym(ck, sym)
+            mp(ck, "': '@ffi.errors(errno=True)' needs 'import nox.ffi'")
+            raise mk_fail(ck, "UnknownType")
+    rsym: int = ck.ext_err_raises.vv[m2_get(ck.ext_err_raises, 0, sym)]
+    rci: int = class_idx(ck, rsym)
+    if rci < 0:
+        rfe: int = m2_get(ck.fimp, 0, rsym)
+        if rfe >= 0:
+            rci = class_idx(ck, ck.fimp.vv[rfe])
+    if rci < 0:
+        mp(ck, "undefined function or class: ")
+        mp_sym(ck, rsym)
+        raise mk_fail(ck, "UndefinedFunction")
+    isid: int = ck.cls_init[rci]
+    if isid < 0:
+        isid = ck.sig_empty
+    if ck.fpn[isid] != 1 or not ty_assignable(ck.tt, ck.fpar[ck.fps[isid]], 3):
+        mp(ck, "'")
+        mp_sym(ck, sym)
+        mp(ck, "': '@ffi.errors' raises class '")
+        mp_sym(ck, rsym)
+        mp(ck, "' must accept a single 'str' message")
+        raise mk_fail(ck, "TypeMismatch")
+    me: int = m2_get(ck.ext_err_msg, 0, sym)
+    if me >= 0 and ck.ext_err_msg.vv[me] >= 0:
+        msym: int = ck.ext_err_msg.vv[me]
+        mfi: int = m2_get(ck.fmap, 0, msym)
+        if mfi < 0:
+            mfe: int = m2_get(ck.fimp, 0, msym)
+            if mfe >= 0:
+                mfi = m2_get(ck.fmap, 0, ck.fimp.vv[mfe])
+        if mfi < 0:
+            mp(ck, "undefined function or class: ")
+            mp_sym(ck, msym)
+            raise mk_fail(ck, "UndefinedFunction")
+        msid: int = ck.fmap.vv[mfi]
+        if ck.fpn[msid] != 1 or not ty_assignable(ck.tt, ck.fpar[ck.fps[msid]], 0) or ck.fret[msid] != 3:
+            mp(ck, "'")
+            mp_sym(ck, sym)
+            mp(ck, "': '@ffi.errors(message=...)' function '")
+            mp_sym(ck, msym)
+            mp(ck, "' must have signature (int) -> str")
+            raise mk_fail(ck, "TypeMismatch")
+
+def check_callback_target_arg(ck: Ck, a: Ast, fx: Fx, ae: int, cb_ty: int, ud_pos: int, ext_sym: int) -> None:
+    if a.n[ae] == {{T:Expr.none_lit}}:
+        return
+    tt: TT = ck.tt
+    is_handle_cand: bool = a.n[ae] == {{T:Expr.attribute}}
+    if not is_handle_cand and a.n[ae] == {{T:Expr.identifier}}:
+        asym_h: int = sym_of(ck, a, pk(a.n[ae + 1], a.n[ae + 2]))
+        if sc_lookup(ck, fx.scope, asym_h) >= 0:
+            is_handle_cand = True
+    if is_handle_cand:
+        ht: int = check_expr(ck, a, fx, ae)
+        if tt.tag[ht] == 6:
+            cbe: int = m2_get(ck.ffi_cb_cls, 0, tt.xa[ht])
+            if cbe >= 0:
+                f_ty: int = ck.ffi_cb_cls.vv[cbe]
+                cb_n: int = tt.xc[cb_ty]
+                exp_n: int = cb_n - 1
+                f_n: int = tt.xc[f_ty]
+                if f_n != exp_n:
+                    mp(ck, "'")
+                    mp_sym(ck, ext_sym)
+                    mp(ck, "': the Callback handle takes ")
+                    mp_int(ck, f_n)
+                    mp(ck, " parameters, the callback signature has ")
+                    mp_int(ck, exp_n)
+                    raise mk_fail(ck, "TypeMismatch")
+                f_base: int = tt.xa[f_ty]
+                cb_base: int = tt.xa[cb_ty]
+                ei: int = 0
+                for pi in range(cb_n):
+                    if pi == ud_pos:
+                        continue
+                    if not scalar_type_eql(ck, tt.fp[f_base + ei], tt.fp[cb_base + pi]):
+                        mp(ck, "'")
+                        mp_sym(ck, ext_sym)
+                        mp(ck, "': the Callback handle: the type of parameter ")
+                        mp_int(ck, ei + 1)
+                        mp(ck, " does not match the callback signature")
+                        raise mk_fail(ck, "TypeMismatch")
+                    ei = ei + 1
+                if not scalar_type_eql(ck, tt.xb[f_ty], tt.xb[cb_ty]):
+                    mp(ck, "'")
+                    mp_sym(ck, ext_sym)
+                    mp(ck, "': the Callback handle: the return type does not match the callback signature")
+                    raise mk_fail(ck, "TypeMismatch")
+                return
+    if a.n[ae] != {{T:Expr.identifier}}:
+        mp(ck, "'")
+        mp_sym(ck, ext_sym)
+        mp(ck, "': the '@ffi.callback' target can only be the BARE name of a top-level function (lambdas/bound methods/capturing closures are NOT ACCEPTED)")
+        raise mk_fail(ck, "TypeMismatch")
+    tsym: int = sym_of(ck, a, pk(a.n[ae + 1], a.n[ae + 2]))
+    if sc_lookup(ck, fx.scope, tsym) >= 0:
+        mp(ck, "'")
+        mp_sym(ck, ext_sym)
+        mp(ck, "': the '@ffi.callback' target '")
+        mp_sym(ck, tsym)
+        mp(ck, "' shadows a local variable, it MUST be a top-level function")
+        raise mk_fail(ck, "TypeMismatch")
+    if m2_get(ck.ext_fns, 0, tsym) >= 0:
+        mp(ck, "'")
+        mp_sym(ck, ext_sym)
+        mp(ck, "': the '@ffi.callback' target '")
+        mp_sym(ck, tsym)
+        mp(ck, "' is an 'extern def' — only ordinary top-level functions (with a Nox body) can be callback targets")
+        raise mk_fail(ck, "TypeMismatch")
+    if m2_get(ck.afn, 0, tsym) >= 0:
+        mp(ck, "'")
+        mp_sym(ck, ext_sym)
+        mp(ck, "': the '@ffi.callback' target '")
+        mp_sym(ck, tsym)
+        mp(ck, "' is an 'async def' — callback targets must be synchronous")
+        raise mk_fail(ck, "TypeMismatch")
+    tfi: int = m2_get(ck.fmap, 0, tsym)
+    if tfi < 0:
+        mp(ck, "'")
+        mp_sym(ck, ext_sym)
+        mp(ck, "': the '@ffi.callback' target is an undefined function: ")
+        mp_sym(ck, tsym)
+        raise mk_fail(ck, "UndefinedFunction")
+    tsid: int = ck.fmap.vv[tfi]
+    cb_n2: int = tt.xc[cb_ty]
+    exp_n2: int = cb_n2 - 1
+    if ck.fpn[tsid] != exp_n2:
+        mp(ck, "'")
+        mp_sym(ck, ext_sym)
+        mp(ck, "': the parameter COUNT of the '@ffi.callback' target '")
+        mp_sym(ck, tsym)
+        mp(ck, "' does not match the callback signature (")
+        mp_int(ck, exp_n2)
+        mp(ck, " expected, ")
+        mp_int(ck, ck.fpn[tsid])
+        mp(ck, " found)")
+        raise mk_fail(ck, "TypeMismatch")
+    t_base: int = ck.fps[tsid]
+    cb_base2: int = tt.xa[cb_ty]
+    ei2: int = 0
+    for pi2 in range(cb_n2):
+        if pi2 == ud_pos:
+            continue
+        if not scalar_type_eql(ck, ck.fpar[t_base + ei2], tt.fp[cb_base2 + pi2]):
+            mp(ck, "'")
+            mp_sym(ck, ext_sym)
+            mp(ck, "': the '@ffi.callback' target '")
+            mp_sym(ck, tsym)
+            mp(ck, "': the type of parameter ")
+            mp_int(ck, ei2 + 1)
+            mp(ck, " does not match the callback signature")
+            raise mk_fail(ck, "TypeMismatch")
+        ei2 = ei2 + 1
+    if not scalar_type_eql(ck, ck.fret[tsid], tt.xb[cb_ty]):
+        mp(ck, "'")
+        mp_sym(ck, ext_sym)
+        mp(ck, "': the return type of the '@ffi.callback' target '")
+        mp_sym(ck, tsym)
+        mp(ck, "' does not match the callback signature")
+        raise mk_fail(ck, "TypeMismatch")
+
+def check_extern_callback_args(ck: Ck, a: Ast, fx: Fx, sid: int, c: int, ext_sym: int) -> None:
+    cargs: int = sl_at(a, c, {{O:Call.args}})
+    nargs: int = pky(cargs)
+    nparams: int = ck.fpn[sid]
+    exp_arity: int = nparams - 1
+    cb_idx: int = ck.ext_cb_idx.vv[m2_get(ck.ext_cb_idx, 0, ext_sym)]
+    ctx_idx: int = ck.ext_cb_ctx.vv[m2_get(ck.ext_cb_ctx, 0, ext_sym)]
+    cb_ty: int = ck.ext_cb_ty.vv[m2_get(ck.ext_cb_ty, 0, ext_sym)]
+    ud_pos: int = ck.ext_cb_ud.vv[m2_get(ck.ext_cb_ud, 0, ext_sym)]
+    if nargs != exp_arity:
+        mp(ck, "'")
+        mp_sym(ck, ext_sym)
+        mp(ck, "' expects ")
+        mp_int(ck, exp_arity)
+        mp(ck, " arguments (parameter ")
+        mp_int(ck, ctx_idx + 1)
+        mp(ck, " is the '@ffi.callback' context_param and is NOT written at the call site — the compiler fills it in automatically), ")
+        mp_int(ck, nargs)
+        mp(ck, " were given")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    ai: int = 0
+    for pi in range(nparams):
+        if pi == ctx_idx:
+            continue
+        ae: int = stmt_at(a, cargs, ai)
+        ai = ai + 1
+        if pi == cb_idx:
+            check_callback_target_arg(ck, a, fx, ae, cb_ty, ud_pos, ext_sym)
+            continue
+        pt: int = ck.fpar[ck.fps[sid] + pi]
+        at: int = check_expr_expected(ck, a, fx, ae, pt)
+        if not assignable_or_coerce(ck, a, pt, at):
+            mp(ck, "type mismatch for argument '")
+            mp_sym(ck, ext_sym)
+            mp(ck, "'")
+            raise mk_fail(ck, "TypeMismatch")
+
+def register_extern_errors(ck: Ck, a: Ast, sym: int, nm: int, dec: int, ed: int, ret: int) -> None:
+    dargs: int = sl_at(a, dec, {{O:Decorator.args}})
+    raises_sym: int = -1
+    kind: int = -1
+    val: int = 0
+    errno_on: int = 0
+    msg_sym: int = -1
+    for i in range(pky(dargs)):
+        da: int = stmt_at(a, dargs, i)
+        if a.n[da] != {{T:Expr.kwarg}}:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': '@ffi.errors' takes keyword arguments only (raises=, ok=, ok_min=, null_is_error=, errno=, message=)")
+            raise mk_fail(ck, "TypeMismatch")
+        kw: int = a.n[da + 1]
+        knm: int = pk(a.n[kw + {{O:Kwarg.name}}], a.n[kw + {{O:Kwarg.name}} + 1])
+        kv: int = a.n[kw + {{O:Kwarg.value}}]
+        kvt: int = a.n[kv]
+        if sref_eq(a, knm, "raises"):
+            if kvt != {{T:Expr.identifier}}:
+                mp(ck, "extern function '")
+                mp_sref(ck, a, nm)
+                mp(ck, "': '@ffi.errors(raises=...)' must name an exception class")
+                raise mk_fail(ck, "TypeMismatch")
+            raises_sym = sym_of(ck, a, pk(a.n[kv + 1], a.n[kv + 2]))
+        elif sref_eq(a, knm, "ok") or sref_eq(a, knm, "ok_min"):
+            n: int = 0
+            ok_int: bool = False
+            if kvt == {{T:Expr.int_lit}}:
+                n = a.n[kv + 1]
+                ok_int = True
+            elif kvt == {{T:Expr.unary}}:
+                up: int = a.n[kv + 1]
+                if a.n[up + {{O:Unary.op}}] == {{E:UnaryOp.neg}} and a.n[a.n[up + {{O:Unary.operand}}]] == {{T:Expr.int_lit}}:
+                    n = 0 - a.n[a.n[up + {{O:Unary.operand}}] + 1]
+                    ok_int = True
+            if not ok_int:
+                mp(ck, "extern function '")
+                mp_sref(ck, a, nm)
+                mp(ck, "': '@ffi.errors(")
+                mp_sref(ck, a, knm)
+                mp(ck, "=...)' takes an integer literal")
+                raise mk_fail(ck, "TypeMismatch")
+            if kind >= 0:
+                mp(ck, "extern function '")
+                mp_sref(ck, a, nm)
+                mp(ck, "': '@ffi.errors' takes exactly one of ok=, ok_min=, null_is_error=")
+                raise mk_fail(ck, "TypeMismatch")
+            kind = 0 if sref_eq(a, knm, "ok") else 1
+            val = n
+        elif sref_eq(a, knm, "null_is_error"):
+            if kvt != {{T:Expr.bool_lit}}:
+                mp(ck, "extern function '")
+                mp_sref(ck, a, nm)
+                mp(ck, "': '@ffi.errors(null_is_error=...)' takes True or False")
+                raise mk_fail(ck, "TypeMismatch")
+            if a.n[kv + 1] != 0:
+                if kind >= 0:
+                    mp(ck, "extern function '")
+                    mp_sref(ck, a, nm)
+                    mp(ck, "': '@ffi.errors' takes exactly one of ok=, ok_min=, null_is_error=")
+                    raise mk_fail(ck, "TypeMismatch")
+                kind = 2
+        elif sref_eq(a, knm, "errno"):
+            if kvt != {{T:Expr.bool_lit}}:
+                mp(ck, "extern function '")
+                mp_sref(ck, a, nm)
+                mp(ck, "': '@ffi.errors(errno=...)' takes True or False")
+                raise mk_fail(ck, "TypeMismatch")
+            errno_on = 1 if a.n[kv + 1] != 0 else 0
+        elif sref_eq(a, knm, "message"):
+            if kvt != {{T:Expr.string_lit}}:
+                mp(ck, "extern function '")
+                mp_sref(ck, a, nm)
+                mp(ck, "': '@ffi.errors(message=...)' takes a string literal naming a top-level function")
+                raise mk_fail(ck, "TypeMismatch")
+            msg_sym = sym_of(ck, a, pk(a.n[kv + 1], a.n[kv + 2]))
+        else:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': unknown '@ffi.errors' argument '")
+            mp_sref(ck, a, knm)
+            mp(ck, "'")
+            raise mk_fail(ck, "TypeMismatch")
+    if raises_sym < 0:
+        mp(ck, "extern function '")
+        mp_sref(ck, a, nm)
+        mp(ck, "': '@ffi.errors' requires raises=<exception class>")
+        raise mk_fail(ck, "TypeMismatch")
+    if kind < 0:
+        mp(ck, "extern function '")
+        mp_sref(ck, a, nm)
+        mp(ck, "': '@ffi.errors' requires one of ok=, ok_min=, null_is_error=True")
+        raise mk_fail(ck, "TypeMismatch")
+    eds: int = sl_at(a, ed, {{O:ExternDef.decorators}})
+    for d2i in range(pky(eds)):
+        d2: int = stmt_at(a, eds, d2i)
+        if sref_eq(a, pk(a.n[d2 + {{O:Decorator.name}}], a.n[d2 + {{O:Decorator.name}} + 1]), "ffi.callback"):
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': '@ffi.errors' cannot be combined with '@ffi.callback'")
+            raise mk_fail(ck, "TypeMismatch")
+    rg: int = ck.tt.tag[ret]
+    ret_ok: bool = (ret == 0 or rg == 16)
+    if kind == 2:
+        ret_ok = ret_ok or ret == 5 or rg == 17
+    if not ret_ok:
+        mp(ck, "extern function '")
+        mp_sref(ck, a, nm)
+        mp(ck, "': '@ffi.errors' needs an integer return type (ok=/ok_min=) or a ptr/integer return type (null_is_error=True)")
+        raise mk_fail(ck, "TypeMismatch")
+    m2_put(ck.ext_err_raises, 0, sym, raises_sym)
+    m2_put(ck.ext_err_kind, 0, sym, kind)
+    m2_put(ck.ext_err_thresh, 0, sym, val)
+    m2_put(ck.ext_err_errno, 0, sym, errno_on)
+    m2_put(ck.ext_err_msg, 0, sym, msg_sym)
+    m2_put(ck.ext_err_node, 0, sym, ck.cur_line)
+
+def register_extern_callback(ck: Ck, a: Ast, sym: int, nm: int, ed: int, tys: list[int]) -> None:
+    ps: int = sl_at(a, ed, {{O:ExternDef.params}})
+    eds: int = sl_at(a, ed, {{O:ExternDef.decorators}})
+    for di in range(pky(eds)):
+        dec: int = stmt_at(a, eds, di)
+        dname: int = pk(a.n[dec + {{O:Decorator.name}}], a.n[dec + {{O:Decorator.name}} + 1])
+        if not sref_eq(a, dname, "ffi.callback"):
+            continue
+        dargs: int = sl_at(a, dec, {{O:Decorator.args}})
+        ud_kw: int = -1
+        n_pos: int = 0
+        for ai in range(pky(dargs)):
+            da: int = stmt_at(a, dargs, ai)
+            if a.n[da] == {{T:Expr.kwarg}}:
+                kw: int = a.n[da + 1]
+                if not sref_eq(a, pk(a.n[kw + {{O:Kwarg.name}}], a.n[kw + {{O:Kwarg.name}} + 1]), "ud_index") or a.n[a.n[kw + {{O:Kwarg.value}}]] != {{T:Expr.int_lit}}:
+                    mp(ck, "extern function '")
+                    mp_sref(ck, a, nm)
+                    mp(ck, "': '@ffi.callback' accepts only the keyword argument ud_index=<integer literal>")
+                    raise mk_fail(ck, "TypeMismatch")
+                ud_kw = a.n[a.n[kw + {{O:Kwarg.value}}] + 1]
+            else:
+                n_pos = n_pos + 1
+        if n_pos < 1 or n_pos > 2 or a.n[stmt_at(a, dargs, 0)] != {{T:Expr.string_lit}}:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': '@ffi.callback' expects at least \"param_name\" (the callback parameter) AND an optional \"context_param=...\" argument")
+            raise mk_fail(ck, "TypeMismatch")
+        cb_e: int = stmt_at(a, dargs, 0)
+        cb_sr: int = pk(a.n[cb_e + 1], a.n[cb_e + 2])
+        cb_idx: int = -1
+        for pi in range(pky(ps)):
+            p: int = stmt_at(a, ps, pi)
+            if sref_eq_ref(a, pk(a.n[p + {{O:Param.name}}], a.n[p + {{O:Param.name}} + 1]), cb_sr):
+                cb_idx = pi
+                break
+        if cb_idx < 0:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': '@ffi.callback(\"")
+            mp_sref(ck, a, cb_sr)
+            mp(ck, "\")' names an unknown parameter")
+            raise mk_fail(ck, "UnknownRetainedParam")
+        cb_ty: int = tys[cb_idx]
+        if ck.tt.tag[cb_ty] != 14:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': the '@ffi.callback' target '")
+            mp_sref(ck, a, cb_sr)
+            mp(ck, "' is not of a function TYPE")
+            raise mk_fail(ck, "TypeMismatch")
+        if not is_ffi_safe_cb_type(ck, cb_ty):
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': the SIGNATURE of the '@ffi.callback' target '")
+            mp_sref(ck, a, cb_sr)
+            mp(ck, "' is not FFI-safe (only int/float/bool/ptr parameters AND an int/float/bool/ptr/None return)")
+            raise mk_fail(ck, "TypeMismatch")
+        if n_pos != 2 or a.n[stmt_at(a, dargs, 1)] != {{T:Expr.string_lit}}:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': in v1 '@ffi.callback' is not supported WITHOUT a \"context_param\" argument (C APIs without a userdata slot are outside the v1 scope)")
+            raise mk_fail(ck, "TypeMismatch")
+        ctx_e: int = stmt_at(a, dargs, 1)
+        ctx_sr: int = pk(a.n[ctx_e + 1], a.n[ctx_e + 2])
+        ctx_idx: int = -1
+        for pi2 in range(pky(ps)):
+            p2: int = stmt_at(a, ps, pi2)
+            if sref_eq_ref(a, pk(a.n[p2 + {{O:Param.name}}], a.n[p2 + {{O:Param.name}} + 1]), ctx_sr):
+                ctx_idx = pi2
+                break
+        if ctx_idx < 0:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': the '@ffi.callback' context_param '")
+            mp_sref(ck, a, ctx_sr)
+            mp(ck, "' names an unknown parameter")
+            raise mk_fail(ck, "UnknownRetainedParam")
+        if ctx_idx == cb_idx:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': the '@ffi.callback' context_param cannot be the SAME as the callback parameter itself")
+            raise mk_fail(ck, "TypeMismatch")
+        if tys[ctx_idx] != 5:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': the '@ffi.callback' context_param '")
+            mp_sref(ck, a, ctx_sr)
+            mp(ck, "' is not of type 'ptr'")
+            raise mk_fail(ck, "TypeMismatch")
+        cb_np: int = ck.tt.xc[cb_ty]
+        if cb_np == 0:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': the SIGNATURE of the '@ffi.callback' target '")
+            mp_sref(ck, a, cb_sr)
+            mp(ck, "' must have at least one parameter (the LAST parameter COUNTS as the 'userdata' slot)")
+            raise mk_fail(ck, "TypeMismatch")
+        ud_pos: int = cb_np - 1
+        if ud_kw >= 0:
+            if ud_kw < 0 or ud_kw >= cb_np:
+                mp(ck, "extern function '")
+                mp_sref(ck, a, nm)
+                mp(ck, "': '@ffi.callback' ud_index=")
+                mp_int(ck, ud_kw)
+                mp(ck, " is outside the callback signature (")
+                mp_int(ck, cb_np)
+                mp(ck, " parameters)")
+                raise mk_fail(ck, "TypeMismatch")
+            ud_pos = ud_kw
+        if ck.tt.fp[ck.tt.xa[cb_ty] + ud_pos] != 5:
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': parameter ")
+            mp_int(ck, ud_pos + 1)
+            mp(ck, " of the SIGNATURE of the '@ffi.callback' target '")
+            mp_sref(ck, a, cb_sr)
+            mp(ck, "' (the userdata slot; the LAST one unless ud_index= is given) must be of type 'ptr'")
+            raise mk_fail(ck, "TypeMismatch")
+        m2_put(ck.ext_cb_idx, 0, sym, cb_idx)
+        m2_put(ck.ext_cb_ctx, 0, sym, ctx_idx)
+        m2_put(ck.ext_cb_ty, 0, sym, cb_ty)
+        m2_put(ck.ext_cb_ud, 0, sym, ud_pos)
+
 def register_extern(ck: Ck, a: Ast, ed: int) -> None:
     nm: int = pk(a.n[ed + {{O:ExternDef.name}}], a.n[ed + {{O:ExternDef.name}} + 1])
     ps: int = sl_at(a, ed, {{O:ExternDef.params}})
@@ -5693,25 +6702,100 @@ def register_extern(ck: Ck, a: Ast, ed: int) -> None:
         mp_sref(ck, a, nm)
         mp(ck, "': the return type is unsupported (only int/float/bool/str/None/list[str]/list[int]/class can cross the C ABI boundary in v0.1)")
         raise mk_fail(ck, "TypeMismatch")
-    # `@ffi.*`/`@capability.requires` dekoratörleri kapsam dışı
-    if pky(sl_at(a, ed, {{O:ExternDef.decorators}})) > 0:
-        raise unsup(ck, "extern#decorators")
+    escape_syms: list[int] = []
     rts: int = sl_at(a, ed, {{O:ExternDef.retains}})
     for r in range(pky(rts)):
         rn: int = pk(a.l[pkx(rts) + r * 2], a.l[pkx(rts) + r * 2 + 1])
-        found: bool = False
+        escape_syms.append(sym_of(ck, a, rn))
+    eds: int = sl_at(a, ed, {{O:ExternDef.decorators}})
+    for di in range(pky(eds)):
+        dec: int = stmt_at(a, eds, di)
+        dname: int = pk(a.n[dec + {{O:Decorator.name}}], a.n[dec + {{O:Decorator.name}} + 1])
+        if not sref_eq(a, dname, "ffi.escape") and not sref_eq(a, dname, "ffi.noescape") and not sref_eq(a, dname, "ffi.callback") and not sref_eq(a, dname, "ffi.errors") and not sref_eq(a, dname, "capability.requires"):
+            mp(ck, "extern function '")
+            mp_sref(ck, a, nm)
+            mp(ck, "': unknown decorator '@")
+            mp_sref(ck, a, dname)
+            mp(ck, "' (only @ffi.escape/@ffi.noescape/@ffi.callback/@ffi.errors/@capability.requires are valid)")
+            raise mk_fail(ck, "UnknownExternDecorator")
+        dargs: int = sl_at(a, dec, {{O:Decorator.args}})
+        if sref_eq(a, dname, "capability.requires"):
+            for ai in range(pky(dargs)):
+                da: int = stmt_at(a, dargs, ai)
+                if a.n[da] != {{T:Expr.string_lit}}:
+                    mp(ck, "extern function '")
+                    mp_sref(ck, a, nm)
+                    mp(ck, "': argument ")
+                    mp_int(ck, ai + 1)
+                    mp(ck, " of '@capability.requires' must be a string LITERAL")
+                    raise mk_fail(ck, "TypeMismatch")
+            register_capability_decorator(ck, a, sym, dargs)
+        elif sref_eq(a, dname, "ffi.errors"):
+            register_extern_errors(ck, a, sym, nm, dec, ed, ret)
+        elif sref_eq(a, dname, "ffi.escape"):
+            for ai2 in range(pky(dargs)):
+                da2: int = stmt_at(a, dargs, ai2)
+                if a.n[da2] != {{T:Expr.string_lit}}:
+                    mp(ck, "extern function '")
+                    mp_sref(ck, a, nm)
+                    mp(ck, "': argument ")
+                    mp_int(ck, ai2 + 1)
+                    mp(ck, " of '@ffi.escape' must be a string LITERAL (parameter name)")
+                    raise mk_fail(ck, "TypeMismatch")
+                escape_syms.append(sym_of(ck, a, pk(a.n[da2 + 1], a.n[da2 + 2])))
+    for ei in range(len(escape_syms)):
+        esym: int = escape_syms[ei]
+        found_e: bool = False
         for f in range(pky(ps)):
             fp: int = stmt_at(a, ps, f)
-            if sref_eq_ref(a, pk(a.n[fp + {{O:Param.name}}], a.n[fp + {{O:Param.name}} + 1]), rn):
-                found = True
-        if not found:
+            if sym_of(ck, a, pk(a.n[fp + {{O:Param.name}}], a.n[fp + {{O:Param.name}} + 1])) == esym:
+                found_e = True
+        if not found_e:
             mp(ck, "extern function '")
             mp_sref(ck, a, nm)
             mp(ck, "': 'retains/@ffi.escape(\"")
-            mp_sref(ck, a, rn)
+            mp_sym(ck, esym)
             mp(ck, "\")' names an unknown parameter")
             raise mk_fail(ck, "UnknownRetainedParam")
+    for di2 in range(pky(eds)):
+        dec2: int = stmt_at(a, eds, di2)
+        dname2: int = pk(a.n[dec2 + {{O:Decorator.name}}], a.n[dec2 + {{O:Decorator.name}} + 1])
+        if not sref_eq(a, dname2, "ffi.noescape"):
+            continue
+        dargs2: int = sl_at(a, dec2, {{O:Decorator.args}})
+        for ai3 in range(pky(dargs2)):
+            da3: int = stmt_at(a, dargs2, ai3)
+            if a.n[da3] != {{T:Expr.string_lit}}:
+                mp(ck, "extern function '")
+                mp_sref(ck, a, nm)
+                mp(ck, "': argument ")
+                mp_int(ck, ai3 + 1)
+                mp(ck, " of '@ffi.noescape' must be a string LITERAL")
+                raise mk_fail(ck, "TypeMismatch")
+            nsym: int = sym_of(ck, a, pk(a.n[da3 + 1], a.n[da3 + 2]))
+            found_n: bool = False
+            for f2 in range(pky(ps)):
+                fp2: int = stmt_at(a, ps, f2)
+                if sym_of(ck, a, pk(a.n[fp2 + {{O:Param.name}}], a.n[fp2 + {{O:Param.name}} + 1])) == nsym:
+                    found_n = True
+            if not found_n:
+                mp(ck, "extern function '")
+                mp_sref(ck, a, nm)
+                mp(ck, "': '@ffi.noescape(\"")
+                mp_sym(ck, nsym)
+                mp(ck, "\")' names an unknown parameter")
+                raise mk_fail(ck, "UnknownRetainedParam")
+            for ei2 in range(len(escape_syms)):
+                if escape_syms[ei2] == nsym:
+                    mp(ck, "extern function '")
+                    mp_sref(ck, a, nm)
+                    mp(ck, "': parameter '")
+                    mp_sym(ck, nsym)
+                    mp(ck, "' is marked both as escaping (retains/@ffi.escape) AND as non-escaping (@ffi.noescape)")
+                    raise mk_fail(ck, "ConflictingEscapeAnnotation")
     m2_put(ck.fmap, 0, sym, new_sig(ck, tys, pnames, ret))
+    m2_put(ck.ext_fns, 0, sym, 1)
+    register_extern_callback(ck, a, sym, nm, ed, tys)
 
 # `registerFunc` (skaler dilim): varsayılan/variadik/dekoratörlü/jenerik/async işlevler kapsam dışı.
 def stmts_have_yield(a: Ast, body: int) -> bool:
@@ -7423,10 +8507,131 @@ def check_function_body(ck: Ck, a: Ast, fd: int) -> None:
         mp(ck, "' does not return a value on all paths")
         raise mk_fail(ck, "MissingReturn")
 
+def cap_resolve_class_cd(ck: Ck, a: Ast, e: int, cls_defs: Map2) -> int:
+    if a.n[e] == {{T:Expr.identifier}}:
+        nm: int = sym_of(ck, a, pk(a.n[e + 1], a.n[e + 2]))
+        ce: int = m2_get(cls_defs, 0, nm)
+        if ce >= 0:
+            return cls_defs.vv[ce]
+        fe: int = m2_get(ck.fimp, 0, nm)
+        if fe >= 0:
+            ce2: int = m2_get(cls_defs, 0, ck.fimp.vv[fe])
+            if ce2 >= 0:
+                return cls_defs.vv[ce2]
+        return -1
+    if a.n[e] == {{T:Expr.attribute}}:
+        raw: list[int] = []
+        if not flatten_dotted(ck, a, e, raw) or len(raw) < 2:
+            return -1
+        segs: list[int] = subst_alias(ck, raw)
+        mangled: int = join_syms(ck, segs, len(segs), 95)
+        ce3: int = m2_get(cls_defs, 0, mangled)
+        if ce3 >= 0:
+            return cls_defs.vv[ce3]
+    return -1
+
+def cap_global_sym(ck: Ck, owner_sym: int, attr_sym: int) -> int:
+    return sym_lit(ck, "__nox_cls_" + sym_to_str(ck, owner_sym) + "_" + sym_to_str(ck, attr_sym))
+
+def cap_walk_stmts(ck: Ck, a: Ast, body: int, cls_defs: Map2, assigned: Map2) -> None:
+    for i in range(pky(body)):
+        st: int = stmt_at(a, body, i)
+        kn: int = a.n[st + {{O:Stmt.kind}}]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == {{T:StmtKind.assign}}:
+            tg: int = a.n[pay + {{O:Assign.target}}]
+            if a.n[tg] == {{T:Expr.attribute}}:
+                at: int = a.n[tg + 1]
+                cd: int = cap_resolve_class_cd(ck, a, a.n[at + {{O:Attribute.obj}}], cls_defs)
+                if cd >= 0:
+                    attr_sr: int = pk(a.n[at + {{O:Attribute.attr}}], a.n[at + {{O:Attribute.attr}} + 1])
+                    kds: int = sl_at(a, cd, {{O:ClassDef.consts}})
+                    for ki in range(pky(kds)):
+                        kd: int = stmt_at(a, kds, ki)
+                        knm: int = pk(a.n[kd + {{O:ConstDecl.name}}], a.n[kd + {{O:ConstDecl.name}} + 1])
+                        if sref_eq_ref(a, knm, attr_sr):
+                            osym: int = sym_of(ck, a, pk(a.n[cd + {{O:ClassDef.name}}], a.n[cd + {{O:ClassDef.name}} + 1]))
+                            if a.n[kd + {{O:ConstDecl.owner}}] != {{NONE}}:
+                                osym = sym_of(ck, a, pk(a.n[kd + {{O:ConstDecl.owner}}], a.n[kd + {{O:ConstDecl.owner}} + 1]))
+                            m2_put(assigned, 0, cap_global_sym(ck, osym, sym_of(ck, a, knm)), 1)
+                            break
+        elif tag == {{T:StmtKind.if_stmt}}:
+            cap_walk_stmts(ck, a, sl_at(a, pay, {{O:IfStmt.then_body}}), cls_defs, assigned)
+            ecs: int = sl_at(a, pay, {{O:IfStmt.elif_clauses}})
+            for ei in range(pky(ecs)):
+                cap_walk_stmts(ck, a, sl_at(a, a.l[pkx(ecs) + ei], {{O:ElifClause.body}}), cls_defs, assigned)
+            if a.n[pay + {{O:IfStmt.else_body}}] != {{NONE}}:
+                cap_walk_stmts(ck, a, sl_at(a, pay, {{O:IfStmt.else_body}}), cls_defs, assigned)
+        elif tag == {{T:StmtKind.while_stmt}}:
+            cap_walk_stmts(ck, a, sl_at(a, pay, {{O:WhileStmt.body}}), cls_defs, assigned)
+        elif tag == {{T:StmtKind.for_stmt}}:
+            cap_walk_stmts(ck, a, sl_at(a, pay, {{O:ForStmt.body}}), cls_defs, assigned)
+        elif tag == {{T:StmtKind.try_stmt}}:
+            cap_walk_stmts(ck, a, sl_at(a, pay, {{O:TryStmt.try_body}}), cls_defs, assigned)
+            txs: int = sl_at(a, pay, {{O:TryStmt.except_clauses}})
+            for ti in range(pky(txs)):
+                cap_walk_stmts(ck, a, sl_at(a, a.l[pkx(txs) + ti], {{O:ExceptClause.body}}), cls_defs, assigned)
+            if a.n[pay + {{O:TryStmt.finally_body}}] != {{NONE}}:
+                cap_walk_stmts(ck, a, sl_at(a, pay, {{O:TryStmt.finally_body}}), cls_defs, assigned)
+        elif tag == {{T:StmtKind.with_stmt}}:
+            cap_walk_stmts(ck, a, sl_at(a, pay, {{O:WithStmt.body}}), cls_defs, assigned)
+        elif tag == {{T:StmtKind.lowlevel_stmt}}:
+            cap_walk_stmts(ck, a, sl_at(a, pay, {{O:LowLevelStmt.body}}), cls_defs, assigned)
+        elif tag == {{T:StmtKind.func_def}}:
+            cap_walk_stmts(ck, a, sl_at(a, pay, {{O:FuncDef.body}}), cls_defs, assigned)
+        elif tag == {{T:StmtKind.class_def}}:
+            ms: int = sl_at(a, pay, {{O:ClassDef.methods}})
+            for mi in range(pky(ms)):
+                cap_walk_stmts(ck, a, sl_at(a, stmt_at(a, ms, mi), {{O:FuncDef.body}}), cls_defs, assigned)
+
+def class_attr_promote_run(ck: Ck, a: Ast, body: int) -> None:
+    any_ca: bool = False
+    for i in range(pky(body)):
+        st: int = stmt_at(a, body, i)
+        kn: int = a.n[st + {{O:Stmt.kind}}]
+        if a.n[kn] == {{T:StmtKind.var_decl}} and a.n[a.n[kn + 1] + {{O:VarDecl.class_attr}}] >= 0:
+            any_ca = True
+            break
+    if not any_ca:
+        return
+    cls_defs: Map2 = Map2()
+    for i2 in range(pky(body)):
+        st2: int = stmt_at(a, body, i2)
+        kn2: int = a.n[st2 + {{O:Stmt.kind}}]
+        if a.n[kn2] == {{T:StmtKind.class_def}}:
+            cd: int = a.n[kn2 + 1]
+            m2_put(cls_defs, 0, sym_of(ck, a, pk(a.n[cd + {{O:ClassDef.name}}], a.n[cd + {{O:ClassDef.name}} + 1])), cd)
+    assigned: Map2 = Map2()
+    cap_walk_stmts(ck, a, body, cls_defs, assigned)
+    for i3 in range(pky(body)):
+        st3: int = stmt_at(a, body, i3)
+        kn3: int = a.n[st3 + {{O:Stmt.kind}}]
+        if a.n[kn3] == {{T:StmtKind.class_def}}:
+            cd3: int = a.n[kn3 + 1]
+            kds: int = sl_at(a, cd3, {{O:ClassDef.consts}})
+            csym3: int = sym_of(ck, a, pk(a.n[cd3 + {{O:ClassDef.name}}], a.n[cd3 + {{O:ClassDef.name}} + 1]))
+            for ki in range(pky(kds)):
+                kd: int = stmt_at(a, kds, ki)
+                osym3: int = csym3
+                if a.n[kd + {{O:ConstDecl.owner}}] != {{NONE}}:
+                    osym3 = sym_of(ck, a, pk(a.n[kd + {{O:ConstDecl.owner}}], a.n[kd + {{O:ConstDecl.owner}} + 1]))
+                ksym3: int = sym_of(ck, a, pk(a.n[kd + {{O:ConstDecl.name}}], a.n[kd + {{O:ConstDecl.name}} + 1]))
+                if m2_get(assigned, 0, cap_global_sym(ck, osym3, ksym3)) >= 0:
+                    a.n[kd + {{O:ConstDecl.promoted}}] = 1
+        elif a.n[kn3] == {{T:StmtKind.var_decl}}:
+            vd3: int = a.n[kn3 + 1]
+            if a.n[vd3 + {{O:VarDecl.class_attr}}] >= 0:
+                vsym3: int = sym_of(ck, a, pk(a.n[vd3 + {{O:VarDecl.name}}], a.n[vd3 + {{O:VarDecl.name}} + 1]))
+                if m2_get(assigned, 0, vsym3) < 0:
+                    m2_put(ck.skip_vdecl, 0, st3, 1)
+
 # `collectModuleGlobals`: üst-düzey `var_decl`ların bildirilen tipleri (+ değişmez tamsayı sabitleri). `__infer` bildirimleri terfi etmez.
 def collect_module_globals(ck: Ck, a: Ast, body: int) -> None:
     for i in range(pky(body)):
         st: int = stmt_at(a, body, i)
+        if m2_get(ck.skip_vdecl, 0, st) >= 0:
+            continue
         ck.cur_line = a.n[st + {{O:Stmt.line}}]
         ck.cur_span = a.n[st + {{O:Stmt.span}}]
         kn: int = a.n[st + {{O:Stmt.kind}}]
@@ -8296,6 +9501,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
     try:
         ck.sig_empty = new_sig(ck, [], [], 4)
         collect_imports(ck, a, body)
+        class_attr_promote_run(ck, a, body)
         check_base_cycles(ck, a, body)
         collect_class_names(ck, a, body)
         extract_generic_methods(ck, a, body)
@@ -8340,7 +9546,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
                 fdsym_b: int = sym_of(ck, a, pk(a.n[a.n[kn3 + 1] + {{O:FuncDef.name}}], a.n[a.n[kn3 + 1] + {{O:FuncDef.name}} + 1]))
                 if m2_get(ck.gfn, 0, fdsym_b) < 0:
                     check_function_body(ck, a, a.n[kn3 + 1])
-            elif a.n[kn3] == {{T:StmtKind.extern_def}} or a.n[kn3] == {{T:StmtKind.import_stmt}} or a.n[kn3] == {{T:StmtKind.from_import_stmt}} or a.n[kn3] == {{T:StmtKind.protocol_def}}:
+            elif a.n[kn3] == {{T:StmtKind.extern_def}} or a.n[kn3] == {{T:StmtKind.import_stmt}} or a.n[kn3] == {{T:StmtKind.from_import_stmt}} or a.n[kn3] == {{T:StmtKind.protocol_def}} or m2_get(ck.skip_vdecl, 0, st3) >= 0:
                 pass
             elif a.n[kn3] == {{T:StmtKind.class_def}}:
                 csym_b: int = sym_of(ck, a, pk(a.n[a.n[kn3 + 1] + {{O:ClassDef.name}}], a.n[a.n[kn3 + 1] + {{O:ClassDef.name}} + 1]))

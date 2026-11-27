@@ -1,0 +1,19 @@
+class nox_ffi_Callback[F]:
+    fn: F
+    box: ptr
+    def __init__(self, fn: F, box: ptr) -> None:
+        self.fn = fn
+        self.box = box
+
+@ffi.callback("cb", "ud")
+extern def c_cb(n: int, cb: (int, ptr) -> int, ud: ptr) -> int from "c"
+
+@ffi.callback("cb", "ud", ud_index=0)
+extern def c_cb0(cb: (ptr, int) -> int, ud: ptr) -> int from "c"
+
+def my_cb(x: int) -> int:
+    return x + 1
+
+r1: int = c_cb(1, my_cb)
+r2: int = c_cb(1, None)
+r3: int = c_cb0(my_cb)

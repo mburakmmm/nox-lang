@@ -11,6 +11,20 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.103] - 2026-11-27
+
+### Değiştirilenler / Eklenenler
+- **Selfhost typechecker (`selfhost/typecheck.nox.in`, `selfhost/typecheck.nox` — 9.753 satır) `class#consts`, `extern#decorators` ve `check_call#intrinsic`:**
+  - **Sınıf sabitleri ve terfi eden sınıf öznitelikleri (`class#consts`):** `class_attr_promote_run` geçişi, `receiver_class_name`, `cls_consts_ty`/`cls_consts_owner`/`cls_consts_prom`, kalıtım devralma, sabit literal/tip/çift-tanım/alan-çakışması doğrulamaları, `Sınıf.NAME`/`obj.NAME` okuma ve `Sınıf.NAME = ...` terfi ataması eklendi; `class#consts` kapısı kaldırıldı (`17 checkm` / `33 repo` → `0`).
+  - **Extern dekoratörleri (`extern#decorators`):** `@ffi.escape`, `@ffi.noescape`, `@ffi.callback` (`ud_index`, `nox_ffi_Callback[F]`, `check_extern_callback_args`, `scalar_type_eql`), `@ffi.errors` (`ok`/`ok_min`/`null_is_error`/`errno`/`message`, `check_extern_errors_call`) ve `@capability.requires` doğrulamaları eklendi; `extern#decorators` kapısı kaldırıldı (`16 checkm` / `19 repo` → `0`).
+  - **Yerleşik intrinsic çağrılar (`check_call#intrinsic`):** 12 `nox.http.serve*` varyantı (`validate_http_handler`, `is_http_handler_factory`, `validate_ws_handler`, `check_http_serve_base`, `check_http_serve_generic`) ile `nox.thread.start` / `nox.thread.pool_run` (`is_thread_transfer_safe_type`, `ThreadHandle[T]`) eklendi; `check_call#intrinsic` kapısı kaldırıldı (`12 checkm` / `48 repo` → `0`).
+- **HTTP/3 zarif kapanış yarışı düzeltmesi (`runtime/stdlib_shims/h3_server.zig`, kullanıcı onayıyla):**
+  - `allQuiet` ve `loopOnce` içinde `cs.ours_buf` bekleyen çerçeve kontrolü eklendi; `run()` kapanışında `cs.close(.no_error)` (`CONNECTION_CLOSE`) öncesi sınırlı 50 ms'lik GOAWAY iletim penceresi (`std.Io.Clock.Timestamp`) eklendi (Linux x86-64 ReleaseFast flaky GOAWAY testi 10/10 stres koşusunda yeşil).
+- **Doğrulama ve korpus:**
+  - `scripts/ck_gen.py`: `--bytes-spawn-dec` kabul oranı düzeltildi (`3000` dosya: `accepted=1362` = %45.4, `rejected=1638`, `unsupported=0`) ve `--consts-ffi-intr` kipi eklendi (`3000` dosya: `unsupported=0 accepted=1818 rejected=1182 diagnostics=1136 skipped_parse=0`).
+  - `tests/fixtures/ck_edge/consts_ffi_intr/*.nox` (23 dosya: `unsupported=0 accepted=4 rejected=19`), `scripts/ck_mutants_consts_ffi_intr.py` (**27/27 yakalandı, 0 yaşayan**).
+  - `scripts/ck_regress.sh` 20 kip + depo (`files=1689 unsupported=212 accepted=535 rejected=942 diagnostics=2078 skipped_parse=56`) ve `ck-diff checkm` (`files=347 unsupported=76 accepted=76 rejected=195 diagnostics=165 skipped=0`) yeşil geçti.
+
 ## [2.2.102] - 2026-11-26
 
 ### Değiştirilenler / Eklenenler

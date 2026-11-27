@@ -893,6 +893,7 @@ fn allQuiet(e: *Engine) bool {
     if (e.inflight.load(.acquire) > 0) return false;
     for (e.conns.items) |cs| {
         if (cs.dead) continue;
+        if (cs.ours_buf[0].items.len > 0) return false;
         for (cs.reqs.items) |rs| {
             if (rs.dispatched and !rs.done) return false;
         }
@@ -912,11 +913,18 @@ pub fn run(gpa: Allocator, listener: *quic.Listener, cfg: Config, hooks: Hooks, 
     // Zarif kapanış: GOAWAY, uçuştaki istekleri bitir.
     e.draining = true;
     for (e.conns.items) |cs| sendGoaway(&e, cs);
+    const goaway_io = std.Io.Threaded.global_single_threaded.io();
+    const goaway_start = std.Io.Clock.Timestamp.now(goaway_io, .awake);
+    const goaway_grace_ns: i96 = @as(i96, @min(cfg.drain_ms, 50)) * 1_000_000;
     // GOAWAY'ın kontrol akışına yazılması ve yolda iken biten isteklerin yanıtlarının çıkması için en az birkaç tur.
     var flush_rounds: usize = 0;
     while (flush_rounds < 4) : (flush_rounds += 1) loopOnce(&e);
     var waited_ms: u32 = 0;
     while (!allQuiet(&e) and waited_ms < cfg.drain_ms) : (waited_ms += 2) loopOnce(&e);
+    // GOAWAY paketinin peer'a ulaşması için CONNECTION_CLOSE öncesi kısa gerçek-zaman penceresi.
+    while (e.conns.items.len > 0 and goaway_start.durationTo(std.Io.Clock.Timestamp.now(goaway_io, .awake)).raw.nanoseconds < goaway_grace_ns) {
+        loopOnce(&e);
+    }
     // Handler fiber'ları `e`yi (bu yığın çerçevesini) kullanır: hepsi dönene dek kuyruğu boşaltarak bekle.
     for (e.conns.items) |cs| markDeadCtls(cs);
     while (e.inflight.load(.acquire) > 0) {
@@ -964,6 +972,10 @@ fn loopOnce(e: *Engine) void {
             _ = e.conns.swapRemove(i);
             continue;
         }
+        for (cs.ours_buf) |b| if (b.items.len > 0) {
+            any_out = true;
+            break;
+        };
         for (cs.reqs.items) |rs| {
             if (rs.out.items.len > rs.out_off) any_out = true;
             if (rs.ctl) |ctl| if (!rs.done) {

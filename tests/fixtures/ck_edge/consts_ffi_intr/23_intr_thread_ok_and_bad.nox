@@ -1,0 +1,15 @@
+import nox.thread
+
+async def w(x: int) -> int:
+    return x + 1
+
+async def pw() -> None:
+    pass
+
+def sync_w(x: int) -> int:
+    return x
+
+if False:
+    th: ThreadHandle[int] = nox.thread.start(w, 5)
+    nox.thread.pool_run(4, pw)
+    nox.thread.start(sync_w, 5)

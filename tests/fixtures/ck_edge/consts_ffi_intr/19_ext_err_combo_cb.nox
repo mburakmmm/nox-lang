@@ -1,0 +1,8 @@
+class ErrX:
+    msg: str
+    def __init__(self, msg: str) -> None:
+        self.msg = msg
+
+@ffi.errors(raises=ErrX, ok=0)
+@ffi.callback("cb", "ud")
+extern def c_combo(cb: (int, ptr) -> int, ud: ptr) -> int from "c"

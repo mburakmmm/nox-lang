@@ -1,0 +1,20 @@
+class ErrX:
+    msg: str
+    def __init__(self, msg: str) -> None:
+        self.msg = msg
+
+def err_msg(code: int) -> str:
+    return "bad"
+
+@ffi.errors(raises=ErrX, ok=0, message="err_msg")
+extern def c_ok(x: int) -> int from "c"
+
+@ffi.errors(raises=ErrX, ok_min=0)
+extern def c_min(x: int) -> int from "c"
+
+@ffi.errors(raises=ErrX, null_is_error=True)
+extern def c_ptr(x: int) -> ptr from "c"
+
+a: int = c_ok(1)
+b: int = c_min(1)
+c: ptr = c_ptr(1)

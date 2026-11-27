@@ -1,0 +1,7 @@
+@ffi.callback("cb", "ud")
+extern def c_cb(n: int, cb: (int, ptr) -> int, ud: ptr) -> int from "c"
+
+def bad_cb(x: int, y: int) -> int:
+    return x + y
+
+r: int = c_cb(1, bad_cb)
