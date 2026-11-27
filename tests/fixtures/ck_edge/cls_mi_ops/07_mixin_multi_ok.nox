@@ -1,0 +1,23 @@
+class Mix:
+    tag: int
+    def __init__(self, t: int) -> None:
+        self.tag = t
+    def get_tag(self) -> int:
+        return self.tag
+
+class Base:
+    v: int
+    def __init__(self, v: int) -> None:
+        self.v = v
+
+class Child(Base, Mix):
+    def __init__(self, v: int, t: int) -> None:
+        Base.__init__(self, v)
+        Mix.__init__(self, t)
+
+def use_mix(m: Mix) -> int:
+    return m.get_tag()
+
+def run() -> None:
+    c: Child = Child(10, 20)
+    print(use_mix(c) + c.v)

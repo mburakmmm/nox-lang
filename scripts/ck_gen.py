@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False, use_bytes_spawn_dec=False, use_consts_ffi_intr=False, use_enum_bin_alias=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False, use_bytes_spawn_dec=False, use_consts_ffi_intr=False, use_enum_bin_alias=False, use_cls_mi_ops=False):
         self.rnd = rnd
+        self.use_cls_mi_ops = use_cls_mi_ops
         self.use_enum_bin_alias = use_enum_bin_alias
         self.use_consts_ffi_intr = use_consts_ffi_intr
         self.use_bytes_spawn_dec = use_bytes_spawn_dec
@@ -1914,8 +1915,127 @@ class Gen:
         if r.random() < 0.5:
             self.lines.append("main_eba()")
 
+    def gen_cls_mi_ops(self):
+        r = self.rnd
+        clean = r.random() < 0.5
+        self.lines.extend([
+            "@dataclass",
+            '@derive("order", "copy")',
+            "class PtCmo:",
+            "    x: int",
+            "    y: int",
+            '@repr("C")',
+            "class CStruct:",
+            "    a: int",
+            "    def __init__(self, a: int) -> None:",
+            "        self.a = a",
+            "@packed",
+            "class PStruct:",
+            "    b: int",
+            "    def __init__(self, b: int) -> None:",
+            "        self.b = b",
+            "class MixACmo:",
+            "    tag: int",
+            "    def __init__(self, t: int) -> None:",
+            "        self.tag = t",
+            "    def get_tag(self) -> int:",
+            "        return self.tag",
+            "class BaseCmo:",
+            "    v: int",
+            "    def __init__(self, v: int) -> None:",
+            "        self.v = v",
+            "    def show(self) -> int:",
+            "        return self.v",
+            "class ChildCmo(BaseCmo, MixACmo):",
+            "    def __init__(self, v: int, t: int) -> None:",
+            "        BaseCmo.__init__(self, v)",
+            "        MixACmo.__init__(self, t)",
+            "    def show(self) -> int:",
+            "        return BaseCmo.show(self) + self.tag",
+            "class BagCmo:",
+            "    items: list[int]",
+            "    def __init__(self, items: list[int]) -> None:",
+            "        self.items = items",
+            "    def __getitem__(self, i: int) -> int:",
+            "        return self.items[i]",
+            "    def __setitem__(self, i: int, v: int) -> None:",
+            "        self.items[i] = v",
+            "    def __len__(self) -> int:",
+            "        return len(self.items)",
+            "    def __str__(self) -> str:",
+            '        return "Bag"',
+            "    def __neg__(self) -> int:",
+            "        return 0 - len(self.items)",
+            "    def __invert__(self) -> int:",
+            "        return ~len(self.items)",
+            "    def __iter__(self) -> list[int]:",
+            "        return self.items",
+            "class IterCmo:",
+            "    cur: int",
+            "    def __init__(self, cur: int) -> None:",
+            "        self.cur = cur",
+            "    def __next__(self) -> int | None:",
+            "        if self.cur <= 0:",
+            "            return None",
+            "        self.cur = self.cur - 1",
+            "        return self.cur",
+            "class ErrCmo:",
+            "    msg: str",
+            "    def __init__(self, msg: str) -> None:",
+            "        self.msg = msg",
+            "def add_one_cmo(x: int) -> int:",
+            "    return x + 1",
+        ])
+        good = [
+            "p1: PtCmo = PtCmo(1, 2)\np2: PtCmo = p1.copy()\nlt_p: bool = p1 < p2",
+            "ch: ChildCmo = ChildCmo(3, 4)\nmx_ref: MixACmo = ch\nt_v: int = mx_ref.get_tag()\ns_v: int = ch.show()",
+            "bm: () -> int = ch2.show\nch2: ChildCmo = ChildCmo(1, 2)\n_bm_r: int = bm()",
+            "fns: list[(int) -> int] = [add_one_cmo]\nr_idx: int = fns[0](5)",
+            "g: list[list[int]] = [[1], [2]]\ng[0].append(3)\ng[1].extend([4, 5])",
+            "xs_e: list[int] = [1, 2]\nys_e: list[int] = [3]\nxs_e.extend(ys_e)\nxs_e.sort(reverse=True)",
+            'd_c: dict[str, int] = {"a": 1}\nits: list[tuple[str, int]] = d_c.items()',
+            "lowlevel:\n    p_ll: ptr = ptr_from_int(0)\n    ll_x: list[int] = adopt(p_ll)",
+            "for ei, ev in enumerate([10, 20]):\n    _ev_s: int = ei + ev",
+            "for za, zb in zip([1, 2], [3, 4]):\n    _zz: int = za + zb",
+            "bg: BagCmo = BagCmo([1, 2])\nbg[0] = 9\n_bi: int = bg[0] + len(bg) + (-bg) + (~bg)\n_bs: str = str(bg)\nfor _bx in bg:\n    pass",
+            "itc: IterCmo = IterCmo(2)\nfor _iv in itc:\n    pass",
+            "try:\n    raise ErrCmo(\"e\")\nexcept ErrCmo as ec:\n    pass",
+        ]
+        bad = [
+            "xs_b: list[int] = [1]\n_bad_ext: list[int] = xs_b.extend([2])",
+            'd_b: dict[str, int] = {"a": 1}\n_bad_it: list[tuple[str, int]] = d_b.items(1)',
+            "p_out: ptr = ptr_from_int(0)\n_ad_bad: list[int] = adopt(p_out)",
+            "lowlevel:\n    ll_v: int = 5\n_ll_leak: int = ll_v",
+            "bm_bad: ChildCmo = ChildCmo(1, 2)\nbm_bad.show = 1",
+            "fns_b: list[int] = [1]\n_bad_fc: int = fns_b[0](2)",
+            "try:\n    pass\nexcept missing.mod.Err as em:\n    pass",
+            "bg_b: BagCmo = BagCmo([1])\nbg_b[0] = 2\n_bad_l: int = len(123)",
+        ]
+        if not clean and r.random() < 0.25:
+            bad_top = [
+                '@derive("nope")\nclass BadDerive:\n    x: int',
+                "@dataclass\nclass BadDcEmpty:\n    pass",
+                "class BadSuperMix:\n    def f(self) -> int:\n        return super().f()\nclass UseBad(BaseCmo, BadSuperMix):\n    pass",
+                "class BadSub(CStruct):\n    pass",
+            ]
+            self.lines.append(r.choice(bad_top))
+        self.lines.append("def run_cmo() -> None:")
+        k = r.randint(2, 4)
+        picks = r.sample(good, k=min(k, len(good))) if clean else r.sample(good + bad, k=min(k, len(good) + len(bad)))
+        # Ensure ch2 appears before bm if bm is picked, or fix bm snippet
+        for pick in picks:
+            if "bm: () -> int = ch2.show" in pick:
+                pick = "ch2: ChildCmo = ChildCmo(1, 2)\nbm: () -> int = ch2.show\n_bm_r: int = bm()"
+            for ln in pick.split("\n"):
+                self.lines.append("    " + ln)
+        if r.random() < 0.5:
+            self.lines.append("run_cmo()")
+
     def program(self):
         r = self.rnd
+        if self.use_cls_mi_ops:
+            self.gen_cls_mi_ops()
+            return "\n".join(self.lines) + "\n"
         if self.use_enum_bin_alias:
             self.gen_enum_bin_alias()
             return "\n".join(self.lines) + "\n"
@@ -2023,11 +2143,12 @@ def main():
     ap.add_argument("--bytes-spawn-dec", dest="use_bytes_spawn_dec", action="store_true")
     ap.add_argument("--consts-ffi-intr", dest="use_consts_ffi_intr", action="store_true")
     ap.add_argument("--enum-bin-alias", dest="use_enum_bin_alias", action="store_true")
+    ap.add_argument("--cls-mi-ops", dest="use_cls_mi_ops", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig, args.use_bytes_spawn_dec, args.use_consts_ffi_intr, args.use_enum_bin_alias).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig, args.use_bytes_spawn_dec, args.use_consts_ffi_intr, args.use_enum_bin_alias, args.use_cls_mi_ops).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

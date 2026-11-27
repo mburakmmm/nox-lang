@@ -11,6 +11,20 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.105] - 2026-11-27
+
+### Değiştirilenler / Eklenenler
+- **Selfhost typechecker (`selfhost/typecheck.nox.in`, `selfhost/typecheck.nox` — 13.715 satır) sınıf dekoratörleri, çoklu kalıtım/mixin, bağlı metot/indeks çağrısı, liste/sözlük/lowlevel ve kalan küçük/dunder kapıları (Paket 1):**
+  - **Çoklu kalıtım ve mixin düzleştirme (`class#bases`, `class#explicit_base_call` → `0`):** `mixin_flatten_run` geçişi (`extra_bases` özyinelemeli düzleştirme, döngü/bilinmeyen taban/jenerik mixin denetimi, `__nox_mx_*`/`__nox_init_*` kopyalama, `Base.m(self)` → `super().m()`, mixin içi `super()` yasağı), `cls_add_mixin` (`types.nox`), `is_mixin_init_sref` ve `validate_mixin_compat` eklendi.
+  - **Sınıf dekoratörleri (`class#decorators` → `0`):** `derive_run` (`@dataclass`, `@derive("order"|"copy"|"json")`) ve `register_class_sigs` içinde `@repr("C")` / `@packed` taban-sınıf düzen tutarlılığı + sınıf dekoratör argümanı doğrulaması eklendi.
+  - **Metot özellikleri (`class#method_features` → `0`):** Metot dekoratörleri (`@capability.requires` nitelikli kayıt + `parse_decorator_args`), `is_async`/`allow_await` bağlamı (`check_method_body`) ve `__del__` `is_async` reddi eklendi.
+  - **Bağlı metot ve indeks çağrısı (`attr#bound_method`, `check_call#bind_method` → `0`):** `index_call_fixup_run` (`name[i](args)` yeniden yazımı), `bound_method_fixup_run` (`__nox_bind_method`) ve `check_bind_method` (`async` metot reddi + capability kontrolü + property/alan geri dönüşü) eklendi.
+  - **Liste/sözlük/lowlevel ve küçük/dunder kapıları (`0`):** `try_check_element_grow_stmt` (`elem_grow`), `try_check_extend_stmt` (`list_extend`), `list.sort(key=..., reverse=...)` (`list_sort_kwargs`), `dict.items()` (`dict_items`), `lowlevel_stmt` kapsam temizliği + `adopt(p)` (`check_call#lowlevel`), `check_call#1` (`xs[i](...)` + `NotCallable`), `check_assign#1`, `try#dotted` (noktalı `except`), `check_identifier#fromimport` (mangled değer), `try_fuse_enumerate_zip_for` (`enumerate`/`zip`), `check_lazy_for` (`__next__`) ve `__getitem__`/`__setitem__`/`__neg__`/`__invert__`/`__len__`/`__str__`/`__iter__` dunder'ları eklendi.
+- **Doğrulama ve korpus:**
+  - `scripts/ck_gen.py --cls-mi-ops`: `3000` dosya (`unsupported=0 accepted=1061 rejected=1939 diagnostics=1546 skipped_parse=0`), `tests/fixtures/ck_edge/cls_mi_ops/*.nox` (`30` dosya, `unsupported=0 accepted=12 rejected=18`), `scripts/ck_mutants_cls_mi_ops.py` (**28/28 yakalandı, 0 yaşayan**).
+  - `ck-diff check` (depo): `files=1746 unsupported=59 accepted=618 rejected=1069 diagnostics=2256 skipped_parse=56` (0 uyuşmazlık).
+  - `ck-diff checkm` (`tests/golden/typecheck_cases/*.nox`): `files=347 unsupported=14 accepted=89 rejected=244 diagnostics=199 skipped=0` (**%96,0 kapsam**, 0 uyuşmazlık; geriye yalnız generator/nonlocal/async kaldı).
+
 ## [2.2.104] - 2026-11-27
 
 ### Değiştirilenler / Eklenenler

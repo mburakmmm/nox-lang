@@ -45,7 +45,14 @@ Döngü (her dilim):
 - `qrun` bildirimi hep "exit 0" der; gerçek sonuç `cikis=` satırı.
 - Zig'in test-fast'i `error: '...' failed` satırları basar; `failed command:` satırları tek başına hata değildir (stderr basan testler).
 
-## 4. DURUM (2026-11-27, v2.2.104 sonrası)
+## 4. DURUM (2026-11-27, v2.2.105 sonrası)
+
+- **Son sürüm:** `v2.2.105` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **13.715 satır**) Paket 1: `mixin_flatten_run` (`class#bases`, `class#explicit_base_call`), `derive_run` (`class#decorators`), `class#method_features`, `index_call_fixup_run` + `bound_method_fixup_run` (`attr#bound_method`, `check_call#bind_method`), `elem_grow`/`list_extend`/`list_sort_kwargs`/`dict_items`, `lowlevel_stmt` + `adopt`, `try#dotted`, `enumerate`/`zip` kaynaşımı, `check_call#1`, `check_assign#1` ve 7 dunder kapısı.
+- **Doğrulama:** `ck_gen.py --cls-mi-ops` (`files=3000 unsupported=0 accepted=1061 rejected=1939 diagnostics=1546 skipped_parse=0`), `ck_edge/cls_mi_ops` (`30` dosya, `unsupported=0 accepted=12 rejected=18 diagnostics=17`), `ck_mutants_cls_mi_ops.py` (`28/28 yakalandı, 0 yaşayan`), `ck_regress.sh` `22` kip + depo yeşil.
+- **Depo `ck-diff check` (`v2.2.105`):** `files=1746 unsupported=59 accepted=618 rejected=1069 diagnostics=2256 skipped_parse=56` (`class#decorators`, `class#bases`, `class#explicit_base_call`, `class#method_features`, `attr#bound_method`, `check_call#bind_method`, `check_call#lowlevel`, `check_call#1`, `check_assign#1`, `try#dotted`, `list_sort_kwargs`, `dict_items`, `check_for_iterable#enumerate_zip`, ve dunder kapıları `0`; kalan üst engeller: `23 register_func#generator`, `22 nonlocal`, `4 stmt_kind#nested_async`, `2 check_stmt#async_for`, `1 check_stmt#async_with`, `1 lambda#captures_order`, `1 spawn#attribute`, `1 stmt_kind#nested_features`).
+- **`ck-diff checkm` (`tests/golden/typecheck_cases/*.nox`, `v2.2.105`):** `files=347 unsupported=14 accepted=89 rejected=244 diagnostics=199 skipped=0` (**%96,0 kapsam**; kalanlar yalnızca: `6 register_func#generator`, `3 nonlocal`, `2 stmt_kind#nested_async`, `2 check_stmt#async_for`, `1 check_stmt#async_with`).
+
+### Önceki (v2.2.104 sonrası)
 
 - **Son sürüm:** `v2.2.104` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **11.752 satır**) `toplevel#2` (`type_alias_run`), `check_stmt#2`/`#1` (`:=` walrus + `__nox_tup_*` + `divmod` + `synth_follow`), `check_binary#1`/`#2` (`guard_normalize_run` + Optional `==`/`!=` + daraltma + `try_operator_overload`), `class#method_features` (`@staticmethod`/`@classmethod`/`@property`/`@x.setter`) ve `class#enum` + `match` (`matrix_exhaustive`, jenerik enum çıkarımı).
 - **Doğrulama:** `ck_gen.py --enum-bin-alias` (`files=3000 unsupported=0 accepted=725 rejected=2275 diagnostics=2270 skipped_parse=0`), `ck_edge/enum_bin_alias` (`34` dosya, `unsupported=0 accepted=12 rejected=22 diagnostics=19`), `ck_mutants_enum_bin_alias.py` (`28/28 yakalandı, 0 yaşayan`), `ck_regress.sh` `21` kip + depo yeşil.
