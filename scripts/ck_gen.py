@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False, use_bytes_spawn_dec=False, use_consts_ffi_intr=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False, use_bytes_spawn_dec=False, use_consts_ffi_intr=False, use_enum_bin_alias=False):
         self.rnd = rnd
+        self.use_enum_bin_alias = use_enum_bin_alias
         self.use_consts_ffi_intr = use_consts_ffi_intr
         self.use_bytes_spawn_dec = use_bytes_spawn_dec
         self.use_sig = use_sig
@@ -1802,8 +1803,122 @@ class Gen:
         if in_fn and r.random() < 0.5:
             self.lines.append("main_cfi()")
 
+    def gen_enum_bin_alias(self):
+        r = self.rnd
+        clean = r.random() < 0.5
+        self.lines.extend([
+            "type NumAlias = int",
+            "type MaybeNum = int | None",
+            "def noop_eba() -> None:",
+            "    pass",
+            "class VecEba:",
+            "    val: int",
+            "    def __init__(self, val: int) -> None:",
+            "        self.val = val",
+            "    def __add__(self, other: VecEba) -> VecEba:",
+            "        return VecEba(self.val + other.val)",
+            "    def __radd__(self, other: int) -> VecEba:",
+            "        return VecEba(other + self.val)",
+            "    def __eq__(self, other: VecEba) -> bool:",
+            "        return self.val == other.val",
+            "    def __ne__(self, other: VecEba) -> bool:",
+            "        return self.val != other.val",
+            "    def __lt__(self, other: VecEba) -> bool:",
+            "        return self.val < other.val",
+            "    @staticmethod",
+            "    def zero() -> VecEba:",
+            "        return VecEba(0)",
+            "    @classmethod",
+            "    def unit(cls) -> VecEba:",
+            "        return cls(1)",
+            "    @property",
+            "    def mag(self) -> int:",
+            "        return self.val",
+            "    @mag.setter",
+            "    def mag(self, v: int) -> None:",
+            "        self.val = v",
+            "class BoxEba:",
+            "    def __contains__(self, x: int) -> bool:",
+            "        return x > 0",
+            "class NodeEba:",
+            "    val: int",
+            "    nxt: NodeEba | None",
+            "    def __init__(self, val: int, nxt: NodeEba | None) -> None:",
+            "        self.val = val",
+            "        self.nxt = nxt",
+            "enum ColorEba:",
+            "    Red",
+            "    Green",
+            "    Blue",
+            "enum ShapeEba:",
+            "    Circle(r: int)",
+            "    Rect(w: int, h: int)",
+            "    Point",
+            "enum OptEba[T]:",
+            "    Some(v: T)",
+            "    Empty",
+            "def gnorm_eba(p: int | None) -> int:",
+            "    if p == None:",
+            "        return 0",
+            "    return p + 1",
+        ])
+        good = [
+            "xw := 10\nyw := xw + 5",
+            "na: NumAlias = 42\nmb: MaybeNum = None",
+            "v1: VecEba = VecEba.zero()\nv2: VecEba = VecEba.unit()\nv3: VecEba = v1 + v2\nv4: VecEba = 3 + v1",
+            "va: VecEba = VecEba.zero()\nvb: VecEba = VecEba.unit()\neq1: bool = va == vb\nne1: bool = va != vb\nlt1: bool = va < vb",
+            "vp: VecEba = VecEba.unit()\nmg: int = vp.mag\nvp.mag = 9",
+            "bx: BoxEba = BoxEba()\nhas_x: bool = 5 in bx",
+            "o1: int | None = 5\nif o1 != None:\n    z1: int = o1 + 1",
+            "o2: int | None = None\nif o2 == None:\n    z2: int = 0\nelse:\n    z2: int = o2 + 2",
+            "o3: int | None = 7\nif not (o3 == None):\n    z3: int = o3 + 3",
+            "o4: int | None = 8\ntn: int = o4 + 1 if o4 != None else 0",
+            "o5: int | None = 4\nandn: bool = o5 != None and o5 > 0\norn: bool = o5 == None or o5 > 0",
+            "nd: NodeEba | None = NodeEba(1, None)\nif nd != None and nd.nxt != None:\n    nv: int = nd.nxt.val",
+            "gn: int = gnorm_eba(None)",
+            "c1: ColorEba = ColorEba.Red\nmatch c1:\n    case ColorEba.Red:\n        rc: int = 1\n    case ColorEba.Green:\n        rc: int = 2\n    case ColorEba.Blue:\n        rc: int = 3",
+            "sh1: ShapeEba = ShapeEba.Circle(3)\nmatch sh1:\n    case ShapeEba.Circle(rad):\n        ar: int = rad * rad\n    case ShapeEba.Rect(w, h):\n        ar: int = w * h\n    case ShapeEba.Point:\n        ar: int = 0",
+            "op1: OptEba[int] = OptEba.Some(9)\nmatch op1:\n    case OptEba.Some(val):\n        ov: int = val + 1\n    case OptEba.Empty:\n        ov: int = 0",
+        ]
+        bad = [
+            "bad_none := None",
+            "bad_list := []",
+            "bad_dict := {}",
+            "bad_call := noop_eba()",
+            'rx := 1\nrx = "s"',
+            "ou: int | None = None\nbad_u: int = ou + 1",
+            "nd2: NodeEba | None = None\nif nd2 != None:\n    nd2 = None\n    bad_nv: int = nd2.val",
+            "vs: VecEba = VecEba.zero()\nbad_sub: VecEba = vs - vs",
+            'vm: VecEba = VecEba.zero()\nvm.mag = "bad"',
+            "sh2: ShapeEba = ShapeEba.Point\nmatch sh2:\n    case ShapeEba.Circle(rad):\n        a2: int = rad",
+            "sh3: ShapeEba = ShapeEba.Point\nmatch sh3:\n    case ShapeEba.Circle(a, b):\n        a3: int = a\n    case _:\n        a3: int = 0",
+            "c2: ColorEba = ColorEba.Red\nmatch c2:\n    case ColorEba.Red:\n        x1: int = 1\n    case ColorEba.Unknown:\n        x1: int = 2\n    case _:\n        x1: int = 3",
+            'op2: OptEba[int] = OptEba.Some("bad")',
+        ]
+        if not clean and r.random() < 0.25:
+            bad_top = [
+                "bad_mod := 1",
+                "type BadCycle = BadCycle",
+                "type BadUnknown = MissingTypeEba",
+            ]
+            self.lines.append(r.choice(bad_top))
+        self.lines.append("def main_eba() -> None:")
+        k = r.randint(2, 4)
+        picks = r.sample(good, k=min(k, len(good))) if clean else [r.choice(good) if r.random() < 0.5 else r.choice(bad) for _ in range(k)]
+        for idx, pick in enumerate(picks):
+            # Avoid duplicate local variable names across picked blocks by wrapping in inner helper or unique suffix?
+            # Actually, keep distinct variable names per snippet above or wrap each in its own `if True:`?
+            # In Nox, same-function locals share scope; let's check if any variable names collide!
+            for ln in pick.split("\n"):
+                self.lines.append("    " + ln)
+        if r.random() < 0.5:
+            self.lines.append("main_eba()")
+
     def program(self):
         r = self.rnd
+        if self.use_enum_bin_alias:
+            self.gen_enum_bin_alias()
+            return "\n".join(self.lines) + "\n"
         if self.use_consts_ffi_intr:
             self.gen_consts_ffi_intr()
             return "\n".join(self.lines) + "\n"
@@ -1907,11 +2022,12 @@ def main():
     ap.add_argument("--sig", dest="use_sig", action="store_true")
     ap.add_argument("--bytes-spawn-dec", dest="use_bytes_spawn_dec", action="store_true")
     ap.add_argument("--consts-ffi-intr", dest="use_consts_ffi_intr", action="store_true")
+    ap.add_argument("--enum-bin-alias", dest="use_enum_bin_alias", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig, args.use_bytes_spawn_dec, args.use_consts_ffi_intr).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig, args.use_bytes_spawn_dec, args.use_consts_ffi_intr, args.use_enum_bin_alias).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

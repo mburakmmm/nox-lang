@@ -45,7 +45,14 @@ Döngü (her dilim):
 - `qrun` bildirimi hep "exit 0" der; gerçek sonuç `cikis=` satırı.
 - Zig'in test-fast'i `error: '...' failed` satırları basar; `failed command:` satırları tek başına hata değildir (stderr basan testler).
 
-## 4. DURUM (2026-11-27, v2.2.103 sonrası)
+## 4. DURUM (2026-11-27, v2.2.104 sonrası)
+
+- **Son sürüm:** `v2.2.104` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **11.752 satır**) `toplevel#2` (`type_alias_run`), `check_stmt#2`/`#1` (`:=` walrus + `__nox_tup_*` + `divmod` + `synth_follow`), `check_binary#1`/`#2` (`guard_normalize_run` + Optional `==`/`!=` + daraltma + `try_operator_overload`), `class#method_features` (`@staticmethod`/`@classmethod`/`@property`/`@x.setter`) ve `class#enum` + `match` (`matrix_exhaustive`, jenerik enum çıkarımı).
+- **Doğrulama:** `ck_gen.py --enum-bin-alias` (`files=3000 unsupported=0 accepted=725 rejected=2275 diagnostics=2270 skipped_parse=0`), `ck_edge/enum_bin_alias` (`34` dosya, `unsupported=0 accepted=12 rejected=22 diagnostics=19`), `ck_mutants_enum_bin_alias.py` (`28/28 yakalandı, 0 yaşayan`), `ck_regress.sh` `21` kip + depo yeşil.
+- **Depo `ck-diff check` (`v2.2.104`):** `files=1712 unsupported=123 accepted=576 rejected=1013 diagnostics=2166 skipped_parse=56` (`toplevel#2`, `check_stmt#2`, `check_binary#1`, `check_binary#2`, `class#enum`, `check_stmt#3` → `0`; kalan üst engeller: `22 register_func#generator`, `22 nonlocal`, `15 class#decorators`, `11 class#bases`, `10 elem_grow`, `6 check_call#1`, `5 list_extend`, `4 check_call#lowlevel`, `4 attr#bound_method`, `4 stmt_kind#nested_async`, `3 class#method_features`).
+- **`ck-diff checkm` (`tests/golden/typecheck_cases/*.nox`, `v2.2.104`):** `files=347 unsupported=36 accepted=85 rejected=226 diagnostics=191 skipped=0` (**%89,6 kapsam**; kalan üst engeller: `8 class#decorators`, `6 register_func#generator`, `5 class#bases`, `3 elem_grow`, `3 nonlocal`, `2 list_extend`, `2 stmt_kind#nested_async`, `2 check_stmt#async_for`).
+
+### Önceki (v2.2.103 sonrası)
 
 - **Son sürüm:** `v2.2.103` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **9.753 satır**) `class#consts` (`class_attr_promote_run`, `receiver_class_name`), `extern#decorators` (`@ffi.escape`/`noescape`/`callback`/`errors`/`@capability.requires`) ve `check_call#intrinsic` (`nox.http.serve*` 12 varyant + `nox.thread.start`/`pool_run`) + `h3_server.zig` GOAWAY kapanış yarışı düzeltmesi (§8).
 - **Doğrulama:** `ck_gen.py --bytes-spawn-dec` (`files=3000 unsupported=0 accepted=1362 rejected=1638`), `ck_gen.py --consts-ffi-intr` (`files=3000 unsupported=0 accepted=1818 rejected=1182 diagnostics=1136`), `ck_edge/consts_ffi_intr` (`23` dosya, `unsupported=0 accepted=4 rejected=19`), `ck_mutants_consts_ffi_intr.py` (`27/27 yakalandı, 0 yaşayan`), `ck_regress.sh` `20` kip + depo yeşil.

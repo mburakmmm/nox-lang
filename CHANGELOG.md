@@ -11,6 +11,20 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.104] - 2026-11-27
+
+### Değiştirilenler / Eklenenler
+- **Selfhost typechecker (`selfhost/typecheck.nox.in`, `selfhost/typecheck.nox` — 11.752 satır) tip takma adları, `:=` / tuple açma, Optional daraltma + dunder operatörler, metot özellikleri ve `enum`/`match`:**
+  - **Tip takma adları (`toplevel#2`):** `type_alias_run` geçişi eklendi (`type Alias = ...`, çift/çakışma/döngü denetimi, modül takma adları ile etkileşim); `toplevel#2` kapısı kaldırıldı (`5 checkm` / `8 repo` → `0`).
+  - **Walrus bildirim ve tuple açma (`check_stmt#2`, `check_stmt#1`):** `check_walrus_decl` (`x := expr`, modül/None/boş-liste/boş-dict/None-çağrı/yeniden-atama hataları) ve `check_infer_var_decl` (`__nox_tup_*` + `divmod` 2-hedefli açma + `synth_follow` takip bastırma) eklendi; `check_stmt#2` kapısı kaldırıldı (`8 checkm` / `8 repo` → `0`).
+  - **Optional daraltma, `guard_normalize` ve dunder operatör yükleme (`check_binary#1`, `check_binary#2`):** `guard_normalize_run`, `collect_narrows`/`apply_narrows`/`restore_narrows`/`invalidate_narrow_prefix`/`invalidate_narrows_by_field` (`if`/`while`/`and`/`or`/`not`/ternary + yol daraltma), Optional `==`/`!=` ve `try_operator_overload` (`__add__`…/`__r*__`/`__eq__`…/`__contains__`) eklendi; `check_binary#1`/`#2` kapıları kaldırıldı (`9 checkm` / `41 repo` → `0`).
+  - **Metot özellikleri (`class#method_features`):** `extract_static_methods`, `try_resolve_static_method_call`, `ensure_static_inst` (`@staticmethod`, `@classmethod` + `cls(...)`), `find_property` (`@property`, `@x.setter` okuma/atama) eklendi (`class#method_features` `4 checkm` → `1`, `8 repo` → `3`).
+  - **`enum` ve `match` (`class#enum`, `check_stmt#3`):** Düz/payload/jenerik (`Option[T]`) enum varyantları, `try_generic_enum_expected`, `try_resolve_generic_enum_call`, `try_enum_intrinsic`, `matrix_exhaustive` (iç içe tüketici denetim), `rename_conflicting_match_bindings` ve birim varyant çağrı koruması eklendi; `class#enum` ve `check_stmt#3` kapıları kaldırıldı (`10 checkm` / `23 repo` → `0`).
+- **Doğrulama ve korpus:**
+  - `scripts/ck_gen.py --enum-bin-alias`: `3000` dosya (`unsupported=0 accepted=725 rejected=2275 diagnostics=2270 skipped_parse=0`), `tests/fixtures/ck_edge/enum_bin_alias/*.nox` (`34` dosya, `unsupported=0 accepted=12 rejected=22`), `scripts/ck_mutants_enum_bin_alias.py` (**28/28 yakalandı, 0 yaşayan**).
+  - `ck-diff check` (depo): `files=1712 unsupported=123 accepted=576 rejected=1013 diagnostics=2166 skipped_parse=56` (0 uyuşmazlık).
+  - `ck-diff checkm` (`tests/golden/typecheck_cases/*.nox`): `files=347 unsupported=36 accepted=85 rejected=226 diagnostics=191 skipped=0` (**%89,6 kapsam**, 0 uyuşmazlık).
+
 ## [2.2.103] - 2026-11-27
 
 ### Değiştirilenler / Eklenenler
