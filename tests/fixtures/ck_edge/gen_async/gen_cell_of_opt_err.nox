@@ -1,0 +1,31 @@
+class Exception:
+    msg: str
+    def __init__(self, msg: str) -> None:
+        self.msg = msg
+
+class __nox_Gen[T]:
+    step: () -> T | None
+    def __init__(self, step: () -> T | None) -> None:
+        self.step = step
+    def __next__(self) -> T | None:
+        return self.step()
+
+def __nox_unwrap[T](x: T | None) -> T:
+    if x is not None:
+        return x
+    raise Exception("unwrap")
+
+def __nox_gen_from_step[T](step: () -> T | None) -> __nox_Gen[T]:
+    return __nox_Gen[T](step)
+
+def __nox_gen_from_list[T](xs: list[T]) -> __nox_Gen[T]:
+    return __nox_Gen[T](lambda: None)
+
+def opt_val() -> int | None:
+    return 1
+
+def g() -> Iterator[int]:
+    for x in [1, 2]:
+        y := opt_val()
+        yield x
+        print(y)

@@ -11,6 +11,19 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.107] - 2026-11-28
+
+### Değiştirilenler / Eklenenler
+- **Selfhost typechecker (`selfhost/typecheck.nox.in`, `selfhost/typecheck.nox` — 15.868 satır) jeneratörler, `nested_async`, `async_for` ve `async_with` (Paket 3 — Aşama 3.8 kapanışı, `ck-diff checkm` %100,0 kapsam):**
+  - **Tembel jeneratör dönüşümü (`generator_desugar_run` / `GdPass`):** `yield`, `yield from`, `Generator[Y, S]` (`send()` / `__nox_sent`), `try`/`except`/`finally`/`with` içinde `yield` + `GeneratorExit`/`throw()` + kaçan sıçrama reddi, `lowlevel` `yield` reddi, jeneratörde `return değer` ve `T | None` yield reddi, `__nox_FnBox`/`__nox_Slot`/`__nox_cell_of`/`__nox_get`/`__nox_for_iter` yerleşikleri, `check_expr_expected` içinde `__nox_FnBox` açma, `check_call_inner` içinde `__nox_get(cell)(...)` çağrısı, `check_for_iterable` jenerik `__nox_Gen[T]` düzeltmesi ve `check_lazy_for` içinde `is_fresh_cleanup_gen_call` (`try/finally: it.close()`) eklendi (`register_func#generator` → `0`).
+  - **`async for` ve `async with` (`check_stmt#async_for`, `check_stmt#async_with` → `0`):** `async for` için `fx.in_async` ve `lazy_for_iter` doğrulamaları, `check_async_with` (`__aenter__`/`__aexit__` `try/finally` indirmesi) ve `generator_desugar_run` içinde `__aenter__`/`__aexit__` `allow_await` dönüşümü eklendi.
+  - **İç içe `async def` kaldırma (`hoist_nested_async`, `stmt_kind#nested_async` → `0`):** Yakalama sözlük-sıralaması, paylaşılamaz yakalama tipi reddi, `__nested_async_*` sentezi + `register_func`/`check_function_body`, `check_spawn` argüman öne-ekleme/callee yeniden yazımı ve doğrudan çağrı reddi eklendi.
+- **Doğrulama ve korpus:**
+  - `scripts/ck_gen.py --gen-async`: `3000` dosya (`unsupported=0 accepted=267 rejected=2733 diagnostics=472 skipped_parse=0`), `tests/fixtures/ck_edge/gen_async/*.nox` (`20` dosya, `unsupported=0 accepted=5 rejected=15 diagnostics=8`), `scripts/ck_mutants_gen_async.py` (**18/18 yakalandı, 0 yaşayan**).
+  - `scripts/ck_regress.sh`: `24` kip × `1500` + depo yeşil (`0` uyuşmazlık).
+  - `ck-diff check` (depo): `files=1800 unsupported=3 accepted=650 rejected=1147 diagnostics=2299 skipped_parse=56` (0 uyuşmazlık; kalanlar yalnız `1 lambda#captures_order`, `1 check_identifier#fromimport`, `1 stmt_kind#15`).
+  - `ck-diff checkm` (`tests/golden/typecheck_cases/*.nox`): `files=347 unsupported=0 accepted=89 rejected=258 diagnostics=204 skipped=0` (**%100,0 kapsam**, `0` kapsam dışı, `0` uyuşmazlık).
+
 ## [2.2.106] - 2026-11-28
 
 ### Değiştirilenler / Eklenenler

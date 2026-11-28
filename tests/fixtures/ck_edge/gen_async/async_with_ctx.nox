@@ -1,0 +1,21 @@
+async def ping() -> int:
+    return 1
+
+class ACM:
+    n: int
+    def __init__(self, n: int) -> None:
+        self.n = n
+    async def __aenter__(self) -> int:
+        r: int = await (spawn ping())
+        return self.n + r
+    async def __aexit__(self) -> None:
+        pass
+
+async def use_aw() -> int:
+    async with ACM(7) as v:
+        return v
+    return 0
+
+def bad_aw() -> None:
+    async with ACM(7) as v:
+        print(v)

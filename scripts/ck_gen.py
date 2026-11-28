@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False, use_bytes_spawn_dec=False, use_consts_ffi_intr=False, use_enum_bin_alias=False, use_cls_mi_ops=False, use_nonlocal=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False, use_bytes_spawn_dec=False, use_consts_ffi_intr=False, use_enum_bin_alias=False, use_cls_mi_ops=False, use_nonlocal=False, use_gen_async=False):
         self.rnd = rnd
+        self.use_gen_async = use_gen_async
         self.use_nonlocal = use_nonlocal
         self.use_cls_mi_ops = use_cls_mi_ops
         self.use_enum_bin_alias = use_enum_bin_alias
@@ -2234,8 +2235,167 @@ class Gen:
                 "    fn()",
             ]
 
+    def gen_gen_async(self):
+        r = self.rnd
+        self.lines += [
+            "class ACM:",
+            "    n: int",
+            "    def __init__(self, n: int) -> None:",
+            "        self.n = n",
+            "    async def __aenter__(self) -> int:",
+            "        return self.n",
+            "    async def __aexit__(self) -> None:",
+            "        pass",
+            "",
+            "class CM:",
+            "    n: int",
+            "    def __init__(self, n: int) -> None:",
+            "        self.n = n",
+            "    def __enter__(self) -> int:",
+            "        return self.n",
+            "    def __exit__(self) -> None:",
+            "        pass",
+            "",
+        ]
+        choice = r.randint(0, 15)
+        if choice == 0:
+            self.lines += [
+                "def g_range(n: int) -> Iterator[int]:",
+                "    for i in range(n):",
+                "        yield i * 2",
+            ]
+        elif choice == 1:
+            self.lines += [
+                "def g_from(xs: list[int]) -> Iterator[int]:",
+                "    yield from xs",
+            ]
+        elif choice == 2:
+            self.lines += [
+                "def g_send(init: int) -> Generator[int, int]:",
+                "    cur: int = init",
+                "    while cur < 10:",
+                "        d: int = yield cur",
+                "        cur = cur + d",
+            ]
+        elif choice == 3:
+            self.lines += [
+                "def g_try_fin(n: int) -> Iterator[int]:",
+                "    try:",
+                "        yield n",
+                "    except Exception as ex:",
+                "        yield -1",
+                "    finally:",
+                "        print(0)",
+            ]
+        elif choice == 4:
+            self.lines += [
+                "def g_with(n: int) -> Iterator[int]:",
+                "    with CM(n) as v:",
+                "        yield v",
+            ]
+        elif choice == 5:
+            self.lines += [
+                "def g_bad_ret() -> int:",
+                "    yield 1",
+            ]
+        elif choice == 6:
+            self.lines += [
+                "def g_ret_val() -> Iterator[int]:",
+                "    yield 1",
+                "    return 2",
+            ]
+        elif choice == 7:
+            self.lines += [
+                "def g_opt_yield() -> Iterator[int | None]:",
+                "    yield 1",
+            ]
+        elif choice == 8:
+            self.lines += [
+                "def g_lowlevel() -> Iterator[int]:",
+                "    lowlevel:",
+                "        yield 1",
+            ]
+        elif choice == 9:
+            self.lines += [
+                "def g_send_bad() -> Iterator[int]:",
+                "    x: int = yield 1",
+                "    print(x)",
+            ]
+        elif choice == 10:
+            self.lines += [
+                "def g_fn_cell() -> Iterator[int]:",
+                "    f: (int) -> int = lambda x: x + 1",
+                "    yield f(1)",
+                "    yield f(2)",
+            ]
+        elif choice == 11:
+            self.lines += [
+                "async def g_agen(n: int) -> AsyncIterator[int]:",
+                "    for i in range(n):",
+                "        yield i",
+                "async def use_af() -> int:",
+                "    s: int = 0",
+                "    async for x in g_agen(3):",
+                "        s = s + x",
+                "    return s",
+            ]
+        elif choice == 12:
+            if r.random() < 0.5:
+                self.lines += [
+                    "def bad_af() -> None:",
+                    "    async for x in [1, 2]:",
+                    "        print(x)",
+                ]
+            else:
+                self.lines += [
+                    "async def bad_af2() -> None:",
+                    "    async for x in [1, 2]:",
+                    "        print(x)",
+                ]
+        elif choice == 13:
+            if r.random() < 0.5:
+                self.lines += [
+                    "async def use_aw() -> int:",
+                    "    async with ACM(7) as v:",
+                    "        return v",
+                    "    return 0",
+                ]
+            else:
+                self.lines += [
+                    "def bad_aw() -> None:",
+                    "    async with ACM(7) as v:",
+                    "        print(v)",
+                ]
+        elif choice == 14:
+            self.lines += [
+                "async def outer_na(a: int, b: str) -> int:",
+                "    async def worker(k: int) -> int:",
+                "        return a + len(b) + k",
+                "    t: Task[int] = spawn worker(3)",
+                "    return await t",
+            ]
+        else:
+            if r.random() < 0.5:
+                self.lines += [
+                    "async def outer_bad_cap(xs: list[int]) -> int:",
+                    "    async def worker() -> int:",
+                    "        return len(xs)",
+                    "    t: Task[int] = spawn worker()",
+                    "    return await t",
+                ]
+            else:
+                self.lines += [
+                    "async def outer_direct_call(a: int) -> int:",
+                    "    async def worker() -> int:",
+                    "        return a",
+                    "    return worker()",
+                ]
+
     def program(self):
         r = self.rnd
+        if self.use_gen_async:
+            self.gen_gen_async()
+            return "\n".join(self.lines) + "\n"
         if self.use_nonlocal:
             self.gen_nonlocal()
             return "\n".join(self.lines) + "\n"
@@ -2351,11 +2511,12 @@ def main():
     ap.add_argument("--enum-bin-alias", dest="use_enum_bin_alias", action="store_true")
     ap.add_argument("--cls-mi-ops", dest="use_cls_mi_ops", action="store_true")
     ap.add_argument("--nonlocal", dest="use_nonlocal", action="store_true")
+    ap.add_argument("--gen-async", dest="use_gen_async", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig, args.use_bytes_spawn_dec, args.use_consts_ffi_intr, args.use_enum_bin_alias, args.use_cls_mi_ops, args.use_nonlocal).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig, args.use_bytes_spawn_dec, args.use_consts_ffi_intr, args.use_enum_bin_alias, args.use_cls_mi_ops, args.use_nonlocal, args.use_gen_async).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

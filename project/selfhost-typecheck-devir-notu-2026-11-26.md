@@ -45,7 +45,14 @@ Döngü (her dilim):
 - `qrun` bildirimi hep "exit 0" der; gerçek sonuç `cikis=` satırı.
 - Zig'in test-fast'i `error: '...' failed` satırları basar; `failed command:` satırları tek başına hata değildir (stderr basan testler).
 
-## 4. DURUM (2026-11-28, v2.2.106 sonrası)
+## 4. DURUM (2026-11-28, v2.2.107 sonrası)
+
+- **Son sürüm:** `v2.2.107` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **15.868 satır**) Paket 3 (Aşama 3.8 kapanışı): `generator_desugar_run` / `GdPass` (`yield`/`yield from`/`Generator[Y, S]`/`try`/`with`), `__nox_cell_of`/`__nox_get`/`__nox_for_iter`, `check_expr_expected` FnBox açma, `check_lazy_for` cleanup `close()`, `async_for`, `check_async_with` ve `hoist_nested_async`.
+- **Doğrulama:** `ck_gen.py --gen-async` (`files=3000 unsupported=0 accepted=267 rejected=2733 diagnostics=472 skipped_parse=0`), `ck_edge/gen_async` (`20` dosya, `unsupported=0 accepted=5 rejected=15 diagnostics=8`), `ck_mutants_gen_async.py` (`18/18 yakalandı, 0 yaşayan`), `ck_regress.sh` `24` kip + depo yeşil.
+- **Depo `ck-diff check` (`v2.2.107`):** `files=1800 unsupported=3 accepted=650 rejected=1147 diagnostics=2299 skipped_parse=56` (`register_func#generator`, `stmt_kind#nested_async`, `check_stmt#async_for`, `check_stmt#async_with` → `0`; kalanlar yalnız `1 lambda#captures_order`, `1 check_identifier#fromimport`, `1 stmt_kind#15`).
+- **`ck-diff checkm` (`tests/golden/typecheck_cases/*.nox`, `v2.2.107`):** `files=347 unsupported=0 accepted=89 rejected=258 diagnostics=204 skipped=0` (**%100,0 kapsam**, `0` kapsam dışı, `0` uyuşmazlık).
+
+### Önceki (v2.2.106 sonrası)
 
 - **Son sürüm:** `v2.2.106` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **14.218 satır**) Paket 2 (Aşama 3.7 kapanışı): `nonlocal_desugar_run` (`nl_has_nonlocal` sıfır tahsisli hızlı yol + tam hücre dönüşümü), `stmt_kind#nested_features` → `0` (`allow_await`/`is_async` yayılımı), `spawn#attribute` → `0` (`find_method_def` + `resolve_spawn_attr_callee` / `__spawn_{cls}_{attr}` thunk) ve `lambda`/`defer` `grow_stmt_gate` temizliği.
 - **Doğrulama:** `ck_gen.py --nonlocal` (`files=3000 unsupported=0 accepted=1593 rejected=1407 diagnostics=592 skipped_parse=0`), `ck_edge/nonlocal` (`24` dosya, `unsupported=0 accepted=12 rejected=12 diagnostics=6`), `ck_mutants_nonlocal.py` (`20/20 yakalandı, 0 yaşayan`), `ck_regress.sh` `23` kip + depo yeşil.

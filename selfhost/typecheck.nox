@@ -5,7 +5,7 @@
 #
 # Durum: 3.2 (kapsam/sembol tabloları). Tip temsili `types.nox` (TypeId/SymbolId, hash-consing). Ad = SymbolId, tip = TypeId; `dict[str, T]` yerine tamsayı anahtarlı düz tablolar
 # (R2-G.1/G.2: dize anahtarlı sözlük ≈6× pahalı). Tablolar tek `Ck` nesnesindedir; kapsamlar derleme boyunca yaşar (Zig'in arena'sı gibi; tek tek serbest bırakılmaz).
-from ast_schema import Ast, at, dump_module, mk_Assign, mk_Attribute, mk_Binary, mk_Call, mk_ClassDef, mk_CompClause_for_clause, mk_CompClause_if_clause, mk_CompForClause, mk_ConstDecl, mk_Decorator, mk_DeferStmt, mk_DictComp, mk_DictPair, mk_ElifClause, mk_ExceptClause, mk_Expr_attribute, mk_Expr_await_expr, mk_Expr_binary, mk_Expr_bool_lit, mk_Expr_call, mk_Expr_dict_comp, mk_Expr_dict_lit, mk_Expr_generic_construct, mk_Expr_identifier, mk_Expr_index, mk_Expr_int_lit, mk_Expr_kwarg, mk_Expr_lambda, mk_Expr_list_comp, mk_Expr_list_lit, mk_Expr_none_lit, mk_Expr_slice, mk_Expr_spawn_expr, mk_Expr_string_lit, mk_Expr_ternary, mk_Expr_tuple_lit, mk_Expr_unary, mk_FieldDecl, mk_ForStmt, mk_FuncDef, mk_FuncTypeExpr, mk_Generic, mk_GenericConstruct, mk_IfStmt, mk_Index, mk_Kwarg, mk_Lambda, mk_ListComp, mk_LowLevelStmt, mk_Param, mk_Slice, mk_Stmt, mk_StmtKind_assign, mk_StmtKind_break_stmt, mk_StmtKind_defer_stmt, mk_StmtKind_del_stmt, mk_StmtKind_expr_stmt, mk_StmtKind_for_stmt, mk_StmtKind_func_def, mk_StmtKind_if_stmt, mk_StmtKind_lowlevel_stmt, mk_StmtKind_pass_stmt, mk_StmtKind_raise_stmt, mk_StmtKind_return_stmt, mk_StmtKind_try_stmt, mk_StmtKind_var_decl, mk_StmtKind_while_stmt, mk_StmtKind_with_stmt, mk_Ternary, mk_TryStmt, mk_TypeExpr_func_type, mk_TypeExpr_generic, mk_TypeExpr_optional, mk_TypeExpr_qualified, mk_TypeExpr_simple, mk_Unary, mk_VarDecl, mk_WhileStmt, mk_WithStmt, mk_attr_call_node, mk_dunder_call, mk_fail, mk_ident_call, mk_ident_node, put
+from ast_schema import Ast, at, dump_module, mk_Assign, mk_Attribute, mk_Binary, mk_Call, mk_ClassDef, mk_CompClause_for_clause, mk_CompClause_if_clause, mk_CompForClause, mk_ConstDecl, mk_Decorator, mk_DeferStmt, mk_DictComp, mk_DictPair, mk_ElifClause, mk_ExceptClause, mk_Expr_attribute, mk_Expr_await_expr, mk_Expr_binary, mk_Expr_bool_lit, mk_Expr_call, mk_Expr_dict_comp, mk_Expr_dict_lit, mk_Expr_float_lit, mk_Expr_generic_construct, mk_Expr_identifier, mk_Expr_index, mk_Expr_int_lit, mk_Expr_kwarg, mk_Expr_lambda, mk_Expr_list_comp, mk_Expr_list_lit, mk_Expr_none_lit, mk_Expr_slice, mk_Expr_spawn_expr, mk_Expr_string_lit, mk_Expr_ternary, mk_Expr_tuple_lit, mk_Expr_unary, mk_FieldDecl, mk_ForStmt, mk_FuncDef, mk_FuncTypeExpr, mk_Generic, mk_GenericConstruct, mk_IfStmt, mk_Index, mk_Kwarg, mk_Lambda, mk_ListComp, mk_LowLevelStmt, mk_Param, mk_Slice, mk_Stmt, mk_StmtKind_assign, mk_StmtKind_break_stmt, mk_StmtKind_defer_stmt, mk_StmtKind_del_stmt, mk_StmtKind_expr_stmt, mk_StmtKind_for_stmt, mk_StmtKind_func_def, mk_StmtKind_if_stmt, mk_StmtKind_lowlevel_stmt, mk_StmtKind_pass_stmt, mk_StmtKind_raise_stmt, mk_StmtKind_return_stmt, mk_StmtKind_try_stmt, mk_StmtKind_var_decl, mk_StmtKind_while_stmt, mk_StmtKind_with_stmt, mk_Ternary, mk_TryStmt, mk_TypeExpr_func_type, mk_TypeExpr_generic, mk_TypeExpr_optional, mk_TypeExpr_qualified, mk_TypeExpr_simple, mk_Unary, mk_VarDecl, mk_WhileStmt, mk_WithStmt, mk_attr_call_node, mk_dunder_call, mk_fail, mk_ident_call, mk_ident_node, put
 from ast_schema import build_sp_idx, loaded_ast
 from parser import pk, pkx, pky, syn, parse_ast, parse_body, sref_eq, sref_len, sref_byte, utf8_bytes
 from types import TT, ty_global, tat, sym_hash_step, cls_set_nonarc, cls_set_base, cls_add_mixin, lcg, sym_intern, sym_intern_list, ty_format, ty_mangle, ty_func_begin, ty_func_param, ty_func_end, ty_assignable, fx_fits, fx_signed, ty_mk, ty_list, ty_dict, ty_optional, ty_class, cls_register, is_subclass
@@ -232,6 +232,9 @@ class Ck:
     cls_meth_owners: Map2
     ext_cnt: int
     lazy_for_iter: int
+    cleanup_gens: Map2
+    nested_async_cnt: int
+    last_nested_cap_id: int
 
     def __init__(self, tt: TT) -> None:
         self.tt = tt
@@ -352,6 +355,9 @@ class Ck:
         self.cls_meth_owners = Map2()
         self.ext_cnt = 0
         self.lazy_for_iter = -1
+        self.cleanup_gens = Map2()
+        self.nested_async_cnt = 0
+        self.last_nested_cap_id = -1
 
 # ---- Scope (Zig `Scope`) ----
 def sc_new(ck: Ck, parent: int, has_caps: bool) -> int:
@@ -521,6 +527,11 @@ class Fx:
     infer_lines: Map2
     narrowed: Map2
     cls_alias: int
+    fn_path: str
+    async_locals: Map2
+    async_cap_s: Map2
+    async_cap_n: Map2
+    async_cap_pool: list[int]
 
     def __init__(self, scope: int, ret: int, in_async: bool) -> None:
         self.awaited = -1
@@ -534,6 +545,11 @@ class Fx:
         self.infer_lines = Map2()
         self.narrowed = Map2()
         self.cls_alias = -1
+        self.fn_path = ""
+        self.async_locals = Map2()
+        self.async_cap_s = Map2()
+        self.async_cap_n = Map2()
+        self.async_cap_pool = []
 
 # `why`: kapsam dışı nedeninin kısa etiketi (işlev adı#sıra); `ck-diff check --why` histogram basar.
 def unsup(ck: Ck, why: str) -> CkUnsupported:
@@ -998,6 +1014,25 @@ def check_spawn(ck: Ck, a: Ast, fx: Fx, opd: int) -> int:
         fail2(ck, "NotCallable", "'spawn' can only wrap a direct function call")
     nm: int = pk(a.n[callee + 1], a.n[callee + 2])
     sym: int = sym_of(ck, a, nm)
+    ale: int = m2_get(fx.async_locals, 0, sym)
+    if ale >= 0:
+        lifted_sym: int = fx.async_locals.vv[ale]
+        cs_e: int = m2_get(fx.async_cap_s, 0, sym)
+        cn_e: int = m2_get(fx.async_cap_n, 0, sym)
+        cargs_al: int = sl_at(a, c, 1)
+        n_al_args: list[int] = []
+        if cs_e >= 0 and cn_e >= 0:
+            st_c: int = fx.async_cap_s.vv[cs_e]
+            n_c: int = fx.async_cap_n.vv[cn_e]
+            for ci_a in range(n_c):
+                n_al_args.append(mk_ident_node(a, sym_to_str(ck, fx.async_cap_pool[st_c + ci_a])))
+        for ai_a in range(pky(cargs_al)):
+            n_al_args.append(stmt_at(a, cargs_al, ai_a))
+        nasl_a: int = ast_expr_list(a, n_al_args)
+        a.n[c + 1] = pkx(nasl_a)
+        a.n[c + 1 + 1] = pky(nasl_a)
+        a.n[c + 0] = mk_ident_node(a, sym_to_str(ck, lifted_sym))
+        sym = lifted_sym
     if m2_get(ck.fmap, 0, sym) < 0:
         sfe: int = m2_get(ck.fimp, 0, sym)
         if sfe >= 0 and m2_get(ck.fmap, 0, ck.fimp.vv[sfe]) >= 0:
@@ -2061,6 +2096,20 @@ def check_expr_expected(ck: Ck, a: Ast, fx: Fx, e: int, expected_in: int) -> int
     tag: int = a.n[e]
     tt: TT = ck.tt
     expected: int = expected_in
+    # fonksiyon tipli yerellerin kutusu (`__nox_FnBox[F] | None`): değer (özellikle lambda) `F` beklenen tipiyle denetlenir, kutulama atamada yapılır
+    if expected >= 0:
+        bt_f: int = expected
+        if tt.tag[bt_f] == 15:
+            bt_f = tt.xa[bt_f]
+        if tt.tag[bt_f] == 6:
+            tsym_f: int = tt.xa[bt_f]
+            tstr_f: str = sym_to_str(ck, tsym_f)
+            if len(tstr_f) >= 13 and tstr_f[:13] == "__nox_FnBox__":
+                ci_fb: int = class_idx(ck, tsym_f)
+                if ci_fb >= 0 and ck.gcls_tn[ci_fb] == 1:
+                    inner_fb: int = ck.gcls_te[ck.gcls_ts[ci_fb]]
+                    if tt.tag[inner_fb] == 14:
+                        expected = inner_fb
     # `y: list[str] | None = []`: Optional'ın taşıdığı list/dict beklenen tip olur
     if expected >= 0 and tt.tag[expected] == 15 and (tag == 11 or tag == 12 or tag == 21 or tag == 22):
         inner: int = tt.xa[expected]
@@ -2089,7 +2138,7 @@ def check_expr_expected(ck: Ck, a: Ast, fx: Fx, e: int, expected_in: int) -> int
     if tag == 22 and expected >= 0 and tt.tag[expected] == 13:
         return check_dict_comp(ck, a, fx, a.n[e + 1], tt.xb[expected])
     if tag == 19:
-        return check_lambda(ck, a, fx, e, expected_in)
+        return check_lambda(ck, a, fx, e, expected)
     if tag == 20:
         return check_tuple_lit(ck, a, fx, e, expected)
     if tag == 16:
@@ -2764,7 +2813,7 @@ def check_reflect_builtin(ck: Ck, a: Ast, fx: Fx, c: int, cv: int) -> int:
 
 # Zig'de ayrı yolu olan (ptr/lowlevel ailesi, dahili `__nox_*` kapıları) ama bu dilimde taşınmayan ad: kapsam dışı etiketi; "" = yok.
 def call_gap_label(ck: Ck, a: Ast, cv: int, fi: int, gfi: int, ci: int) -> str:
-    if sref_eq(a, cv, "__nox_match_check") or sref_eq(a, cv, "__nox_payload") or sref_eq(a, cv, "__nox_match_unreachable") or sref_eq(a, cv, "__nox_cell_of") or sref_eq(a, cv, "__nox_get") or sref_eq(a, cv, "__nox_for_iter"):
+    if sref_eq(a, cv, "__nox_match_check") or sref_eq(a, cv, "__nox_payload") or sref_eq(a, cv, "__nox_match_unreachable"):
         return "check_call#internal"
     return ""
 
@@ -3578,9 +3627,28 @@ def check_call_inner(ck: Ck, a: Ast, fx: Fx, c: int) -> int:
             fail2(ck, "NotCallable", "this expression is not callable")
         check_args_func_type(ck, a, fx, c, cel_t, sym_lit(ck, "<list element>"))
         return ck.tt.xb[cel_t]
+    if a.n[callee] == 8:
+        ic: int = a.n[callee + 1]
+        ical: int = a.n[ic + 0]
+        iargs: int = sl_at(a, ic, 1)
+        if a.n[ical] == 5 and sref_eq(a, pk(a.n[ical + 1], a.n[ical + 2]), "__nox_get") and pky(iargs) == 1:
+            ct_g: int = check_expr(ck, a, fx, callee)
+            if ck.tt.tag[ct_g] != 14:
+                fail2(ck, "NotCallable", "this expression is not callable")
+            check_args_func_type(ck, a, fx, c, ct_g, sym_lit(ck, "<generator local>"))
+            return ck.tt.xb[ct_g]
+        fail2(ck, "NotCallable", "this expression is not callable")
     if a.n[callee] != 5:
         fail2(ck, "NotCallable", "this expression is not callable")
     cv: int = pk(a.n[callee + 1], a.n[callee + 2])
+    csym_al: int = sym_of(ck, a, cv)
+    if m2_get(fx.async_locals, 0, csym_al) >= 0 and sc_lookup(ck, fx.scope, csym_al) < 0:
+        mp(ck, "'")
+        mp_sym(ck, csym_al)
+        mp(ck, "' is a nested 'async def': start it with 'spawn ")
+        mp_sym(ck, csym_al)
+        mp(ck, "(...)' (an async function is never called directly)")
+        raise mk_fail(ck, "TypeMismatch")
     et_r: int = try_enum_intrinsic(ck, a, fx, c, cv)
     if et_r >= 0:
         return et_r
@@ -3979,13 +4047,16 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
             raise mk_fail(ck, "TypeMismatch")
         return
     if tag == 6:
-        if a.n[pay + 6] != 0:
-            raise unsup(ck, "check_stmt#async_for")
-        if try_fuse_enumerate_zip_for(ck, a, fx, pay):
+        is_af: bool = a.n[pay + 6] != 0
+        if is_af and not fx.in_async:
+            fail2(ck, "TypeMismatch", "'async for' can only be used inside an 'async def' body or at the top level")
+        if not is_af and try_fuse_enumerate_zip_for(ck, a, fx, pay):
             return
         it: int = a.n[pay + 2]
         ck.lazy_for_iter = -1
         elem_t: int = check_for_iterable(ck, a, fx, it)
+        if is_af and ck.lazy_for_iter < 0:
+            fail2(ck, "TypeMismatch", "'async for' needs an async iterator (an 'AsyncIterator[T]' returned by an async generator)")
         if ck.lazy_for_iter >= 0:
             lzt: int = ck.lazy_for_iter
             ck.lazy_for_iter = -1
@@ -4064,7 +4135,8 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
         return
     if tag == 21:
         if a.n[pay + 5] != 0:
-            raise unsup(ck, "check_stmt#async_with")
+            check_async_with(ck, a, fx, pay)
+            return
         check_with(ck, a, fx, pay)
         return
     if tag == 7:
@@ -4073,7 +4145,8 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
             mp_sref(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1]))
             raise mk_fail(ck, "TypeMismatch")
         if a.n[pay + 10] != 0:
-            raise unsup(ck, "stmt_kind#nested_async")
+            hoist_nested_async(ck, a, fx, st, pay)
+            return
         ft: int = check_nested_def(ck, a, fx, pay)
         sc_declare(ck, fx.scope, sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1])), ft)
         return
@@ -4085,6 +4158,7 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
 # `checkNestedFuncDef`: gövde, dış kapsamı üst zincir (yakalama kaydıyla) olan yeni kapsamda denetlenir; sonuç işlev tipi.
 def check_nested_def(ck: Ck, a: Ast, fx: Fx, fd: int) -> int:
     inner: int = sc_new(ck, fx.scope, True)
+    ck.last_nested_cap_id = ck.sc[inner]
     ps: int = sl_at(a, fd, 4)
     for i in range(pky(ps)):
         p: int = stmt_at(a, ps, i)
@@ -4386,6 +4460,121 @@ def try_fuse_enumerate_zip_for(ck: Ck, a: Ast, fx: Fx, f: int) -> bool:
     check_stmt(ck, a, fx, synth)
     return True
 
+def check_async_with(ck: Ck, a: Ast, fx: Fx, w: int) -> None:
+    if not fx.in_async:
+        fail2(ck, "TypeMismatch", "'async with' can only be used inside an 'async def' body or at the top level")
+    ck.ext_cnt = ck.ext_cnt + 1
+    mgr_name: str = "__nox_am_" + str(ck.ext_cnt)
+    msr: int = syn(a, mgr_name)
+    inf_sr: int = syn(a, "__infer")
+    inf_te: int = mk_TypeExpr_simple(a, pkx(inf_sr), pky(inf_sr))
+    enter_c: int = mk_attr_call_node(a, mk_ident_node(a, mgr_name), "__aenter__", pk(0, 0))
+    exit_c: int = mk_attr_call_node(a, mk_ident_node(a, mgr_name), "__aexit__", pk(0, 0))
+    vd0: int = mk_Stmt(a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(msr), pky(msr), inf_te, a.n[w + 0], 0, 0, 0, 0)), ck.cur_line, ck.cur_span)
+    s1: int = -1
+    if a.n[w + 1] != -4611686018427387904:
+        s1 = mk_Stmt(a, mk_StmtKind_var_decl(a, mk_VarDecl(a, a.n[w + 1], a.n[w + 1 + 1], inf_te, enter_c, 0, 0, 0, 0)), ck.cur_line, ck.cur_span)
+    else:
+        s1 = mk_Stmt(a, mk_StmtKind_expr_stmt(a, enter_c), ck.cur_line, ck.cur_span)
+    wbody: int = sl_at(a, w, 3)
+    fin_sl: int = ast_stmt_list(a, [mk_Stmt(a, mk_StmtKind_expr_stmt(a, exit_c), ck.cur_line, ck.cur_span)])
+    ts2: int = mk_Stmt(a, mk_StmtKind_try_stmt(a, mk_TryStmt(a, pkx(wbody), pky(wbody), 0, 0, pkx(fin_sl), pky(fin_sl), 0)), ck.cur_line, ck.cur_span)
+    ob: int = ast_stmt_list(a, [vd0, s1, ts2])
+    ifp: int = mk_IfStmt(a, mk_Expr_bool_lit(a, 1), pkx(ob), pky(ob), 0, 0, -4611686018427387904, 0, 0, -1, 0)
+    synth: int = mk_Stmt(a, mk_StmtKind_if_stmt(a, ifp), ck.cur_line, ck.cur_span)
+    check_stmt(ck, a, fx, synth)
+
+def hoist_nested_async(ck: Ck, a: Ast, fx: Fx, st: int, fd: int) -> None:
+    if pky(sl_at(a, fd, 2)) > 0:
+        mp(ck, "a nested function definition CANNOT be generic: ")
+        mp_sref(ck, a, pk(a.n[fd + 0], a.n[fd + 0 + 1]))
+        raise mk_fail(ck, "TypeMismatch")
+    _ = check_nested_def(ck, a, fx, fd)
+    cap_id: int = ck.last_nested_cap_id
+    fn_sr: int = pk(a.n[fd + 0], a.n[fd + 0 + 1])
+    fn_sym: int = sym_of(ck, a, fn_sr)
+    fn_str: str = sym_to_str(ck, fn_sym)
+    cap_syms: list[int] = []
+    cap_tys: list[int] = []
+    cap_strs: list[str] = []
+    for ci in range(len(ck.caps.k1)):
+        if ck.caps.k1[ci] == cap_id and ck.caps.dead[ci] == 0:
+            cs: int = ck.caps.k2[ci]
+            ct: int = ck.caps.vv[ci]
+            cap_syms.append(cs)
+            cap_tys.append(ct)
+            cap_strs.append(sym_to_str(ck, cs))
+    n_caps: int = len(cap_syms)
+    for si in range(n_caps):
+        for sj in range(si + 1, n_caps):
+            if cap_strs[sj] < cap_strs[si]:
+                ts: str = cap_strs[si]
+                cap_strs[si] = cap_strs[sj]
+                cap_strs[sj] = ts
+                tsy: int = cap_syms[si]
+                cap_syms[si] = cap_syms[sj]
+                cap_syms[sj] = tsy
+                tty: int = cap_tys[si]
+                cap_tys[si] = cap_tys[sj]
+                cap_tys[sj] = tty
+    pids: list[int] = []
+    cap_start: int = len(fx.async_cap_pool)
+    for k in range(n_caps):
+        tg: int = ck.tt.tag[cap_tys[k]]
+        if tg != 0 and tg != 1 and tg != 2 and tg != 3 and tg != 4 and tg != 16:
+            mp(ck, "the nested 'async def' ")
+            mp(ck, fn_str)
+            mp(ck, " captures '")
+            mp(ck, cap_strs[k])
+            mp(ck, "', whose type cannot be shared with a task: a nested 'async def' may only capture int, float, bool, str and None values from the enclosing function — pass '")
+            mp(ck, cap_strs[k])
+            mp(ck, "' as a parameter instead")
+            raise mk_fail(ck, "TypeMismatch")
+        csr: int = syn(a, cap_strs[k])
+        pids.append(mk_Param(a, pkx(csr), pky(csr), 0, 0, 0, 0, type_to_type_expr(ck, a, cap_tys[k]), 0, -4611686018427387904))
+        fx.async_cap_pool.append(cap_syms[k])
+    fps: int = sl_at(a, fd, 4)
+    for pi in range(pky(fps)):
+        pids.append(stmt_at(a, fps, pi))
+    psl: int = ast_stmt_list(a, pids)
+    ck.nested_async_cnt = ck.nested_async_cnt + 1
+    lifted_str: str = "__nested_async_" + fx.fn_path + "__" + fn_str + "_" + str(ck.nested_async_cnt)
+    lsr: int = syn(a, lifted_str)
+    cbody: int = subst_stmts(ck, a, sl_at(a, fd, 8), Map2())
+    concrete: int = mk_FuncDef(a, pkx(lsr), pky(lsr), 0, 0, pkx(psl), pky(psl), a.n[fd + 6], a.n[fd + 7], pkx(cbody), pky(cbody), 1, 0, 0, -4611686018427387904, 0, 0, 0, 0, 0, a.n[fd + 19], a.n[fd + 20])
+    register_func(ck, a, concrete)
+    check_function_body(ck, a, concrete)
+    lifted_sym: int = sym_lit(ck, lifted_str)
+    m2_put(fx.async_locals, 0, fn_sym, lifted_sym)
+    m2_put(fx.async_cap_s, 0, fn_sym, cap_start)
+    m2_put(fx.async_cap_n, 0, fn_sym, n_caps)
+    a.n[st + 0] = mk_StmtKind_pass_stmt(a)
+
+def is_fresh_cleanup_gen_call(ck: Ck, a: Ast, fx: Fx, e: int) -> bool:
+    if ck.cleanup_gens.live == 0 or a.n[e] != 8:
+        return False
+    cal: int = a.n[a.n[e + 1] + 0]
+    if a.n[cal] == 5:
+        return m2_get(ck.cleanup_gens, 0, sym_of(ck, a, pk(a.n[cal + 1], a.n[cal + 2]))) >= 0
+    if a.n[cal] == 9:
+        at: int = a.n[cal + 1]
+        sv_c: int = len(ck.mb)
+        sv_l: int = ck.cur_line
+        sv_s: int = ck.cur_span
+        ot: int = -1
+        try:
+            ot = check_expr(ck, a, fx, a.n[at + 0])
+        except CkErr:
+            ck.mb = ck.mb[:sv_c]
+            ck.cur_line = sv_l
+            ck.cur_span = sv_s
+            return False
+        if ck.tt.tag[ot] != 6:
+            return False
+        key: str = sym_to_str(ck, ck.tt.xa[ot]) + "." + sym_to_str(ck, sym_of(ck, a, pk(a.n[at + 1], a.n[at + 1 + 1])))
+        return m2_get(ck.cleanup_gens, 0, sym_lit(ck, key)) >= 0
+    return False
+
 def check_lazy_for(ck: Ck, a: Ast, fx: Fx, f: int, it_t: int) -> None:
     ck.ext_cnt = ck.ext_cnt + 1
     eid: int = ck.ext_cnt
@@ -4407,8 +4596,14 @@ def check_lazy_for(ck: Ck, a: Ast, fx: Fx, f: int, it_t: int) -> None:
     nx_call: int = mk_attr_call_node(a, mk_ident_node(a, it_name), "__next__", pk(0, 0))
     lb: int = ast_stmt_list(a, [mk_Stmt(a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(nxsr), pky(nxsr), inf_te, nx_call, 0, 0, 0, 0)), ck.cur_line, ck.cur_span), inner_if])
     wh: int = mk_Stmt(a, mk_StmtKind_while_stmt(a, mk_WhileStmt(a, mk_Expr_bool_lit(a, 1), pkx(lb), pky(lb), -1)), ck.cur_line, ck.cur_span)
+    loop_st: int = wh
+    if is_fresh_cleanup_gen_call(ck, a, fx, a.n[f + 2]):
+        cc_call: int = mk_attr_call_node(a, mk_ident_node(a, it_name), "close", pk(0, 0))
+        fin_sl: int = ast_stmt_list(a, [mk_Stmt(a, mk_StmtKind_expr_stmt(a, cc_call), ck.cur_line, ck.cur_span)])
+        gs_sl: int = ast_stmt_list(a, [wh])
+        loop_st = mk_Stmt(a, mk_StmtKind_try_stmt(a, mk_TryStmt(a, pkx(gs_sl), pky(gs_sl), 0, 0, pkx(fin_sl), pky(fin_sl), 0)), ck.cur_line, ck.cur_span)
     it_te: int = type_to_type_expr(ck, a, it_t)
-    ob: int = ast_stmt_list(a, [mk_Stmt(a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(itsr), pky(itsr), it_te, a.n[f + 2], 0, 0, 0, 0)), ck.cur_line, ck.cur_span), wh])
+    ob: int = ast_stmt_list(a, [mk_Stmt(a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(itsr), pky(itsr), it_te, a.n[f + 2], 0, 0, 0, 0)), ck.cur_line, ck.cur_span), loop_st])
     ifp: int = mk_IfStmt(a, mk_Expr_bool_lit(a, 1), pkx(ob), pky(ob), 0, 0, 0, 0, 0, -1, 0)
     synth: int = mk_Stmt(a, mk_StmtKind_if_stmt(a, ifp), ck.cur_line, ck.cur_span)
     check_stmt(ck, a, fx, synth)
@@ -4441,7 +4636,7 @@ def check_for_iterable(ck: Ck, a: Ast, fx: Fx, it: int) -> int:
     tt: TT = ck.tt
     if tt.tag[t] == 6:
         ci_nx: int = class_idx_of_type(ck, t)
-        if ci_nx >= 0 and ck.cls_synth[ci_nx] == 0:
+        if ci_nx >= 0 and not is_tuple_cls(ck, ci_nx):
             nxe: int = m2_get(ck.cls_meths, ci_nx, sym_lit(ck, "__next__"))
             if nxe >= 0:
                 nxsid: int = ck.cls_meths.vv[nxe]
@@ -6905,6 +7100,7 @@ def check_method_body(ck: Ck, a: Ast, idx: int, m: int, is_init: bool) -> None:
     fx: Fx = Fx(scope, ret, a.n[m + 10] != 0 or a.n[m + 19] != 0)
     fx.self_cls = idx
     fx.is_init = is_init
+    fx.fn_path = sym_to_str(ck, ck.cls_sym[idx]) + "_" + sym_to_str(ck, sym_of(ck, a, pk(a.n[m + 0], a.n[m + 0 + 1])))
     body: int = sl_at(a, m, 8)
     check_block(ck, a, fx, body)
     if ret != 4 and not always_returns(a, body):
@@ -9072,8 +9268,6 @@ def check_capability_call(ck: Ck, fn_sym: int) -> None:
 def register_func(ck: Ck, a: Ast, fd: int) -> None:
     nm: int = pk(a.n[fd + 0], a.n[fd + 0 + 1])
     ps: int = sl_at(a, fd, 4)
-    if stmts_have_yield(a, sl_at(a, fd, 8)):
-        raise unsup(ck, "register_func#generator")
     validate_param_defaults(ck, a, nm, ps, 0, pky(sl_at(a, fd, 2)) > 0)
     if sref_eq(a, nm, "main"):
         mp(ck, "'main' is a reserved name: Nox has no 'def main()' convention, top-level statements are already the program's entry point — define this function under another name")
@@ -10606,6 +10800,7 @@ def check_function_body(ck: Ck, a: Ast, fd: int) -> None:
         check_no_post_spawn_caller_mutation(ck, a, body, ps)
     ret: int = type_expr_to_type(ck, a, a.n[fd + 6])
     fx: Fx = Fx(scope, ret, a.n[fd + 10] != 0)
+    fx.fn_path = sym_to_str(ck, fd_sym)
     cae: int = m2_get(ck.cls_alias_by_fn, 0, fd_sym)
     if cae >= 0:
         fx.cls_alias = ck.cls_alias_by_fn.vv[cae]
@@ -11281,6 +11476,1413 @@ def nl_process_func(ck: Ck, a: Ast, fd: int, nested: bool) -> None:
     for k2 in kids:
         nl_process_func(ck, a, k2, True)
 
+# `generator_desugar` (`compiler/typecheck/generator_desugar.zig`): `yield`/`yield from` tembel jeneratör durum makinesine dönüştürür.
+class GdPass:
+    uid: int
+    line: int
+    send_line: int
+    uses_send: bool
+    owner: str
+    ytype: int
+    sent_cell: str
+    sent_flag: int
+    done: str
+    closing: str
+    thrown_cell: str
+    thrown_flag: int
+    prelude: list[int]
+    fr_pc: list[str]
+    fr_sel: list[str]
+    fr_loop: list[bool]
+    idxs: list[int]
+    sc_base: list[int]
+    sc_sym: list[int]
+    sc_cell: list[str]
+    sc_flag: list[int]
+    rst_cell: list[str]
+    rst_kind: list[int]
+
+    def __init__(self) -> None:
+        self.uid = 0
+        self.line = 0
+        self.send_line = 0
+        self.uses_send = False
+        self.owner = ""
+        self.ytype = -1
+        self.sent_cell = ""
+        self.sent_flag = 0
+        self.done = ""
+        self.closing = ""
+        self.thrown_cell = ""
+        self.thrown_flag = 0
+        self.prelude = []
+        self.fr_pc = []
+        self.fr_sel = []
+        self.fr_loop = []
+        self.idxs = []
+        self.sc_base = []
+        self.sc_sym = []
+        self.sc_cell = []
+        self.sc_flag = []
+        self.rst_cell = []
+        self.rst_kind = []
+
+def gd_fail(g: GdPass, ck: Ck, msg: str) -> None:
+    ck.cur_line = g.line
+    mp(ck, msg)
+    raise mk_fail(ck, "TypeMismatch")
+
+def gd_is_yield(a: Ast, e: int) -> int:
+    if e >= 0 and a.n[e] == 8:
+        c: int = a.n[e + 1]
+        cal: int = a.n[c + 0]
+        args: int = sl_at(a, c, 1)
+        if a.n[cal] == 5 and pky(args) == 1:
+            cv: int = pk(a.n[cal + 1], a.n[cal + 2])
+            if sref_eq(a, cv, "__nox_yield"):
+                return 1
+            if sref_eq(a, cv, "__nox_yield_from"):
+                return 2
+            if sref_eq(a, cv, "__nox_yield_expr"):
+                return 3
+    return 0
+
+def gd_list_has_yield(a: Ast, sl: int) -> bool:
+    for i in range(pky(sl)):
+        if gd_stmt_has_yield(a, stmt_at(a, sl, i)):
+            return True
+    return False
+
+def gd_stmt_has_yield(a: Ast, st: int) -> bool:
+    kn: int = a.n[st + 0]
+    tag: int = a.n[kn]
+    pay: int = a.n[kn + 1]
+    if tag == 0:
+        return gd_is_yield(a, pay) != 0
+    if tag == 1:
+        return gd_is_yield(a, a.n[pay + 3]) == 3
+    if tag == 3:
+        return gd_is_yield(a, a.n[pay + 1]) == 3
+    if tag == 4:
+        if gd_list_has_yield(a, sl_at(a, pay, 1)):
+            return True
+        ecs: int = sl_at(a, pay, 3)
+        for j in range(pky(ecs)):
+            if gd_list_has_yield(a, sl_at(a, stmt_at(a, ecs, j), 1)):
+                return True
+        if a.n[pay + 5] != -4611686018427387904 and gd_list_has_yield(a, sl_at(a, pay, 5)):
+            return True
+        return False
+    if tag == 5:
+        return gd_list_has_yield(a, sl_at(a, pay, 1))
+    if tag == 6:
+        return gd_list_has_yield(a, sl_at(a, pay, 3))
+    if tag == 13:
+        if gd_list_has_yield(a, sl_at(a, pay, 0)):
+            return True
+        exs: int = sl_at(a, pay, 2)
+        for k in range(pky(exs)):
+            if gd_list_has_yield(a, sl_at(a, stmt_at(a, exs, k), 4)):
+                return True
+        if a.n[pay + 4] != -4611686018427387904 and gd_list_has_yield(a, sl_at(a, pay, 4)):
+            return True
+        return False
+    if tag == 21:
+        return gd_list_has_yield(a, sl_at(a, pay, 3))
+    if tag == 14:
+        return gd_list_has_yield(a, sl_at(a, pay, 0))
+    return False
+
+def gd_unsupported_yield(g: GdPass, ck: Ck, a: Ast, sl: int) -> None:
+    for i in range(pky(sl)):
+        st: int = stmt_at(a, sl, i)
+        g.line = a.n[st + 1]
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 13:
+            gd_unsupported_yield(g, ck, a, sl_at(a, pay, 0))
+            exs: int = sl_at(a, pay, 2)
+            for k in range(pky(exs)):
+                gd_unsupported_yield(g, ck, a, sl_at(a, stmt_at(a, exs, k), 4))
+            if a.n[pay + 4] != -4611686018427387904:
+                gd_unsupported_yield(g, ck, a, sl_at(a, pay, 4))
+        elif tag == 21:
+            gd_unsupported_yield(g, ck, a, sl_at(a, pay, 3))
+        elif tag == 14:
+            if gd_stmt_has_yield(a, st):
+                gd_fail(g, ck, "'yield' inside 'lowlevel' is not supported in a generator")
+        elif tag == 4:
+            gd_unsupported_yield(g, ck, a, sl_at(a, pay, 1))
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                gd_unsupported_yield(g, ck, a, sl_at(a, stmt_at(a, ecs, j), 1))
+            if a.n[pay + 5] != -4611686018427387904:
+                gd_unsupported_yield(g, ck, a, sl_at(a, pay, 5))
+        elif tag == 5:
+            gd_unsupported_yield(g, ck, a, sl_at(a, pay, 1))
+        elif tag == 6:
+            gd_unsupported_yield(g, ck, a, sl_at(a, pay, 3))
+
+def gd_idx0(a: Ast, cell: str) -> int:
+    return mk_Expr_index(a, mk_Index(a, mk_ident_node(a, cell), mk_Expr_int_lit(a, 0)))
+
+def gd_call1(a: Ast, name: str, arg: int) -> int:
+    asl: int = ast_expr_list(a, [arg])
+    return mk_Expr_call(a, mk_Call(a, mk_ident_node(a, name), pkx(asl), pky(asl), 0, 0, 0, 0, 0, 0))
+
+def gd_call0(a: Ast, name: str) -> int:
+    return mk_Expr_call(a, mk_Call(a, mk_ident_node(a, name), 0, 0, 0, 0, 0, 0, 0, 0))
+
+def gd_bin(a: Ast, op: int, l: int, r: int) -> int:
+    return mk_Expr_binary(a, mk_Binary(a, op, l, r, 0, 0, 0, 0))
+
+def gd_stmt(g: GdPass, a: Ast, kind: int) -> int:
+    return mk_Stmt(a, kind, g.line, -1)
+
+def gd_assign(g: GdPass, a: Ast, target: int, val: int) -> int:
+    return gd_stmt(g, a, mk_StmtKind_assign(a, mk_Assign(a, target, val, 0)))
+
+def gd_set_cell(g: GdPass, a: Ast, cell: str, v: int) -> int:
+    return gd_assign(g, a, gd_idx0(a, cell), mk_Expr_int_lit(a, v))
+
+def gd_if_stmt(g: GdPass, a: Ast, cond: int, bsl: int) -> int:
+    return gd_stmt(g, a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, cond, pkx(bsl), pky(bsl), 0, 0, -4611686018427387904, 0, 0, -1, 0)))
+
+def gd_new_name(g: GdPass, base: str) -> str:
+    g.uid = g.uid + 1
+    return "__g_" + base + "_" + str(g.uid)
+
+def gd_list_of(a: Ast, te: int) -> int:
+    lsr: int = syn(a, "list")
+    asl: int = ast_expr_list(a, [te])
+    return mk_TypeExpr_generic(a, mk_Generic(a, pkx(lsr), pky(lsr), pkx(asl), pky(asl)))
+
+def gd_reg_reset(g: GdPass, cell: str, kind: int) -> None:
+    g.rst_cell.append(cell)
+    g.rst_kind.append(kind)
+
+def gd_reset_since(g: GdPass, a: Ast, mark: int) -> list[int]:
+    out: list[int] = []
+    for i in range(mark, len(g.rst_cell)):
+        k: int = g.rst_kind[i]
+        v: int = mk_Expr_none_lit(a)
+        if k == 0:
+            v = mk_Expr_int_lit(a, 0)
+        elif k == 1:
+            v = mk_Expr_bool_lit(a, 0)
+        out.append(gd_assign(g, a, gd_idx0(a, g.rst_cell[i]), v))
+    return out
+
+def gd_int_cell(g: GdPass, a: Ast, base: str, v: int) -> str:
+    name: str = gd_new_name(g, base)
+    nsr: int = syn(a, name)
+    isr: int = syn(a, "int")
+    itsl: int = ast_expr_list(a, [mk_Expr_int_lit(a, v)])
+    vd: int = mk_VarDecl(a, pkx(nsr), pky(nsr), gd_list_of(a, mk_TypeExpr_simple(a, pkx(isr), pky(isr))), mk_Expr_list_lit(a, pkx(itsl), pky(itsl)), 0, 0, 0, 0)
+    g.prelude.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, vd)))
+    return name
+
+def gd_bool_cell(g: GdPass, a: Ast, base: str, v: int) -> str:
+    name: str = gd_new_name(g, base)
+    nsr: int = syn(a, name)
+    bsr: int = syn(a, "bool")
+    itsl: int = ast_expr_list(a, [mk_Expr_bool_lit(a, v)])
+    vd: int = mk_VarDecl(a, pkx(nsr), pky(nsr), gd_list_of(a, mk_TypeExpr_simple(a, pkx(bsr), pky(bsr))), mk_Expr_list_lit(a, pkx(itsl), pky(itsl)), 0, 0, 0, 0)
+    g.prelude.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, vd)))
+    return name
+
+def gd_is_fixed_int_sref(a: Ast, sr: int) -> bool:
+    return sref_eq(a, sr, "u8") or sref_eq(a, sr, "u16") or sref_eq(a, sr, "u32") or sref_eq(a, sr, "u64") or sref_eq(a, sr, "i8") or sref_eq(a, sr, "i16") or sref_eq(a, sr, "i32") or sref_eq(a, sr, "i64")
+
+def gd_zero_for(a: Ast, te: int) -> int:
+    if a.n[te] != 0:
+        return -1
+    sr: int = pk(a.n[te + 1], a.n[te + 2])
+    if sref_eq(a, sr, "int"):
+        return mk_Expr_int_lit(a, 0)
+    if sref_eq(a, sr, "float"):
+        return mk_Expr_float_lit(a, 0)
+    if sref_eq(a, sr, "bool"):
+        return mk_Expr_bool_lit(a, 0)
+    if sref_eq(a, sr, "str"):
+        esr: int = syn(a, "")
+        return mk_Expr_string_lit(a, pkx(esr), pky(esr))
+    return -1
+
+def gd_typed_cell(g: GdPass, a: Ast, name: str, t: int) -> tuple[str, int]:
+    if a.n[t] == 2:
+        fbsr: int = syn(a, "__nox_FnBox")
+        asl: int = ast_expr_list(a, [t])
+        return gd_typed_cell(g, a, name, mk_TypeExpr_generic(a, mk_Generic(a, pkx(fbsr), pky(fbsr), pkx(asl), pky(asl))))
+    cell: str = gd_new_name(g, name)
+    csr: int = syn(a, cell)
+    if a.n[t] == 1:
+        gg: int = a.n[t + 1]
+        gsr: int = pk(a.n[gg + 0], a.n[gg + 0 + 1])
+        if sref_eq(a, gsr, "list") or sref_eq(a, gsr, "dict"):
+            lit: int = mk_Expr_dict_lit(a, 0, 0)
+            if sref_eq(a, gsr, "list"):
+                lit = mk_Expr_list_lit(a, 0, 0)
+            itsl: int = ast_expr_list(a, [lit])
+            vd_ld: int = mk_VarDecl(a, pkx(csr), pky(csr), gd_list_of(a, t), mk_Expr_list_lit(a, pkx(itsl), pky(itsl)), 0, 0, 0, 0)
+            g.prelude.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, vd_ld)))
+            return (cell, 1)
+    z: int = gd_zero_for(a, t)
+    if z >= 0:
+        itsl2: int = ast_expr_list(a, [z])
+        vd_z: int = mk_VarDecl(a, pkx(csr), pky(csr), gd_list_of(a, t), mk_Expr_list_lit(a, pkx(itsl2), pky(itsl2)), 0, 0, 0, 0)
+        g.prelude.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, vd_z)))
+        return (cell, 1)
+    if a.n[t] == 3:
+        inner_o: int = a.n[t + 1]
+        if gd_zero_for(a, inner_o) >= 0 or (a.n[inner_o] == 0 and gd_is_fixed_int_sref(a, pk(a.n[inner_o + 1], a.n[inner_o + 2]))):
+            nn0: str = gd_new_name(g, "none")
+            nn0sr: int = syn(a, nn0)
+            g.prelude.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(nn0sr), pky(nn0sr), t, mk_Expr_none_lit(a), 0, 0, 0, 0))))
+            sl_sr: int = syn(a, "__nox_Slot")
+            iasl: int = ast_expr_list(a, [inner_o])
+            slot_te: int = mk_TypeExpr_generic(a, mk_Generic(a, pkx(sl_sr), pky(sl_sr), pkx(iasl), pky(iasl)))
+            casl: int = ast_expr_list(a, [mk_ident_node(a, nn0)])
+            ctor: int = mk_Expr_generic_construct(a, mk_GenericConstruct(a, pkx(sl_sr), pky(sl_sr), pkx(iasl), pky(iasl), pkx(casl), pky(casl), -4611686018427387904, 0))
+            itsl3: int = ast_expr_list(a, [ctor])
+            vd_s: int = mk_VarDecl(a, pkx(csr), pky(csr), gd_list_of(a, slot_te), mk_Expr_list_lit(a, pkx(itsl3), pky(itsl3)), 0, 0, 0, 0)
+            g.prelude.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, vd_s)))
+            return (cell, 3)
+    opt_t: int = t
+    is_opt: bool = a.n[t] == 3
+    if not is_opt:
+        opt_t = mk_TypeExpr_optional(a, t)
+    nn: str = gd_new_name(g, "none")
+    nnsr: int = syn(a, nn)
+    g.prelude.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(nnsr), pky(nnsr), opt_t, mk_Expr_none_lit(a), 0, 0, 0, 0))))
+    itsl4: int = ast_expr_list(a, [mk_ident_node(a, nn)])
+    vd_o: int = mk_VarDecl(a, pkx(csr), pky(csr), gd_list_of(a, opt_t), mk_Expr_list_lit(a, pkx(itsl4), pky(itsl4)), 0, 0, 0, 0)
+    g.prelude.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, vd_o)))
+    if is_opt:
+        return (cell, 1)
+    return (cell, 2)
+
+def gd_inferred_cell(g: GdPass, a: Ast, name: str, src: int) -> tuple[str, int]:
+    cell: str = gd_new_name(g, name)
+    csr: int = syn(a, cell)
+    inf_sr: int = syn(a, "__infer")
+    vd: int = mk_VarDecl(a, pkx(csr), pky(csr), mk_TypeExpr_simple(a, pkx(inf_sr), pky(inf_sr)), gd_call1(a, "__nox_cell_of", src), 0, 0, 0, 0)
+    g.prelude.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, vd)))
+    return (cell, 2)
+
+def gd_push_scope(g: GdPass) -> None:
+    g.sc_base.append(len(g.sc_sym))
+
+def gd_pop_scope(g: GdPass) -> None:
+    b: int = g.sc_base[len(g.sc_base) - 1]
+    g.sc_base.pop()
+    while len(g.sc_sym) > b:
+        g.sc_sym.pop()
+        g.sc_cell.pop()
+        g.sc_flag.pop()
+
+def gd_bind(g: GdPass, sym: int, cell: str, flag: int) -> None:
+    g.sc_sym.append(sym)
+    g.sc_cell.append(cell)
+    g.sc_flag.append(flag)
+
+def gd_lookup(g: GdPass, sym: int) -> int:
+    i: int = len(g.sc_sym)
+    while i > 0:
+        i = i - 1
+        if g.sc_sym[i] == sym:
+            if g.sc_flag[i] == 0:
+                return -1
+            return i
+    return -1
+
+def gd_read_of(a: Ast, cell: str, flag: int) -> int:
+    if flag == 3:
+        vsr: int = syn(a, "v")
+        return mk_Expr_attribute(a, mk_Attribute(a, gd_idx0(a, cell), pkx(vsr), pky(vsr)))
+    if flag == 2:
+        return gd_call1(a, "__nox_get", mk_ident_node(a, cell))
+    return gd_idx0(a, cell)
+
+def gd_write_target(a: Ast, cell: str, flag: int) -> int:
+    if flag == 3:
+        vsr: int = syn(a, "v")
+        return mk_Expr_attribute(a, mk_Attribute(a, gd_idx0(a, cell), pkx(vsr), pky(vsr)))
+    return gd_idx0(a, cell)
+
+def gd_rename(g: GdPass, ck: Ck, a: Ast, e: int) -> None:
+    if e < 0:
+        return
+    tag: int = a.n[e]
+    if tag == 5:
+        bi: int = gd_lookup(g, sym_of(ck, a, pk(a.n[e + 1], a.n[e + 2])))
+        if bi >= 0:
+            rep: int = gd_read_of(a, g.sc_cell[bi], g.sc_flag[bi])
+            a.n[e] = a.n[rep]
+            a.n[e + 1] = a.n[rep + 1]
+        return
+    if tag == 6:
+        gd_rename(g, ck, a, a.n[a.n[e + 1] + 1])
+        return
+    if tag == 17:
+        gd_rename(g, ck, a, a.n[a.n[e + 1] + 2])
+        return
+    if tag == 16:
+        t: int = a.n[e + 1]
+        gd_rename(g, ck, a, a.n[t + 0])
+        gd_rename(g, ck, a, a.n[t + 1])
+        gd_rename(g, ck, a, a.n[t + 2])
+        return
+    if tag == 7:
+        b: int = a.n[e + 1]
+        gd_rename(g, ck, a, a.n[b + 1])
+        gd_rename(g, ck, a, a.n[b + 2])
+        return
+    if tag == 8:
+        c: int = a.n[e + 1]
+        cal: int = a.n[c + 0]
+        args: int = sl_at(a, c, 1)
+        if a.n[cal] == 5 and sref_eq(a, pk(a.n[cal + 1], a.n[cal + 2]), "__nox_sent") and pky(args) == 0:
+            if g.sent_flag > 0:
+                rep2: int = gd_read_of(a, g.sent_cell, g.sent_flag)
+                a.n[e] = a.n[rep2]
+                a.n[e + 1] = a.n[rep2 + 1]
+            return
+        gd_rename(g, ck, a, cal)
+        for i in range(pky(args)):
+            gd_rename(g, ck, a, stmt_at(a, args, i))
+        return
+    if tag == 9:
+        gd_rename(g, ck, a, a.n[a.n[e + 1] + 0])
+        return
+    if tag == 21:
+        lc: int = a.n[e + 1]
+        gd_rename_comp(g, ck, a, sl_at(a, lc, 1), [a.n[lc + 0]])
+        return
+    if tag == 22:
+        dc: int = a.n[e + 1]
+        gd_rename_comp(g, ck, a, sl_at(a, dc, 2), [a.n[dc + 0], a.n[dc + 1]])
+        return
+    if tag == 19:
+        lam: int = a.n[e + 1]
+        gd_push_scope(g)
+        try:
+            lps: int = sl_at(a, lam, 0)
+            for i2 in range(pky(lps)):
+                gd_bind(g, sym_of(ck, a, pk(a.l[pkx(lps) + i2 * 2], a.l[pkx(lps) + i2 * 2 + 1])), "", 0)
+            gd_rename(g, ck, a, a.n[lam + 2])
+        finally:
+            gd_pop_scope(g)
+        return
+    if tag == 18:
+        sl: int = a.n[e + 1]
+        gd_rename(g, ck, a, a.n[sl + 0])
+        if a.n[sl + 1] >= 0:
+            gd_rename(g, ck, a, a.n[sl + 1])
+        if a.n[sl + 2] >= 0:
+            gd_rename(g, ck, a, a.n[sl + 2])
+        if a.n[sl + 3] >= 0:
+            gd_rename(g, ck, a, a.n[sl + 3])
+        return
+    if tag == 10:
+        ix: int = a.n[e + 1]
+        gd_rename(g, ck, a, a.n[ix + 0])
+        gd_rename(g, ck, a, a.n[ix + 1])
+        return
+    if tag == 11 or tag == 20:
+        its: int = pk(a.n[e + 1], a.n[e + 2])
+        for i3 in range(pky(its)):
+            gd_rename(g, ck, a, stmt_at(a, its, i3))
+        return
+    if tag == 12:
+        prs: int = pk(a.n[e + 1], a.n[e + 2])
+        for i4 in range(pky(prs)):
+            pr: int = stmt_at(a, prs, i4)
+            gd_rename(g, ck, a, a.n[pr + 0])
+            gd_rename(g, ck, a, a.n[pr + 1])
+        return
+    if tag == 13 or tag == 14:
+        gd_rename(g, ck, a, a.n[e + 1])
+        return
+    if tag == 15:
+        gc: int = a.n[e + 1]
+        ga: int = sl_at(a, gc, 4)
+        for i5 in range(pky(ga)):
+            gd_rename(g, ck, a, stmt_at(a, ga, i5))
+
+def gd_rename_comp(g: GdPass, ck: Ck, a: Ast, cls: int, bodies: list[int]) -> None:
+    gd_push_scope(g)
+    try:
+        for i in range(pky(cls)):
+            cl: int = stmt_at(a, cls, i)
+            if a.n[cl] == 0:
+                cpay: int = a.n[cl + 1]
+                gd_rename(g, ck, a, a.n[cpay + 2])
+                gd_bind(g, sym_of(ck, a, pk(a.n[cpay + 0], a.n[cpay + 0 + 1])), "", 0)
+            elif a.n[cl] == 1:
+                gd_rename(g, ck, a, a.n[cl + 1])
+        for b in bodies:
+            gd_rename(g, ck, a, b)
+    finally:
+        gd_pop_scope(g)
+
+def gd_jump_resets(g: GdPass, a: Ast, out: list[int]) -> None:
+    i: int = len(g.fr_pc)
+    while i > 0:
+        i = i - 1
+        if len(g.fr_pc[i]) > 0:
+            out.append(gd_set_cell(g, a, g.fr_pc[i], 0))
+        if len(g.fr_sel[i]) > 0:
+            out.append(gd_set_cell(g, a, g.fr_sel[i], 0))
+        if g.fr_loop[i]:
+            return
+
+def gd_plain_block(g: GdPass, ck: Ck, a: Ast, sl: int, top: bool, loop_d: int) -> int:
+    gd_push_scope(g)
+    out: list[int] = []
+    try:
+        for i in range(pky(sl)):
+            gd_plain_stmt(g, ck, a, stmt_at(a, sl, i), top, loop_d, out, False)
+    finally:
+        gd_pop_scope(g)
+    return ast_stmt_list(a, out)
+
+def gd_plain_stmt(g: GdPass, ck: Ck, a: Ast, st: int, top: bool, loop_d: int, out: list[int], hoist: bool) -> None:
+    g.line = a.n[st + 1]
+    kn: int = a.n[st + 0]
+    tag: int = a.n[kn]
+    pay: int = a.n[kn + 1]
+    if tag == 0:
+        gd_rename(g, ck, a, pay)
+    elif tag == 1:
+        gd_rename(g, ck, a, a.n[pay + 3])
+        vsr: int = pk(a.n[pay + 0], a.n[pay + 0 + 1])
+        vsym: int = sym_of(ck, a, vsr)
+        vname: str = sym_to_str(ck, vsym)
+        vte: int = a.n[pay + 2]
+        is_inf: bool = a.n[vte] == 0 and sref_eq(a, pk(a.n[vte + 1], a.n[vte + 2]), "__infer")
+        if is_inf:
+            ex_bi: int = gd_lookup(g, vsym)
+            if ex_bi >= 0:
+                out.append(mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_write_target(a, g.sc_cell[ex_bi], g.sc_flag[ex_bi]), a.n[pay + 3], 0)), g.line, a.n[st + 2]))
+                return
+        if hoist:
+            b: tuple[str, int] = ("", 0)
+            if is_inf:
+                b = gd_inferred_cell(g, a, vname, a.n[pay + 3])
+            else:
+                b = gd_typed_cell(g, a, vname, vte)
+            gd_bind(g, vsym, b[0], b[1])
+            if is_inf:
+                out.append(mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_write_target(a, b[0], b[1]), a.n[pay + 3], 0)), g.line, a.n[st + 2]))
+            else:
+                tmp: str = gd_new_name(g, "tmp")
+                tsr: int = syn(a, tmp)
+                out.append(mk_Stmt(a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(tsr), pky(tsr), vte, a.n[pay + 3], 0, 0, 0, 0)), g.line, a.n[st + 2]))
+                out.append(mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_write_target(a, b[0], b[1]), mk_ident_node(a, tmp), 0)), g.line, a.n[st + 2]))
+            return
+        gd_bind(g, vsym, "", 0)
+    elif tag == 3:
+        atg: int = a.n[pay + 0]
+        if a.n[atg] == 5:
+            abi: int = gd_lookup(g, sym_of(ck, a, pk(a.n[atg + 1], a.n[atg + 2])))
+            if abi >= 0:
+                a.n[pay + 0] = gd_write_target(a, g.sc_cell[abi], g.sc_flag[abi])
+        else:
+            gd_rename(g, ck, a, atg)
+        gd_rename(g, ck, a, a.n[pay + 1])
+    elif tag == 4:
+        gd_rename(g, ck, a, a.n[pay + 0])
+        ntb: int = gd_plain_block(g, ck, a, sl_at(a, pay, 1), top, loop_d)
+        a.n[pay + 1] = pkx(ntb)
+        a.n[pay + 1 + 1] = pky(ntb)
+        ecs: int = sl_at(a, pay, 3)
+        for j in range(pky(ecs)):
+            ec: int = stmt_at(a, ecs, j)
+            gd_rename(g, ck, a, a.n[ec + 0])
+            neb: int = gd_plain_block(g, ck, a, sl_at(a, ec, 1), top, loop_d)
+            a.n[ec + 1] = pkx(neb)
+            a.n[ec + 1 + 1] = pky(neb)
+        if a.n[pay + 5] != -4611686018427387904:
+            nelb: int = gd_plain_block(g, ck, a, sl_at(a, pay, 5), top, loop_d)
+            a.n[pay + 5] = pkx(nelb)
+            a.n[pay + 5 + 1] = pky(nelb)
+    elif tag == 5:
+        gd_rename(g, ck, a, a.n[pay + 0])
+        nwb: int = gd_plain_block(g, ck, a, sl_at(a, pay, 1), top, loop_d + 1)
+        a.n[pay + 1] = pkx(nwb)
+        a.n[pay + 1 + 1] = pky(nwb)
+    elif tag == 6:
+        gd_rename(g, ck, a, a.n[pay + 2])
+        gd_push_scope(g)
+        try:
+            gd_bind(g, sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1])), "", 0)
+            nfb: int = gd_plain_block(g, ck, a, sl_at(a, pay, 3), top, loop_d + 1)
+            a.n[pay + 3] = pkx(nfb)
+            a.n[pay + 3 + 1] = pky(nfb)
+        finally:
+            gd_pop_scope(g)
+    elif tag == 18 or tag == 19:
+        if top and loop_d == 0:
+            gd_jump_resets(g, a, out)
+    elif tag == 11:
+        if top:
+            if pay >= 0:
+                gd_fail(g, ck, "a generator ('yield') cannot 'return' a value")
+            a.n[kn + 1] = mk_Expr_none_lit(a)
+        elif pay >= 0:
+            gd_rename(g, ck, a, pay)
+    elif tag == 12 or tag == 20:
+        gd_rename(g, ck, a, pay)
+    elif tag == 13:
+        nttb: int = gd_plain_block(g, ck, a, sl_at(a, pay, 0), top, loop_d)
+        a.n[pay + 0] = pkx(nttb)
+        a.n[pay + 0 + 1] = pky(nttb)
+        exs: int = sl_at(a, pay, 2)
+        for k in range(pky(exs)):
+            ex: int = stmt_at(a, exs, k)
+            gd_push_scope(g)
+            try:
+                if a.n[ex + 2] != -4611686018427387904:
+                    gd_bind(g, sym_of(ck, a, pk(a.n[ex + 2], a.n[ex + 2 + 1])), "", 0)
+                nexb: int = gd_plain_block(g, ck, a, sl_at(a, ex, 4), top, loop_d)
+                a.n[ex + 4] = pkx(nexb)
+                a.n[ex + 4 + 1] = pky(nexb)
+            finally:
+                gd_pop_scope(g)
+        if a.n[pay + 4] != -4611686018427387904:
+            nfinb: int = gd_plain_block(g, ck, a, sl_at(a, pay, 4), top, loop_d)
+            a.n[pay + 4] = pkx(nfinb)
+            a.n[pay + 4 + 1] = pky(nfinb)
+    elif tag == 21:
+        gd_rename(g, ck, a, a.n[pay + 0])
+        gd_push_scope(g)
+        try:
+            if a.n[pay + 1] != -4611686018427387904:
+                gd_bind(g, sym_of(ck, a, pk(a.n[pay + 1], a.n[pay + 1 + 1])), "", 0)
+            nwb2: int = gd_plain_block(g, ck, a, sl_at(a, pay, 3), top, loop_d)
+            a.n[pay + 3] = pkx(nwb2)
+            a.n[pay + 3 + 1] = pky(nwb2)
+        finally:
+            gd_pop_scope(g)
+    elif tag == 14:
+        nlb: int = gd_plain_block(g, ck, a, sl_at(a, pay, 0), top, loop_d)
+        a.n[pay + 0] = pkx(nlb)
+        a.n[pay + 0 + 1] = pky(nlb)
+    elif tag == 22:
+        dc: int = a.n[pay]
+        gd_rename(g, ck, a, a.n[dc + 0])
+        dargs: int = sl_at(a, dc, 1)
+        for di in range(pky(dargs)):
+            gd_rename(g, ck, a, stmt_at(a, dargs, di))
+    elif tag == 7:
+        gd_bind(g, sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1])), "", 0)
+        gd_push_scope(g)
+        try:
+            fps: int = sl_at(a, pay, 4)
+            for pi in range(pky(fps)):
+                p: int = stmt_at(a, fps, pi)
+                gd_bind(g, sym_of(ck, a, pk(a.n[p + 0], a.n[p + 0 + 1])), "", 0)
+            nfd_b: int = gd_plain_block(g, ck, a, sl_at(a, pay, 8), False, 0)
+            a.n[pay + 8] = pkx(nfd_b)
+            a.n[pay + 8 + 1] = pky(nfd_b)
+        finally:
+            gd_pop_scope(g)
+    out.append(st)
+
+def gd_guard(g: GdPass, a: Ast, pc: str, threshold: int, bsl: int, line: int) -> int:
+    cond: int = gd_bin(a, 10, gd_idx0(a, pc), mk_Expr_int_lit(a, threshold))
+    return mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, cond, pkx(bsl), pky(bsl), 0, 0, -4611686018427387904, 0, 0, -1, 0)), line, -1)
+
+def gd_emit_list(g: GdPass, ck: Ck, a: Ast, sl: int, loop: bool, sel: str) -> tuple[str, int]:
+    pc: str = gd_int_cell(g, a, "pc", 0)
+    gd_reg_reset(g, pc, 0)
+    g.fr_pc.append(pc)
+    g.fr_sel.append(sel)
+    g.fr_loop.append(loop)
+    g.idxs.append(0)
+    gd_push_scope(g)
+    out: list[int] = []
+    n: int = pky(sl)
+    i: int = 0
+    try:
+        while i < n:
+            st: int = stmt_at(a, sl, i)
+            g.line = a.n[st + 1]
+            if not gd_stmt_has_yield(a, st):
+                first: int = i
+                grp: list[int] = []
+                while i < n and not gd_stmt_has_yield(a, stmt_at(a, sl, i)):
+                    st_i: int = stmt_at(a, sl, i)
+                    if a.n[a.n[st_i + 0]] == 7:
+                        gd_plain_stmt(g, ck, a, st_i, True, 0, g.prelude, True)
+                    else:
+                        gd_plain_stmt(g, ck, a, st_i, True, 0, grp, True)
+                    i = i + 1
+                out.append(gd_guard(g, a, pc, 2 * first + 1, ast_stmt_list(a, grp), a.n[st + 1]))
+                continue
+            g.idxs[len(g.idxs) - 1] = i
+            code: list[int] = gd_emit_active(g, ck, a, st, i, pc)
+            out.append(gd_guard(g, a, pc, 2 * i + 1, ast_stmt_list(a, code), a.n[st + 1]))
+            if len(g.closing) > 0 and a.n[a.n[st + 0]] == 0:
+                resumed: int = gd_bin(a, 7, gd_idx0(a, pc), mk_Expr_int_lit(a, 2 * i + 2))
+                cond: int = gd_bin(a, 13, gd_idx0(a, g.closing), resumed)
+                gsr: int = syn(a, "generator closed")
+                exit_ctor: int = gd_call1(a, "GeneratorExit", mk_Expr_string_lit(a, pkx(gsr), pky(gsr)))
+                chk_b: int = ast_stmt_list(a, [mk_Stmt(a, mk_StmtKind_raise_stmt(a, exit_ctor), a.n[st + 1], -1)])
+                out.append(mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, cond, pkx(chk_b), pky(chk_b), 0, 0, -4611686018427387904, 0, 0, -1, 0)), a.n[st + 1], -1))
+                has_th: int = gd_bin(a, 8, gd_idx0(a, g.thrown_cell), mk_Expr_none_lit(a))
+                th_cond: int = gd_bin(a, 13, has_th, resumed)
+                g.uid = g.uid + 1
+                tmp: str = "__nox_th_" + str(g.uid)
+                tsr: int = syn(a, tmp)
+                inf_sr: int = syn(a, "__infer")
+                s0: int = mk_Stmt(a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(tsr), pky(tsr), mk_TypeExpr_simple(a, pkx(inf_sr), pky(inf_sr)), gd_read_of(a, g.thrown_cell, g.thrown_flag), 0, 0, 0, 0)), a.n[st + 1], -1)
+                s1: int = mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_idx0(a, g.thrown_cell), mk_Expr_none_lit(a), 0)), a.n[st + 1], -1)
+                s2: int = mk_Stmt(a, mk_StmtKind_raise_stmt(a, mk_ident_node(a, tmp)), a.n[st + 1], -1)
+                tb_sl: int = ast_stmt_list(a, [s0, s1, s2])
+                out.append(mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, th_cond, pkx(tb_sl), pky(tb_sl), 0, 0, -4611686018427387904, 0, 0, -1, 0)), a.n[st + 1], -1))
+            i = i + 1
+        out.append(gd_set_cell(g, a, pc, 0))
+    finally:
+        gd_pop_scope(g)
+        g.idxs.pop()
+        g.fr_pc.pop()
+        g.fr_sel.pop()
+        g.fr_loop.pop()
+    return (pc, ast_stmt_list(a, out))
+
+def gd_emit_active(g: GdPass, ck: Ck, a: Ast, st: int, i: int, pc: str) -> list[int]:
+    g.line = a.n[st + 1]
+    kn: int = a.n[st + 0]
+    tag: int = a.n[kn]
+    pay: int = a.n[kn + 1]
+    if tag == 0:
+        yk: int = gd_is_yield(a, pay)
+        arg: int = stmt_at(a, sl_at(a, a.n[pay + 1], 1), 0)
+        if yk == 2:
+            g.uid = g.uid + 1
+            v: str = "__nox_yf_" + str(g.uid)
+            vsr: int = syn(a, v)
+            ybsl: int = ast_stmt_list(a, [mk_Stmt(a, mk_StmtKind_expr_stmt(a, gd_call1(a, "__nox_yield", mk_ident_node(a, v))), g.line, -1)])
+            return gd_emit_for(g, ck, a, mk_ForStmt(a, pkx(vsr), pky(vsr), arg, pkx(ybsl), pky(ybsl), 0, 0, 0), st)
+        gd_rename(g, ck, a, arg)
+        out: list[int] = []
+        k: int = 0
+        while k + 1 < len(g.fr_pc):
+            if len(g.fr_pc[k]) > 0:
+                out.append(gd_set_cell(g, a, g.fr_pc[k], 2 * g.idxs[k] + 1))
+            k = k + 1
+        out.append(gd_set_cell(g, a, pc, 2 * i + 2))
+        out.append(gd_assign(g, a, gd_idx0(a, g.done), mk_Expr_bool_lit(a, 0)))
+        out.append(mk_Stmt(a, mk_StmtKind_return_stmt(a, arg), g.line, -1))
+        return out
+    if tag == 4:
+        return gd_emit_if(g, ck, a, pay, st)
+    if tag == 13:
+        return gd_emit_try(g, ck, a, pay, st)
+    if tag == 21:
+        return gd_emit_with(g, ck, a, pay, st)
+    if tag == 5:
+        return gd_emit_while(g, ck, a, pay, st)
+    if tag == 6:
+        return gd_emit_for(g, ck, a, pay, st)
+    gd_fail(g, ck, "internal error: unexpected statement kind in a generator")
+    return []
+
+def gd_emit_if(g: GdPass, ck: Ck, a: Ast, s: int, st: int) -> list[int]:
+    sel: str = gd_int_cell(g, a, "sel", 0)
+    gd_reg_reset(g, sel, 0)
+    out: list[int] = []
+    cond0: int = a.n[s + 0]
+    gd_rename(g, ck, a, cond0)
+    tb0: int = ast_stmt_list(a, [gd_set_cell(g, a, sel, 1)])
+    ecs: int = sl_at(a, s, 3)
+    ec_ids: list[int] = []
+    for k in range(pky(ecs)):
+        ec: int = stmt_at(a, ecs, k)
+        ec_c: int = a.n[ec + 0]
+        gd_rename(g, ck, a, ec_c)
+        eb_k: int = ast_stmt_list(a, [gd_set_cell(g, a, sel, k + 2)])
+        ec_ids.append(mk_ElifClause(a, ec_c, pkx(eb_k), pky(eb_k)))
+    ec_sl: int = list_put_slice(a, ec_ids)
+    eb0: int = -4611686018427387904
+    eb1: int = 0
+    if a.n[s + 5] != -4611686018427387904:
+        eb_s: int = ast_stmt_list(a, [gd_set_cell(g, a, sel, pky(ecs) + 2)])
+        eb0 = pkx(eb_s)
+        eb1 = pky(eb_s)
+    pick_st: int = mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, cond0, pkx(tb0), pky(tb0), pkx(ec_sl), pky(ec_sl), eb0, eb1, 0, -1, 0)), a.n[st + 1], -1)
+    fresh: int = gd_bin(a, 7, gd_idx0(a, sel), mk_Expr_int_lit(a, 0))
+    fr_sl: int = ast_stmt_list(a, [pick_st])
+    out.append(mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, fresh, pkx(fr_sl), pky(fr_sl), 0, 0, -4611686018427387904, 0, 0, -1, 0)), a.n[st + 1], -1))
+    out.append(gd_branch(g, ck, a, sel, 1, sl_at(a, s, 1)))
+    for k2 in range(pky(ecs)):
+        out.append(gd_branch(g, ck, a, sel, k2 + 2, sl_at(a, stmt_at(a, ecs, k2), 1)))
+    if a.n[s + 5] != -4611686018427387904:
+        out.append(gd_branch(g, ck, a, sel, pky(ecs) + 2, sl_at(a, s, 5)))
+    out.append(gd_set_cell(g, a, sel, 0))
+    return out
+
+def gd_branch(g: GdPass, ck: Ck, a: Ast, sel: str, k: int, bsl: int) -> int:
+    code_sl: int = -1
+    if gd_list_has_yield(a, bsl):
+        r: tuple[str, int] = gd_emit_list(g, ck, a, bsl, False, sel)
+        code_sl = r[1]
+    else:
+        g.fr_pc.append("")
+        g.fr_sel.append(sel)
+        g.fr_loop.append(False)
+        try:
+            code_sl = gd_plain_block(g, ck, a, bsl, True, 0)
+        finally:
+            g.fr_pc.pop()
+            g.fr_sel.pop()
+            g.fr_loop.pop()
+    return gd_if_stmt(g, a, gd_bin(a, 7, gd_idx0(a, sel), mk_Expr_int_lit(a, k)), code_sl)
+
+def gd_has_escaping_jump(a: Ast, sl: int, loop_d: int) -> bool:
+    for i in range(pky(sl)):
+        st: int = stmt_at(a, sl, i)
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 11:
+            return True
+        if tag == 18 or tag == 19:
+            if loop_d == 0:
+                return True
+        elif tag == 4:
+            if gd_has_escaping_jump(a, sl_at(a, pay, 1), loop_d):
+                return True
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                if gd_has_escaping_jump(a, sl_at(a, stmt_at(a, ecs, j), 1), loop_d):
+                    return True
+            if a.n[pay + 5] != -4611686018427387904 and gd_has_escaping_jump(a, sl_at(a, pay, 5), loop_d):
+                return True
+        elif tag == 5:
+            if gd_has_escaping_jump(a, sl_at(a, pay, 1), loop_d + 1):
+                return True
+        elif tag == 6:
+            if gd_has_escaping_jump(a, sl_at(a, pay, 3), loop_d + 1):
+                return True
+        elif tag == 13:
+            if gd_has_escaping_jump(a, sl_at(a, pay, 0), loop_d):
+                return True
+            exs: int = sl_at(a, pay, 2)
+            for k in range(pky(exs)):
+                if gd_has_escaping_jump(a, sl_at(a, stmt_at(a, exs, k), 4), loop_d):
+                    return True
+            if a.n[pay + 4] != -4611686018427387904 and gd_has_escaping_jump(a, sl_at(a, pay, 4), loop_d):
+                return True
+        elif tag == 21:
+            if gd_has_escaping_jump(a, sl_at(a, pay, 3), loop_d):
+                return True
+        elif tag == 14:
+            if gd_has_escaping_jump(a, sl_at(a, pay, 0), loop_d):
+                return True
+    return False
+
+def gd_emit_try(g: GdPass, ck: Ck, a: Ast, s: int, st: int) -> list[int]:
+    exs: int = sl_at(a, s, 2)
+    deferred: bool = False
+    for k0 in range(pky(exs)):
+        if gd_list_has_yield(a, sl_at(a, stmt_at(a, exs, k0), 4)):
+            deferred = True
+    fb_sl: int = sl_at(a, s, 4)
+    has_fin: bool = a.n[s + 4] != -4611686018427387904
+    fin_yield: bool = has_fin and gd_list_has_yield(a, fb_sl)
+    if fin_yield:
+        jumps: bool = gd_has_escaping_jump(a, sl_at(a, s, 0), 0)
+        for k1 in range(pky(exs)):
+            if gd_has_escaping_jump(a, sl_at(a, stmt_at(a, exs, k1), 4), 0):
+                jumps = True
+        if jumps or gd_has_escaping_jump(a, fb_sl, 0):
+            gd_fail(g, ck, "'return', 'break' or 'continue' that leaves a 'try' whose 'finally' contains 'yield' is not supported in a generator (the 'finally' would be skipped)")
+            return []
+    mark: int = len(g.rst_cell)
+    body_r: tuple[str, int] = gd_emit_list(g, ck, a, sl_at(a, s, 0), False, "")
+    body_resets: list[int] = gd_reset_since(g, a, mark)
+    which: str = ""
+    if deferred:
+        which = gd_int_cell(g, a, "which", 0)
+        gd_reg_reset(g, which, 0)
+    ec_ids: list[int] = []
+    def_k: list[int] = []
+    def_bcell: list[str] = []
+    def_code: list[int] = []
+    for k in range(pky(exs)):
+        ec: int = stmt_at(a, exs, k)
+        ec_b: int = sl_at(a, ec, 4)
+        gd_push_scope(g)
+        try:
+            if gd_list_has_yield(a, ec_b):
+                bcell: str = ""
+                cb: list[int] = []
+                for br in body_resets:
+                    cb.append(br)
+                cb.append(gd_set_cell(g, a, which, k + 1))
+                if a.n[ec + 2] != -4611686018427387904:
+                    bnsr: int = pk(a.n[ec + 2], a.n[ec + 2 + 1])
+                    bnsym: int = sym_of(ck, a, bnsr)
+                    cn_te: int = -1
+                    if a.n[ec + 0] != -4611686018427387904:
+                        cn_te = mk_TypeExpr_simple(a, a.n[ec + 0], a.n[ec + 0 + 1])
+                    else:
+                        ex_sr: int = syn(a, "Exception")
+                        cn_te = mk_TypeExpr_simple(a, pkx(ex_sr), pky(ex_sr))
+                    nb: tuple[str, int] = gd_typed_cell(g, a, sym_to_str(ck, bnsym), cn_te)
+                    gd_reg_reset(g, nb[0], 2)
+                    cb.append(gd_assign(g, a, gd_idx0(a, nb[0]), mk_Expr_identifier(a, pkx(bnsr), pky(bnsr))))
+                    gd_bind(g, bnsym, nb[0], nb[1])
+                    bcell = nb[0]
+                cbsl: int = ast_stmt_list(a, cb)
+                ec_ids.append(mk_ExceptClause(a, a.n[ec + 0], a.n[ec + 0 + 1], a.n[ec + 2], a.n[ec + 2 + 1], pkx(cbsl), pky(cbsl), a.n[ec + 6], a.n[ec + 7]))
+                hl: tuple[str, int] = gd_emit_list(g, ck, a, ec_b, False, which)
+                def_k.append(k)
+                def_bcell.append(bcell)
+                def_code.append(hl[1])
+            else:
+                if a.n[ec + 2] != -4611686018427387904:
+                    gd_bind(g, sym_of(ck, a, pk(a.n[ec + 2], a.n[ec + 2 + 1])), "", 0)
+                cb2: list[int] = []
+                for br2 in body_resets:
+                    cb2.append(br2)
+                pb: int = gd_plain_block(g, ck, a, ec_b, True, 0)
+                for pbi in range(pky(pb)):
+                    cb2.append(stmt_at(a, pb, pbi))
+                cbsl2: int = ast_stmt_list(a, cb2)
+                ec_ids.append(mk_ExceptClause(a, a.n[ec + 0], a.n[ec + 0 + 1], a.n[ec + 2], a.n[ec + 2 + 1], pkx(cbsl2), pky(cbsl2), a.n[ec + 6], a.n[ec + 7]))
+        finally:
+            gd_pop_scope(g)
+    ec_sl: int = list_put_slice(a, ec_ids)
+    inner_t: int = mk_Stmt(a, mk_StmtKind_try_stmt(a, mk_TryStmt(a, pkx(body_r[1]), pky(body_r[1]), pkx(ec_sl), pky(ec_sl), -4611686018427387904, 0, 0)), a.n[st + 1], -1)
+    region: list[int] = []
+    if deferred:
+        f_sl: int = ast_stmt_list(a, [inner_t])
+        region.append(mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, gd_bin(a, 7, gd_idx0(a, which), mk_Expr_int_lit(a, 0)), pkx(f_sl), pky(f_sl), 0, 0, -4611686018427387904, 0, 0, -1, 0)), a.n[st + 1], -1))
+        for di in range(len(def_k)):
+            blk: list[int] = []
+            dc_sl: int = def_code[di]
+            for dci in range(pky(dc_sl)):
+                blk.append(stmt_at(a, dc_sl, dci))
+            if len(def_bcell[di]) > 0:
+                blk.append(gd_assign(g, a, gd_idx0(a, def_bcell[di]), mk_Expr_none_lit(a)))
+            blk_sl: int = ast_stmt_list(a, blk)
+            region.append(mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, gd_bin(a, 7, gd_idx0(a, which), mk_Expr_int_lit(a, def_k[di] + 1)), pkx(blk_sl), pky(blk_sl), 0, 0, -4611686018427387904, 0, 0, -1, 0)), a.n[st + 1], -1))
+        region.append(gd_set_cell(g, a, which, 0))
+    else:
+        region.append(inner_t)
+    reg_sl: int = ast_stmt_list(a, region)
+    if not fin_yield:
+        fin: list[int] = []
+        if has_fin:
+            pfb: int = gd_plain_block(g, ck, a, fb_sl, True, 0)
+            for pfi in range(pky(pfb)):
+                fin.append(stmt_at(a, pfb, pfi))
+        for rfr in gd_reset_since(g, a, mark):
+            fin.append(rfr)
+        g_fin: int = ast_stmt_list(a, [gd_if_stmt(g, a, gd_idx0(a, g.done), ast_stmt_list(a, fin))])
+        return [mk_Stmt(a, mk_StmtKind_try_stmt(a, mk_TryStmt(a, pkx(reg_sl), pky(reg_sl), 0, 0, pkx(g_fin), pky(g_fin), 0)), a.n[st + 1], -1)]
+    fst: str = gd_int_cell(g, a, "fst", 0)
+    gd_reg_reset(g, fst, 0)
+    ex_sr2: int = syn(a, "Exception")
+    pend: tuple[str, int] = gd_typed_cell(g, a, "pend", mk_TypeExpr_simple(a, pkx(ex_sr2), pky(ex_sr2)))
+    gd_reg_reset(g, pend[0], 2)
+    fl: tuple[str, int] = gd_emit_list(g, ck, a, fb_sl, False, "")
+    cb_all: list[int] = gd_reset_since(g, a, mark)
+    cb_all.append(gd_assign(g, a, gd_idx0(a, pend[0]), mk_ident_node(a, "__nox_pending")))
+    cbs_all: int = ast_stmt_list(a, cb_all)
+    pnd_sr: int = syn(a, "__nox_pending")
+    ca_ec: int = mk_ExceptClause(a, pkx(ex_sr2), pky(ex_sr2), pkx(pnd_sr), pky(pnd_sr), pkx(cbs_all), pky(cbs_all), 0, 0)
+    ca_sl: int = list_put_slice(a, [ca_ec])
+    prot: int = mk_Stmt(a, mk_StmtKind_try_stmt(a, mk_TryStmt(a, pkx(reg_sl), pky(reg_sl), pkx(ca_sl), pky(ca_sl), -4611686018427387904, 0, 0)), a.n[st + 1], -1)
+    eblk: int = ast_stmt_list(a, [prot, gd_set_cell(g, a, fst, 1)])
+    out_t: list[int] = []
+    out_t.append(mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, gd_bin(a, 7, gd_idx0(a, fst), mk_Expr_int_lit(a, 0)), pkx(eblk), pky(eblk), 0, 0, -4611686018427387904, 0, 0, -1, 0)), a.n[st + 1], -1))
+    fblk: list[int] = []
+    for fli in range(pky(fl[1])):
+        fblk.append(stmt_at(a, fl[1], fli))
+    fblk.append(gd_set_cell(g, a, fst, 0))
+    g.uid = g.uid + 1
+    tmp_pe: str = "__nox_pe_" + str(g.uid)
+    tpesr: int = syn(a, tmp_pe)
+    inf_sr2: int = syn(a, "__infer")
+    rt0: int = gd_stmt(g, a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(tpesr), pky(tpesr), mk_TypeExpr_simple(a, pkx(inf_sr2), pky(inf_sr2)), gd_read_of(a, pend[0], pend[1]), 0, 0, 0, 0)))
+    rt1: int = gd_assign(g, a, gd_idx0(a, pend[0]), mk_Expr_none_lit(a))
+    rt2: int = gd_stmt(g, a, mk_StmtKind_raise_stmt(a, mk_ident_node(a, tmp_pe)))
+    fblk.append(gd_if_stmt(g, a, gd_bin(a, 8, gd_idx0(a, pend[0]), mk_Expr_none_lit(a)), ast_stmt_list(a, [rt0, rt1, rt2])))
+    fblk_sl: int = ast_stmt_list(a, fblk)
+    out_t.append(mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, gd_bin(a, 7, gd_idx0(a, fst), mk_Expr_int_lit(a, 1)), pkx(fblk_sl), pky(fblk_sl), 0, 0, -4611686018427387904, 0, 0, -1, 0)), a.n[st + 1], -1))
+    return out_t
+
+def gd_emit_with(g: GdPass, ck: Ck, a: Ast, s: int, st: int) -> list[int]:
+    ctx_e: int = a.n[s + 0]
+    gd_rename(g, ck, a, ctx_e)
+    out: list[int] = []
+    mgr: tuple[str, int] = gd_inferred_cell(g, a, "mgr", ctx_e)
+    gd_reg_reset(g, mgr[0], 2)
+    gd_push_scope(g)
+    try:
+        bcell: str = ""
+        bflag: int = 0
+        enter_n: str = "__enter__"
+        exit_n: str = "__exit__"
+        if a.n[s + 5] != 0:
+            enter_n = "__aenter__"
+            exit_n = "__aexit__"
+        if a.n[s + 1] != -4611686018427387904:
+            bnsr: int = pk(a.n[s + 1], a.n[s + 1 + 1])
+            bnsym: int = sym_of(ck, a, bnsr)
+            ec_expr: int = mk_attr_call_node(a, gd_call1(a, "__nox_get", mk_ident_node(a, mgr[0])), enter_n, pk(0, 0))
+            bc: tuple[str, int] = gd_inferred_cell(g, a, sym_to_str(ck, bnsym), ec_expr)
+            gd_bind(g, bnsym, bc[0], bc[1])
+            bcell = bc[0]
+            bflag = bc[1]
+        g.uid = g.uid + 1
+        tmp_w: str = "__nox_wm_" + str(g.uid)
+        twsr: int = syn(a, tmp_w)
+        inf_sr: int = syn(a, "__infer")
+        fr_st: list[int] = [gd_stmt(g, a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(twsr), pky(twsr), mk_TypeExpr_simple(a, pkx(inf_sr), pky(inf_sr)), ctx_e, 0, 0, 0, 0)))]
+        ec_tmp: int = mk_attr_call_node(a, mk_ident_node(a, tmp_w), enter_n, pk(0, 0))
+        if len(bcell) > 0:
+            fr_st.append(gd_assign(g, a, gd_write_target(a, bcell, bflag), ec_tmp))
+        else:
+            fr_st.append(gd_stmt(g, a, mk_StmtKind_expr_stmt(a, ec_tmp)))
+        fr_st.append(gd_assign(g, a, gd_idx0(a, mgr[0]), mk_ident_node(a, tmp_w)))
+        fr_sl: int = ast_stmt_list(a, fr_st)
+        unset: int = gd_bin(a, 7, gd_idx0(a, mgr[0]), mk_Expr_none_lit(a))
+        out.append(mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, unset, pkx(fr_sl), pky(fr_sl), 0, 0, -4611686018427387904, 0, 0, -1, 0)), a.n[st + 1], -1))
+        body_r: tuple[str, int] = gd_emit_list(g, ck, a, sl_at(a, s, 3), False, "")
+        ex_c: int = mk_attr_call_node(a, gd_call1(a, "__nox_get", mk_ident_node(a, mgr[0])), exit_n, pk(0, 0))
+        fin_sl: int = ast_stmt_list(a, [gd_stmt(g, a, mk_StmtKind_expr_stmt(a, ex_c)), gd_assign(g, a, gd_idx0(a, mgr[0]), mk_Expr_none_lit(a)), gd_set_cell(g, a, body_r[0], 0)])
+        g_fin: int = ast_stmt_list(a, [gd_if_stmt(g, a, gd_idx0(a, g.done), fin_sl)])
+        out.append(mk_Stmt(a, mk_StmtKind_try_stmt(a, mk_TryStmt(a, pkx(body_r[1]), pky(body_r[1]), 0, 0, pkx(g_fin), pky(g_fin), 0)), a.n[st + 1], -1))
+    finally:
+        gd_pop_scope(g)
+    return out
+
+def gd_emit_while(g: GdPass, ck: Ck, a: Ast, s: int, st: int) -> list[int]:
+    cond: int = a.n[s + 0]
+    gd_rename(g, ck, a, cond)
+    r: tuple[str, int] = gd_emit_list(g, ck, a, sl_at(a, s, 1), True, "")
+    roc: int = gd_bin(a, 14, gd_bin(a, 8, gd_idx0(a, r[0]), mk_Expr_int_lit(a, 0)), cond)
+    return [mk_Stmt(a, mk_StmtKind_while_stmt(a, mk_WhileStmt(a, roc, pkx(r[1]), pky(r[1]), -1)), a.n[st + 1], -1)]
+
+def gd_is_range_call(g: GdPass, ck: Ck, a: Ast, e: int) -> bool:
+    if a.n[e] != 8:
+        return False
+    c: int = a.n[e + 1]
+    cal: int = a.n[c + 0]
+    args: int = sl_at(a, c, 1)
+    return a.n[cal] == 5 and sref_eq(a, pk(a.n[cal + 1], a.n[cal + 2]), "range") and pky(args) >= 1 and pky(args) <= 3 and gd_lookup(g, sym_lit(ck, "range")) < 0
+
+def gd_emit_for(g: GdPass, ck: Ck, a: Ast, s: int, st: int) -> list[int]:
+    out: list[int] = []
+    raw_it: int = a.n[s + 2]
+    is_rng: bool = gd_is_range_call(g, ck, a, raw_it)
+    it_e: int = raw_it
+    gd_rename(g, ck, a, it_e)
+    gd_push_scope(g)
+    try:
+        vsr: int = pk(a.n[s + 0], a.n[s + 0 + 1])
+        vsym: int = sym_of(ck, a, vsr)
+        vname: str = sym_to_str(ck, vsym)
+        if is_rng:
+            cur: str = gd_int_cell(g, a, "cur", 0)
+            stop: str = gd_int_cell(g, a, "stop", 0)
+            step: str = gd_int_cell(g, a, "step", 1)
+            started: str = gd_bool_cell(g, a, "started", 0)
+            gd_reg_reset(g, started, 1)
+            vcell: str = gd_int_cell(g, a, vname, 0)
+            gd_bind(g, vsym, vcell, 1)
+            rargs: int = sl_at(a, a.n[it_e + 1], 1)
+            rn: int = pky(rargs)
+            se: int = mk_Expr_int_lit(a, 0)
+            ee: int = stmt_at(a, rargs, 0)
+            if rn >= 2:
+                se = stmt_at(a, rargs, 0)
+                ee = stmt_at(a, rargs, 1)
+            ib: list[int] = [gd_assign(g, a, gd_idx0(a, cur), se), gd_assign(g, a, gd_idx0(a, stop), ee)]
+            if rn == 3:
+                ib.append(gd_assign(g, a, gd_idx0(a, step), stmt_at(a, rargs, 2)))
+            ib.append(gd_assign(g, a, gd_idx0(a, started), mk_Expr_bool_lit(a, 1)))
+            ib_sl: int = ast_stmt_list(a, ib)
+            out.append(mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, gd_bin(a, 7, gd_idx0(a, started), mk_Expr_bool_lit(a, 0)), pkx(ib_sl), pky(ib_sl), 0, 0, -4611686018427387904, 0, 0, -1, 0)), a.n[st + 1], -1))
+            br: tuple[str, int] = gd_emit_list(g, ck, a, sl_at(a, s, 3), True, "")
+            pos: int = gd_bin(a, 13, gd_bin(a, 11, gd_idx0(a, step), mk_Expr_int_lit(a, 0)), gd_bin(a, 12, gd_idx0(a, cur), gd_idx0(a, stop)))
+            neg: int = gd_bin(a, 13, gd_bin(a, 9, gd_idx0(a, step), mk_Expr_int_lit(a, 0)), gd_bin(a, 10, gd_idx0(a, cur), gd_idx0(a, stop)))
+            fin: int = gd_bin(a, 14, pos, neg)
+            brk_sl: int = ast_stmt_list(a, [gd_stmt(g, a, mk_StmtKind_break_stmt(a))])
+            fb_sl: int = ast_stmt_list(a, [gd_if_stmt(g, a, fin, brk_sl), gd_assign(g, a, gd_idx0(a, vcell), gd_idx0(a, cur)), gd_assign(g, a, gd_idx0(a, cur), gd_bin(a, 0, gd_idx0(a, cur), gd_idx0(a, step)))])
+            lb: list[int] = [gd_if_stmt(g, a, gd_bin(a, 7, gd_idx0(a, br[0]), mk_Expr_int_lit(a, 0)), fb_sl)]
+            for bci in range(pky(br[1])):
+                lb.append(stmt_at(a, br[1], bci))
+            lb_sl: int = ast_stmt_list(a, lb)
+            out.append(mk_Stmt(a, mk_StmtKind_while_stmt(a, mk_WhileStmt(a, mk_Expr_bool_lit(a, 1), pkx(lb_sl), pky(lb_sl), -1)), a.n[st + 1], -1))
+            out.append(gd_assign(g, a, gd_idx0(a, started), mk_Expr_bool_lit(a, 0)))
+            return out
+        it_b: tuple[str, int] = gd_inferred_cell(g, a, "it", gd_call1(a, "__nox_for_iter", it_e))
+        gd_reg_reset(g, it_b[0], 2)
+        v_b: tuple[str, int] = gd_inferred_cell(g, a, vname, gd_call1(a, "__nox_elem_of", it_e))
+        gd_bind(g, vsym, v_b[0], v_b[1])
+        it_un: int = gd_bin(a, 7, gd_idx0(a, it_b[0]), mk_Expr_none_lit(a))
+        out.append(gd_if_stmt(g, a, it_un, ast_stmt_list(a, [gd_assign(g, a, gd_idx0(a, it_b[0]), gd_call1(a, "__nox_for_iter", it_e))])))
+        br2: tuple[str, int] = gd_emit_list(g, ck, a, sl_at(a, s, 3), True, "")
+        g.uid = g.uid + 1
+        nx: str = "__nox_nx_" + str(g.uid)
+        nxsr: int = syn(a, nx)
+        inf_sr: int = syn(a, "__infer")
+        nx_c: int = mk_attr_call_node(a, gd_call1(a, "__nox_get", mk_ident_node(a, it_b[0])), "__next__", pk(0, 0))
+        vd_nx: int = gd_stmt(g, a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(nxsr), pky(nxsr), mk_TypeExpr_simple(a, pkx(inf_sr), pky(inf_sr)), nx_c, 0, 0, 0, 0)))
+        th_sl: int = ast_stmt_list(a, [gd_assign(g, a, gd_idx0(a, v_b[0]), mk_ident_node(a, nx))])
+        el_sl: int = ast_stmt_list(a, [gd_stmt(g, a, mk_StmtKind_break_stmt(a))])
+        pk_if: int = mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, gd_bin(a, 8, mk_ident_node(a, nx), mk_Expr_none_lit(a)), pkx(th_sl), pky(th_sl), 0, 0, pkx(el_sl), pky(el_sl), 0, -1, 0)), a.n[st + 1], -1)
+        pull_sl: int = ast_stmt_list(a, [vd_nx, pk_if])
+        lb2: list[int] = [gd_if_stmt(g, a, gd_bin(a, 7, gd_idx0(a, br2[0]), mk_Expr_int_lit(a, 0)), pull_sl)]
+        for bci2 in range(pky(br2[1])):
+            lb2.append(stmt_at(a, br2[1], bci2))
+        lb2_sl: int = ast_stmt_list(a, lb2)
+        out.append(mk_Stmt(a, mk_StmtKind_while_stmt(a, mk_WhileStmt(a, mk_Expr_bool_lit(a, 1), pkx(lb2_sl), pky(lb2_sl), -1)), a.n[st + 1], -1))
+        out.append(gd_assign(g, a, gd_idx0(a, it_b[0]), mk_Expr_none_lit(a)))
+    finally:
+        gd_pop_scope(g)
+    return out
+
+def gd_has_cleanup(a: Ast, sl: int) -> bool:
+    for i in range(pky(sl)):
+        st: int = stmt_at(a, sl, i)
+        if not gd_stmt_has_yield(a, st):
+            continue
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 13 or tag == 21:
+            return True
+        if tag == 4:
+            if gd_has_cleanup(a, sl_at(a, pay, 1)):
+                return True
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                if gd_has_cleanup(a, sl_at(a, stmt_at(a, ecs, j), 1)):
+                    return True
+            if a.n[pay + 5] != -4611686018427387904 and gd_has_cleanup(a, sl_at(a, pay, 5)):
+                return True
+        elif tag == 5:
+            if gd_has_cleanup(a, sl_at(a, pay, 1)):
+                return True
+        elif tag == 6:
+            if gd_has_cleanup(a, sl_at(a, pay, 3)):
+                return True
+    return False
+
+def gd_expand_send(g: GdPass, a: Ast, sl: int) -> int:
+    out: list[int] = []
+    for i in range(pky(sl)):
+        st: int = stmt_at(a, sl, i)
+        ln: int = a.n[st + 1]
+        spn: int = a.n[st + 2]
+        g.line = ln
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 3 and gd_is_yield(a, a.n[pay + 1]) == 3:
+            g.uses_send = True
+            if g.send_line == 0:
+                g.send_line = ln
+            yc: int = a.n[a.n[pay + 1] + 1]
+            yarg: int = stmt_at(a, sl_at(a, yc, 1), 0)
+            out.append(mk_Stmt(a, mk_StmtKind_expr_stmt(a, gd_call1(a, "__nox_yield", yarg)), ln, spn))
+            a.n[pay + 1] = gd_call0(a, "__nox_sent")
+            out.append(st)
+            continue
+        if tag == 1 and gd_is_yield(a, a.n[pay + 3]) == 3:
+            g.uses_send = True
+            if g.send_line == 0:
+                g.send_line = ln
+            yc2: int = a.n[a.n[pay + 3] + 1]
+            yarg2: int = stmt_at(a, sl_at(a, yc2, 1), 0)
+            out.append(mk_Stmt(a, mk_StmtKind_expr_stmt(a, gd_call1(a, "__nox_yield", yarg2)), ln, spn))
+            a.n[pay + 3] = gd_call0(a, "__nox_sent")
+            out.append(st)
+            continue
+        if tag == 0 and gd_is_yield(a, pay) == 3:
+            yc3: int = a.n[pay + 1]
+            yarg3: int = stmt_at(a, sl_at(a, yc3, 1), 0)
+            out.append(mk_Stmt(a, mk_StmtKind_expr_stmt(a, gd_call1(a, "__nox_yield", yarg3)), ln, spn))
+            continue
+        if tag == 4:
+            ntb: int = gd_expand_send(g, a, sl_at(a, pay, 1))
+            a.n[pay + 1] = pkx(ntb)
+            a.n[pay + 1 + 1] = pky(ntb)
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                ec: int = stmt_at(a, ecs, j)
+                neb: int = gd_expand_send(g, a, sl_at(a, ec, 1))
+                a.n[ec + 1] = pkx(neb)
+                a.n[ec + 1 + 1] = pky(neb)
+            if a.n[pay + 5] != -4611686018427387904:
+                nelb: int = gd_expand_send(g, a, sl_at(a, pay, 5))
+                a.n[pay + 5] = pkx(nelb)
+                a.n[pay + 5 + 1] = pky(nelb)
+        elif tag == 5:
+            nwb: int = gd_expand_send(g, a, sl_at(a, pay, 1))
+            a.n[pay + 1] = pkx(nwb)
+            a.n[pay + 1 + 1] = pky(nwb)
+        elif tag == 6:
+            nfb: int = gd_expand_send(g, a, sl_at(a, pay, 3))
+            a.n[pay + 3] = pkx(nfb)
+            a.n[pay + 3 + 1] = pky(nfb)
+        elif tag == 13:
+            nttb: int = gd_expand_send(g, a, sl_at(a, pay, 0))
+            a.n[pay + 0] = pkx(nttb)
+            a.n[pay + 0 + 1] = pky(nttb)
+            exs: int = sl_at(a, pay, 2)
+            for k in range(pky(exs)):
+                ex: int = stmt_at(a, exs, k)
+                nexb: int = gd_expand_send(g, a, sl_at(a, ex, 4))
+                a.n[ex + 4] = pkx(nexb)
+                a.n[ex + 4 + 1] = pky(nexb)
+            if a.n[pay + 4] != -4611686018427387904:
+                nfinb: int = gd_expand_send(g, a, sl_at(a, pay, 4))
+                a.n[pay + 4] = pkx(nfinb)
+                a.n[pay + 4 + 1] = pky(nfinb)
+        elif tag == 21:
+            nwb2: int = gd_expand_send(g, a, sl_at(a, pay, 3))
+            a.n[pay + 3] = pkx(nwb2)
+            a.n[pay + 3 + 1] = pky(nwb2)
+        out.append(st)
+    return ast_stmt_list(a, out)
+
+def gd_assigns_name(ck: Ck, a: Ast, sl: int, xsym: int) -> bool:
+    for i in range(pky(sl)):
+        st: int = stmt_at(a, sl, i)
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 3:
+            atg: int = a.n[pay + 0]
+            if a.n[atg] == 5 and sym_of(ck, a, pk(a.n[atg + 1], a.n[atg + 2])) == xsym:
+                return True
+        elif tag == 4:
+            if gd_assigns_name(ck, a, sl_at(a, pay, 1), xsym):
+                return True
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                if gd_assigns_name(ck, a, sl_at(a, stmt_at(a, ecs, j), 1), xsym):
+                    return True
+            if a.n[pay + 5] != -4611686018427387904 and gd_assigns_name(ck, a, sl_at(a, pay, 5), xsym):
+                return True
+        elif tag == 5:
+            if gd_assigns_name(ck, a, sl_at(a, pay, 1), xsym):
+                return True
+        elif tag == 6:
+            if gd_assigns_name(ck, a, sl_at(a, pay, 3), xsym):
+                return True
+        elif tag == 13:
+            if gd_assigns_name(ck, a, sl_at(a, pay, 0), xsym):
+                return True
+            exs: int = sl_at(a, pay, 2)
+            for k in range(pky(exs)):
+                if gd_assigns_name(ck, a, sl_at(a, stmt_at(a, exs, k), 4), xsym):
+                    return True
+            if a.n[pay + 4] != -4611686018427387904 and gd_assigns_name(ck, a, sl_at(a, pay, 4), xsym):
+                return True
+        elif tag == 21:
+            if gd_assigns_name(ck, a, sl_at(a, pay, 3), xsym):
+                return True
+        elif tag == 14:
+            if gd_assigns_name(ck, a, sl_at(a, pay, 0), xsym):
+                return True
+    return False
+
+def gd_lower(g: GdPass, ck: Ck, a: Ast, fd: int, line: int) -> None:
+    g.line = line
+    was_async: int = a.n[fd + 10]
+    rt_te: int = a.n[fd + 6]
+    is_gens: bool = False
+    is_gen: bool = False
+    gargs: int = 0
+    if a.n[rt_te] == 1:
+        gg: int = a.n[rt_te + 1]
+        gn_sr: int = pk(a.n[gg + 0], a.n[gg + 0 + 1])
+        gargs = sl_at(a, gg, 2)
+        is_gens = sref_eq(a, gn_sr, "__nox_GenS") and pky(gargs) == 2
+        is_gen = sref_eq(a, gn_sr, "__nox_Gen") and pky(gargs) == 1
+    if not is_gens and not is_gen:
+        gd_fail(g, ck, "a function containing 'yield' must be annotated '-> Iterator[T]' (or Generator[T], or Generator[Y, S] to receive values with send())")
+    g.ytype = stmt_at(a, gargs, 0)
+    g.uses_send = False
+    g.send_line = 0
+    nbsl: int = gd_expand_send(g, a, sl_at(a, fd, 8))
+    a.n[fd + 8] = pkx(nbsl)
+    a.n[fd + 8 + 1] = pky(nbsl)
+    if g.uses_send and not is_gens:
+        g.line = g.send_line
+        gd_fail(g, ck, "'x = yield value' receives sent values: annotate the function '-> Generator[Y, S]' (S is the type of the values passed to send())")
+    g.line = line
+    if a.n[g.ytype] == 3:
+        gd_fail(g, ck, "a generator cannot yield an optional type ('T | None'); yield the plain type")
+    gd_unsupported_yield(g, ck, a, nbsl)
+    g.prelude = []
+    g.rst_cell = []
+    g.rst_kind = []
+    g.fr_pc = []
+    g.fr_sel = []
+    g.fr_loop = []
+    g.idxs = []
+    g.sc_base = []
+    g.sc_sym = []
+    g.sc_cell = []
+    g.sc_flag = []
+    gd_push_scope(g)
+    try:
+        ps: int = sl_at(a, fd, 4)
+        for i in range(pky(ps)):
+            p: int = stmt_at(a, ps, i)
+            if a.n[p + 2] != 0 or a.n[p + 3] != 0:
+                continue
+            psr: int = pk(a.n[p + 0], a.n[p + 0 + 1])
+            psym: int = sym_of(ck, a, psr)
+            pname: str = sym_to_str(ck, psym)
+            if gd_assigns_name(ck, a, nbsl, psym):
+                pcell: str = gd_new_name(g, pname)
+                pcsr: int = syn(a, pcell)
+                pitsl: int = ast_expr_list(a, [mk_Expr_identifier(a, pkx(psr), pky(psr))])
+                g.prelude.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(pcsr), pky(pcsr), gd_list_of(a, a.n[p + 6]), mk_Expr_list_lit(a, pkx(pitsl), pky(pitsl)), 0, 0, 0, 0))))
+                gd_bind(g, psym, pcell, 1)
+            else:
+                gd_bind(g, psym, "", 0)
+        g.done = gd_bool_cell(g, a, "done", 0)
+        g.closing = ""
+        if gd_has_cleanup(a, nbsl):
+            g.closing = gd_bool_cell(g, a, "closing", 0)
+        g.thrown_cell = ""
+        g.thrown_flag = 0
+        if len(g.closing) > 0:
+            ex_sr3: int = syn(a, "Exception")
+            th: tuple[str, int] = gd_typed_cell(g, a, "thrown", mk_TypeExpr_simple(a, pkx(ex_sr3), pky(ex_sr3)))
+            g.thrown_cell = th[0]
+            g.thrown_flag = th[1]
+        g.sent_cell = ""
+        g.sent_flag = 0
+        if is_gens:
+            stype: int = stmt_at(a, gargs, 1)
+            sb: tuple[str, int] = gd_typed_cell(g, a, "sent", stype)
+            g.sent_cell = sb[0]
+            g.sent_flag = sb[1]
+            vsr2: int = syn(a, "v")
+            nsr2: int = syn(a, "None")
+            spsl: int = ast_stmt_list(a, [mk_Param(a, pkx(vsr2), pky(vsr2), 0, 0, 0, 0, stype, 0, -4611686018427387904)])
+            sbsl: int = ast_stmt_list(a, [gd_assign(g, a, gd_write_target(a, sb[0], sb[1]), mk_Expr_identifier(a, pkx(vsr2), pky(vsr2)))])
+            snd_sr: int = syn(a, "__nox_send")
+            sfd: int = mk_FuncDef(a, pkx(snd_sr), pky(snd_sr), 0, 0, pkx(spsl), pky(spsl), mk_TypeExpr_simple(a, pkx(nsr2), pky(nsr2)), 0, pkx(sbsl), pky(sbsl), 0, 0, 0, -4611686018427387904, 0, 0, 0, 0, 0, 0, line)
+            g.prelude.append(gd_stmt(g, a, mk_StmtKind_func_def(a, sfd)))
+        root_r: tuple[str, int] = gd_emit_list(g, ck, a, nbsl, False, "")
+        step_body: list[int] = [gd_if_stmt(g, a, gd_idx0(a, g.done), ast_stmt_list(a, [gd_stmt(g, a, mk_StmtKind_return_stmt(a, mk_Expr_none_lit(a)))])), gd_assign(g, a, gd_idx0(a, g.done), mk_Expr_bool_lit(a, 1))]
+        for rci in range(pky(root_r[1])):
+            step_body.append(stmt_at(a, root_r[1], rci))
+        step_body.append(gd_stmt(g, a, mk_StmtKind_return_stmt(a, mk_Expr_none_lit(a))))
+        st_bsl: int = ast_stmt_list(a, step_body)
+        step_sr: int = syn(a, "__nox_step")
+        step_fd: int = mk_FuncDef(a, pkx(step_sr), pky(step_sr), 0, 0, 0, 0, mk_TypeExpr_optional(a, g.ytype), 0, pkx(st_bsl), pky(st_bsl), 0, 0, 0, -4611686018427387904, 0, 0, 0, 0, 0, was_async, line)
+        out_b: list[int] = []
+        for pi2 in range(len(g.prelude)):
+            out_b.append(g.prelude[pi2])
+        out_b.append(gd_stmt(g, a, mk_StmtKind_func_def(a, step_fd)))
+        if is_gens:
+            cl_n: str = g.closing
+            bsr_g: int = syn(a, "bool")
+            if len(cl_n) == 0:
+                cl_n = gd_new_name(g, "noclose")
+                clsr: int = syn(a, cl_n)
+                out_b.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(clsr), pky(clsr), gd_list_of(a, mk_TypeExpr_simple(a, pkx(bsr_g), pky(bsr_g))), mk_Expr_list_lit(a, 0, 0), 0, 0, 0, 0))))
+            th_n: str = g.thrown_cell
+            if len(th_n) == 0:
+                th_n = gd_new_name(g, "nothrow")
+                thsr: int = syn(a, th_n)
+                ex_sr4: int = syn(a, "Exception")
+                out_b.append(gd_stmt(g, a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(thsr), pky(thsr), gd_list_of(a, mk_TypeExpr_optional(a, mk_TypeExpr_simple(a, pkx(ex_sr4), pky(ex_sr4)))), mk_Expr_list_lit(a, 0, 0), 0, 0, 0, 0))))
+            ga_sl: int = ast_expr_list(a, [mk_ident_node(a, "__nox_step"), mk_ident_node(a, cl_n), mk_ident_node(a, th_n), mk_ident_node(a, "__nox_send")])
+            out_b.append(gd_stmt(g, a, mk_StmtKind_return_stmt(a, mk_Expr_call(a, mk_Call(a, mk_ident_node(a, "__nox_gens_from_step"), pkx(ga_sl), pky(ga_sl), 0, 0, 0, 0, 0, 0)))))
+        elif len(g.closing) > 0:
+            ga_sl2: int = ast_expr_list(a, [mk_ident_node(a, "__nox_step"), mk_ident_node(a, g.closing), mk_ident_node(a, g.thrown_cell)])
+            out_b.append(gd_stmt(g, a, mk_StmtKind_return_stmt(a, mk_Expr_call(a, mk_Call(a, mk_ident_node(a, "__nox_gen_from_step_closable"), pkx(ga_sl2), pky(ga_sl2), 0, 0, 0, 0, 0, 0)))))
+        else:
+            out_b.append(gd_stmt(g, a, mk_StmtKind_return_stmt(a, gd_call1(a, "__nox_gen_from_step", mk_ident_node(a, "__nox_step")))))
+        fbsl: int = ast_stmt_list(a, out_b)
+        a.n[fd + 8] = pkx(fbsl)
+        a.n[fd + 8 + 1] = pky(fbsl)
+        a.n[fd + 10] = 0
+        if len(g.closing) > 0:
+            fsym_k: int = sym_of(ck, a, pk(a.n[fd + 0], a.n[fd + 0 + 1]))
+            key_s: str = sym_to_str(ck, fsym_k)
+            if len(g.owner) > 0:
+                key_s = g.owner + "." + key_s
+            m2_put(ck.cleanup_gens, 0, sym_lit(ck, key_s), 1)
+    finally:
+        gd_pop_scope(g)
+
+def gd_nested_defs(g: GdPass, ck: Ck, a: Ast, sl: int) -> None:
+    for i in range(pky(sl)):
+        st: int = stmt_at(a, sl, i)
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 7:
+            gd_process_func(g, ck, a, pay, a.n[st + 1])
+        elif tag == 4:
+            gd_nested_defs(g, ck, a, sl_at(a, pay, 1))
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                gd_nested_defs(g, ck, a, sl_at(a, stmt_at(a, ecs, j), 1))
+            if a.n[pay + 5] != -4611686018427387904:
+                gd_nested_defs(g, ck, a, sl_at(a, pay, 5))
+        elif tag == 5:
+            gd_nested_defs(g, ck, a, sl_at(a, pay, 1))
+        elif tag == 6:
+            gd_nested_defs(g, ck, a, sl_at(a, pay, 3))
+        elif tag == 13:
+            gd_nested_defs(g, ck, a, sl_at(a, pay, 0))
+            exs: int = sl_at(a, pay, 2)
+            for k in range(pky(exs)):
+                gd_nested_defs(g, ck, a, sl_at(a, stmt_at(a, exs, k), 4))
+            if a.n[pay + 4] != -4611686018427387904:
+                gd_nested_defs(g, ck, a, sl_at(a, pay, 4))
+        elif tag == 21:
+            gd_nested_defs(g, ck, a, sl_at(a, pay, 3))
+
+def gd_process_func(g: GdPass, ck: Ck, a: Ast, fd: int, line: int) -> None:
+    gd_nested_defs(g, ck, a, sl_at(a, fd, 8))
+    if not gd_list_has_yield(a, sl_at(a, fd, 8)):
+        return
+    saved_uid: int = g.uid
+    gd_lower(g, ck, a, fd, line)
+    g.uid = saved_uid + 1000
+
+def generator_desugar_run(ck: Ck, a: Ast, body: int) -> None:
+    g: GdPass = GdPass()
+    for i in range(pky(body)):
+        st: int = stmt_at(a, body, i)
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 7:
+            gd_process_func(g, ck, a, pay, a.n[st + 1])
+        elif tag == 8:
+            g.owner = sym_to_str(ck, sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1])))
+            ms: int = sl_at(a, pay, 16)
+            for q in range(pky(ms)):
+                m: int = stmt_at(a, ms, q)
+                msr: int = pk(a.n[m + 0], a.n[m + 0 + 1])
+                if a.n[m + 10] != 0 and (sref_eq(a, msr, "__aenter__") or sref_eq(a, msr, "__aexit__")):
+                    a.n[m + 10] = 0
+                    a.n[m + 19] = 1
+                gd_process_func(g, ck, a, m, a.n[st + 1])
+            g.owner = ""
+
 def nl_has_nonlocal(a: Ast, s: int) -> bool:
     for i in range(pky(s)):
         st: int = stmt_at(a, s, i)
@@ -11473,6 +13075,66 @@ def try_desugar_prelude_call(ck: Ck, a: Ast, fx: Fx, c: int, callee: int) -> int
         else:
             positional = positional + 1
     sym: int = sym_of(ck, a, cv)
+    if sref_eq(a, cv, "__nox_cell_of") and n == 1:
+        a0_co: int = stmt_at(a, args, 0)
+        inner_t: int = -1
+        is_eo: bool = False
+        if a.n[a0_co] == 8:
+            eoc: int = a.n[a0_co + 1]
+            eocal: int = a.n[eoc + 0]
+            eoargs: int = sl_at(a, eoc, 1)
+            if a.n[eocal] == 5 and sref_eq(a, pk(a.n[eocal + 1], a.n[eocal + 2]), "__nox_elem_of") and pky(eoargs) == 1:
+                is_eo = True
+                ck.lazy_for_iter = -1
+                inner_t = check_for_iterable(ck, a, fx, stmt_at(a, eoargs, 0))
+                ck.lazy_for_iter = -1
+        if not is_eo:
+            inner_t = check_expr(ck, a, fx, a0_co)
+        itg: int = ck.tt.tag[inner_t]
+        if itg == 15 or itg == 4:
+            fail2(ck, "TypeMismatch", "a generator variable cannot have an optional or None type here; give it a plain type")
+        if itg == 14:
+            fbt_sr: int = syn(a, "__nox_FnBox")
+            fb_asl: int = ast_expr_list(a, [type_to_type_expr(ck, a, inner_t)])
+            fb_te: int = mk_TypeExpr_generic(a, mk_Generic(a, pkx(fbt_sr), pky(fbt_sr), pkx(fb_asl), pky(fb_asl)))
+            box_t: int = type_expr_to_type(ck, a, fb_te)
+            return ty_list(ck.tt, ty_optional(ck.tt, box_t))
+        if itg == 0 or itg == 16 or itg == 1 or itg == 2 or itg == 3 or itg == 5 or itg == 13:
+            return ty_list(ck.tt, inner_t)
+        return ty_list(ck.tt, ty_optional(ck.tt, inner_t))
+    if sref_eq(a, cv, "__nox_get") and n == 1:
+        ct_get: int = check_expr(ck, a, fx, stmt_at(a, args, 0))
+        if ck.tt.tag[ct_get] != 5:
+            fail2(ck, "TypeMismatch", "internal error: '__nox_get' needs a generator cell")
+        zero_ix: int = mk_Expr_index(a, mk_Index(a, stmt_at(a, args, 0), mk_Expr_int_lit(a, 0)))
+        elem_get: int = ck.tt.xa[ct_get]
+        repl_get: int = zero_ix
+        if ck.tt.tag[elem_get] == 15:
+            unw_sr: int = syn(a, "__nox_unwrap")
+            unw_asl: int = ast_expr_list(a, [zero_ix])
+            unw: int = mk_Expr_call(a, mk_Call(a, mk_Expr_identifier(a, pkx(unw_sr), pky(unw_sr)), pkx(unw_asl), pky(unw_asl), 0, 0, 0, 0, 0, 0))
+            repl_get = unw
+            unw_t: int = ck.tt.xa[elem_get]
+            if ck.tt.tag[unw_t] == 6:
+                unw_s: str = sym_to_str(ck, ck.tt.xa[unw_t])
+                if len(unw_s) >= 13 and unw_s[:13] == "__nox_FnBox__":
+                    fsr_g: int = syn(a, "f")
+                    repl_get = mk_Expr_attribute(a, mk_Attribute(a, unw, pkx(fsr_g), pky(fsr_g)))
+        return check_expr(ck, a, fx, repl_get)
+    if sref_eq(a, cv, "__nox_for_iter") and n == 1:
+        a0_fi: int = stmt_at(a, args, 0)
+        at_fi: int = check_expr(ck, a, fx, a0_fi)
+        repl_fi: int = -1
+        if ck.tt.tag[at_fi] == 6 and has_dunder(ck, at_fi, "__next__"):
+            repl_fi = mk_dunder_call(a, a0_fi, "__self__", [])
+        else:
+            lsr_fi: int = syn(a, "list")
+            lasl_fi: int = ast_expr_list(a, [a0_fi])
+            lcall_fi: int = mk_Expr_call(a, mk_Call(a, mk_Expr_identifier(a, pkx(lsr_fi), pky(lsr_fi)), pkx(lasl_fi), pky(lasl_fi), 0, 0, 0, 0, 0, 0))
+            gsr_fi: int = syn(a, "__nox_gen_from_list")
+            gasl_fi: int = ast_expr_list(a, [lcall_fi])
+            repl_fi = mk_Expr_call(a, mk_Call(a, mk_Expr_identifier(a, pkx(gsr_fi), pky(gsr_fi)), pkx(gasl_fi), pky(gasl_fi), 0, 0, 0, 0, 0, 0))
+        return check_expr(ck, a, fx, repl_fi)
     if class_idx(ck, sym) >= 0 or (m2_get(ck.fmap, 0, sym) >= 0 and not is_prelude_name(a, cv)):
         return -1
     if (sref_eq(a, cv, "any") or sref_eq(a, cv, "all")) and n == 1:
@@ -13947,19 +15609,7 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
     try:
         ck.sig_empty = new_sig(ck, [], [], 4)
         type_alias_run(ck, a, body)
-        for yi in range(pky(body)):
-            yst: int = stmt_at(a, body, yi)
-            ykn: int = a.n[yst + 0]
-            ytag: int = a.n[ykn]
-            ypay: int = a.n[ykn + 1]
-            if ytag == 7:
-                if stmts_have_yield(a, sl_at(a, ypay, 8)):
-                    raise unsup(ck, "register_func#generator")
-            elif ytag == 8:
-                yms: int = sl_at(a, ypay, 16)
-                for yq in range(pky(yms)):
-                    if stmts_have_yield(a, sl_at(a, stmt_at(a, yms, yq), 8)):
-                        raise unsup(ck, "register_func#generator")
+        generator_desugar_run(ck, a, body)
         nonlocal_desugar_run(ck, a, body)
         guard_normalize_run(a, body)
         collect_imports(ck, a, body)

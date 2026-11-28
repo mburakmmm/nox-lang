@@ -1,0 +1,44 @@
+class Exception:
+    msg: str
+    def __init__(self, msg: str) -> None:
+        self.msg = msg
+
+class GeneratorExit(Exception):
+    def __init__(self, msg: str) -> None:
+        self.msg = msg
+
+class __nox_Gen[T]:
+    step: () -> T | None
+    def __init__(self, step: () -> T | None) -> None:
+        self.step = step
+    def __next__(self) -> T | None:
+        return self.step()
+    def close(self) -> None:
+        pass
+
+def __nox_unwrap[T](x: T | None) -> T:
+    if x is not None:
+        return x
+    raise Exception("unwrap")
+
+def __nox_gen_from_list[T](xs: list[T]) -> __nox_Gen[T]:
+    return __nox_Gen[T](lambda: None)
+
+def __nox_gen_from_step_closable[T](step: () -> T | None, cl: list[bool], th: list[Exception | None]) -> __nox_Gen[T]:
+    return __nox_Gen[T](step)
+
+class CM:
+    n: int
+    def __init__(self, n: int) -> None:
+        self.n = n
+    def __enter__(self) -> int:
+        return self.n
+    def __exit__(self) -> None:
+        pass
+
+def g_with(n: int) -> Iterator[int]:
+    with CM(n) as v:
+        yield v
+
+for x in g_with(3):
+    break
