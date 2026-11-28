@@ -22,9 +22,7 @@ class Map2:
 
     def __init__(self) -> None:
         self.slots = []
-        self.mask = 255
-        for i in range(256):
-            self.slots.append(0)
+        self.mask = 0
         self.k1 = []
         self.k2 = []
         self.vv = []
@@ -36,6 +34,8 @@ def m2_hash(k1: int, k2: int) -> int:
 
 # Anahtarın giriş indeksi (ölü olsa da) ya da -1.
 def m2_find(m: Map2, k1: int, k2: int) -> int:
+    if m.mask == 0:
+        return -1
     i: int = m2_hash(k1, k2) & m.mask
     while True:
         s: int = m.slots[i]
@@ -67,6 +67,10 @@ def m2_grow(m: Map2) -> None:
         m.slots[j] = e + 1
 
 def m2_put(m: Map2, k1: int, k2: int, v: int) -> None:
+    if m.mask == 0:
+        m.mask = 15
+        for i in range(16):
+            m.slots.append(0)
     e: int = m2_find(m, k1, k2)
     if e >= 0:
         m.vv[e] = v
@@ -2118,6 +2122,15 @@ def check_expr_expected(ck: Ck, a: Ast, fx: Fx, e: int, expected_in: int) -> int
     if tag == 8:
         ac: int = a.n[e + 1]
         acal: int = a.n[ac + 0]
+        if a.n[acal] == 5 and sref_eq(a, pk(a.n[acal + 1], a.n[acal + 2]), "set") and pky(sl_at(a, ac, 1)) == 0 and m2_get(ck.fmap, 0, sym_of(ck, a, pk(a.n[acal + 1], a.n[acal + 2]))) < 0:
+            if expected >= 0 and tt.tag[expected] == 6:
+                tsym_s: int = tt.xa[expected]
+                tstr_s: str = sym_to_str(ck, tsym_s)
+                if len(tstr_s) >= 11 and tstr_s[:11] == "__nox_Set__":
+                    ci_s: int = class_idx(ck, tsym_s)
+                    if ci_s >= 0 and ck.gcls_tn[ci_s] == 1:
+                        return expected
+            fail2(ck, "UnknownType", "the element type of set() cannot be inferred — declare the type as `s: set[int] = set()`")
         if a.n[acal] == 5 and sref_eq(a, pk(a.n[acal + 1], a.n[acal + 2]), "adopt"):
             ll_require(ck, fx, a, pk(a.n[acal + 1], a.n[acal + 2]))
             aargs: int = sl_at(a, ac, 1)
@@ -4153,12 +4166,16 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
     if tag == 22:
         check_defer(ck, a, fx, pay)
         return
+    if tag == 15:
+        fail2(ck, "TypeMismatch", "'import' is only allowed at module level")
+    if tag == 16:
+        fail2(ck, "TypeMismatch", "'from ... import' is only allowed at module level")
     raise unsup(ck, "stmt_kind#" + str(tag))
 
 # `checkNestedFuncDef`: gövde, dış kapsamı üst zincir (yakalama kaydıyla) olan yeni kapsamda denetlenir; sonuç işlev tipi.
 def check_nested_def(ck: Ck, a: Ast, fx: Fx, fd: int) -> int:
     inner: int = sc_new(ck, fx.scope, True)
-    ck.last_nested_cap_id = ck.sc[inner]
+    cap_id: int = ck.sc[inner]
     ps: int = sl_at(a, fd, 4)
     for i in range(pky(ps)):
         p: int = stmt_at(a, ps, i)
@@ -4166,8 +4183,10 @@ def check_nested_def(ck: Ck, a: Ast, fx: Fx, fd: int) -> int:
     ret: int = type_expr_to_type(ck, a, a.n[fd + 6])
     in_async: bool = a.n[fd + 19] != 0 or a.n[fd + 10] != 0
     ifx: Fx = Fx(inner, ret, in_async)
+    ifx.fn_path = fx.fn_path + "_" + sym_to_str(ck, sym_of(ck, a, pk(a.n[fd + 0], a.n[fd + 0 + 1])))
     body: int = sl_at(a, fd, 8)
     check_block(ck, a, ifx, body)
+    ck.last_nested_cap_id = cap_id
     if ret != 4 and not always_returns(a, body):
         mp(ck, "nested function '")
         mp_sref(ck, a, pk(a.n[fd + 0], a.n[fd + 0 + 1]))
@@ -11641,7 +11660,7 @@ def gd_stmt(g: GdPass, a: Ast, kind: int) -> int:
     return mk_Stmt(a, kind, g.line, -1)
 
 def gd_assign(g: GdPass, a: Ast, target: int, val: int) -> int:
-    return gd_stmt(g, a, mk_StmtKind_assign(a, mk_Assign(a, target, val, 0)))
+    return gd_stmt(g, a, mk_StmtKind_assign(a, mk_Assign(a, target, val, -4611686018427387904)))
 
 def gd_set_cell(g: GdPass, a: Ast, cell: str, v: int) -> int:
     return gd_assign(g, a, gd_idx0(a, cell), mk_Expr_int_lit(a, v))
@@ -11965,7 +11984,7 @@ def gd_plain_stmt(g: GdPass, ck: Ck, a: Ast, st: int, top: bool, loop_d: int, ou
         if is_inf:
             ex_bi: int = gd_lookup(g, vsym)
             if ex_bi >= 0:
-                out.append(mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_write_target(a, g.sc_cell[ex_bi], g.sc_flag[ex_bi]), a.n[pay + 3], 0)), g.line, a.n[st + 2]))
+                out.append(mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_write_target(a, g.sc_cell[ex_bi], g.sc_flag[ex_bi]), a.n[pay + 3], -4611686018427387904)), g.line, a.n[st + 2]))
                 return
         if hoist:
             b: tuple[str, int] = ("", 0)
@@ -11975,12 +11994,12 @@ def gd_plain_stmt(g: GdPass, ck: Ck, a: Ast, st: int, top: bool, loop_d: int, ou
                 b = gd_typed_cell(g, a, vname, vte)
             gd_bind(g, vsym, b[0], b[1])
             if is_inf:
-                out.append(mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_write_target(a, b[0], b[1]), a.n[pay + 3], 0)), g.line, a.n[st + 2]))
+                out.append(mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_write_target(a, b[0], b[1]), a.n[pay + 3], -4611686018427387904)), g.line, a.n[st + 2]))
             else:
                 tmp: str = gd_new_name(g, "tmp")
                 tsr: int = syn(a, tmp)
                 out.append(mk_Stmt(a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(tsr), pky(tsr), vte, a.n[pay + 3], 0, 0, 0, 0)), g.line, a.n[st + 2]))
-                out.append(mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_write_target(a, b[0], b[1]), mk_ident_node(a, tmp), 0)), g.line, a.n[st + 2]))
+                out.append(mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_write_target(a, b[0], b[1]), mk_ident_node(a, tmp), -4611686018427387904)), g.line, a.n[st + 2]))
             return
         gd_bind(g, vsym, "", 0)
     elif tag == 3:
@@ -12139,7 +12158,7 @@ def gd_emit_list(g: GdPass, ck: Ck, a: Ast, sl: int, loop: bool, sel: str) -> tu
                 tsr: int = syn(a, tmp)
                 inf_sr: int = syn(a, "__infer")
                 s0: int = mk_Stmt(a, mk_StmtKind_var_decl(a, mk_VarDecl(a, pkx(tsr), pky(tsr), mk_TypeExpr_simple(a, pkx(inf_sr), pky(inf_sr)), gd_read_of(a, g.thrown_cell, g.thrown_flag), 0, 0, 0, 0)), a.n[st + 1], -1)
-                s1: int = mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_idx0(a, g.thrown_cell), mk_Expr_none_lit(a), 0)), a.n[st + 1], -1)
+                s1: int = mk_Stmt(a, mk_StmtKind_assign(a, mk_Assign(a, gd_idx0(a, g.thrown_cell), mk_Expr_none_lit(a), -4611686018427387904)), a.n[st + 1], -1)
                 s2: int = mk_Stmt(a, mk_StmtKind_raise_stmt(a, mk_ident_node(a, tmp)), a.n[st + 1], -1)
                 tb_sl: int = ast_stmt_list(a, [s0, s1, s2])
                 out.append(mk_Stmt(a, mk_StmtKind_if_stmt(a, mk_IfStmt(a, th_cond, pkx(tb_sl), pky(tb_sl), 0, 0, -4611686018427387904, 0, 0, -1, 0)), a.n[st + 1], -1))

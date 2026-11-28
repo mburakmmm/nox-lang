@@ -45,7 +45,15 @@ Döngü (her dilim):
 - `qrun` bildirimi hep "exit 0" der; gerçek sonuç `cikis=` satırı.
 - Zig'in test-fast'i `error: '...' failed` satırları basar; `failed command:` satırları tek başına hata değildir (stderr basan testler).
 
-## 4. DURUM (2026-11-28, v2.2.107 sonrası)
+## 4. DURUM (2026-11-28, v2.2.108 sonrası)
+
+- **Son sürüm:** `v2.2.108` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **15.887 satır**) **Aşama 3 kapanış paketi (`3.14 [K]` hariç):** tembel `Map2` (`mask = 0` + tembel 16-yuvalı tahsis), `GdPass` 5 `mk_Assign(..., {{NONE}})` düzeltmesi, `check_nested_def` `cap_id` koruması ve `ifx.fn_path` uzatması, `check_expr_expected` `set()` 0-arg `__nox_Set__` çıkarımı ve `check_stmt` iç içe `import`/`from ... import` (`stmt_kind#15` → `0`).
+- **Doğrulama:** `ck_edge/a3_close/*.nox` (`8` dosya, `unsupported=0 accepted=3 rejected=5 diagnostics=4`), `ck_mutants_a3_close.py` (`6/6 yakalandı, 0 yaşayan`), `ck_regress.sh` `24` kip × `1500` + depo yeşil (`0` uyuşmazlık).
+- **Depo `ck-diff check` (`v2.2.108`):** `files=1820 unsupported=2 accepted=655 rejected=1163 diagnostics=2308 skipped_parse=56` (`stmt_kind#15` → `0`; kalan `2` dosya Zig referans tuhaflıkları: `lambda#captures_order` HashMap sırası ve `check_identifier#fromimport` Zig `checker.zig:7485` `.?` paniği).
+- **`ck-diff checkm` (`v2.2.108`):** `typecheck_cases` (`347/347`), `stdlib` (`87/87`) ve `codegen_cases` (`667/667`) — toplam **1101/1101 (%100,0 kapsam, `unsupported=0`, `0` uyuşmazlık)**.
+- **Performans & Bellek (Aşama 3.16, `ReleaseFast`, `87` stdlib dosyası):** `noxc check` `1.13s` / `14,4 MiB` RSS; `noxc-nightly ck-diff checkm` **`0.53s` / `35,7 MiB` RSS** (`Map2` öncesi Debug `59.89s` / `907.5 MB` tabanına göre ~113× hızlı, ~25× az bellek); `NOX_RC_STATS=1` (`5` stdlib): `alloc=64244 free=64244` (`0` sızıntı).
+
+### Önceki (v2.2.107 sonrası)
 
 - **Son sürüm:** `v2.2.107` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **15.868 satır**) Paket 3 (Aşama 3.8 kapanışı): `generator_desugar_run` / `GdPass` (`yield`/`yield from`/`Generator[Y, S]`/`try`/`with`), `__nox_cell_of`/`__nox_get`/`__nox_for_iter`, `check_expr_expected` FnBox açma, `check_lazy_for` cleanup `close()`, `async_for`, `check_async_with` ve `hoist_nested_async`.
 - **Doğrulama:** `ck_gen.py --gen-async` (`files=3000 unsupported=0 accepted=267 rejected=2733 diagnostics=472 skipped_parse=0`), `ck_edge/gen_async` (`20` dosya, `unsupported=0 accepted=5 rejected=15 diagnostics=8`), `ck_mutants_gen_async.py` (`18/18 yakalandı, 0 yaşayan`), `ck_regress.sh` `24` kip + depo yeşil.

@@ -11,6 +11,22 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.108] - 2026-11-28
+
+### Değiştirilenler / Eklenenler
+- **Selfhost typechecker Aşama 3 kapanış paketi (`selfhost/typecheck.nox.in`, `selfhost/typecheck.nox` — 15.887 satır; `3.14 [K]` hariç Aşama 3 tamamlandı):**
+  - **Tembel `Map2` tahsisi (Aşama 3.16):** `Map2.__init__` içindeki peşin 256-yuvalı dizi tahsisi kaldırıldı (`mask = 0`), `m2_find` boş tablo koruması ve `m2_put` içinde tembel 16-yuvalı ilk tahsis eklendi.
+  - **`codegen_cases` `checkm` %100,0 kapanışı (Aşama 3.15 — 667/667):**
+    - `GdPass`: 5 `mk_Assign(..., 0)` çağrısı `mk_Assign(..., {{NONE}})` olarak düzeltildi (`lazy_generators_more.nox`).
+    - `check_nested_def`: `cap_id` yerel değişkene alınıp `check_block` sonrasında `ck.last_nested_cap_id = cap_id` atandı ve `ifx.fn_path` iç içe fonksiyon adıyla uzatıldı (`nested_async_def.nox`).
+    - `check_expr_expected`: `set()` 0-argümanlı çağrılar için `__nox_Set__` beklenen-tip çıkarımı ve `UnknownType` hatası eklendi (`sets.nox`).
+  - **İç içe `import`/`from ... import` kapısı (`stmt_kind#15` → `0`):** `check_stmt` içinde `StmtKind.import_stmt` ve `StmtKind.from_import_stmt` için Zig `checker.zig` ile birebir `TypeMismatch` (`'... is only allowed at module level'`) eklendi.
+- **Doğrulama, performans ve bellek bütçesi:**
+  - `tests/fixtures/ck_edge/a3_close/*.nox` (`8` dosya, `unsupported=0 accepted=3 rejected=5 diagnostics=4`), `scripts/ck_mutants_a3_close.py` (**6/6 yakalandı, 0 yaşayan**).
+  - `scripts/ck_regress.sh`: `24` kip × `1500` + depo (`files=1820 unsupported=2 accepted=655 rejected=1163 diagnostics=2308 skipped_parse=56`; kalan `2` dosya Zig referans tuhaflıkları: `lambda#captures_order` HashMap sırası ve `check_identifier#fromimport` Zig `checker.zig:7485` `.?` paniği).
+  - `ck-diff checkm`: `typecheck_cases` (`347/347`), `stdlib` (`87/87`) ve `codegen_cases` (`667/667`) — toplam **1101/1101 (%100,0 kapsam, `unsupported=0`)**.
+  - `ReleaseFast` (`87` stdlib dosyası): `noxc check` `1.13s` / `14,4 MiB` RSS; `noxc-nightly ck-diff checkm` **`0.53s` / `35,7 MiB` RSS** (`Map2` öncesi Debug `59.89s` / `907.5 MB` tabanına göre ~113× hızlı, ~25× az bellek); `NOX_RC_STATS=1` (`5` stdlib): `alloc=64244 free=64244` (`0` sızıntı).
+
 ## [2.2.107] - 2026-11-28
 
 ### Değiştirilenler / Eklenenler
