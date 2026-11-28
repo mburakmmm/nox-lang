@@ -45,7 +45,14 @@ Döngü (her dilim):
 - `qrun` bildirimi hep "exit 0" der; gerçek sonuç `cikis=` satırı.
 - Zig'in test-fast'i `error: '...' failed` satırları basar; `failed command:` satırları tek başına hata değildir (stderr basan testler).
 
-## 4. DURUM (2026-11-27, v2.2.105 sonrası)
+## 4. DURUM (2026-11-28, v2.2.106 sonrası)
+
+- **Son sürüm:** `v2.2.106` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **14.218 satır**) Paket 2 (Aşama 3.7 kapanışı): `nonlocal_desugar_run` (`nl_has_nonlocal` sıfır tahsisli hızlı yol + tam hücre dönüşümü), `stmt_kind#nested_features` → `0` (`allow_await`/`is_async` yayılımı), `spawn#attribute` → `0` (`find_method_def` + `resolve_spawn_attr_callee` / `__spawn_{cls}_{attr}` thunk) ve `lambda`/`defer` `grow_stmt_gate` temizliği.
+- **Doğrulama:** `ck_gen.py --nonlocal` (`files=3000 unsupported=0 accepted=1593 rejected=1407 diagnostics=592 skipped_parse=0`), `ck_edge/nonlocal` (`24` dosya, `unsupported=0 accepted=12 rejected=12 diagnostics=6`), `ck_mutants_nonlocal.py` (`20/20 yakalandı, 0 yaşayan`), `ck_regress.sh` `23` kip + depo yeşil.
+- **Depo `ck-diff check` (`v2.2.106`):** `files=1776 unsupported=38 accepted=637 rejected=1101 diagnostics=2286 skipped_parse=56` (`nonlocal`, `stmt_kind#nested_features`, `spawn#attribute`, `elem_grow`, `list_extend` → `0`; kalanlar: `28 register_func#generator`, `4 stmt_kind#nested_async`, `2 check_stmt#async_for`, `1 check_stmt#async_with`, `1 check_identifier#fromimport`, `1 stmt_kind#15`, `1 lambda#captures_order`).
+- **`ck-diff checkm` (`tests/golden/typecheck_cases/*.nox`, `v2.2.106`):** `files=347 unsupported=11 accepted=89 rejected=247 diagnostics=199 skipped=0` (**%96,8 kapsam**; kalanlar yalnızca: `6 register_func#generator`, `2 stmt_kind#nested_async`, `2 check_stmt#async_for`, `1 check_stmt#async_with`).
+
+### Önceki (v2.2.105 sonrası)
 
 - **Son sürüm:** `v2.2.105` — `selfhost/typecheck.nox.in` (üretilen `selfhost/typecheck.nox`: **13.715 satır**) Paket 1: `mixin_flatten_run` (`class#bases`, `class#explicit_base_call`), `derive_run` (`class#decorators`), `class#method_features`, `index_call_fixup_run` + `bound_method_fixup_run` (`attr#bound_method`, `check_call#bind_method`), `elem_grow`/`list_extend`/`list_sort_kwargs`/`dict_items`, `lowlevel_stmt` + `adopt`, `try#dotted`, `enumerate`/`zip` kaynaşımı, `check_call#1`, `check_assign#1` ve 7 dunder kapısı.
 - **Doğrulama:** `ck_gen.py --cls-mi-ops` (`files=3000 unsupported=0 accepted=1061 rejected=1939 diagnostics=1546 skipped_parse=0`), `ck_edge/cls_mi_ops` (`30` dosya, `unsupported=0 accepted=12 rejected=18 diagnostics=17`), `ck_mutants_cls_mi_ops.py` (`28/28 yakalandı, 0 yaşayan`), `ck_regress.sh` `22` kip + depo yeşil.

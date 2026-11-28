@@ -1,0 +1,11 @@
+def outer() -> int:
+    x: int = 1
+    def mid() -> int:
+        x: int = 10
+        def leaf() -> int:
+            nonlocal x
+            x = x + 5
+            return x
+        return leaf()
+    return mid() + x
+r: int = outer()

@@ -1,0 +1,11 @@
+def f() -> int:
+    x: int = 1
+    def inner() -> int:
+        nonlocal x
+        x = x + 1
+        def inner_shadow() -> str:
+            x: str = "hi"
+            return x
+        return x + len(inner_shadow())
+    return inner()
+r: int = f()

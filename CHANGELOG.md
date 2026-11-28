@@ -11,6 +11,20 @@ hazırlığı yol haritası — bkz. `docs/uretim-hazirlik-analizi.md`) TEK bir
 `v1.0.0`dan v2.2.2'ye kadar (2026-07-24 – 2026-11-17) her küçük iş ayrı commit + sürüm oldu; 2026-11-17'den itibaren `VERSIONING.md` §4 geçerlidir:
 commit'ler TOPLU atılır (aşama/iş paketi başına bir commit), her commit yine bir sürüm + tag + GitHub Release'dir. Girişler aşağıya SIRAYLA eklenir, EN YENİ EN ÜSTTE.
 
+## [2.2.106] - 2026-11-28
+
+### Değiştirilenler / Eklenenler
+- **Selfhost typechecker (`selfhost/typecheck.nox.in`, `selfhost/typecheck.nox` — 14.218 satır) `nonlocal` hücre dönüşümü, iç içe `def` özellikleri, `spawn` metot/modül nitelikli çağrı ve `lambda`/`defer` büyüme temizliği (Paket 2 — Aşama 3.7 kapanışı):**
+  - **`nonlocal` hücre dönüşümü (`nonlocal_desugar_run`):** `nl_has_nonlocal` (sıfır tahsisli hızlı yol), `nl_declared_stmts`/`nl_declared`, `nl_nested_defs`, `nl_unresolved`, `nl_find_type`, `nl_rewrite_expr`/`nl_rewrite_stmts`, `nl_convert_cell` ve `nl_process_func` eklendi; `nonlocal` kapısı kaldırıldı (`22 repo` / `3 checkm` → `0`).
+  - **İç içe `def` özellikleri (`stmt_kind#nested_features` → `0`):** İç içe `func_def` üzerindeki `decorators`/`nonlocals`/`allow_await` kapısı kaldırıldı; `check_nested_def` içinde `allow_await`/`is_async` bağlamı yayıldı.
+  - **Nitelikli `spawn` çağrısı (`spawn#attribute` → `0`):** `find_method_def` ve `resolve_spawn_attr_callee` eklendi (`spawn mod.fn(...)` + `spawn obj.method(...)` için `__spawn_{cls}_{attr}` async thunk sentezi ve argüman sayısı/alıcı sınıf doğrulaması).
+  - **Küçük temizlikler:** `check_lambda` ve `check_defer` içinde `grow_stmt_gate` kaldırılıp `try_check_extend_stmt` / `try_check_element_grow_stmt` bağlandı; ölü `grow_stmt_gate` ve yinelenen `lowlevel_stmt` dalı temizlendi (`elem_grow`/`list_extend` = `0`).
+- **Doğrulama ve korpus:**
+  - `scripts/ck_gen.py --nonlocal`: `3000` dosya (`unsupported=0 accepted=1593 rejected=1407 diagnostics=592 skipped_parse=0`), `tests/fixtures/ck_edge/nonlocal/*.nox` (`24` dosya, `unsupported=0 accepted=12 rejected=12 diagnostics=6`), `scripts/ck_mutants_nonlocal.py` (**20/20 yakalandı, 0 yaşayan**).
+  - `scripts/ck_regress.sh`: `23` kip × `1500` + depo yeşil (`0` uyuşmazlık).
+  - `ck-diff check` (depo): `files=1776 unsupported=38 accepted=637 rejected=1101 diagnostics=2286 skipped_parse=56` (0 uyuşmazlık).
+  - `ck-diff checkm` (`tests/golden/typecheck_cases/*.nox`): `files=347 unsupported=11 accepted=89 rejected=247 diagnostics=199 skipped=0` (**%96,8 kapsam**, 0 uyuşmazlık; geriye yalnız `6 register_func#generator`, `2 stmt_kind#nested_async`, `2 check_stmt#async_for`, `1 check_stmt#async_with` kaldı).
+
 ## [2.2.105] - 2026-11-27
 
 ### Değiştirilenler / Eklenenler

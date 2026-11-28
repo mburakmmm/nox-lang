@@ -42,8 +42,9 @@ def lit(rnd, t):
 
 
 class Gen:
-    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False, use_bytes_spawn_dec=False, use_consts_ffi_intr=False, use_enum_bin_alias=False, use_cls_mi_ops=False):
+    def __init__(self, rnd, use_async=False, use_methods=False, use_builtins=False, use_recv=False, use_try=False, use_construct=False, use_ptr=False, use_extern=False, use_spawn=False, use_import=False, use_inherit=False, use_closure=False, use_tuple=False, use_generic_cls=False, use_generic_fn=False, use_prelude_proto=False, use_sig=False, use_bytes_spawn_dec=False, use_consts_ffi_intr=False, use_enum_bin_alias=False, use_cls_mi_ops=False, use_nonlocal=False):
         self.rnd = rnd
+        self.use_nonlocal = use_nonlocal
         self.use_cls_mi_ops = use_cls_mi_ops
         self.use_enum_bin_alias = use_enum_bin_alias
         self.use_consts_ffi_intr = use_consts_ffi_intr
@@ -2031,8 +2032,213 @@ class Gen:
         if r.random() < 0.5:
             self.lines.append("run_cmo()")
 
+    def gen_nonlocal(self):
+        r = self.rnd
+        self.lines += [
+            "async def nl_mod_fn(x: int) -> int:",
+            "    return x + 1",
+            "",
+            "class NLBase:",
+            "    v: int",
+            "    def __init__(self, v: int) -> None:",
+            "        self.v = v",
+            "    def work(self, d: int) -> int:",
+            "        return self.v + d",
+            "    def step(self) -> None:",
+            "        self.v = self.v + 1",
+            "",
+            "class NLSub(NLBase):",
+            "    w: int",
+            "    def __init__(self, v: int, w: int) -> None:",
+            "        super().__init__(v)",
+            "        self.w = w",
+            "    def inc_local(self, start: int) -> int:",
+            "        acc: int = start",
+            "        def bump(d: int) -> int:",
+            "            nonlocal acc",
+            "            acc = acc + d",
+            "            return acc",
+            "        return bump(self.w)",
+            "",
+        ]
+        choice = r.randint(0, 14)
+        if choice == 0:
+            self.lines += [
+                "def nl_basic(n: int) -> int:",
+                "    c: int = n",
+                "    def inc() -> int:",
+                "        nonlocal c",
+                "        c = c + 1",
+                "        return c",
+                "    return inc() + inc()",
+                "r0: int = nl_basic(10)",
+            ]
+        elif choice == 1:
+            self.lines += [
+                "def nl_param(p: int) -> int:",
+                "    def add(k: int) -> int:",
+                "        nonlocal p",
+                "        p = p + k",
+                "        return p",
+                "    return add(3) + p",
+                "r1: int = nl_param(5)",
+            ]
+        elif choice == 2:
+            self.lines += [
+                "def nl_multi(a: int) -> int:",
+                "    x: int = a",
+                "    def mid() -> int:",
+                "        y: int = 1",
+                "        def leaf() -> int:",
+                "            nonlocal x, y",
+                "            x = x + 2",
+                "            y = y + 3",
+                "            return x + y",
+                "        return leaf()",
+                "    return mid()",
+                "r2: int = nl_multi(4)",
+            ]
+        elif choice == 3:
+            self.lines += [
+                "def nl_shadow() -> int:",
+                "    x: int = 1",
+                "    def mid() -> int:",
+                "        x: int = 10",
+                "        def leaf() -> int:",
+                "            nonlocal x",
+                "            x = x + 5",
+                "            return x",
+                "        return leaf()",
+                "    return mid() + x",
+                "r3: int = nl_shadow()",
+            ]
+        elif choice == 4:
+            self.lines += [
+                "def nl_for_conflict() -> int:",
+                "    x: int = 0",
+                "    def inner() -> int:",
+                "        nonlocal x",
+                "        x = x + 1",
+                "        return x",
+                "    for x in [1, 2]:",
+                "        print(x)",
+                "    return inner()",
+            ]
+        elif choice == 5:
+            self.lines += [
+                "def nl_missing() -> int:",
+                "    def inner() -> int:",
+                "        nonlocal ghost",
+                "        ghost = 1",
+                "        return ghost",
+                "    return inner()",
+            ]
+        elif choice == 6:
+            self.lines += [
+                "def nl_walrus() -> int:",
+                "    v := 10",
+                "    def inner() -> int:",
+                "        nonlocal v",
+                "        v = v + 1",
+                "        return v",
+                "    return inner()",
+            ]
+        elif choice == 7:
+            self.lines += [
+                "def nl_top() -> int:",
+                "    nonlocal topv",
+                "    return 1",
+            ]
+        elif choice == 8:
+            self.lines += [
+                "def nl_branches(flag: bool) -> int:",
+                "    res: int = 0",
+                "    if flag:",
+                "        msg: str = \"ok\"",
+                "        def set_msg(s: str) -> None:",
+                "            nonlocal msg",
+                "            msg = s",
+                "        set_msg(\"hi\")",
+                "        res = len(msg)",
+                "    return res",
+                "r8: int = nl_branches(True)",
+            ]
+        elif choice == 9:
+            self.lines += [
+                "def nl_try_with() -> int:",
+                "    cnt: int = 0",
+                "    def bump() -> None:",
+                "        nonlocal cnt",
+                "        cnt = cnt + 1",
+                "    try:",
+                "        bump()",
+                "    except Exception as ex:",
+                "        print(ex)",
+                "    return cnt",
+                "r9: int = nl_try_with()",
+            ]
+        elif choice == 10:
+            self.lines += [
+                "def nl_exprs(a: int) -> int:",
+                "    x: int = a",
+                "    def f() -> int:",
+                "        nonlocal x",
+                "        z: int = -x if x > 0 else x + 1",
+                "        xs: list[int] = [x, x + 1]",
+                "        fn: (int) -> int = lambda k: x + k",
+                "        defer print(x)",
+                "        return z + len(xs) + fn(2)",
+                "    return f()",
+                "r10: int = nl_exprs(3)",
+            ]
+        elif choice == 11:
+            self.lines += [
+                "async def nl_spawn_method() -> int:",
+                "    obj: NLSub = NLSub(10, 5)",
+                "    t1: Task[int] = spawn obj.work(3)",
+                "    t2: Task[None] = spawn obj.step()",
+                "    await t2",
+                "    return await t1",
+            ]
+        elif choice == 12:
+            if r.random() < 0.5:
+                self.lines += [
+                    "async def nl_spawn_bad_recv() -> int:",
+                    "    x: int = 5",
+                    "    t: Task[int] = spawn x.work(1)",
+                    "    return await t",
+                ]
+            else:
+                self.lines += [
+                    "async def nl_spawn_bad_arity() -> int:",
+                    "    obj: NLBase = NLBase(1)",
+                    "    t: Task[int] = spawn obj.work(1, 2)",
+                    "    return await t",
+                ]
+        elif choice == 13:
+            self.lines += [
+                "async def nl_nested_allow_await() -> int:",
+                "    def inner() -> int:",
+                "        t: Task[int] = spawn nl_mod_fn(4)",
+                "        return await t",
+                "    return inner()",
+            ]
+        else:
+            self.lines += [
+                "def nl_lambda_defer_grow() -> None:",
+                "    xs: list[int] = [1, 2]",
+                "    ys: list[int] = [3]",
+                "    mat: list[list[int]] = [[1]]",
+                "    fn: () -> None = lambda: xs.extend(ys)",
+                "    defer mat[0].append(9)",
+                "    fn()",
+            ]
+
     def program(self):
         r = self.rnd
+        if self.use_nonlocal:
+            self.gen_nonlocal()
+            return "\n".join(self.lines) + "\n"
         if self.use_cls_mi_ops:
             self.gen_cls_mi_ops()
             return "\n".join(self.lines) + "\n"
@@ -2144,11 +2350,12 @@ def main():
     ap.add_argument("--consts-ffi-intr", dest="use_consts_ffi_intr", action="store_true")
     ap.add_argument("--enum-bin-alias", dest="use_enum_bin_alias", action="store_true")
     ap.add_argument("--cls-mi-ops", dest="use_cls_mi_ops", action="store_true")
+    ap.add_argument("--nonlocal", dest="use_nonlocal", action="store_true")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     for i in range(args.count):
         rnd = random.Random(args.seed * 1_000_003 + i)
-        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig, args.use_bytes_spawn_dec, args.use_consts_ffi_intr, args.use_enum_bin_alias, args.use_cls_mi_ops).program()
+        src = Gen(rnd, args.use_async, args.use_methods, args.use_builtins, args.use_recv, args.use_try, args.use_construct, args.use_ptr, args.use_extern, args.use_spawn, args.use_import, args.use_inherit, args.use_closure, args.use_tuple, args.use_generic_cls, args.use_generic_fn, args.use_prelude_proto, args.use_sig, args.use_bytes_spawn_dec, args.use_consts_ffi_intr, args.use_enum_bin_alias, args.use_cls_mi_ops, args.use_nonlocal).program()
         with open(os.path.join(args.out, f"g{args.seed}_{i}.nox"), "w", encoding="utf-8") as f:
             f.write(src)
 

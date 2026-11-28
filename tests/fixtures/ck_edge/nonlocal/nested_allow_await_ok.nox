@@ -1,0 +1,8 @@
+async def helper(x: int) -> int:
+    return x + 1
+
+async def f() -> int:
+    def inner() -> int:
+        t: Task[int] = spawn helper(4)
+        return await t
+    return inner()

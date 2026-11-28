@@ -1,0 +1,15 @@
+def noop() -> None:
+    pass
+
+def f(a: int) -> int:
+    x: int = a
+    cb: () -> None = noop
+    def inner() -> int:
+        nonlocal x, cb
+        z: int = -x if x > 0 else x + 1
+        fn: (int) -> int = lambda k: x + k
+        defer cb()
+        defer print(x)
+        return z + fn(2)
+    return inner()
+r: int = f(3)

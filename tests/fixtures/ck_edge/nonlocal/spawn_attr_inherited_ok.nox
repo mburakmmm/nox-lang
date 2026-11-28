@@ -1,0 +1,15 @@
+class Base:
+    v: int
+    def __init__(self, v: int) -> None:
+        self.v = v
+    def calc(self, d: int) -> int:
+        return self.v + d
+
+class Sub(Base):
+    def __init__(self, v: int) -> None:
+        super().__init__(v)
+
+async def f() -> int:
+    s: Sub = Sub(10)
+    t: Task[int] = spawn s.calc(5)
+    return await t

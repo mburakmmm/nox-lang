@@ -1,0 +1,11 @@
+class Worker:
+    n: int
+    def __init__(self, n: int) -> None:
+        self.n = n
+    def calc(self, d: int) -> int:
+        return self.n + d
+
+async def f() -> int:
+    w: Worker = Worker(1)
+    t: Task[int] = spawn w.calc(1, 2)
+    return await t

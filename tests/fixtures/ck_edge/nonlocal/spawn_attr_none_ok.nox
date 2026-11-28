@@ -1,0 +1,11 @@
+class Worker:
+    n: int
+    def __init__(self, n: int) -> None:
+        self.n = n
+    def step(self) -> None:
+        self.n = self.n + 1
+
+async def f() -> None:
+    w: Worker = Worker(1)
+    t: Task[None] = spawn w.step()
+    await t

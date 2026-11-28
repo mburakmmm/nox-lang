@@ -896,13 +896,104 @@ def check_expr_inner(ck: Ck, a: Ast, fx: Fx, e: int) -> int:
     raise unsup(ck, "check_expr_inner#" + str(tag))
 
 # `spawn f(...)`: yalnızca üst-düzey `async def` çağrısı (iç içe async/`obj.metod` sarmalayıcısı kapsam dışı) -> `Task[T]`.
+def find_method_def(ck: Ck, a: Ast, cls_sym: int, attr_sym: int) -> int:
+    cur: int = cls_sym
+    while cur >= 0:
+        ci: int = class_idx(ck, cur)
+        if ci < 0:
+            return -1
+        cd: int = ck.cls_node[ci]
+        if cd >= 0:
+            ms: int = sl_at(a, cd, 16)
+            for i in range(pky(ms)):
+                m: int = stmt_at(a, ms, i)
+                if sym_of(ck, a, pk(a.n[m + 0], a.n[m + 0 + 1])) == attr_sym:
+                    return m
+        cur = ck.cls_base[ci]
+    return -1
+
+def resolve_spawn_attr_callee(ck: Ck, a: Ast, fx: Fx, c: int, at: int) -> None:
+    raw_segs: list[int] = []
+    callee_e: int = a.n[c + 0]
+    if flatten_dotted(ck, a, callee_e, raw_segs) and len(raw_segs) >= 2:
+        segs: list[int] = subst_alias(ck, raw_segs)
+        mod_sym: int = join_syms(ck, segs, len(segs) - 1, 46)
+        if m2_get(ck.imod, 0, mod_sym) >= 0:
+            msym: int = join_syms(ck, segs, len(segs), 95)
+            a.n[c + 0] = mk_ident_node(a, sym_to_str(ck, msym))
+            return
+    recv_t: int = check_expr(ck, a, fx, a.n[at + 0])
+    if ck.tt.tag[recv_t] != 6:
+        fail2(ck, "NotCallable", "'spawn' can only wrap a function or a method call on a class instance")
+    cls_sym: int = ck.tt.xa[recv_t]
+    attr_sr: int = pk(a.n[at + 1], a.n[at + 1 + 1])
+    attr_sym: int = sym_of(ck, a, attr_sr)
+    md: int = find_method_def(ck, a, cls_sym, attr_sym)
+    if md < 0:
+        mp(ck, "class '")
+        mp_sym(ck, cls_sym)
+        mp(ck, "' has no method '")
+        mp_sym(ck, attr_sym)
+        mp(ck, "'")
+        raise mk_fail(ck, "UndefinedMethod")
+    mps: int = sl_at(a, md, 4)
+    mpn: int = pky(mps)
+    cargs: int = sl_at(a, c, 1)
+    can: int = pky(cargs)
+    if mpn == 0 or can != mpn - 1:
+        exp_n: int = 0
+        if mpn > 0:
+            exp_n = mpn - 1
+        mp(ck, "'")
+        mp_sym(ck, cls_sym)
+        mp(ck, ".")
+        mp_sym(ck, attr_sym)
+        mp(ck, "' expects ")
+        mp_int(ck, exp_n)
+        mp(ck, " arguments, ")
+        mp_int(ck, can)
+        mp(ck, " were given")
+        raise mk_fail(ck, "ArgumentCountMismatch")
+    thunk_str: str = "__spawn_" + sym_to_str(ck, cls_sym) + "_" + sym_to_str(ck, attr_sym)
+    thunk_sym: int = sym_lit(ck, thunk_str)
+    if m2_get(ck.fmap, 0, thunk_sym) < 0:
+        cls_sr: int = syn(a, sym_to_str(ck, cls_sym))
+        self_sr: int = syn(a, "__self")
+        pids: list[int] = [mk_Param(a, pkx(self_sr), pky(self_sr), 0, 0, 0, 0, mk_TypeExpr_simple(a, pkx(cls_sr), pky(cls_sr)), 0, -4611686018427387904)]
+        iargs: list[int] = []
+        for i in range(1, mpn):
+            p: int = stmt_at(a, mps, i)
+            pids.append(mk_Param(a, a.n[p + 0], a.n[p + 0 + 1], 0, 0, 0, 0, a.n[p + 6], 0, -4611686018427387904))
+            iargs.append(mk_Expr_identifier(a, a.n[p + 0], a.n[p + 0 + 1]))
+        iasl: int = ast_expr_list(a, iargs)
+        invoke: int = mk_attr_call_node(a, mk_Expr_identifier(a, pkx(self_sr), pky(self_sr)), sym_to_str(ck, attr_sym), iasl)
+        ret_te: int = a.n[md + 6]
+        returns_none: bool = a.n[ret_te] == 0 and sref_eq(a, pk(a.n[ret_te + 1], a.n[ret_te + 2]), "None")
+        bk: int = mk_StmtKind_return_stmt(a, invoke)
+        if returns_none:
+            bk = mk_StmtKind_expr_stmt(a, invoke)
+        bsl: int = ast_stmt_list(a, [mk_Stmt(a, bk, ck.cur_line, -1)])
+        psl: int = ast_stmt_list(a, pids)
+        tsr: int = syn(a, thunk_str)
+        fd: int = mk_FuncDef(a, pkx(tsr), pky(tsr), 0, 0, pkx(psl), pky(psl), ret_te, 0, pkx(bsl), pky(bsl), 1, 0, 0, -4611686018427387904, 0, 0, 0, 0, 0, 0, ck.cur_line)
+        register_func(ck, a, fd)
+        check_function_body(ck, a, fd)
+    new_args: list[int] = [a.n[at + 0]]
+    for i in range(can):
+        new_args.append(a.l[pkx(cargs) + i])
+    nasl: int = ast_expr_list(a, new_args)
+    a.n[c + 1] = pkx(nasl)
+    a.n[c + 1 + 1] = pky(nasl)
+    a.n[c + 0] = mk_ident_node(a, thunk_str)
+
 def check_spawn(ck: Ck, a: Ast, fx: Fx, opd: int) -> int:
     if a.n[opd] != 8:
         fail2(ck, "NotCallable", "'spawn' can only wrap a call expression")
     c: int = a.n[opd + 1]
     callee: int = a.n[c + 0]
     if a.n[callee] == 9:
-        raise unsup(ck, "spawn#attribute")
+        resolve_spawn_attr_callee(ck, a, fx, c, a.n[callee + 1])
+        callee = a.n[c + 0]
     if a.n[callee] != 5:
         fail2(ck, "NotCallable", "'spawn' can only wrap a direct function call")
     nm: int = pk(a.n[callee + 1], a.n[callee + 2])
@@ -3983,37 +4074,11 @@ def check_stmt(ck: Ck, a: Ast, fx: Fx, st: int) -> None:
             raise mk_fail(ck, "TypeMismatch")
         if a.n[pay + 10] != 0:
             raise unsup(ck, "stmt_kind#nested_async")
-        if pky(sl_at(a, pay, 11)) > 0 or pky(sl_at(a, pay, 15)) > 0 or a.n[pay + 19] != 0:
-            raise unsup(ck, "stmt_kind#nested_features")
         ft: int = check_nested_def(ck, a, fx, pay)
         sc_declare(ck, fx.scope, sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1])), ft)
         return
     if tag == 22:
         check_defer(ck, a, fx, pay)
-        return
-    if tag == 14:
-        before_k: list[int] = []
-        for vi in range(len(ck.vars.k1)):
-            if ck.vars.k1[vi] == fx.scope and ck.vars.dead[vi] == 0:
-                before_k.append(ck.vars.k2[vi])
-        fx.ll_depth = fx.ll_depth + 1
-        try:
-            check_block(ck, a, fx, sl_at(a, pay, 0))
-        finally:
-            fx.ll_depth = fx.ll_depth - 1
-        rm_k: list[int] = []
-        for vj in range(len(ck.vars.k1)):
-            if ck.vars.k1[vj] == fx.scope and ck.vars.dead[vj] == 0:
-                k2v: int = ck.vars.k2[vj]
-                had: bool = False
-                for bk in before_k:
-                    if bk == k2v:
-                        had = True
-                        break
-                if not had:
-                    rm_k.append(k2v)
-        for rk in rm_k:
-            m2_remove(ck.vars, fx.scope, rk)
         return
     raise unsup(ck, "stmt_kind#" + str(tag))
 
@@ -4025,7 +4090,8 @@ def check_nested_def(ck: Ck, a: Ast, fx: Fx, fd: int) -> int:
         p: int = stmt_at(a, ps, i)
         sc_declare(ck, inner, sym_of(ck, a, pk(a.n[p + 0], a.n[p + 0 + 1])), type_expr_to_type(ck, a, a.n[p + 6]))
     ret: int = type_expr_to_type(ck, a, a.n[fd + 6])
-    ifx: Fx = Fx(inner, ret, False)
+    in_async: bool = a.n[fd + 19] != 0 or a.n[fd + 10] != 0
+    ifx: Fx = Fx(inner, ret, in_async)
     body: int = sl_at(a, fd, 8)
     check_block(ck, a, ifx, body)
     if ret != 4 and not always_returns(a, body):
@@ -4066,8 +4132,8 @@ def check_lambda(ck: Ck, a: Ast, fx: Fx, e: int, expected: int) -> int:
     ifx: Fx = Fx(inner, ret, False)
     body: int = a.n[lam + 2]
     if ret == 4:
-        grow_stmt_gate(ck, a, ifx, body)
-        check_expr(ck, a, ifx, body)
+        if not try_check_extend_stmt(ck, a, ifx, body) and not try_check_element_grow_stmt(ck, a, ifx, body):
+            check_expr(ck, a, ifx, body)
     else:
         rt: int = check_expr_expected(ck, a, ifx, body, ret)
         if not ty_assignable(tt, ret, rt):
@@ -4100,8 +4166,8 @@ def check_defer(ck: Ck, a: Ast, fx: Fx, d: int) -> None:
     inner: int = sc_new(ck, fx.scope, True)
     ifx: Fx = Fx(inner, 4, False)
     ck.cur_span = -1
-    grow_stmt_gate(ck, a, ifx, ce)
-    check_expr(ck, a, ifx, ce)
+    if not try_check_extend_stmt(ck, a, ifx, ce) and not try_check_element_grow_stmt(ck, a, ifx, ce):
+        check_expr(ck, a, ifx, ce)
 
 def scope_live_names(ck: Ck, scope: int) -> list[int]:
     out: list[int] = []
@@ -7432,28 +7498,6 @@ def check_growable_recv(ck: Ck, a: Ast, fx: Fx, obj: int, what: str, example: st
     if not ok:
         fail2(ck, "TypeMismatch", "'" + what + "' can only be called on a variable or on 'name.field[.field...]' (e.g. '" + example + "', 'self.items.append(v)')")
 
-# `tryCheckExtendStmt` / `tryCheckElementGrowStmt` (ifade deyimi olarak `xs.extend(ys)`, `xs[i].append/insert/extend(..)`): deyim yeniden yazılır → kapsam dışı
-def grow_stmt_gate(ck: Ck, a: Ast, fx: Fx, e: int) -> None:
-    if a.n[e] != 8:
-        return
-    callee: int = a.n[a.n[e + 1] + 0]
-    if a.n[callee] != 9:
-        return
-    at: int = a.n[callee + 1]
-    attr: int = pk(a.n[at + 1], a.n[at + 1 + 1])
-    obj: int = a.n[at + 0]
-    is_ext: bool = sref_eq(a, attr, "extend")
-    if not (is_ext or sref_eq(a, attr, "append") or sref_eq(a, attr, "insert")):
-        return
-    if is_ext:
-        et: int = check_expr(ck, a, fx, obj)
-        if ck.tt.tag[et] == 5:
-            raise unsup(ck, "list_extend")
-    if a.n[obj] == 10:
-        it: int = check_expr(ck, a, fx, obj)
-        if ck.tt.tag[it] == 5:
-            raise unsup(ck, "elem_grow")
-
 # `requireListElemComparable`
 def require_list_elem_comparable(ck: Ck, a: Ast, et: int, xt: int, attr: int) -> None:
     g: int = ck.tt.tag[et]
@@ -9028,8 +9072,6 @@ def check_capability_call(ck: Ck, fn_sym: int) -> None:
 def register_func(ck: Ck, a: Ast, fd: int) -> None:
     nm: int = pk(a.n[fd + 0], a.n[fd + 0 + 1])
     ps: int = sl_at(a, fd, 4)
-    if pky(sl_at(a, fd, 15)) > 0:
-        raise unsup(ck, "nonlocal")
     if stmts_have_yield(a, sl_at(a, fd, 8)):
         raise unsup(ck, "register_func#generator")
     validate_param_defaults(ck, a, nm, ps, 0, pky(sl_at(a, fd, 2)) > 0)
@@ -10804,53 +10846,503 @@ def stmts_assign_name_ints(a: Ast, s: int, xs: list[int]) -> bool:
                 return True
     return False
 
-# `nonlocal_desugar` kapısı: herhangi bir (iç içe) `def` `nonlocal` bildiriyorsa Zig sahip işlevin değişkenini hücreye (`__nl_x[0]`) çevirir: kapsam dışı.
-def stmts_have_nonlocal(a: Ast, s: int) -> bool:
+# `nonlocal_desugar` (`compiler/typecheck/nonlocal_desugar.zig`): `nonlocal` bildiren değişkenleri sahip işlevde `__nl_x: list[T] = [x]` hücresine çevirir.
+def nl_declared_stmts(ck: Ck, a: Ast, s: int, out: Map2) -> None:
+    for i in range(pky(s)):
+        st: int = stmt_at(a, s, i)
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 1:
+            m2_put(out, 0, sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1])), 1)
+        elif tag == 7:
+            m2_put(out, 0, sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1])), 1)
+        elif tag == 6:
+            m2_put(out, 0, sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1])), 1)
+            nl_declared_stmts(ck, a, sl_at(a, pay, 3), out)
+        elif tag == 4:
+            nl_declared_stmts(ck, a, sl_at(a, pay, 1), out)
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                nl_declared_stmts(ck, a, sl_at(a, a.l[pkx(ecs) + j], 1), out)
+            if a.n[pay + 5] != -4611686018427387904:
+                nl_declared_stmts(ck, a, sl_at(a, pay, 5), out)
+        elif tag == 5:
+            nl_declared_stmts(ck, a, sl_at(a, pay, 1), out)
+        elif tag == 13:
+            nl_declared_stmts(ck, a, sl_at(a, pay, 0), out)
+            exs: int = sl_at(a, pay, 2)
+            for k in range(pky(exs)):
+                ec: int = a.l[pkx(exs) + k]
+                if a.n[ec + 2] != -4611686018427387904:
+                    m2_put(out, 0, sym_of(ck, a, pk(a.n[ec + 2], a.n[ec + 2 + 1])), 1)
+                nl_declared_stmts(ck, a, sl_at(a, ec, 4), out)
+            if a.n[pay + 4] != -4611686018427387904:
+                nl_declared_stmts(ck, a, sl_at(a, pay, 4), out)
+        elif tag == 21:
+            if a.n[pay + 1] != -4611686018427387904:
+                m2_put(out, 0, sym_of(ck, a, pk(a.n[pay + 1], a.n[pay + 1 + 1])), 1)
+            nl_declared_stmts(ck, a, sl_at(a, pay, 3), out)
+        elif tag == 14:
+            nl_declared_stmts(ck, a, sl_at(a, pay, 0), out)
+
+def nl_declared(ck: Ck, a: Ast, fd: int, out: Map2) -> None:
+    ps: int = sl_at(a, fd, 4)
+    for i in range(pky(ps)):
+        p: int = stmt_at(a, ps, i)
+        m2_put(out, 0, sym_of(ck, a, pk(a.n[p + 0], a.n[p + 0 + 1])), 1)
+    nl_declared_stmts(ck, a, sl_at(a, fd, 8), out)
+    nls: int = sl_at(a, fd, 15)
+    for ni in range(pky(nls)):
+        m2_remove(out, 0, sym_of(ck, a, pk(a.l[pkx(nls) + ni * 2], a.l[pkx(nls) + ni * 2 + 1])))
+
+def nl_nested_defs(a: Ast, s: int, out: list[int]) -> None:
     for i in range(pky(s)):
         st: int = stmt_at(a, s, i)
         kn: int = a.n[st + 0]
         tag: int = a.n[kn]
         pay: int = a.n[kn + 1]
         if tag == 7:
-            if pky(sl_at(a, pay, 15)) > 0 or stmts_have_nonlocal(a, sl_at(a, pay, 8)):
+            out.append(pay)
+        elif tag == 4:
+            nl_nested_defs(a, sl_at(a, pay, 1), out)
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                nl_nested_defs(a, sl_at(a, a.l[pkx(ecs) + j], 1), out)
+            if a.n[pay + 5] != -4611686018427387904:
+                nl_nested_defs(a, sl_at(a, pay, 5), out)
+        elif tag == 5:
+            nl_nested_defs(a, sl_at(a, pay, 1), out)
+        elif tag == 6:
+            nl_nested_defs(a, sl_at(a, pay, 3), out)
+        elif tag == 13:
+            nl_nested_defs(a, sl_at(a, pay, 0), out)
+            exs: int = sl_at(a, pay, 2)
+            for k in range(pky(exs)):
+                nl_nested_defs(a, sl_at(a, a.l[pkx(exs) + k], 4), out)
+            if a.n[pay + 4] != -4611686018427387904:
+                nl_nested_defs(a, sl_at(a, pay, 4), out)
+        elif tag == 21:
+            nl_nested_defs(a, sl_at(a, pay, 3), out)
+        elif tag == 14:
+            nl_nested_defs(a, sl_at(a, pay, 0), out)
+
+def nl_unresolved(ck: Ck, a: Ast, fd: int, out: Map2, out_syms: list[int]) -> None:
+    tmp_m: Map2 = Map2()
+    tmp_s: list[int] = []
+    nls: int = sl_at(a, fd, 15)
+    for i in range(pky(nls)):
+        nsym: int = sym_of(ck, a, pk(a.l[pkx(nls) + i * 2], a.l[pkx(nls) + i * 2 + 1]))
+        if m2_get(tmp_m, 0, nsym) < 0:
+            m2_put(tmp_m, 0, nsym, 1)
+            tmp_s.append(nsym)
+    kids: list[int] = []
+    nl_nested_defs(a, sl_at(a, fd, 8), kids)
+    for k in kids:
+        nl_unresolved(ck, a, k, tmp_m, tmp_s)
+    own: Map2 = Map2()
+    nl_declared(ck, a, fd, own)
+    for s in tmp_s:
+        if m2_get(own, 0, s) < 0 and m2_get(out, 0, s) < 0:
+            m2_put(out, 0, s, 1)
+            out_syms.append(s)
+
+def nl_find_type_in(ck: Ck, a: Ast, s: int, xsym: int) -> int:
+    for i in range(pky(s)):
+        st: int = stmt_at(a, s, i)
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 1:
+            if sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1])) == xsym:
+                return a.n[pay + 2]
+        elif tag == 4:
+            t: int = nl_find_type_in(ck, a, sl_at(a, pay, 1), xsym)
+            if t >= 0:
+                return t
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                t = nl_find_type_in(ck, a, sl_at(a, a.l[pkx(ecs) + j], 1), xsym)
+                if t >= 0:
+                    return t
+            if a.n[pay + 5] != -4611686018427387904:
+                t = nl_find_type_in(ck, a, sl_at(a, pay, 5), xsym)
+                if t >= 0:
+                    return t
+        elif tag == 5:
+            t2: int = nl_find_type_in(ck, a, sl_at(a, pay, 1), xsym)
+            if t2 >= 0:
+                return t2
+        elif tag == 6:
+            t3: int = nl_find_type_in(ck, a, sl_at(a, pay, 3), xsym)
+            if t3 >= 0:
+                return t3
+        elif tag == 13:
+            t4: int = nl_find_type_in(ck, a, sl_at(a, pay, 0), xsym)
+            if t4 >= 0:
+                return t4
+            exs: int = sl_at(a, pay, 2)
+            for k in range(pky(exs)):
+                t4 = nl_find_type_in(ck, a, sl_at(a, a.l[pkx(exs) + k], 4), xsym)
+                if t4 >= 0:
+                    return t4
+            if a.n[pay + 4] != -4611686018427387904:
+                t4 = nl_find_type_in(ck, a, sl_at(a, pay, 4), xsym)
+                if t4 >= 0:
+                    return t4
+        elif tag == 21:
+            t5: int = nl_find_type_in(ck, a, sl_at(a, pay, 3), xsym)
+            if t5 >= 0:
+                return t5
+    return -1
+
+def nl_find_type(ck: Ck, a: Ast, fd: int, xsym: int) -> int:
+    ps: int = sl_at(a, fd, 4)
+    for i in range(pky(ps)):
+        p: int = stmt_at(a, ps, i)
+        if sym_of(ck, a, pk(a.n[p + 0], a.n[p + 0 + 1])) == xsym:
+            return a.n[p + 6]
+    t: int = nl_find_type_in(ck, a, sl_at(a, fd, 8), xsym)
+    if t < 0:
+        return -1
+    if a.n[t] == 0 and sref_eq(a, pk(a.n[t + 1], a.n[t + 2]), "__infer"):
+        return -1
+    return t
+
+def nl_list_of(a: Ast, te: int) -> int:
+    lsr: int = syn(a, "list")
+    asl: int = ast_expr_list(a, [te])
+    return mk_TypeExpr_generic(a, mk_Generic(a, pkx(lsr), pky(lsr), pkx(asl), pky(asl)))
+
+def nl_comp_shadows(ck: Ck, a: Ast, clauses: int, xsym: int) -> bool:
+    for i in range(pky(clauses)):
+        cl: int = stmt_at(a, clauses, i)
+        if a.n[cl] == 0:
+            cpay: int = a.n[cl + 1]
+            if sym_of(ck, a, pk(a.n[cpay + 0], a.n[cpay + 0 + 1])) == xsym:
+                return True
+    return False
+
+def nl_rewrite_expr(ck: Ck, a: Ast, e: int, xsym: int, cell_s: str) -> None:
+    if e < 0:
+        return
+    tag: int = a.n[e]
+    if tag == 5:
+        if sym_of(ck, a, pk(a.n[e + 1], a.n[e + 2])) == xsym:
+            a.n[e] = 10
+            a.n[e + 1] = mk_Index(a, mk_ident_node(a, cell_s), mk_Expr_int_lit(a, 0))
+        return
+    if tag == 6:
+        nl_rewrite_expr(ck, a, a.n[a.n[e + 1] + 1], xsym, cell_s)
+        return
+    if tag == 17:
+        nl_rewrite_expr(ck, a, a.n[a.n[e + 1] + 2], xsym, cell_s)
+        return
+    if tag == 16:
+        t: int = a.n[e + 1]
+        nl_rewrite_expr(ck, a, a.n[t + 0], xsym, cell_s)
+        nl_rewrite_expr(ck, a, a.n[t + 1], xsym, cell_s)
+        nl_rewrite_expr(ck, a, a.n[t + 2], xsym, cell_s)
+        return
+    if tag == 7:
+        b: int = a.n[e + 1]
+        nl_rewrite_expr(ck, a, a.n[b + 1], xsym, cell_s)
+        nl_rewrite_expr(ck, a, a.n[b + 2], xsym, cell_s)
+        return
+    if tag == 8:
+        c: int = a.n[e + 1]
+        nl_rewrite_expr(ck, a, a.n[c + 0], xsym, cell_s)
+        args: int = sl_at(a, c, 1)
+        for i in range(pky(args)):
+            nl_rewrite_expr(ck, a, a.l[pkx(args) + i], xsym, cell_s)
+        return
+    if tag == 9:
+        nl_rewrite_expr(ck, a, a.n[a.n[e + 1] + 0], xsym, cell_s)
+        return
+    if tag == 21:
+        lc: int = a.n[e + 1]
+        cls: int = sl_at(a, lc, 1)
+        if nl_comp_shadows(ck, a, cls, xsym):
+            return
+        nl_rewrite_expr(ck, a, a.n[lc + 0], xsym, cell_s)
+        for i in range(pky(cls)):
+            cl: int = stmt_at(a, cls, i)
+            if a.n[cl] == 0:
+                nl_rewrite_expr(ck, a, a.n[a.n[cl + 1] + 2], xsym, cell_s)
+            elif a.n[cl] == 1:
+                nl_rewrite_expr(ck, a, a.n[cl + 1], xsym, cell_s)
+        return
+    if tag == 22:
+        dc: int = a.n[e + 1]
+        cls2: int = sl_at(a, dc, 2)
+        if nl_comp_shadows(ck, a, cls2, xsym):
+            return
+        nl_rewrite_expr(ck, a, a.n[dc + 0], xsym, cell_s)
+        nl_rewrite_expr(ck, a, a.n[dc + 1], xsym, cell_s)
+        for i2 in range(pky(cls2)):
+            cl2: int = stmt_at(a, cls2, i2)
+            if a.n[cl2] == 0:
+                nl_rewrite_expr(ck, a, a.n[a.n[cl2 + 1] + 2], xsym, cell_s)
+            elif a.n[cl2] == 1:
+                nl_rewrite_expr(ck, a, a.n[cl2 + 1], xsym, cell_s)
+        return
+    if tag == 19:
+        lam: int = a.n[e + 1]
+        lps: int = sl_at(a, lam, 0)
+        for i3 in range(pky(lps)):
+            if sym_of(ck, a, pk(a.l[pkx(lps) + i3 * 2], a.l[pkx(lps) + i3 * 2 + 1])) == xsym:
+                return
+        nl_rewrite_expr(ck, a, a.n[lam + 2], xsym, cell_s)
+        return
+    if tag == 18:
+        sl: int = a.n[e + 1]
+        nl_rewrite_expr(ck, a, a.n[sl + 0], xsym, cell_s)
+        if a.n[sl + 1] != -4611686018427387904:
+            nl_rewrite_expr(ck, a, a.n[sl + 1], xsym, cell_s)
+        if a.n[sl + 2] != -4611686018427387904:
+            nl_rewrite_expr(ck, a, a.n[sl + 2], xsym, cell_s)
+        if a.n[sl + 3] != -4611686018427387904:
+            nl_rewrite_expr(ck, a, a.n[sl + 3], xsym, cell_s)
+        return
+    if tag == 10:
+        ix: int = a.n[e + 1]
+        nl_rewrite_expr(ck, a, a.n[ix + 0], xsym, cell_s)
+        nl_rewrite_expr(ck, a, a.n[ix + 1], xsym, cell_s)
+        return
+    if tag == 11 or tag == 20:
+        its: int = pk(a.n[e + 1], a.n[e + 2])
+        for i4 in range(pky(its)):
+            nl_rewrite_expr(ck, a, a.l[pkx(its) + i4], xsym, cell_s)
+        return
+    if tag == 12:
+        prs: int = pk(a.n[e + 1], a.n[e + 2])
+        for i5 in range(pky(prs)):
+            pr: int = a.l[pkx(prs) + i5]
+            nl_rewrite_expr(ck, a, a.n[pr + 0], xsym, cell_s)
+            nl_rewrite_expr(ck, a, a.n[pr + 1], xsym, cell_s)
+        return
+    if tag == 13 or tag == 14:
+        nl_rewrite_expr(ck, a, a.n[e + 1], xsym, cell_s)
+        return
+    if tag == 15:
+        gc: int = a.n[e + 1]
+        ga: int = sl_at(a, gc, 4)
+        for i6 in range(pky(ga)):
+            nl_rewrite_expr(ck, a, a.l[pkx(ga) + i6], xsym, cell_s)
+
+def nl_rewrite_stmts(ck: Ck, a: Ast, s: int, xsym: int, cell_s: str, te: int) -> None:
+    for i in range(pky(s)):
+        st: int = stmt_at(a, s, i)
+        ck.cur_line = a.n[st + 1]
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 0 or tag == 12 or tag == 20:
+            nl_rewrite_expr(ck, a, pay, xsym, cell_s)
+        elif tag == 11:
+            if pay != -4611686018427387904:
+                nl_rewrite_expr(ck, a, pay, xsym, cell_s)
+        elif tag == 1:
+            nl_rewrite_expr(ck, a, a.n[pay + 3], xsym, cell_s)
+            if sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1])) == xsym:
+                it_sl: int = ast_expr_list(a, [a.n[pay + 3]])
+                csr: int = syn(a, cell_s)
+                a.n[pay + 0] = pkx(csr)
+                a.n[pay + 0 + 1] = pky(csr)
+                a.n[pay + 2] = nl_list_of(a, te)
+                a.n[pay + 3] = mk_Expr_list_lit(a, pkx(it_sl), pky(it_sl))
+        elif tag == 3:
+            nl_rewrite_expr(ck, a, a.n[pay + 0], xsym, cell_s)
+            nl_rewrite_expr(ck, a, a.n[pay + 1], xsym, cell_s)
+        elif tag == 4:
+            nl_rewrite_expr(ck, a, a.n[pay + 0], xsym, cell_s)
+            nl_rewrite_stmts(ck, a, sl_at(a, pay, 1), xsym, cell_s, te)
+            ecs: int = sl_at(a, pay, 3)
+            for j in range(pky(ecs)):
+                ec: int = a.l[pkx(ecs) + j]
+                nl_rewrite_expr(ck, a, a.n[ec + 0], xsym, cell_s)
+                nl_rewrite_stmts(ck, a, sl_at(a, ec, 1), xsym, cell_s, te)
+            if a.n[pay + 5] != -4611686018427387904:
+                nl_rewrite_stmts(ck, a, sl_at(a, pay, 5), xsym, cell_s, te)
+        elif tag == 5:
+            nl_rewrite_expr(ck, a, a.n[pay + 0], xsym, cell_s)
+            nl_rewrite_stmts(ck, a, sl_at(a, pay, 1), xsym, cell_s, te)
+        elif tag == 6:
+            if sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1])) == xsym:
+                mp(ck, "the nonlocal variable '")
+                mp_sym(ck, xsym)
+                mp(ck, "' cannot also be a 'for' loop variable")
+                raise mk_fail(ck, "TypeMismatch")
+            nl_rewrite_expr(ck, a, a.n[pay + 2], xsym, cell_s)
+            nl_rewrite_stmts(ck, a, sl_at(a, pay, 3), xsym, cell_s, te)
+        elif tag == 7:
+            fsym: int = sym_of(ck, a, pk(a.n[pay + 0], a.n[pay + 0 + 1]))
+            own_n: Map2 = Map2()
+            nl_declared(ck, a, pay, own_n)
+            if fsym == xsym or m2_get(own_n, 0, xsym) >= 0:
+                continue
+            nls: int = sl_at(a, pay, 15)
+            kept: list[int] = []
+            for ni in range(pky(nls)):
+                nsr: int = pk(a.l[pkx(nls) + ni * 2], a.l[pkx(nls) + ni * 2 + 1])
+                if sym_of(ck, a, nsr) != xsym:
+                    kept.append(pkx(nsr))
+                    kept.append(pky(nsr))
+            kst: int = len(a.l)
+            for kv in kept:
+                a.l.append(kv)
+            a.n[pay + 15] = kst
+            a.n[pay + 15 + 1] = len(kept) // 2
+            nl_rewrite_stmts(ck, a, sl_at(a, pay, 8), xsym, cell_s, te)
+        elif tag == 13:
+            nl_rewrite_stmts(ck, a, sl_at(a, pay, 0), xsym, cell_s, te)
+            exs: int = sl_at(a, pay, 2)
+            for k in range(pky(exs)):
+                nl_rewrite_stmts(ck, a, sl_at(a, a.l[pkx(exs) + k], 4), xsym, cell_s, te)
+            if a.n[pay + 4] != -4611686018427387904:
+                nl_rewrite_stmts(ck, a, sl_at(a, pay, 4), xsym, cell_s, te)
+        elif tag == 14:
+            nl_rewrite_stmts(ck, a, sl_at(a, pay, 0), xsym, cell_s, te)
+        elif tag == 21:
+            nl_rewrite_expr(ck, a, a.n[pay + 0], xsym, cell_s)
+            nl_rewrite_stmts(ck, a, sl_at(a, pay, 3), xsym, cell_s, te)
+        elif tag == 22:
+            dc: int = a.n[pay]
+            nl_rewrite_expr(ck, a, a.n[dc + 0], xsym, cell_s)
+            dargs: int = sl_at(a, dc, 1)
+            for di in range(pky(dargs)):
+                nl_rewrite_expr(ck, a, a.l[pkx(dargs) + di], xsym, cell_s)
+
+def nl_convert_cell(ck: Ck, a: Ast, fd: int, xsym: int, te: int) -> None:
+    x_s: str = sym_to_str(ck, xsym)
+    cell_s: str = "__nl_" + x_s
+    is_param: bool = False
+    ps: int = sl_at(a, fd, 4)
+    for i in range(pky(ps)):
+        p: int = stmt_at(a, ps, i)
+        if sym_of(ck, a, pk(a.n[p + 0], a.n[p + 0 + 1])) == xsym:
+            is_param = True
+    nl_rewrite_stmts(ck, a, sl_at(a, fd, 8), xsym, cell_s, te)
+    if is_param:
+        bsl: int = sl_at(a, fd, 8)
+        bn: int = pky(bsl)
+        first_line: int = a.n[fd + 20]
+        first_span: int = -1
+        if bn > 0:
+            fst: int = stmt_at(a, bsl, 0)
+            first_line = a.n[fst + 1]
+            first_span = a.n[fst + 2]
+        csr: int = syn(a, cell_s)
+        xsr: int = syn(a, x_s)
+        it_sl: int = ast_expr_list(a, [mk_Expr_identifier(a, pkx(xsr), pky(xsr))])
+        vd: int = mk_VarDecl(a, pkx(csr), pky(csr), nl_list_of(a, te), mk_Expr_list_lit(a, pkx(it_sl), pky(it_sl)), 0, 0, 0, 0)
+        ns_id: int = mk_Stmt(a, mk_StmtKind_var_decl(a, vd), first_line, first_span)
+        nb_items: list[int] = [ns_id]
+        for bi in range(bn):
+            nb_items.append(stmt_at(a, bsl, bi))
+        nbsl: int = ast_stmt_list(a, nb_items)
+        a.n[fd + 8] = pkx(nbsl)
+        a.n[fd + 8 + 1] = pky(nbsl)
+
+def nl_process_func(ck: Ck, a: Ast, fd: int, nested: bool) -> None:
+    kids: list[int] = []
+    nl_nested_defs(a, sl_at(a, fd, 8), kids)
+    unres_m: Map2 = Map2()
+    unres_s: list[int] = []
+    for k in kids:
+        nl_unresolved(ck, a, k, unres_m, unres_s)
+    if not nested:
+        nls: int = sl_at(a, fd, 15)
+        for ni in range(pky(nls)):
+            nsym: int = sym_of(ck, a, pk(a.l[pkx(nls) + ni * 2], a.l[pkx(nls) + ni * 2 + 1]))
+            if m2_get(unres_m, 0, nsym) < 0:
+                m2_put(unres_m, 0, nsym, 1)
+                unres_s.append(nsym)
+    if len(unres_s) > 0:
+        own: Map2 = Map2()
+        nl_declared(ck, a, fd, own)
+        for xsym in unres_s:
+            if m2_get(own, 0, xsym) < 0:
+                if not nested:
+                    mp(ck, "nonlocal '")
+                    mp_sym(ck, xsym)
+                    mp(ck, "': no binding for it was found in an enclosing function")
+                    raise mk_fail(ck, "TypeMismatch")
+                continue
+            te: int = nl_find_type(ck, a, fd, xsym)
+            if te < 0:
+                mp(ck, "the nonlocal variable '")
+                mp_sym(ck, xsym)
+                mp(ck, "' must be declared with an explicit type ('")
+                mp_sym(ck, xsym)
+                mp(ck, ": T = ...') or be a typed parameter")
+                raise mk_fail(ck, "TypeMismatch")
+            nl_convert_cell(ck, a, fd, xsym, te)
+    for k2 in kids:
+        nl_process_func(ck, a, k2, True)
+
+def nl_has_nonlocal(a: Ast, s: int) -> bool:
+    for i in range(pky(s)):
+        st: int = stmt_at(a, s, i)
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 7:
+            if pky(sl_at(a, pay, 15)) > 0 or nl_has_nonlocal(a, sl_at(a, pay, 8)):
                 return True
         elif tag == 8:
             ms: int = sl_at(a, pay, 16)
             for q in range(pky(ms)):
                 m: int = stmt_at(a, ms, q)
-                if pky(sl_at(a, m, 15)) > 0 or stmts_have_nonlocal(a, sl_at(a, m, 8)):
+                if pky(sl_at(a, m, 15)) > 0 or nl_has_nonlocal(a, sl_at(a, m, 8)):
                     return True
         elif tag == 4:
-            if stmts_have_nonlocal(a, sl_at(a, pay, 1)):
+            if nl_has_nonlocal(a, sl_at(a, pay, 1)):
                 return True
             ecs: int = sl_at(a, pay, 3)
             for j in range(pky(ecs)):
-                if stmts_have_nonlocal(a, sl_at(a, a.l[pkx(ecs) + j], 1)):
+                if nl_has_nonlocal(a, sl_at(a, a.l[pkx(ecs) + j], 1)):
                     return True
-            if a.n[pay + 5] != -4611686018427387904 and stmts_have_nonlocal(a, sl_at(a, pay, 5)):
+            if a.n[pay + 5] != -4611686018427387904 and nl_has_nonlocal(a, sl_at(a, pay, 5)):
                 return True
         elif tag == 5:
-            if stmts_have_nonlocal(a, sl_at(a, pay, 1)):
+            if nl_has_nonlocal(a, sl_at(a, pay, 1)):
                 return True
         elif tag == 6:
-            if stmts_have_nonlocal(a, sl_at(a, pay, 3)):
+            if nl_has_nonlocal(a, sl_at(a, pay, 3)):
                 return True
         elif tag == 13:
-            if stmts_have_nonlocal(a, sl_at(a, pay, 0)):
+            if nl_has_nonlocal(a, sl_at(a, pay, 0)):
                 return True
             exs: int = sl_at(a, pay, 2)
             for k in range(pky(exs)):
-                if stmts_have_nonlocal(a, sl_at(a, a.l[pkx(exs) + k], 4)):
+                if nl_has_nonlocal(a, sl_at(a, a.l[pkx(exs) + k], 4)):
                     return True
-            if a.n[pay + 4] != -4611686018427387904 and stmts_have_nonlocal(a, sl_at(a, pay, 4)):
+            if a.n[pay + 4] != -4611686018427387904 and nl_has_nonlocal(a, sl_at(a, pay, 4)):
                 return True
         elif tag == 21:
-            if stmts_have_nonlocal(a, sl_at(a, pay, 3)):
+            if nl_has_nonlocal(a, sl_at(a, pay, 3)):
                 return True
         elif tag == 14:
-            if stmts_have_nonlocal(a, sl_at(a, pay, 0)):
+            if nl_has_nonlocal(a, sl_at(a, pay, 0)):
                 return True
     return False
+
+def nonlocal_desugar_run(ck: Ck, a: Ast, body: int) -> None:
+    if not nl_has_nonlocal(a, body):
+        return
+    for i in range(pky(body)):
+        st: int = stmt_at(a, body, i)
+        ck.cur_line = a.n[st + 1]
+        kn: int = a.n[st + 0]
+        tag: int = a.n[kn]
+        pay: int = a.n[kn + 1]
+        if tag == 7:
+            nl_process_func(ck, a, pay, False)
+        elif tag == 8:
+            ms: int = sl_at(a, pay, 16)
+            for q in range(pky(ms)):
+                nl_process_func(ck, a, stmt_at(a, ms, q), False)
 
 # ---- 3.6d: prelude jenerikleri/çağrıları + protocol_def (Zig `tryDesugarPreludeCall`, `shortCircuitAnyAll`, `collectProtocols`, `satisfiesProtocol`, `ensureProtocolBase`, `ensureProtocolBox`, `assignableOrCoerce`) ----
 def sym_to_str(ck: Ck, sym: int) -> str:
@@ -13452,12 +13944,23 @@ def check_module(ck: Ck, a: Ast, body: int) -> int:
     ck.cur_span = -1
     ck.o_code = ""
     ck.o_msg = []
-    if stmts_have_nonlocal(a, body):
-        ck.why = "nonlocal"
-        return 2
     try:
         ck.sig_empty = new_sig(ck, [], [], 4)
         type_alias_run(ck, a, body)
+        for yi in range(pky(body)):
+            yst: int = stmt_at(a, body, yi)
+            ykn: int = a.n[yst + 0]
+            ytag: int = a.n[ykn]
+            ypay: int = a.n[ykn + 1]
+            if ytag == 7:
+                if stmts_have_yield(a, sl_at(a, ypay, 8)):
+                    raise unsup(ck, "register_func#generator")
+            elif ytag == 8:
+                yms: int = sl_at(a, ypay, 16)
+                for yq in range(pky(yms)):
+                    if stmts_have_yield(a, sl_at(a, stmt_at(a, yms, yq), 8)):
+                        raise unsup(ck, "register_func#generator")
+        nonlocal_desugar_run(ck, a, body)
         guard_normalize_run(a, body)
         collect_imports(ck, a, body)
         mixin_flatten_run(ck, a, body)
